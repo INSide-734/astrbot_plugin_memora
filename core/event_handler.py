@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import LLMResponse, ProviderRequest
 
-    from .injection.recorder import InjectionDecisionRecorder
+    from .features.injection.infrastructure.recorder import InjectionDecisionRecorder
     from .shared.contracts import PromptProtectionPort
 
 

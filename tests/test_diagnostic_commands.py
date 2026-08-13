@@ -10,8 +10,8 @@ import pytest
 from astrbot.api.platform import MessageType
 
 from core import i18n_backend
-from core.commands.diagnostic_commands import DiagnosticCommandMixin
 from core.i18n_backend import init as i18n_init
+from core.platform.transport.commands.diagnostic_commands import DiagnosticCommandMixin
 
 _SENTINEL = "PRIVATE_SENTINEL_NEVER_EXPOSE"
 

@@ -14,7 +14,7 @@ from core.features.memory.application.memory_engine_evolution_hooks import (
     MemoryEngineEvolutionHooksMixin,
 )
 from core.features.reflection.application.reflection_handler import ReflectionHandler
-from core.retrieval.memory_lifecycle import MemoryLifecycleManager
+from core.features.retrieval.memory_lifecycle import MemoryLifecycleManager
 
 
 @pytest.mark.asyncio

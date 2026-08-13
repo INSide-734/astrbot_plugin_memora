@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from core.review.models import (
+from core.features.quality.application.review_detector import ReviewDetector
+from core.features.quality.domain.models import (
     ReviewAction,
     ReviewActionResult,
     ReviewItem,
@@ -14,8 +15,7 @@ from core.review.models import (
     ReviewSeverity,
     ReviewStatus,
 )
-from core.review.review_detector import ReviewDetector
-from core.review.review_store import ReviewStore
+from core.features.quality.infrastructure.review_store import ReviewStore
 
 
 @asynccontextmanager

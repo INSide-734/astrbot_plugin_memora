@@ -163,7 +163,7 @@ def recall_case() -> SimpleNamespace:
 async def test_runtime_persists_only_trusted_and_unblocked() -> None:
     """可信且未写保护时同步名称，写保护或不可信时只返回解析结果。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     resolver = MagicMock()
     resolver.resolve.return_value = trusted_identity()
@@ -200,7 +200,7 @@ async def test_runtime_persists_only_trusted_and_unblocked() -> None:
 async def test_runtime_degrades_storage_errors_but_propagates_cancellation() -> None:
     """身份目录普通失败不阻断聊天，取消信号必须继续传播。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     resolver = MagicMock()
     resolver.resolve.return_value = trusted_identity()
@@ -219,7 +219,7 @@ async def test_runtime_degrades_storage_errors_but_propagates_cancellation() -> 
 def test_runtime_keeps_identity_when_event_extra_publication_fails() -> None:
     """事件 extras 不可写时保留解析结果，避免破坏聊天主链。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     resolver = MagicMock()
     identity = trusted_identity()
@@ -236,7 +236,7 @@ async def test_event_handler_defers_and_deduplicates_identity_sync() -> None:
     """请求与响应共享事件时目录同步只调度一次且不阻塞召回。"""
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -279,7 +279,7 @@ def test_event_handler_retries_identity_sync_after_scheduling_failure() -> None:
     """目录任务创建失败时清除事件标记，使后续钩子能够重试。"""
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     runtime = ProtocolIdentityRuntime()
     identity = trusted_identity()
@@ -308,7 +308,7 @@ def test_event_handler_retries_identity_sync_after_scheduling_failure() -> None:
 async def test_runtime_exposes_read_only_current_identity_lookup() -> None:
     """身份运行时通过只读边界返回当前目录记录，并在无 Store 时安全降级。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     store = MagicMock()
     stored = SimpleNamespace(
@@ -331,7 +331,7 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
     from astrbot.api.platform import MessageType
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     config = MagicMock()
     config.get.return_value = True
@@ -457,7 +457,7 @@ async def test_conflict_group_capture_skips_user_message_and_cognitive_state() -
     from astrbot.api.platform import MessageType
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     config = MagicMock()
     config.get.return_value = True
@@ -552,7 +552,7 @@ async def test_factory_identity_store_failure_returns_resolver_only_runtime(
 ) -> None:
     """身份表初始化普通失败时工厂继续启动并返回解析器降级运行时。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
     from core.platform.composition.component_factory import ComponentFactory
 
     factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
@@ -658,7 +658,7 @@ async def test_initializer_closes_identity_runtime_without_event_handler(
 ) -> None:
     """未创建事件处理器时，初始化器关闭链仍释放身份 Store。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
     from core.platform.composition.plugin_initializer import PluginInitializer
 
     store = MagicMock()
@@ -683,7 +683,7 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
 ) -> None:
     """运行时发布后的初始化失败或取消都必须释放身份 Store。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
     from core.platform.composition.plugin_initializer import PluginInitializer
     from core.shared.errors import InitializationError
 

@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
+from core.features.identity.application.enricher import (
+    IDENTITY_SCHEMA_VERSION,
+    MemoryIdentityEnricher,
+)
 from core.features.identity.application.service import ProtocolIdentityService
 from core.features.identity.domain.models import (
     IdentityTrust,
@@ -17,11 +21,10 @@ from core.features.identity.domain.models import (
     ResolvedIdentity,
 )
 from core.features.identity.infrastructure.store import ProtocolIdentityStore
-from core.identity.memory import (
-    IDENTITY_SCHEMA_VERSION,
-    MemoryIdentityEnricher,
+from core.features.injection.domain.models import (
+    InjectionExecutionResult,
+    InjectionOutcome,
 )
-from core.injection.models import InjectionExecutionResult, InjectionOutcome
 
 
 def _identity(
@@ -663,7 +666,7 @@ def test_event_handler_passes_runtime_enricher_to_recall_handler() -> None:
     """EventHandler 应把运行时拥有的只读 Enricher 显式注入召回处理器。"""
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     identity_enricher = MagicMock()
     runtime = ProtocolIdentityRuntime(enricher=identity_enricher)

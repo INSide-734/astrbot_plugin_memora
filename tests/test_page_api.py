@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.jargon.jargon_store import JargonStore
-from core.jargon.models import JargonMeaning
+from core.features.cognition.jargon.jargon_store import JargonStore
+from core.features.cognition.jargon.models import JargonMeaning
 from core.page_api import (
     PAGE_API_ALIAS_PREFIXES,
     PAGE_API_PREFIX,

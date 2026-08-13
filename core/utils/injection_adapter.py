@@ -7,7 +7,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from ..injection.models import DeliveryMode
+from ..features.injection.domain.models import DeliveryMode
 from ..shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,

@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.session_cache import SessionCacheMixin
-from core.managers.session_lifecycle import SessionLifecycleMixin
+from core.features.conversation.application.session_cache import SessionCacheMixin
+from core.features.conversation.application.session_lifecycle import (
+    SessionLifecycleMixin,
+)
 
 # ---------------------------------------------------------------------------
 # Concrete test class combining both mixins

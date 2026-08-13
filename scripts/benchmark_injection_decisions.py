@@ -16,11 +16,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 # 脚本需先把仓库根目录加入模块路径，以下运行时代码导入必须后置。
-from core.injection.models import InjectionDecisionRecord  # noqa: E402
-from core.injection.recorder import InjectionDecisionRecorder  # noqa: E402
-from core.storage.injection_decision_store import (  # noqa: E402
+from core.features.injection.domain.models import InjectionDecisionRecord  # noqa: E402
+from core.features.injection.infrastructure.injection_decision_store import (  # noqa: E402
     DecisionQuery,
     InjectionDecisionStore,
+)
+from core.features.injection.infrastructure.recorder import (  # noqa: E402
+    InjectionDecisionRecorder,
 )
 
 ROW_COUNT = 100_000

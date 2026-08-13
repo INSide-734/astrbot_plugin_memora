@@ -14,14 +14,7 @@ import time
 
 import pytest
 
-from core.shared.entity_editing import (
-    EditConflictError,
-    EntityAlreadyExistsError,
-    EntityNotFoundError,
-    EntityValidationError,
-)
-from core.shared.list_sorting import SortQuery
-from core.social.models import (
+from core.features.cognition.social.models import (
     RELATION_CATEGORIES,
     RELATION_DIFFICULTY,
     RelationChange,
@@ -29,8 +22,15 @@ from core.social.models import (
     get_difficulty,
     get_relation_category,
 )
-from core.social.relation_manager import RelationManager
-from core.social.relation_store import RelationStore
+from core.features.cognition.social.relation_manager import RelationManager
+from core.features.cognition.social.relation_store import RelationStore
+from core.shared.entity_editing import (
+    EditConflictError,
+    EntityAlreadyExistsError,
+    EntityNotFoundError,
+    EntityValidationError,
+)
+from core.shared.list_sorting import SortQuery
 
 # ============================================================================
 # Helpers

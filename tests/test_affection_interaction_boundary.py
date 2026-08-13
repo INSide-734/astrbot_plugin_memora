@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from core.affection.affection_manager import AffectionManager
-from core.affection.affection_store import AffectionStore
-from core.affection.models import BotMood, MoodType
+from core.features.cognition.affection.affection_manager import AffectionManager
+from core.features.cognition.affection.affection_store import AffectionStore
+from core.features.cognition.affection.models import BotMood, MoodType
 
 
 @pytest.mark.asyncio

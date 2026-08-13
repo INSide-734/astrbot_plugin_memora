@@ -128,7 +128,9 @@ class TestHandleSummarizeErrors:
         """手动总结隔离低质量候选后不得写 canonical，但应安全推进窗口。"""
 
         from core.command_handler import CommandHandler
-        from core.review.memory_quality_gate import MemoryGateResult
+        from core.features.quality.application.memory_quality_gate import (
+            MemoryGateResult,
+        )
 
         conversation_manager = MagicMock()
         conversation_manager.store.get_message_count = AsyncMock(return_value=2)

@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.injection.models import InjectionDecisionRecord
-from core.injection.recorder import InjectionDecisionRecorder
+from core.features.injection.domain.models import InjectionDecisionRecord
+from core.features.injection.infrastructure.recorder import InjectionDecisionRecorder
 
 
 @pytest.fixture

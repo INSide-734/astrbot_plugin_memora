@@ -550,7 +550,7 @@ class TestMemoryEngineInitialize:
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             with patch(
-                "core.retrieval.reranker_factory.create_reranker",
+                "core.features.retrieval.reranker_factory.create_reranker",
                 side_effect=Exception("reranker failure"),
             ):
                 await engine.initialize()

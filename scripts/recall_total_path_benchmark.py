@@ -155,7 +155,7 @@ async def noop_async(*_args: Any, **_kwargs: Any) -> None:
 
 
 def build_memories() -> list[Any]:
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     rows = (
         (0.95, "用户固定选择燕麦拿铁，并明确要求不要额外添加糖浆。"),
@@ -183,7 +183,7 @@ def build_memories() -> list[Any]:
 
 
 def build_handler(retrieval_delay_ms: float) -> tuple[Any, HandlerBenchmarkProvider]:
-    from core.handlers import recall_handler as recall_module
+    import core.features.recall.application.recall_handler as recall_module
     from core.utils.injection_adapter import InjectionAdapter
 
     provider = HandlerBenchmarkProvider()
@@ -233,7 +233,7 @@ def configure_deterministic_handler(handler: Any) -> None:
 
 
 def install_worker_overrides() -> Any:
-    from core.handlers import recall_handler as recall_module
+    import core.features.recall.application.recall_handler as recall_module
 
     recall_module.logger = SilentLogger()
 

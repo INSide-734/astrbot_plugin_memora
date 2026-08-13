@@ -18,7 +18,10 @@ from core.features.memory.application.schema_migration import (
     SchemaMigrationCoordinator,
     SchemaMigrationError,
 )
-from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager
+from core.features.memory.infrastructure.schema_manager import (
+    CURRENT_DB_VERSION,
+    SchemaManager,
+)
 
 
 def _create_legacy_database(

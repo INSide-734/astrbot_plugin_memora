@@ -8,7 +8,7 @@ from core.features.memory.application.retrieval_optimizer import (
     RetrievalOptimizer,
     _safe_json,
 )
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.rrf_fusion import HybridResult
 
 
 def _make_hr(

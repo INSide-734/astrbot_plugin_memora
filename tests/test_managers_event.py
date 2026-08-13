@@ -6,12 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core.features.conversation.application.event_adapter import EventAdapterMixin
 from core.features.identity.domain.models import (
     IdentityTrust,
     NameFieldState,
     ResolvedIdentity,
 )
-from core.managers.event_adapter import EventAdapterMixin
 
 
 def _trusted_group_identity() -> ResolvedIdentity:

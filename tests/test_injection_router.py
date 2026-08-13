@@ -7,14 +7,17 @@ from math import inf, nan
 
 import pytest
 
-from core.injection.models import (
+from core.features.injection.application.presets import PRESETS
+from core.features.injection.application.router import (
+    InjectionRoutingConfig,
+    InjectionStrategyRouter,
+)
+from core.features.injection.domain.models import (
     DeliveryMode,
     PresetName,
     RequestSignals,
     RoutingMode,
 )
-from core.injection.presets import PRESETS
-from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
 
 
 def make_signals(**overrides: object) -> RequestSignals:

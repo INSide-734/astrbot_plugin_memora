@@ -21,7 +21,7 @@ def _make_hybrid(
     vector: float | None = None,
     breakdown: dict | None = None,
 ) -> Any:
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
         doc_id=doc_id,
@@ -44,7 +44,7 @@ def _make_graph(
     vec_score: float | None = None,
     breakdown: dict | None = None,
 ) -> Any:
-    from core.retrieval.graph_retriever import GraphResult
+    from core.features.retrieval.graph_retriever import GraphResult
 
     return GraphResult(
         doc_id=doc_id,
@@ -83,7 +83,7 @@ class TestDualRouteRetriever:
         graph_retriever: AsyncMock,
         memory_loader: AsyncMock,
     ) -> Any:
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         return DualRouteRetriever(
             document_retriever=doc_retriever,
@@ -110,7 +110,7 @@ class TestDualRouteRetriever:
         graph_retriever: AsyncMock,
         memory_loader: AsyncMock,
     ) -> None:
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         direct = _make_hybrid(1, 0.9, "直接证据")
         derived = _make_hybrid(2, 0.7, "一跳证据")
@@ -147,7 +147,7 @@ class TestDualRouteRetriever:
         graph_retriever: AsyncMock,
         memory_loader: AsyncMock,
     ) -> None:
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         direct = _make_hybrid(1, 0.9, "直接证据")
         doc_retriever.search.return_value = [direct]
@@ -176,7 +176,7 @@ class TestDualRouteRetriever:
         graph_retriever: AsyncMock,
         memory_loader: AsyncMock,
     ) -> None:
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         direct = _make_hybrid(1, 0.9, "直接证据")
         doc_retriever.search.return_value = [direct]
@@ -203,7 +203,7 @@ class TestDualRouteRetriever:
         graph_retriever: AsyncMock,
         memory_loader: AsyncMock,
     ) -> None:
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         direct = _make_hybrid(1, 0.9, "直接证据")
         doc_retriever.search.return_value = [direct]
@@ -231,7 +231,7 @@ class TestDualRouteRetriever:
         graph_retriever: AsyncMock,
         memory_loader: AsyncMock,
     ) -> None:
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         direct = _make_hybrid(1, 0.9, "直接证据")
         attached = _make_hybrid(
@@ -279,7 +279,7 @@ class TestDualRouteRetriever:
         graph_retriever: AsyncMock,
         memory_loader: AsyncMock,
     ) -> None:
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         direct = _make_hybrid(1, 0.9, "直接证据")
         doc_retriever.search.return_value = [direct]
@@ -457,7 +457,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """没有文档路结果而有图路结果时，应使用图路作为降级结果。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = []
         graph_retriever.search.return_value = [
@@ -494,7 +494,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """启用 persona_interpretation 时，匹配当前人格的记忆应获得加分。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(
@@ -529,7 +529,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """禁用 persona_interpretation 时不应加分。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(
@@ -560,7 +560,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """提供 user_id、ranker 和 profile_manager 时应调用个性化排序器。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.8, "test content"),
@@ -590,7 +590,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """个性化排序失败不应中断检索。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.8, "test"),
@@ -618,7 +618,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """存在重排序器且结果多于一条时应调用它。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "result 1"),
@@ -645,7 +645,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """异步重排序器（包括 LLM 重排序器）应携带 query 等待完成。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.5, "less relevant"),
@@ -684,7 +684,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """异步重排序器等待后抛出异常时不应中断检索。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.2, "low"),
@@ -717,7 +717,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """重排序失败不应中断检索。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "r1"),
@@ -745,7 +745,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """memory_loader 抛错时，doc_id 应因 loaded=None 被跳过。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "ok", {"importance": 0.5}),
@@ -768,7 +768,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """memory_loader 返回 None 时应跳过该文档。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "ok", {"importance": 0.5}),
@@ -792,7 +792,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """LLM intent=relationship 时应提高图路权重。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         base_doc = retriever.document_route_weight
@@ -816,7 +816,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """LLM intent=temporal 时应略微提高图路权重。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         base_doc = retriever.document_route_weight
@@ -839,7 +839,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """LLM intent=factual 时应提高文档路权重。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         base_doc = retriever.document_route_weight
@@ -862,7 +862,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """LLM intent=preference 时应略微提高文档路权重。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
         base_doc = retriever.document_route_weight
@@ -885,7 +885,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """LLM intent=default 时回退到关键词匹配。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
 
@@ -905,7 +905,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """总权重小于等于 0 时应回退到固定基础权重。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         retriever = DualRouteRetriever(
             doc_retriever,
@@ -930,7 +930,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """_build_score_breakdown 应包含 graph_result 的 score_breakdown。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
 
@@ -971,8 +971,8 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """向 search() 传入 strategy 时应触发 _compute_strategy_weights。"""
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
         from core.models.recall_strategy import RecallStrategy
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "content", {"importance": 0.5}),
@@ -995,7 +995,7 @@ class TestDualRouteRetriever:
         memory_loader: AsyncMock,
     ) -> None:
         """doc_result 为 None 时，_build_score_breakdown 仍应保留 document_* 字段。"""
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         retriever = DualRouteRetriever(doc_retriever, graph_retriever, memory_loader)
 
@@ -1025,8 +1025,8 @@ class TestDualRouteRetriever:
     ) -> None:
         """多条查询必须在任意一条完成前全部启动。"""
 
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
-        from core.retrieval.query_planner import QueryPlan
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.query_planner import QueryPlan
 
         queries = ("查询甲", "查询乙", "查询丙")
         started = {query: asyncio.Event() for query in queries}
@@ -1072,8 +1072,8 @@ class TestDualRouteRetriever:
     ) -> None:
         """多查询计划的全部文档与图路必须复用同一绝对截止时间。"""
 
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
-        from core.retrieval.query_planner import QueryPlan
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.query_planner import QueryPlan
 
         document = MagicMock()
         document.search = AsyncMock(return_value=[])
@@ -1120,7 +1120,7 @@ class TestDualRouteRetriever:
     ) -> None:
         """群聊过滤机密候选后应继续用后续共享候选补足 top-k。"""
 
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.99, metadata={"privacy_level": "confidential"}),
@@ -1142,7 +1142,7 @@ class TestDualRouteRetriever:
     ) -> None:
         """重排器先截断时，隐私过滤后仍应从基础候选回填。"""
 
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         candidates = [
             _make_hybrid(1, 0.99, metadata={"privacy_level": "confidential"}),
@@ -1172,8 +1172,8 @@ class TestDualRouteRetriever:
     ) -> None:
         """多查询融合不得在隐私过滤前把候选提前截断为最终 k。"""
 
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
-        from core.retrieval.query_planner import QueryPlan
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.query_planner import QueryPlan
 
         confidential = _make_hybrid(
             1,
@@ -1227,7 +1227,7 @@ class TestDualRouteRetriever:
     ) -> None:
         """Atom 访问反馈不得阻塞检索结果返回。"""
 
-        from core.retrieval.dual_route_retriever import DualRouteRetriever
+        from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
         doc_retriever.search.return_value = [_make_hybrid(1, 0.9)]
         memory_loader.return_value = {

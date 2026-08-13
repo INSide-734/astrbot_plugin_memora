@@ -13,9 +13,12 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 import pytest
 
-from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager
-from core.storage.canonical_idempotency import (
+from core.features.memory.infrastructure.canonical_idempotency import (
     find_canonical_memory_id_by_idempotency_key,
+)
+from core.features.memory.infrastructure.schema_manager import (
+    CURRENT_DB_VERSION,
+    SchemaManager,
 )
 
 

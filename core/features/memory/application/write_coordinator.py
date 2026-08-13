@@ -178,7 +178,7 @@ class ConnectionRegistry:
         try:
             new_conn = await aiosqlite.connect(cls._db_path)
             new_conn.row_factory = aiosqlite.Row
-            from ....storage.base import apply_perf_pragmas
+            from ..infrastructure.base import apply_perf_pragmas
 
             await apply_perf_pragmas(new_conn)
 

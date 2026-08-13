@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.cleaners.injection_cleaner import InjectionCleaner
+from core.features.recall.application.injection_cleaner import InjectionCleaner
 from core.shared.constants import (
     FAKE_TOOL_CALL_ID_PREFIX,
     FAKE_TOOL_CALL_NAME,
@@ -446,14 +446,20 @@ class TestCleanupInjectedMemoriesFromDb:
     ],
 )
 async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -> None:
-    from core.injection.executor import InjectionExecutionContext, InjectionExecutor
-    from core.injection.models import (
+    from core.features.injection.application.executor import (
+        InjectionExecutionContext,
+        InjectionExecutor,
+    )
+    from core.features.injection.application.router import (
+        InjectionRoutingConfig,
+        InjectionStrategyRouter,
+    )
+    from core.features.injection.domain.models import (
         DeliveryMode,
         PresetName,
         RequestSignals,
         RoutingMode,
     )
-    from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
     from core.utils.injection_adapter import InjectionAdapter
 
     class Part:
@@ -681,7 +687,7 @@ def test_fake_tool_cleaner_preserves_non_exact_pairs(
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_fake_tool_cleaner_removes_real_legacy_json_pair(wrapped) -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
     from core.utils.memory_formatter import format_memories_for_fake_tool_call
 
     contexts = format_memories_for_fake_tool_call(

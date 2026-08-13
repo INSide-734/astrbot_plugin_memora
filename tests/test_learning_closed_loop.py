@@ -409,7 +409,7 @@ def test_review_feedback_records_trusted_event() -> None:
 async def test_forget_feedback_records_trusted_event() -> None:
     """显式忘记命令应写入可信负向反馈；无管理器时安全跳过。"""
 
-    from core.commands.query_commands import QueryCommandMixin
+    from core.platform.transport.commands.query_commands import QueryCommandMixin
 
     manager = MagicMock()
     manager.policy = FeedbackSignalPolicy()

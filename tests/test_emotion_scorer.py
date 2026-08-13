@@ -1,6 +1,9 @@
 """emotion_scorer 函数测试 — Jaccard重叠度、强度加权。"""
 
-from core.retrieval.emotion_scorer import compute_emotion_boost, emotion_similarity
+from core.features.retrieval.emotion_scorer import (
+    compute_emotion_boost,
+    emotion_similarity,
+)
 
 
 class TestEmotionSimilarity:

@@ -6,11 +6,13 @@ from core.features.memory.graph import (
     GraphReplaceResult,
     GraphStore,
 )
+from core.features.memory.graph.infrastructure.graph_store import (
+    GraphStore as LegacyGraphStore,
+)
 from core.features.memory.infrastructure.validators import (
     IndexValidator,
     PersistenceHealthValidator,
 )
-from core.storage.graph_store import GraphStore as LegacyGraphStore
 from core.validators.index_validator import IndexValidator as LegacyIndexValidator
 
 

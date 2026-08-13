@@ -267,8 +267,13 @@ class TestTextProcessorEdgeCases:
 
     def test_segment_jieba_fallback_on_error(self) -> None:
         # Simulate jieba.cut_for_search raising an exception
-        with patch("core.processors.text_processor.JIEBA_AVAILABLE", True):
-            with patch("core.processors.text_processor.JIEBA_RUNTIME_DISABLED", False):
+        with patch(
+            "core.features.recall.processors.text_processor.JIEBA_AVAILABLE", True
+        ):
+            with patch(
+                "core.features.recall.processors.text_processor.JIEBA_RUNTIME_DISABLED",
+                False,
+            ):
                 with patch(
                     "jieba.cut_for_search", side_effect=RuntimeError("jieba crash")
                 ):

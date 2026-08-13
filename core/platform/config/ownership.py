@@ -68,12 +68,12 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "fusion_strategy": _ownership(
         "fusion_strategy",
         ConfigOwnershipKind.RUNTIME,
-        "core.retrieval.rrf_fusion",
+        "core.features.retrieval.rrf_fusion",
     ),
     "hybrid_scoring": _ownership(
         "hybrid_scoring",
         ConfigOwnershipKind.RUNTIME,
-        "core.retrieval.hybrid_retriever",
+        "core.features.retrieval.hybrid_retriever",
     ),
     "filtering_settings": _ownership(
         "filtering_settings",
@@ -118,7 +118,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "prompt_templates": _ownership(
         "prompt_templates",
         ConfigOwnershipKind.RUNTIME,
-        "core.processors.prompt_builder",
+        "core.features.recall.processors.prompt_builder",
     ),
     "user_profile": _ownership(
         "user_profile",
@@ -136,7 +136,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "reranker": _ownership(
         "reranker",
         ConfigOwnershipKind.RUNTIME,
-        "core.retrieval.reranker_factory",
+        "core.features.retrieval.reranker_factory",
     ),
     "auto_learning": _ownership(
         "auto_learning",
@@ -215,7 +215,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "atom_classifier": _ownership(
         "atom_classifier",
         ConfigOwnershipKind.RUNTIME,
-        "core.processors.atom_classifier",
+        "core.features.recall.processors.atom_classifier",
     ),
     "flashbulb": _ownership(
         "flashbulb",
@@ -230,7 +230,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "atom_quality_filter": _ownership(
         "atom_quality_filter",
         ConfigOwnershipKind.RUNTIME,
-        "core.processors.atom_classifier",
+        "core.features.recall.processors.atom_classifier",
     ),
 }
 

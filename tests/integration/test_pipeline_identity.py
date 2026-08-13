@@ -10,14 +10,23 @@ from unittest.mock import MagicMock
 import pytest
 from astrbot.api.platform import MessageType
 
+from core.features.conversation.application.conversation_manager import (
+    ConversationManager,
+)
+from core.features.conversation.infrastructure.conversation_store import (
+    ConversationStore,
+)
+from core.features.identity.application.conversation_sync import (
+    ConversationIdentitySynchronizer,
+)
+from core.features.identity.application.enricher import (
+    MemoryIdentityEnricher,
+    build_memory_identity_context,
+)
+from core.features.identity.application.runtime import ProtocolIdentityRuntime
 from core.features.identity.application.service import ProtocolIdentityService
 from core.features.identity.infrastructure.protocols import ProtocolIdentityResolver
 from core.features.identity.infrastructure.store import ProtocolIdentityStore
-from core.identity.conversation_sync import ConversationIdentitySynchronizer
-from core.identity.memory import MemoryIdentityEnricher, build_memory_identity_context
-from core.identity.runtime import ProtocolIdentityRuntime
-from core.managers.conversation_manager import ConversationManager
-from core.storage.conversation_store import ConversationStore
 
 
 def _onebot_group_event(*, card: str, timestamp: int) -> MagicMock:

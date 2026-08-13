@@ -11,7 +11,7 @@ import pytest
 def _make_fused(
     doc_id: int, rrf_score: float, content: str = "", metadata: dict | None = None
 ) -> Any:
-    from core.retrieval.rrf_fusion import FusedResult
+    from core.features.retrieval.rrf_fusion import FusedResult
 
     return FusedResult(
         doc_id=doc_id,
@@ -26,7 +26,7 @@ def _make_fused(
 class TestScoreWeighting:
     @pytest.fixture
     def weighting(self) -> Any:
-        from core.retrieval.score_weighting import ScoreWeighting
+        from core.features.retrieval.score_weighting import ScoreWeighting
 
         return ScoreWeighting(decay_rate=0.01, importance_weight=1.0)
 
@@ -158,7 +158,7 @@ class TestScoreWeighting:
 
     def test_recency_bump_score(self) -> None:
         """静态 _recency_bump_score returns correct ranges."""
-        from core.retrieval.score_weighting import ScoreWeighting
+        from core.features.retrieval.score_weighting import ScoreWeighting
 
         assert ScoreWeighting._recency_bump_score(3) == 1.5  # type: ignore[attr-defined]
         assert ScoreWeighting._recency_bump_score(15) == 1.2  # type: ignore[attr-defined]

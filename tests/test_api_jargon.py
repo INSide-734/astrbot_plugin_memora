@@ -14,9 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.jargon.jargon_admin_service import JargonAdminService
-from core.jargon.jargon_query import JargonQueryService
-from core.jargon.jargon_store import JargonStore
+from core.features.cognition.jargon.jargon_admin_service import JargonAdminService
+from core.features.cognition.jargon.jargon_query import JargonQueryService
+from core.features.cognition.jargon.jargon_store import JargonStore
 from core.page_api import PluginPageApi
 from core.platform.transport.page_api.jargon_api import JargonApiMixin
 from core.platform.transport.page_api.response_utils import error_response
@@ -38,7 +38,7 @@ def _make_mock_request(**args):
 
 def _make_jargon_candidate(term="破防", group_id="g1", score=0.72):
     """Create a mock JargonCandidate."""
-    from core.jargon.models import JargonCandidate
+    from core.features.cognition.jargon.models import JargonCandidate
 
     return JargonCandidate(
         term=term,
@@ -56,7 +56,7 @@ def _make_jargon_candidate(term="破防", group_id="g1", score=0.72):
 
 def _make_jargon_meaning(term="破防", group_id="g1", confirmed=True):
     """Create a mock JargonMeaning."""
-    from core.jargon.models import JargonMeaning
+    from core.features.cognition.jargon.models import JargonMeaning
 
     return JargonMeaning(
         term=term,

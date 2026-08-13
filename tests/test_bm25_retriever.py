@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.storage.base import apply_perf_pragmas
+from core.features.memory.infrastructure.base import apply_perf_pragmas
 
 
 class TestBM25Retriever:
@@ -19,7 +19,7 @@ class TestBM25Retriever:
 
     @pytest.fixture
     def retriever(self, text_processor: MagicMock) -> Any:
-        from core.retrieval.bm25_retriever import BM25Retriever
+        from core.features.retrieval.bm25_retriever import BM25Retriever
 
         return BM25Retriever(
             db_path=":memory:",
@@ -53,7 +53,7 @@ class TestBM25Retriever:
         tmp_db_path,
         text_processor: MagicMock,
     ) -> None:
-        from core.retrieval.bm25_retriever import BM25Retriever
+        from core.features.retrieval.bm25_retriever import BM25Retriever
 
         retriever = BM25Retriever(
             db_path=tmp_db_path,

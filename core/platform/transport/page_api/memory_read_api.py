@@ -6,7 +6,7 @@ import aiosqlite
 from astrbot.api import logger
 from quart import request
 
-from ....storage.base import apply_perf_pragmas
+from ....features.memory.infrastructure.base import apply_perf_pragmas
 from ....utils.number_utils import clamp_float
 from .response_utils import error_response
 

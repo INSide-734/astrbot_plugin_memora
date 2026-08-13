@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.infrastructure.graph_store import GraphStore
 from core.platform.transport.page_api.graph_api import GraphApiMixin
-from core.storage.graph_store import GraphStore
 
 
 def _empty_snapshot() -> dict[str, list]:

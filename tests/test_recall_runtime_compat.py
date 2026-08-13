@@ -9,7 +9,9 @@ from unittest.mock import patch
 def test_unlimited_provider_context_keeps_injection_budget_available() -> None:
     """AstrBot 的零上下文上限表示不限制，不能被误判为零注入预算。"""
 
-    from core.injection.headroom import estimate_context_headroom_chars
+    from core.features.injection.application.headroom import (
+        estimate_context_headroom_chars,
+    )
 
     request = SimpleNamespace(
         prompt="当前消息",
@@ -29,7 +31,9 @@ def test_unlimited_provider_context_keeps_injection_budget_available() -> None:
 def test_missing_provider_context_limit_keeps_injection_budget_available() -> None:
     """常见 Provider 未声明上下文上限时仍应允许受硬上限保护的召回注入。"""
 
-    from core.injection.headroom import estimate_context_headroom_chars
+    from core.features.injection.application.headroom import (
+        estimate_context_headroom_chars,
+    )
 
     request = SimpleNamespace(
         prompt="当前消息",

@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.features.quality.application.memory_quality_gate import (
+    QuarantineApprovalPendingError,
+)
+from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
 from core.page_api import PAGE_API_PREFIX, PluginPageApi
-from core.review.memory_quality_gate import QuarantineApprovalPendingError
-from core.review.quarantine_store import MemoryQuarantineStore
 
 
 def _mock_request(**args):

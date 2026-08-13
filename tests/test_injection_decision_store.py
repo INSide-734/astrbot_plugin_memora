@@ -8,8 +8,8 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from core.injection.models import InjectionDecisionRecord
-from core.storage.injection_decision_store import (
+from core.features.injection.domain.models import InjectionDecisionRecord
+from core.features.injection.infrastructure.injection_decision_store import (
     INJECTION_DECISION_SORT_COLUMNS,
     DecisionQuery,
     InjectionDecisionStore,

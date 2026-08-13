@@ -59,7 +59,7 @@ def test_feature_modules_import_under_astrbot_package_name(monkeypatch):
             "data.plugins.astrbot_plugin_memora.core.platform.transport.page_api.recall_trace_api"
         )
         recorder_module = importlib.import_module(
-            "data.plugins.astrbot_plugin_memora.core.injection.recorder"
+            "data.plugins.astrbot_plugin_memora.core.features.injection.infrastructure.recorder"
         )
         perf_tracker_module = importlib.import_module(
             "data.plugins.astrbot_plugin_memora.core.features.observability.application.perf_tracker"

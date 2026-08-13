@@ -8,7 +8,7 @@ from core.shared.mmr import apply_mmr
 
 
 def _make_result(doc_id: int, final_score: float, content: str = "") -> Any:
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
         doc_id=doc_id,

@@ -11,7 +11,7 @@ import pytest
 def _make_result(doc_id: int, final_score: float) -> Any:
     """构造只包含重排序所需字段的检索结果。"""
 
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
         doc_id=doc_id,
@@ -38,7 +38,7 @@ def faiss_db() -> MagicMock:
 def reranker(faiss_db: MagicMock) -> Any:
     """构造使用默认融合权重的 Embedding 相似度重排器。"""
 
-    from core.retrieval.embedding_similarity_reranker import (
+    from core.features.retrieval.embedding_similarity_reranker import (
         EmbeddingSimilarityReranker,
     )
 
@@ -57,7 +57,7 @@ def test_rerank_short_circuits_when_k_exceeds_results(reranker: Any) -> None:
 def test_rerank_falls_back_when_backend_is_missing() -> None:
     """缺少向量后端时应回退 MMR 并返回有界结果。"""
 
-    from core.retrieval.embedding_similarity_reranker import (
+    from core.features.retrieval.embedding_similarity_reranker import (
         EmbeddingSimilarityReranker,
     )
 
@@ -87,7 +87,7 @@ def test_rerank_falls_back_when_query_encoding_fails(
 def test_cosine_similarity_handles_equal_orthogonal_and_zero_vectors() -> None:
     """余弦计算应覆盖同向、正交和零范数边界。"""
 
-    from core.retrieval.embedding_similarity_reranker import (
+    from core.features.retrieval.embedding_similarity_reranker import (
         EmbeddingSimilarityReranker,
     )
 
@@ -105,7 +105,7 @@ def test_cosine_similarity_handles_equal_orthogonal_and_zero_vectors() -> None:
 def test_lambda_weight_is_clamped_to_supported_range() -> None:
     """越界融合权重应分别收敛到 ``0`` 和 ``1``。"""
 
-    from core.retrieval.embedding_similarity_reranker import (
+    from core.features.retrieval.embedding_similarity_reranker import (
         EmbeddingSimilarityReranker,
     )
 
@@ -118,7 +118,7 @@ def test_lambda_weight_is_clamped_to_supported_range() -> None:
 def test_embedding_similarity_preserves_legacy_order_and_scores() -> None:
     """纯重命名阶段应保持既有 cosine 融合公式、排序和分数不变。"""
 
-    from core.retrieval.embedding_similarity_reranker import (
+    from core.features.retrieval.embedding_similarity_reranker import (
         EmbeddingSimilarityReranker,
     )
 

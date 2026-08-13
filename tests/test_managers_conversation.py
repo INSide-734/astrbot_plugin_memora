@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.managers.conversation_manager import (
+from core.features.conversation.application.conversation_manager import (
     ConversationManager,
+)
+from core.features.conversation.infrastructure.conversation_manager_factory import (
     create_conversation_manager,
 )
 

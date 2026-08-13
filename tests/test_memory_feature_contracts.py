@@ -8,13 +8,19 @@ from core.features.memory import (
     SchemaManager,
     WriteOpJournal,
 )
+from core.features.memory.infrastructure.atom_store import AtomStore as LegacyAtomStore
 from core.features.memory.infrastructure.base_store import (
     BaseStore as FeatureInstanceBaseStore,
 )
-from core.managers.schema_manager import SchemaManager as LegacySchemaManager
-from core.managers.write_op_journal import WriteOpJournal as LegacyWriteOpJournal
-from core.storage.atom_store import AtomStore as LegacyAtomStore
-from core.storage.base_store import BaseStore as LegacyInstanceBaseStore
+from core.features.memory.infrastructure.base_store import (
+    BaseStore as LegacyInstanceBaseStore,
+)
+from core.features.memory.infrastructure.schema_manager import (
+    SchemaManager as LegacySchemaManager,
+)
+from core.features.memory.infrastructure.write_op_journal import (
+    WriteOpJournal as LegacyWriteOpJournal,
+)
 
 
 def test_memory_domain_owner_first_import_stays_lightweight() -> None:

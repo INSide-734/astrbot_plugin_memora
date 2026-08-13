@@ -6,7 +6,9 @@ import asyncio
 
 import pytest
 
-from core.retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
+from core.features.retrieval.embedding_singleflight import (
+    InFlightEmbeddingProviderProxy,
+)
 
 
 class _SingleProvider:

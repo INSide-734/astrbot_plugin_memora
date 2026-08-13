@@ -120,7 +120,7 @@ def test_evolution_readers_first_import_resolves_retrieval_without_cycle() -> No
             "from core.features.evolution.application import "
             "DerivedRelationExpander, ProjectionReader; "
             "import core.retrieval as retrieval; "
-            "from core.retrieval.rrf_fusion import HybridResult; "
+            "from core.features.retrieval.rrf_fusion import HybridResult; "
             "assert retrieval.HybridResult is HybridResult; "
             "print(DerivedRelationExpander.__name__, ProjectionReader.__name__)",
         ],

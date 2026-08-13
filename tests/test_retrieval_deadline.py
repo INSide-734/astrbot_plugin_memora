@@ -9,11 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.retrieval.graph_retriever import GraphRetriever
-from core.retrieval.hybrid_retriever import HybridRetriever
-from core.retrieval.retrieval_execution import RouteExecutionCoordinator
-from core.retrieval.rrf_fusion import RRFFusion
-from core.retrieval.vector_deadline import run_local_and_bounded_vector
+from core.features.retrieval.graph_retriever import GraphRetriever
+from core.features.retrieval.hybrid_retriever import HybridRetriever
+from core.features.retrieval.retrieval_execution import RouteExecutionCoordinator
+from core.features.retrieval.rrf_fusion import RRFFusion
+from core.features.retrieval.vector_deadline import run_local_and_bounded_vector
 
 
 @pytest.mark.asyncio

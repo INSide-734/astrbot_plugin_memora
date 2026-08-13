@@ -8,15 +8,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.affection.models import BotMood, MoodType
-from core.expression.models import ExpressionPattern
-from core.expression.pattern_learner import ExpressionPatternLearner
-from core.jargon.jargon_query import JargonQueryService
-from core.social.models import SocialRelation
-from core.tools.affection_tools import AffectionCheckTool, BotMoodTool
-from core.tools.expression_tools import ExpressionRecallTool
-from core.tools.jargon_tools import JargonExplainTool, JargonListTool
-from core.tools.social_tools import RelationGraphTool, RelationLookupTool
+from core.features.cognition.affection.models import BotMood, MoodType
+from core.features.cognition.expression.models import ExpressionPattern
+from core.features.cognition.expression.pattern_learner import ExpressionPatternLearner
+from core.features.cognition.jargon.jargon_query import JargonQueryService
+from core.features.cognition.social.models import SocialRelation
+from core.platform.transport.tools.affection_tools import (
+    AffectionCheckTool,
+    BotMoodTool,
+)
+from core.platform.transport.tools.expression_tools import ExpressionRecallTool
+from core.platform.transport.tools.jargon_tools import JargonExplainTool, JargonListTool
+from core.platform.transport.tools.social_tools import (
+    RelationGraphTool,
+    RelationLookupTool,
+)
 from tests.tool_contract_support import call_text_handler
 
 

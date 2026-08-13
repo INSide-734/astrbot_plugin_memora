@@ -269,7 +269,7 @@ def tokenize_keywords(text: str) -> set[str]:
     按空格和常见标点分割，过滤短 token
     （< 2 字符）和停用词。
 
-    用于: :class:`~core.retrieval.knowledge_retriever.KnowledgeRetriever`
+    用于: :class:`~core.features.retrieval.knowledge_retriever.KnowledgeRetriever`
     的轻量级关键词匹配。
 
     Args:

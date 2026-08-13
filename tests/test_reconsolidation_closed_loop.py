@@ -19,7 +19,7 @@ from core.features.reconsolidation.application.reconsolidation import (
 from core.features.reconsolidation.infrastructure.reconsolidation_store import (
     ReconsolidationStore,
 )
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.rrf_fusion import HybridResult
 
 
 class _SimulatedCrash(BaseException):

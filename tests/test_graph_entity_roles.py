@@ -4,8 +4,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core.features.memory.graph.infrastructure.graph_store import GraphStore
 from core.features.recall.processors.graph_extractor import GraphExtractor
-from core.storage.graph_store import GraphStore
 
 
 def _make_atom(content: str, entities: list[str]) -> MagicMock:

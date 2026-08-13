@@ -11,19 +11,22 @@ from unittest.mock import MagicMock
 import pytest
 from astrbot.core.agent.message import TextPart
 
-from core.injection.executor import (
+from core.features.injection.application.executor import (
     InjectionExecutionContext,
     InjectionExecutor,
     candidate_utility,
 )
-from core.injection.models import (
+from core.features.injection.application.router import (
+    InjectionRoutingConfig,
+    InjectionStrategyRouter,
+)
+from core.features.injection.domain.models import (
     DeliveryMode,
     InjectionOutcome,
     PresetName,
     RequestSignals,
     RoutingMode,
 )
-from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
 from core.utils.injection_adapter import InjectionAdapter
 from core.utils.injection_budget import InjectionStats
 
@@ -1012,7 +1015,7 @@ async def test_fake_tool_call_ids_are_unique_and_prefixed() -> None:
 
 @pytest.mark.asyncio
 async def test_real_prompt_protection_filters_registered_unique_secret() -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     secret = "unique executor secret phrase alpha beta gamma delta epsilon"
     protection = PromptProtectionService(enable_double_check=False)
@@ -1059,7 +1062,7 @@ async def test_prompt_protection_cancellation_is_not_converted_to_error() -> Non
 async def test_registration_failure_after_mutation_rolls_back_and_does_not_filter() -> (
     None
 ):
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     req = _request()
     snapshot = (

@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 from astrbot.api.platform import MessageType
 
 from core.features.identity.infrastructure.protocols import ProtocolIdentityResolver
-from core.tools.agent_scope import resolve_agent_read_scope
+from core.platform.transport.tools.agent_scope import resolve_agent_read_scope
 
 
 def _event(

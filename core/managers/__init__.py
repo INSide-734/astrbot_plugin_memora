@@ -5,8 +5,13 @@
 
 from typing import Any
 
-from .conversation_manager import ConversationManager, create_conversation_manager
-from .graph_memory_manager import GraphMemoryManager
+from ..features.conversation.application.conversation_manager import (
+    ConversationManager,
+)
+from ..features.conversation.infrastructure.conversation_manager_factory import (
+    create_conversation_manager,
+)
+from ..features.memory.application.graph_memory_manager import GraphMemoryManager
 
 __all__ = [
     "ConversationManager",
@@ -20,7 +25,9 @@ def __getattr__(name: str) -> Any:
     """首次访问时加载会反向组合 manager mixin 的记忆引擎。"""
 
     if name == "MemoryEngine":
-        from .memory_engine import MemoryEngine as _MemoryEngine
+        from ..features.memory.application.memory_engine import (
+            MemoryEngine as _MemoryEngine,
+        )
 
         globals()[name] = _MemoryEngine
         return _MemoryEngine

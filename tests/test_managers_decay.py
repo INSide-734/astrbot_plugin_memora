@@ -12,7 +12,7 @@ from core.features.decay.application.operations import (
     DecayOperationsMixin,
     _normalize_batch_metadata,
 )
-from core.storage.base import apply_perf_pragmas
+from core.features.memory.infrastructure.base import apply_perf_pragmas
 
 
 class TestTypeDecayMultiplier:

@@ -423,7 +423,7 @@ async def test_backup_and_restore_roundtrip(
         assert os.path.getsize(backup_db) > 0, "备份文件不应为空"
 
         # Act — 从备份创建新 AtomStore 实例
-        from core.storage.atom_store import AtomStore
+        from core.features.memory.infrastructure.atom_store import AtomStore
 
         restored_store = AtomStore(db_path=backup_db)
         await restored_store.initialize()

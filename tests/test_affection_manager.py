@@ -15,9 +15,9 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.affection.affection_manager import AffectionManager
-from core.affection.affection_store import AffectionStore
-from core.affection.models import (
+from core.features.cognition.affection.affection_manager import AffectionManager
+from core.features.cognition.affection.affection_store import AffectionStore
+from core.features.cognition.affection.models import (
     INTERACTION_RULES,
     AffectionLevel,
     BotMood,

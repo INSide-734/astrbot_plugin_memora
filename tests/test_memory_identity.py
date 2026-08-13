@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.identity.memory import build_memory_identity_context
+from core.features.identity.application.enricher import build_memory_identity_context
 from core.models.conversation_models import Message
 
 

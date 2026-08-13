@@ -11,7 +11,7 @@ from core.features.memory.domain.memory_atom import (
     DecayType,
     MemoryAtom,
 )
-from core.managers.write_op_serialization import (
+from core.features.memory.infrastructure.write_op_serialization import (
     _deserialize_atom_from_repair,
     safe_json_dict,
     serialize_atom_for_repair,

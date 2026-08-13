@@ -19,7 +19,7 @@ class TestKnowledgeRetriever:
 
     @pytest.fixture
     def retriever(self, knowledge_store: AsyncMock) -> Any:
-        from core.retrieval.knowledge_retriever import KnowledgeRetriever
+        from core.features.retrieval.knowledge_retriever import KnowledgeRetriever
 
         return KnowledgeRetriever(knowledge_store=knowledge_store)
 
@@ -47,7 +47,7 @@ class TestKnowledgeRetriever:
     async def test_search_with_keyword_results(self, retriever: Any) -> None:
         """关键词命中应经过评分与合并后返回。"""
         from core.features.knowledge import KnowledgeEntry, KnowledgeType
-        from core.retrieval.knowledge_retriever import KnowledgeResult
+        from core.features.retrieval.knowledge_retriever import KnowledgeResult
 
         entry = KnowledgeEntry(
             title="Test Knowledge",
@@ -102,7 +102,7 @@ class TestKnowledgeRetriever:
 
     def test_merge_with_vector_scores(self, retriever: Any) -> None:
         """向量分数应与关键词分数按配置权重融合。"""
-        from core.retrieval.knowledge_retriever import KnowledgeResult
+        from core.features.retrieval.knowledge_retriever import KnowledgeResult
 
         # 直接构造结果，避免测试依赖 __slots__ 的动态属性限制。
         kw_result = KnowledgeResult(

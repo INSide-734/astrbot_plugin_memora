@@ -10,7 +10,7 @@ import secrets
 from dataclasses import dataclass
 from typing import Any
 
-from ....processors.memory_grounding import MemoryGroundingValidator
+from ...recall.processors.memory_grounding import MemoryGroundingValidator
 from ..infrastructure.quarantine_store import MemoryQuarantineStore
 
 

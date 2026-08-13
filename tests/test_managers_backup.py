@@ -514,7 +514,9 @@ class TestStageRestore:
     ) -> None:
         """双库备份恢复必须同时还原 canonical 与 quarantine 状态。"""
 
-        from core.review.quarantine_store import MemoryQuarantineStore
+        from core.features.quality.infrastructure.quarantine_store import (
+            MemoryQuarantineStore,
+        )
 
         canonical_path = tmp_path / "memora.db"
         with sqlite3.connect(canonical_path) as db:
@@ -580,7 +582,9 @@ class TestStageRestore:
     ) -> None:
         """旧的单库备份也不得留下 approved 指向不存在 canonical 的状态。"""
 
-        from core.review.quarantine_store import MemoryQuarantineStore
+        from core.features.quality.infrastructure.quarantine_store import (
+            MemoryQuarantineStore,
+        )
 
         canonical_path = tmp_path / "memora.db"
         with sqlite3.connect(canonical_path) as db:

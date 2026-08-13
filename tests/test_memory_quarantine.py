@@ -11,12 +11,12 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import pytest_asyncio
 
-from core.models.conversation_models import Message
-from core.review.memory_quality_gate import (
+from core.features.quality.application.memory_quality_gate import (
     MemoryQualityGate,
     QuarantineApprovalPendingError,
 )
-from core.review.quarantine_store import MemoryQuarantineStore
+from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
+from core.models.conversation_models import Message
 
 
 def _source_message(content: str = "我喜欢咖啡。") -> Message:

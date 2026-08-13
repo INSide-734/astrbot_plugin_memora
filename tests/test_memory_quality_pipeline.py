@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import core.features.reflection.application.reflection_handler as reflection_handler_module
+from core.features.quality.application.memory_quality_gate import MemoryGateResult
 from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.models.conversation_models import Message
-from core.review.memory_quality_gate import MemoryGateResult
 
 
 def _pipeline_message(index: int, role: str, content: str) -> Message:

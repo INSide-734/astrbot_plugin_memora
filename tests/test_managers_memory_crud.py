@@ -335,7 +335,7 @@ class TestMemoryEngineSearchMemories:
     async def test_cache_hits_report_retrieval_total_timing(self) -> None:
         """结果缓存与会话缓存命中时都应上报完整检索耗时。"""
 
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         cached = [
             HybridResult(
@@ -378,7 +378,7 @@ class TestMemoryEngineSearchMemories:
     @pytest.mark.asyncio
     async def test_search_forwards_memory_types_and_user_id_to_dual_route(self) -> None:
         """查询应向双路检索转发类型、用户与查询计划。"""
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
@@ -438,7 +438,7 @@ class TestMemoryEngineSearchMemories:
         self,
     ) -> None:
         """查询应向检索路径转发策略和调试追踪开关。"""
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)

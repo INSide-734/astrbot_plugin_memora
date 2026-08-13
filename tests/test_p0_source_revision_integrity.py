@@ -22,7 +22,7 @@ from core.features.evolution.domain import (
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
 from core.features.memory.application.memory_engine import MemoryEngine
-from core.retrieval.vector_retriever import VectorRetriever
+from core.features.retrieval.vector_retriever import VectorRetriever
 
 UTC = timezone.utc
 

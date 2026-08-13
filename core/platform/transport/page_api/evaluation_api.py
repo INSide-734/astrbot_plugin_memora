@@ -17,7 +17,7 @@ from ....features.evaluation import (
     PreparedEvaluationDataset,
 )
 from ....features.evaluation.infrastructure.evaluation_service import EvaluationService
-from ....storage.base import apply_perf_pragmas
+from ....features.memory.infrastructure.base import apply_perf_pragmas
 from .response_utils import error_response, ok_response
 
 _CURRENT_MEMORY_DATASET = "current_memories"

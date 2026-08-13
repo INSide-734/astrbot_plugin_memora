@@ -18,6 +18,8 @@ from core.features.memory.application.memory_engine import MemoryEngine
 from core.features.memory.application.retrieval_optimizer import RetrievalOptimizer
 from core.features.recall.processors.atom_classifier import classify_atoms
 from core.features.recall.processors.memory_processor import MemoryProcessor
+from core.features.retrieval.rrf_fusion import FusedResult, HybridResult
+from core.features.retrieval.score_weighting import ScoreWeighting
 from core.managers.decay_operations import DecayOperationsMixin
 from core.platform.composition.component_factory import ComponentFactory
 from core.platform.config import (
@@ -26,9 +28,7 @@ from core.platform.config import (
     ConfigOwnershipKind,
     resolve_config_ownership,
 )
-from core.retrieval.rrf_fusion import FusedResult, HybridResult
-from core.retrieval.score_weighting import ScoreWeighting
-from core.tools.memory_search_tool import MemorySearchTool
+from core.platform.transport.tools.memory_search_tool import MemorySearchTool
 from tests.tool_contract_support import call_text_handler
 
 

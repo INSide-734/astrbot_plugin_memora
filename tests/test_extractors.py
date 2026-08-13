@@ -23,7 +23,9 @@ from astrbot.api.message_components import (
     Video,
 )
 
-from core.extractors.message_content_extractor import MessageContentExtractor
+from core.features.conversation.application.message_content_extractor import (
+    MessageContentExtractor,
+)
 
 # ---------------------------------------------------------------------------
 # extract_message_content 测试

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from core.jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS, JargonStore
-from core.jargon.models import JargonMeaning
+from core.features.cognition.jargon.jargon_store import (
+    JARGON_MEANING_SORT_COLUMNS,
+    JargonStore,
+)
+from core.features.cognition.jargon.models import JargonMeaning
 from core.shared.list_sorting import SortQuery
 
 

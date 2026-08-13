@@ -285,7 +285,7 @@ async def test_fixture_is_current_for_production_schema_manager(tmp_path: Path) 
 
     import aiosqlite
 
-    from core.managers.schema_manager import SchemaManager
+    from core.features.memory.infrastructure.schema_manager import SchemaManager
 
     fixture, _fingerprint, data_dir = _seed_fingerprint(tmp_path)
     connection = await aiosqlite.connect(data_dir / str(fixture["database"]))

@@ -6,7 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.message_operations import MessageOperationsMixin
+from core.features.conversation.application.message_operations import (
+    MessageOperationsMixin,
+)
 from core.models.conversation_models import Message
 
 # ---------------------------------------------------------------------------

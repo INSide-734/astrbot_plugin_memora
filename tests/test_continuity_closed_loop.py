@@ -15,10 +15,10 @@ from core.features.memory.application.memory_engine_lifecycle import (
     MemoryEngineLifecycleMixin,
     _build_continuity_tracker,
 )
+from core.features.quality.application.memory_quality_gate import MemoryGateResult
 from core.features.recall.application.recall_handler import RecallHandler
 from core.features.reflection.application import continuity as reflection_continuity
 from core.features.reflection.application.reflection_handler import ReflectionHandler
-from core.review.memory_quality_gate import MemoryGateResult
 
 record_continuity_topics = reflection_continuity.record_continuity_topics
 resolve_continuity_session = reflection_continuity.resolve_continuity_session

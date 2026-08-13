@@ -11,7 +11,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..injection.models import ContentLevel
+from ..features.injection.domain.models import ContentLevel
 from .data_helpers import safe_parse_metadata, validate_timestamp
 from .injection_budget import (
     InjectionBudget,

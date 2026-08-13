@@ -122,7 +122,7 @@ def test_descriptors_reject_config_and_reranker_no_ops() -> None:
     from core.features.evaluation.application.retrieval_ablation import (
         RetrievalAblationController,
     )
-    from core.retrieval.reranker_factory import MMRReranker
+    from core.features.retrieval.reranker_factory import MMRReranker
 
     engine = _engine(reranker=MMRReranker(0.7))
     engine.config["recall_engine.chain_graph_expansion_enabled"] = False
@@ -301,10 +301,10 @@ def test_descriptors_reject_noop_config_and_reranker_variants() -> None:
     from core.features.evaluation.application.retrieval_ablation import (
         RetrievalAblationController,
     )
-    from core.retrieval.embedding_similarity_reranker import (
+    from core.features.retrieval.embedding_similarity_reranker import (
         EmbeddingSimilarityReranker,
     )
-    from core.retrieval.reranker_factory import MMRReranker
+    from core.features.retrieval.reranker_factory import MMRReranker
 
     graph_disabled = _engine()
     graph_disabled.config["recall_engine.chain_graph_expansion_enabled"] = False
@@ -346,7 +346,7 @@ def test_embedding_variant_does_not_silently_fallback_on_vector_failure() -> Non
     from core.features.evaluation.application.retrieval_ablation import (
         RetrievalAblationController,
     )
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     live = _engine()
 
@@ -378,7 +378,7 @@ def test_embedding_probe_failure_is_sticky_across_later_success() -> None:
     from core.features.evaluation.application.retrieval_ablation import (
         RetrievalAblationController,
     )
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     live = _engine()
     prepared = RetrievalAblationController(live).prepare(
@@ -407,7 +407,7 @@ def test_embedding_probe_success_is_not_reset_by_unexercised_case() -> None:
     from core.features.evaluation.application.retrieval_ablation import (
         RetrievalAblationController,
     )
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     prepared = RetrievalAblationController(_engine()).prepare(
         "final_reranker_embedding_similarity"

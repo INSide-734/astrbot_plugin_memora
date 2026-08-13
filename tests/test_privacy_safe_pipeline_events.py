@@ -10,10 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.features.observability.infrastructure import debug_reporter
-from core.features.recall.application.recall_handler import RecallHandler
-from core.features.reflection.application.reflection_handler import ReflectionHandler
-from core.injection.models import (
+from core.features.injection.domain.models import (
     DeliveryMode,
     InjectionDecision,
     InjectionExecutionResult,
@@ -22,8 +19,11 @@ from core.injection.models import (
     RequestSignals,
     RoutingMode,
 )
+from core.features.observability.infrastructure import debug_reporter
+from core.features.recall.application.recall_handler import RecallHandler
+from core.features.reflection.application.reflection_handler import ReflectionHandler
+from core.features.retrieval.trace_store import RecallTraceStore
 from core.page_api import PluginPageApi
-from core.retrieval.trace_store import RecallTraceStore
 
 
 @pytest.fixture(autouse=True)

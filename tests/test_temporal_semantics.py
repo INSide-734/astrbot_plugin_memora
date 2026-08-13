@@ -26,8 +26,8 @@ from core.features.evolution.domain import (
     ScopeContext,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.retrieval.query_rewriter import QueryIntent, resolve_reference_time
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.query_rewriter import QueryIntent, resolve_reference_time
+from core.features.retrieval.rrf_fusion import HybridResult
 from core.shared.contracts import MemorySourceRef
 from core.shared.temporal import (
     canonical_visible_at,

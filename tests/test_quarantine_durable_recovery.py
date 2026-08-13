@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.quality.application.memory_quality_gate import MemoryQualityGate
+from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
 from core.features.recall.processors.memory_grounding import MemoryGroundingValidator
-from core.review.memory_quality_gate import MemoryQualityGate
-from core.review.quarantine_store import MemoryQuarantineStore
 
 
 async def _claimed_candidate(store: MemoryQuarantineStore) -> tuple[dict, str]:

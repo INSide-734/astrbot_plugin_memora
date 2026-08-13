@@ -10,7 +10,7 @@ import pytest
 
 from core import i18n_backend
 from core.command_handler import CommandHandler
-from core.review.memory_quality_gate import MemoryGateResult
+from core.features.quality.application.memory_quality_gate import MemoryGateResult
 
 
 @pytest.fixture(autouse=True)

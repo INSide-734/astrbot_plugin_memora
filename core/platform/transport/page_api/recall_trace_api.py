@@ -8,17 +8,17 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
+from ....features.injection.application.router import InjectionRoutingConfig
+from ....features.injection.domain.models import DeliveryMode, PresetName, RoutingMode
 from ....features.observability.infrastructure.debug_reporter import (
     debug_operation,
     is_debug_reporting_enabled,
     report_debug_event,
     report_debug_exception,
 )
-from ....injection.models import DeliveryMode, PresetName, RoutingMode
-from ....injection.router import InjectionRoutingConfig
+from ....features.retrieval.explainable_recall import capture_explainable_recall
+from ....features.retrieval.trace_store import RecallTraceStore
 from ....models.recall_strategy import RecallStrategy
-from ....retrieval.explainable_recall import capture_explainable_recall
-from ....retrieval.trace_store import RecallTraceStore
 
 
 class RecallTraceApiMixin:

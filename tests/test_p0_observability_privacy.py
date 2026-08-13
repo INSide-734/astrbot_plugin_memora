@@ -11,9 +11,9 @@ import aiosqlite
 import pytest
 
 from core.features.diagnostics.infrastructure.event_store import DiagnosticEventStore
+from core.features.retrieval.explainable_recall import capture_explainable_recall
+from core.features.retrieval.trace_store import RecallTraceStore
 from core.page_api import PluginPageApi
-from core.retrieval.explainable_recall import capture_explainable_recall
-from core.retrieval.trace_store import RecallTraceStore
 
 _SENTINEL = "PRIVATE_SENTINEL_NEVER_EXPOSE"
 _FORBIDDEN_TRACE_KEYS = {

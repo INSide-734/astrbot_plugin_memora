@@ -36,14 +36,14 @@ class TestHybridRetriever:
             _FakeResult(doc_id=3, score=0.9, content="doc3"),
             _FakeResult(doc_id=1, score=0.4, content="doc1"),
         ]
-        from core.retrieval.hybrid_retriever import HybridRetriever
-        from core.retrieval.rrf_fusion import RRFFusion
+        from core.features.retrieval.hybrid_retriever import HybridRetriever
+        from core.features.retrieval.rrf_fusion import RRFFusion
 
         return HybridRetriever(bm25, vector, RRFFusion(k=60), test_config)
 
     @pytest.mark.asyncio
     async def test_search_merges_both_routes(self, hybrid):
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         results = await hybrid.search("test query", k=5)
         assert len(results) > 0
@@ -62,7 +62,7 @@ class TestHybridRetriever:
 
     @pytest.mark.asyncio
     async def test_score_tuple_format(self, hybrid):
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         results = await hybrid.search("test", k=3)
         if results:
@@ -166,7 +166,7 @@ class TestHybridRetriever:
         """_search_route re-raises CancelledError."""
         import asyncio
 
-        from core.retrieval.hybrid_retriever import HybridRetriever
+        from core.features.retrieval.hybrid_retriever import HybridRetriever
 
         async def _cancelled():
             raise asyncio.CancelledError()

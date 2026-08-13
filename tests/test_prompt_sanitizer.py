@@ -1,4 +1,4 @@
-"""测试 core.security.prompt_sanitizer 的三层提示词保护。"""
+"""测试 core.platform.security.prompt_sanitizer 的三层提示词保护。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ _PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 if str(_PLUGIN_ROOT) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_ROOT))
 
-from core.security.prompt_sanitizer import (  # noqa: E402
+from core.platform.security.prompt_sanitizer import (  # noqa: E402
     DoubleCheckValidator,
     MetaInstructionWrapper,
     PromptProtectionService,

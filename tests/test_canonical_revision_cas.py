@@ -12,7 +12,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from core.retrieval.vector_retriever import VectorRetriever
+from core.features.retrieval.vector_retriever import VectorRetriever
 
 
 class _DocumentStorage:

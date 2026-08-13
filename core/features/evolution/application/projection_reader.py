@@ -27,7 +27,7 @@ from ..domain import (
 )
 
 if TYPE_CHECKING:
-    from ....retrieval.rrf_fusion import HybridResult
+    from ...retrieval.rrf_fusion import HybridResult
 
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 _PROJECTION_TYPES = frozenset(item.value for item in ProjectionType)
@@ -377,7 +377,7 @@ def _copy_candidate(candidate: HybridResult) -> HybridResult:
         内容与分数相同、可变字段独立的候选副本。
     """
 
-    from ....retrieval.rrf_fusion import HybridResult
+    from ...retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
         doc_id=candidate.doc_id,

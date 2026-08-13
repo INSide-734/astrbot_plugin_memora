@@ -53,7 +53,7 @@ def _group_event() -> MagicMock:
 async def test_group_capture_checks_only_ambient_messages_after_persisting() -> None:
     """环境消息落库后应检查阈值，唤醒 Bot 的消息则等待响应钩子。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: (

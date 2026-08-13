@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 from core.features.memory.graph.domain.models import GraphEdge, GraphNode
-from core.storage.graph_store import GraphStore
+from core.features.memory.graph.infrastructure.graph_store import GraphStore
 
 
 class TestPipelineGraph:

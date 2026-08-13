@@ -3,7 +3,7 @@
 import pytest
 
 from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
-from core.storage.graph_store import GraphStore
+from core.features.memory.graph.infrastructure.graph_store import GraphStore
 
 
 class TestGraphQueryFilters:

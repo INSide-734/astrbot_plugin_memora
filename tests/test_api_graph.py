@@ -427,7 +427,7 @@ class TestGraphApiEdgeCases:
     @pytest.mark.asyncio
     async def test_query_graph_impl_with_search(self) -> None:
         """_query_graph_impl with query runs search_memories + tokens + subgraph."""
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
         mock_gs.search_nodes_by_tokens = AsyncMock(return_value=[])
@@ -462,7 +462,7 @@ class TestGraphApiEdgeCases:
         self,
     ) -> None:
         """搜索和节点命中会去重 memory_id，并只保留数字分数。"""
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
         mock_gs.search_nodes_by_tokens = AsyncMock(
@@ -524,7 +524,7 @@ class TestGraphApiEdgeCases:
         """单条损坏的 score_breakdown 不应使整个查询失败。"""
         from types import SimpleNamespace
 
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
         mock_gs.search_nodes_by_tokens = AsyncMock(return_value=[])
@@ -592,7 +592,7 @@ class TestGraphApiEdgeCases:
     @pytest.mark.asyncio
     async def test_query_graph_impl_skips_malformed_search_and_graph_hits(self) -> None:
         """损坏的检索项和图命中项应被忽略，而不是使查询失败。"""
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         mock_gs = MagicMock()
         mock_gs.search_nodes_by_tokens = AsyncMock(

@@ -8,15 +8,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.models.recall_strategy import RecallStrategy
-from core.retrieval.dual_route_fusion import (
+from core.features.retrieval.dual_route_fusion import (
     compute_strategy_weights,
     merge_dual_results,
     route_weights_for_query,
 )
-from core.retrieval.dual_route_retriever import DualRouteRetriever
-from core.retrieval.graph_retriever import GraphResult
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+from core.features.retrieval.graph_retriever import GraphResult
+from core.features.retrieval.rrf_fusion import HybridResult
+from core.models.recall_strategy import RecallStrategy
 
 
 def _document_result(doc_id: int, score: float) -> HybridResult:

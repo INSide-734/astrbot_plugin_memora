@@ -1,14 +1,14 @@
 """存储层 — 基于 SQLite 的记忆原子、会话和图记忆持久化。"""
 
-from .atom_store import AtomStore
-from .conversation_store import ConversationStore
-from .graph_store import GraphStore
-from .injection_decision_store import (
+from ..features.conversation.infrastructure.conversation_store import ConversationStore
+from ..features.injection.infrastructure.injection_decision_store import (
     CleanupResult,
     DecisionPage,
     DecisionQuery,
     InjectionDecisionStore,
 )
+from ..features.memory.graph.infrastructure.graph_store import GraphStore
+from ..features.memory.infrastructure.atom_store import AtomStore
 
 __all__ = [
     "AtomStore",

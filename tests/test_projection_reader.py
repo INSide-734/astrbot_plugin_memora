@@ -20,7 +20,7 @@ from core.features.evolution.domain import (
     ProjectionType,
     ProjectionView,
 )
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.rrf_fusion import HybridResult
 from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc

@@ -23,9 +23,11 @@ from core.shared.extra_llm_budget import (
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
 
+    from core.features.conversation.application.conversation_manager import (
+        ConversationManager,
+    )
     from core.features.memory.application.memory_engine import MemoryEngine
     from core.features.recall.processors.memory_processor import MemoryProcessor
-    from core.managers.conversation_manager import ConversationManager
     from core.platform.config import ConfigManager
 
 
@@ -293,7 +295,7 @@ async def test_passive_recall_and_reflection_share_one_budget(
     from core.features.reflection.application.topic_batch_preparer import (
         TopicBatchPreparer,
     )
-    from core.retrieval.query_rewriter import QueryRewriter
+    from core.features.retrieval.query_rewriter import QueryRewriter
 
     llm_rewrite = AsyncMock(
         return_value=(

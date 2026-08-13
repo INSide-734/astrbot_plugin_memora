@@ -9,7 +9,7 @@ import pytest
 from core.features.memory.domain.memory_atom import AtomType
 from core.features.recall.processors import atom_classifier
 from core.features.recall.processors.atom_classifier import classify_atoms
-from core.security.guardrails import MemoryAtomSchema
+from core.platform.security.guardrails import MemoryAtomSchema
 
 
 def _classify(text: str):

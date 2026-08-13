@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.tools.profile_tools import ProfileLookupTool
+from core.platform.transport.tools.profile_tools import ProfileLookupTool
 from tests.tool_contract_support import call_text_handler
 
 # ---------------------------------------------------------------------------

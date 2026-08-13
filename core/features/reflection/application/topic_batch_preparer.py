@@ -12,12 +12,12 @@ from typing import Any
 from astrbot.api import logger
 
 from ....platform.config.manager import ConfigManager
-from ....processors.topic_splitter import (
+from ....shared.cost_control import CostControl
+from ....shared.extra_llm_budget import budgeted_extra_llm_call
+from ...recall.processors.topic_splitter import (
     TopicChunkingStrategy,
     TwoStageLLMStrategy,
 )
-from ....shared.cost_control import CostControl
-from ....shared.extra_llm_budget import budgeted_extra_llm_call
 
 
 class TopicBatchPreparer:

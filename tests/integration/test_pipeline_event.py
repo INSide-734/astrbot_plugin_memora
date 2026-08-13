@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.cleaners.injection_cleaner import InjectionCleaner
+from core.features.recall.application.injection_cleaner import InjectionCleaner
 from core.features.recall.application.recall_handler import RecallHandler
 from core.shared.constants import (
     MEMORY_INJECTION_FOOTER,
@@ -95,7 +95,7 @@ def _make_memory_dicts_for_xihu() -> list[dict]:
 
 def _make_mock_hybrid_results(memory_dicts: list[dict]) -> list:
     """Convert memory dicts to mock HybridResult objects."""
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     results = []
     for md in memory_dicts:

@@ -4,13 +4,17 @@ from types import MappingProxyType
 
 import pytest
 
-from core.injection.models import (
+from core.features.injection.application.presets import (
+    PRESETS,
+    get_preset,
+    resolve_preset,
+)
+from core.features.injection.domain.models import (
     ContentLevel,
     DeliveryMode,
     InjectionStrategyPreset,
     PresetName,
 )
-from core.injection.presets import PRESETS, get_preset, resolve_preset
 
 
 def test_builtin_preset_gradient_is_locked() -> None:

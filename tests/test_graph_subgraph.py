@@ -24,7 +24,7 @@ def _row(values: dict[str, Any]) -> MagicMock:
 
 def _make_graph_store() -> Any:
     """Create a minimal GraphStore with subgraph mixin for testing."""
-    from core.storage.graph_store import GraphStore
+    from core.features.memory.graph.infrastructure.graph_store import GraphStore
 
     db_path = ":memory:"
     store = GraphStore.__new__(GraphStore)

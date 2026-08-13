@@ -10,9 +10,11 @@ import aiosqlite
 import pytest
 
 from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
-from core.managers.write_op_journal import WriteOpJournal
-from core.managers.write_op_serialization import serialize_atom_for_repair
-from core.storage.atom_store import AtomStore
+from core.features.memory.infrastructure.atom_store import AtomStore
+from core.features.memory.infrastructure.write_op_journal import WriteOpJournal
+from core.features.memory.infrastructure.write_op_serialization import (
+    serialize_atom_for_repair,
+)
 
 
 async def _upsert_document(

@@ -9,7 +9,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
-from ....processors.human_like_formatter import HumanLikeMemoryFormatter
+from ....features.recall.processors.human_like_formatter import HumanLikeMemoryFormatter
 from ....utils import get_persona_id
 from ...config.manager import ConfigManager
 from .agent_scope import resolve_agent_read_scope

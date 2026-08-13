@@ -128,7 +128,7 @@ def integration_config(test_config_dict: dict[str, Any]) -> dict[str, Any]:
 @pytest.fixture
 async def integration_atom_store(integration_db_path: str) -> Any:
     """创建并初始化由会话数据库支持的真实 AtomStore。"""
-    from core.storage.atom_store import AtomStore
+    from core.features.memory.infrastructure.atom_store import AtomStore
 
     store = AtomStore(db_path=integration_db_path)
     await store.initialize()

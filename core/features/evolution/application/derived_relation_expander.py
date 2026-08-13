@@ -22,7 +22,7 @@ from ..domain import (
 )
 
 if TYPE_CHECKING:
-    from ....retrieval.rrf_fusion import HybridResult
+    from ...retrieval.rrf_fusion import HybridResult
 
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 
@@ -170,7 +170,7 @@ class DerivedRelationExpander:
             保留直接候选并追加合法派生候选的结果列表。
         """
 
-        from ....retrieval.rrf_fusion import HybridResult
+        from ...retrieval.rrf_fusion import HybridResult
 
         direct_by_id = {item.doc_id: item for item in direct}
         derived_by_id: dict[int, HybridResult] = {}
@@ -247,7 +247,7 @@ def _deduplicate_direct(seeds: list[HybridResult]) -> list[HybridResult]:
         保持首次出现顺序且同 ID 取最高分的候选副本。
     """
 
-    from ....retrieval.rrf_fusion import HybridResult
+    from ...retrieval.rrf_fusion import HybridResult
 
     direct: list[HybridResult] = []
     by_id: dict[int, HybridResult] = {}

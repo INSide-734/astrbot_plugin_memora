@@ -13,8 +13,8 @@ from astrbot.api.platform import MessageType
 
 from core.features.identity.infrastructure.protocols import ProtocolIdentityResolver
 from core.platform.config import ConfigManager
-from core.tools.memory_memorize_tool import MemoryMemorizeTool
-from core.tools.memory_search_tool import MemorySearchTool
+from core.platform.transport.tools.memory_memorize_tool import MemoryMemorizeTool
+from core.platform.transport.tools.memory_search_tool import MemorySearchTool
 from tests.tool_contract_support import call_text_handler
 
 # ---------------------------------------------------------------------------

@@ -11,12 +11,12 @@ from core.features.evaluation.application import (
     RetrievedDocument,
     evaluate_variants,
 )
-from core.retrieval.graph_keyword_retriever import (
+from core.features.retrieval.graph_keyword_retriever import (
     GraphKeywordResult,
     GraphKeywordRetriever,
 )
-from core.retrieval.graph_retriever import GraphRetriever
-from core.retrieval.rrf_fusion import RRFFusion
+from core.features.retrieval.graph_retriever import GraphRetriever
+from core.features.retrieval.rrf_fusion import RRFFusion
 
 
 def _retriever(*, hops: int) -> tuple[GraphKeywordRetriever, AsyncMock]:

@@ -10,7 +10,7 @@ import pytest
 def test_protocol_identity_runtime_satisfies_identity_conversation_port() -> None:
     """既有唯一身份运行时必须提供共享端口声明的全部协作能力。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
     from core.shared import IdentityConversationPort as SharedIdentityConversationPort
     from core.shared.contracts import IdentityConversationPort
 
@@ -21,7 +21,9 @@ def test_protocol_identity_runtime_satisfies_identity_conversation_port() -> Non
 def test_conversation_manager_does_not_create_identity_runtime_without_port() -> None:
     """缺少组合根注入时，会话管理器不得私自创建第二个身份运行时。"""
 
-    from core.managers.conversation_manager import ConversationManager
+    from core.features.conversation.application.conversation_manager import (
+        ConversationManager,
+    )
 
     manager = ConversationManager(MagicMock())
 
@@ -32,8 +34,8 @@ def test_event_handler_without_identity_port_returns_unsupported_identity() -> N
     """事件处理器不得从会话管理器间接取得身份端口。"""
 
     from core.event_handler import EventHandler
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
     from core.features.identity.domain.models import IdentityTrust
-    from core.identity.runtime import ProtocolIdentityRuntime
 
     config = MagicMock()
     config.get_section.return_value = {}
@@ -57,7 +59,7 @@ def test_command_handler_retains_explicit_identity_port() -> None:
     """命令适配器必须保存组合根显式注入的身份端口。"""
 
     from core.command_handler import CommandHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     runtime = ProtocolIdentityRuntime()
     handler = CommandHandler(

@@ -10,7 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from astrbot.api.platform import MessageType
 
-from core.tools.knowledge_tools import KnowledgeReadTool, KnowledgeSearchTool
+from core.platform.transport.tools.knowledge_tools import (
+    KnowledgeReadTool,
+    KnowledgeSearchTool,
+)
 from tests.tool_contract_support import call_text_handler
 
 # ---------------------------------------------------------------------------

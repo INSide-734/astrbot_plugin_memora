@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.injection.models import ContentLevel
+from core.features.injection.domain.models import ContentLevel
 from core.utils.injection_budget import InjectionBudget, InjectionStats
 from core.utils.memory_formatter import (
     format_memories_for_fake_tool_call,

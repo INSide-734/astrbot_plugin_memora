@@ -10,7 +10,7 @@ import pytest
 def _make_result(
     doc_id: int, final_score: float, content: str = "", metadata: dict | None = None
 ) -> Any:
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
         doc_id=doc_id,
@@ -26,7 +26,7 @@ def _make_result(
 class TestPersonalizedRanker:
     @pytest.fixture
     def ranker(self) -> Any:
-        from core.retrieval.personalized_ranker import PersonalizedRanker
+        from core.features.retrieval.personalized_ranker import PersonalizedRanker
 
         return PersonalizedRanker(boost_strength=0.15)
 
@@ -104,7 +104,7 @@ class TestPersonalizedRanker:
     def test_preference_boost_avoided_topics(self) -> None:
         """静态偏好计算对回避话题返回负提升。"""
         from core.features.profiles.domain.models import UserPreferences, UserProfile
-        from core.retrieval.personalized_ranker import PersonalizedRanker
+        from core.features.retrieval.personalized_ranker import PersonalizedRanker
 
         profile = UserProfile(
             user_id="u1",
@@ -120,7 +120,7 @@ class TestPersonalizedRanker:
     def test_preference_boost_preferred_topics(self) -> None:
         """静态偏好计算对偏好话题返回正提升。"""
         from core.features.profiles.domain.models import UserPreferences, UserProfile
-        from core.retrieval.personalized_ranker import PersonalizedRanker
+        from core.features.retrieval.personalized_ranker import PersonalizedRanker
 
         profile = UserProfile(
             user_id="u1",
@@ -135,7 +135,7 @@ class TestPersonalizedRanker:
 
     def test_boost_strength_clamped(self) -> None:
         """构造器将提升强度限制在 [0, 0.5]。"""
-        from core.retrieval.personalized_ranker import PersonalizedRanker
+        from core.features.retrieval.personalized_ranker import PersonalizedRanker
 
         r1 = PersonalizedRanker(boost_strength=1.0)
         assert r1._boost_strength == 0.5  # type: ignore[attr-defined]

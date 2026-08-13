@@ -10,12 +10,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from astrbot.api.platform import MessageType
 
-from core.injection.models import (
+from core.features.injection.domain.models import (
     DeliveryMode,
     InjectionExecutionResult,
     InjectionOutcome,
 )
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.rrf_fusion import HybridResult
 
 # ============================================================================
 # RecallHandler tests
@@ -330,7 +330,7 @@ class TestRecallHandlerFinalizeCandidates:
 
     def test_finalizes_unique_candidates_with_top_k_limit(self) -> None:
         from core.features.recall.application.recall_handler import RecallHandler
-        from core.retrieval.rrf_fusion import HybridResult
+        from core.features.retrieval.rrf_fusion import HybridResult
 
         handler = RecallHandler(
             context=MagicMock(),
@@ -685,7 +685,7 @@ class TestReflectionHandlerPromptProtection:
         from core.features.reflection.application.reflection_handler import (
             ReflectionHandler,
         )
-        from core.security.prompt_sanitizer import PromptProtectionService
+        from core.platform.security.prompt_sanitizer import PromptProtectionService
 
         cfg = MagicMock()
         cfg.get.side_effect = lambda key, default=None: {
@@ -717,16 +717,23 @@ class TestReflectionHandlerPromptProtection:
     async def test_registered_injection_is_removed_from_visible_and_stored_response(
         self,
     ) -> None:
-        from core.features.reflection.application.reflection_handler import (
-            ReflectionHandler,
+        from core.features.injection.application.executor import (
+            InjectionExecutionContext,
+            InjectionExecutor,
         )
-        from core.injection.executor import InjectionExecutionContext, InjectionExecutor
-        from core.injection.models import PresetName, RequestSignals, RoutingMode
-        from core.injection.router import (
+        from core.features.injection.application.router import (
             InjectionRoutingConfig,
             InjectionStrategyRouter,
         )
-        from core.security.prompt_sanitizer import PromptProtectionService
+        from core.features.injection.domain.models import (
+            PresetName,
+            RequestSignals,
+            RoutingMode,
+        )
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
+        from core.platform.security.prompt_sanitizer import PromptProtectionService
         from core.utils.injection_adapter import InjectionAdapter
 
         secret = "outbound unique secret alpha beta gamma delta epsilon"
@@ -789,7 +796,7 @@ class TestReflectionHandlerPromptProtection:
         from core.features.reflection.application.reflection_handler import (
             ReflectionHandler,
         )
-        from core.security.prompt_sanitizer import PromptProtectionService
+        from core.platform.security.prompt_sanitizer import PromptProtectionService
 
         cfg = MagicMock()
         cfg.get.side_effect = lambda key, default=None: {
@@ -1637,7 +1644,7 @@ async def test_fake_tool_execution_uses_transient_query_without_recording_it(
 
 @pytest.mark.asyncio
 async def test_recall_correlates_scope_without_recording_token(handler_case) -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     service = PromptProtectionService(enable_double_check=False)
     case = handler_case(
@@ -1668,7 +1675,7 @@ async def test_reflection_sanitizes_visible_response_before_early_gates(
     from core.features.reflection.application.reflection_handler import (
         ReflectionHandler,
     )
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     secret = f"{early_gate} scoped secret alpha beta gamma delta epsilon"
     service = PromptProtectionService(enable_double_check=False)
@@ -1749,7 +1756,7 @@ async def test_reflection_visible_sanitizer_failures_are_closed(failure) -> None
 async def test_recall_scope_setter_exception_uses_private_scope_without_leaking_token(
     handler_case,
 ) -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     service = PromptProtectionService(enable_double_check=False)
     case = handler_case(
@@ -1775,7 +1782,7 @@ async def test_reflection_scope_getter_exception_uses_private_fallback() -> None
     from core.features.reflection.application.reflection_handler import (
         ReflectionHandler,
     )
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     secret = "private fallback secret alpha beta gamma delta epsilon"
     service = PromptProtectionService(enable_double_check=False)
@@ -1841,7 +1848,7 @@ def _scoped_event(scope_id, *, required=True, role="assistant"):
 
 @pytest.mark.asyncio
 async def test_interleaved_scopes_sanitize_only_their_own_responses() -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     service = PromptProtectionService(enable_double_check=False)
     secret_a = "request A amber birch cedar dogwood elm"
@@ -1867,7 +1874,7 @@ async def test_interleaved_scopes_sanitize_only_their_own_responses() -> None:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("unavailable", ["expired", "evicted"])
 async def test_required_expired_or_evicted_scope_fails_closed(unavailable) -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     now = [10.0]
     service = PromptProtectionService(
@@ -1890,7 +1897,7 @@ async def test_required_expired_or_evicted_scope_fails_closed(unavailable) -> No
 
 @pytest.mark.asyncio
 async def test_nonassistant_response_discards_scope_without_sanitizing() -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     service = PromptProtectionService(enable_double_check=False)
     secret = "nonassistant secret alpha beta gamma delta epsilon"
@@ -1906,7 +1913,7 @@ async def test_nonassistant_response_discards_scope_without_sanitizing() -> None
 @pytest.mark.asyncio
 @pytest.mark.parametrize("first_role", ["assistant", "tool"])
 async def test_reflection_clears_event_markers_before_event_reuse(first_role) -> None:
-    from core.security.prompt_sanitizer import (
+    from core.platform.security.prompt_sanitizer import (
         PROMPT_PROTECTION_REQUIRED_ATTR,
         PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
         PROMPT_PROTECTION_SCOPE_ATTR,
@@ -1946,7 +1953,7 @@ async def test_reflection_clears_event_markers_before_event_reuse(first_role) ->
 
 @pytest.mark.asyncio
 async def test_reflection_setter_error_still_clears_private_markers() -> None:
-    from core.security.prompt_sanitizer import (
+    from core.platform.security.prompt_sanitizer import (
         PROMPT_PROTECTION_REQUIRED_ATTR,
         PROMPT_PROTECTION_SCOPE_ATTR,
         PromptProtectionService,
@@ -1967,7 +1974,7 @@ async def test_reflection_setter_error_still_clears_private_markers() -> None:
 async def test_no_injection_missing_scope_keys_does_not_clear_ordinary_response() -> (
     None
 ):
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     service = PromptProtectionService(enable_double_check=False)
     handler = _reflection_handler_for_scope(service)
@@ -1988,7 +1995,7 @@ async def test_no_injection_missing_scope_keys_does_not_clear_ordinary_response(
 async def test_scope_getter_error_without_fallback_fails_visible_response_closed() -> (
     None
 ):
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     handler = _reflection_handler_for_scope(
         PromptProtectionService(enable_double_check=False)
@@ -2009,7 +2016,7 @@ async def test_scope_getter_error_without_fallback_fails_visible_response_closed
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", [InjectionOutcome.EMPTY, InjectionOutcome.ERROR])
 async def test_recall_empty_or_error_clears_event_scope(handler_case, outcome) -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     service = PromptProtectionService(enable_double_check=False)
     case = handler_case(
@@ -2033,7 +2040,7 @@ async def test_recall_empty_or_error_clears_event_scope(handler_case, outcome) -
 async def test_recall_both_scope_channels_failure_skips_protected_executor(
     handler_case,
 ) -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     class EventWithoutStorage:
         __slots__ = ("unified_msg_origin",)
@@ -2082,7 +2089,7 @@ async def test_recall_both_scope_channels_failure_skips_protected_executor(
 async def test_setter_exception_real_executor_never_registers_unscoped(
     handler_case,
 ) -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     service = PromptProtectionService(enable_double_check=False)
     case = handler_case(

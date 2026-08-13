@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 def test_reranker_factory_uses_shared_mmr_implementation() -> None:
     """重排工厂必须直接使用 shared 中的唯一 MMR 实现。"""
 
-    from core.retrieval import reranker_factory
+    import core.features.retrieval.reranker_factory as reranker_factory
     from core.shared import mmr as shared_mmr
 
     assert reranker_factory.MMRReranker is shared_mmr.MMRReranker
@@ -45,7 +45,7 @@ def _contract(
 def _hybrid_result(doc_id: int, score: float = 0.9):
     """构造 DualRoute 测试需要的 canonical 候选。"""
 
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
         doc_id=doc_id,
@@ -315,7 +315,7 @@ async def test_embedding_adapter_rejects_string_vector_shapes(
 async def test_vector_filter_unsupported_fails_closed() -> None:
     """显式不支持 filter 的向量后端不得收到去掉 filter 的检索。"""
 
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
 
     backend = MagicMock()
     backend.retrieve = AsyncMock(return_value=[])
@@ -330,7 +330,7 @@ async def test_vector_filter_unsupported_fails_closed() -> None:
 async def test_vector_filter_rechecks_backend_results_locally() -> None:
     """固定后端忽略 metadata filter 时也不得返回跨 scope 结果。"""
 
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
 
     wrong_scope = MagicMock()
     wrong_scope.similarity = 0.9
@@ -356,7 +356,7 @@ async def test_vector_filter_rechecks_backend_results_locally() -> None:
 async def test_graph_vector_filter_unsupported_fails_closed() -> None:
     """图向量后端显式不支持 filter 时不得执行底层查询。"""
 
-    from core.retrieval.graph_vector_retriever import GraphVectorRetriever
+    from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
 
     backend = MagicMock()
     backend.adapter_capabilities = _contract(kind="vector_backend")
@@ -376,7 +376,7 @@ async def test_graph_vector_filter_unsupported_fails_closed() -> None:
 async def test_graph_vector_rechecks_scope_and_rejects_non_finite_scores() -> None:
     """图向量返回侧必须复核 scope，并丢弃 NaN/Infinity 分数。"""
 
-    from core.retrieval.graph_vector_retriever import GraphVectorRetriever
+    from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
 
     wrong_scope = MagicMock()
     wrong_scope.similarity = 0.9
@@ -406,8 +406,8 @@ async def test_graph_vector_rechecks_scope_and_rejects_non_finite_scores() -> No
 async def test_vector_mutations_unsupported_do_not_touch_backend() -> None:
     """主/图向量显式不支持 update/delete 时不得读取或写入底层 Store。"""
 
-    from core.retrieval.graph_vector_retriever import GraphVectorRetriever
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
 
     backend = MagicMock()
     backend.adapter_capabilities = _contract(kind="vector_backend")
@@ -432,8 +432,8 @@ def test_current_adapter_snapshots_state_real_filter_and_score_semantics() -> No
         ProjectionReader,
     )
     from core.features.evolution.infrastructure import MemoryEvolutionStore
-    from core.retrieval.bm25_retriever import BM25Retriever
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.bm25_retriever import BM25Retriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
     from core.shared.adapter_capabilities import (
         AdapterCapability,
         ScoreSemantics,
@@ -466,7 +466,7 @@ def test_current_faiss_backend_exposes_vector_access_after_fixed_adapter_setup()
 ):
     """固定 AstrBot FAISS 装配后必须向重排工厂公开向量访问能力。"""
 
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
     from core.shared.adapter_capabilities import AdapterCapability, adapter_contract
 
     backend = MagicMock()
@@ -479,7 +479,7 @@ def test_current_faiss_backend_exposes_vector_access_after_fixed_adapter_setup()
 async def test_dual_route_skips_explicitly_unsupported_derived_reference_time() -> None:
     """Derived adapter 显式不支持 as-of 时应保留 canonical baseline。"""
 
-    from core.retrieval.dual_route_retriever import DualRouteRetriever
+    from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
     direct = _hybrid_result(1)
     document = MagicMock()
@@ -541,7 +541,7 @@ def test_injection_unknown_provider_does_not_infer_runtime_capabilities() -> Non
 async def test_reranker_factory_explicitly_degrades_unsupported_dependencies() -> None:
     """缺少 vector-access/同步 LLM 能力时应在工厂阶段降级 MMR。"""
 
-    from core.retrieval.reranker_factory import MMRReranker, create_reranker
+    from core.features.retrieval.reranker_factory import MMRReranker, create_reranker
 
     backend = MagicMock()
     backend.adapter_capabilities = _contract(kind="vector_backend")

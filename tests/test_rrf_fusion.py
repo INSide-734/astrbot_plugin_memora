@@ -2,7 +2,12 @@
 
 import pytest
 
-from core.retrieval.rrf_fusion import BM25Result, FusedResult, RRFFusion, VectorResult
+from core.features.retrieval.rrf_fusion import (
+    BM25Result,
+    FusedResult,
+    RRFFusion,
+    VectorResult,
+)
 
 
 def _bm25(doc_id: int, score: float, content: str = "") -> BM25Result:

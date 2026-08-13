@@ -7,11 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.retrieval.dual_route_retriever import DualRouteRetriever
-from core.retrieval.graph_keyword_retriever import GraphKeywordResult
-from core.retrieval.graph_retriever import GraphRetriever
-from core.retrieval.graph_vector_retriever import GraphVectorResult
-from core.retrieval.rrf_fusion import HybridResult, RRFFusion
+from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+from core.features.retrieval.graph_keyword_retriever import GraphKeywordResult
+from core.features.retrieval.graph_retriever import GraphRetriever
+from core.features.retrieval.graph_vector_retriever import GraphVectorResult
+from core.features.retrieval.rrf_fusion import HybridResult, RRFFusion
 from core.shared.adapter_capabilities import ASTRBOT_FAISS_CAPABILITIES
 
 
@@ -113,7 +113,7 @@ async def test_final_mmr_variant_invokes_mmr_reranker() -> None:
     from core.features.evaluation.application.retrieval_ablation import (
         RetrievalAblationController,
     )
-    from core.retrieval.reranker_factory import MMRReranker
+    from core.features.retrieval.reranker_factory import MMRReranker
 
     engine, _ = _ablation_engine(reranker=SimpleNamespace(rerank=MagicMock()))
     prepared = RetrievalAblationController(engine).prepare("final_reranker_mmr")

@@ -223,8 +223,8 @@ async def _rebuild_fts5(
 
     try:
         _ensure_repo_root_importable()
-        from core.processors.text_processor import TextProcessor
-        from core.retrieval.bm25_retriever import BM25Retriever
+        from core.features.recall.processors.text_processor import TextProcessor
+        from core.features.retrieval.bm25_retriever import BM25Retriever
 
         text_processor = cast(TextProcessor, _LiteralTextProcessor())
         retriever = BM25Retriever(str(database), text_processor)
@@ -319,7 +319,7 @@ async def _rebuild_graph(
             GraphEntry,
             GraphNode,
         )
-        from core.storage.graph_store import GraphStore
+        from core.features.memory.graph.infrastructure.graph_store import GraphStore
 
         source_id = int(rows[0][0])
         nodes = [

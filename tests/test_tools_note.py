@@ -9,7 +9,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from astrbot.api.platform import MessageType
 
-from core.tools.note_tools import NoteReadTool, NoteSearchTool, NoteWriteTool
+from core.platform.transport.tools.note_tools import (
+    NoteReadTool,
+    NoteSearchTool,
+    NoteWriteTool,
+)
 from tests.tool_contract_support import call_text_handler
 
 # ---------------------------------------------------------------------------

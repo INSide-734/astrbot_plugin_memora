@@ -43,7 +43,7 @@ class BlockAstrBot(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockAstrBot())
 
 importlib.import_module("core.evaluation")
-importlib.import_module("core.evaluation.retrieval_quality")
+importlib.import_module("core.features.evaluation.application.retrieval_quality")
 """
     env = dict(os.environ)
     env["PYTHONPATH"] = os.getcwd()

@@ -2,7 +2,7 @@
 
 import time
 
-from core.retrieval.seasonal_recall import seasonal_boost, seasonal_similarity
+from core.features.retrieval.seasonal_recall import seasonal_boost, seasonal_similarity
 
 
 class TestSeasonalSimilarity:

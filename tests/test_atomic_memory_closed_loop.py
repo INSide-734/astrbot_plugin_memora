@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from core.features.memory.infrastructure.atom_store import AtomStore
 from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.features.recall.processors.text_processor import TextProcessor
-from core.retrieval.atom_retriever import AtomRetrievalResult, AtomRetriever
-from core.retrieval.dual_route_retriever import DualRouteRetriever
-from core.retrieval.graph_keyword_retriever import GraphKeywordResult
-from core.retrieval.graph_retriever import GraphRetriever
-from core.retrieval.rrf_fusion import HybridResult, RRFFusion
-from core.storage.atom_store import AtomStore
+from core.features.retrieval.atom_retriever import AtomRetrievalResult, AtomRetriever
+from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+from core.features.retrieval.graph_keyword_retriever import GraphKeywordResult
+from core.features.retrieval.graph_retriever import GraphRetriever
+from core.features.retrieval.rrf_fusion import HybridResult, RRFFusion
 
 
 def _atom_result(

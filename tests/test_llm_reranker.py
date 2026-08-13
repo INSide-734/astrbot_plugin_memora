@@ -14,7 +14,7 @@ from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 def _make_result(doc_id: int, final_score: float, content: str = "") -> Any:
     """构造仅包含重排所需字段的候选结果。"""
 
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
         doc_id=doc_id,
@@ -40,7 +40,7 @@ class TestLLMReranker:
     def reranker(self, llm_client: MagicMock) -> Any:
         """构造允许请求级 LLM 重排的质量档实例。"""
 
-        from core.retrieval.llm_reranker import LLMReranker
+        from core.features.retrieval.llm_reranker import LLMReranker
 
         return LLMReranker(
             llm_client=llm_client,
@@ -55,7 +55,7 @@ class TestLLMReranker:
     @pytest.mark.asyncio
     async def test_rerank_no_llm_client(self) -> None:
         """没有 LLM 客户端时按输入顺序返回前 k 项。"""
-        from core.retrieval.llm_reranker import LLMReranker
+        from core.features.retrieval.llm_reranker import LLMReranker
 
         reranker = LLMReranker(llm_client=None)
         results = [_make_result(i, 0.9 - i * 0.1) for i in range(5)]

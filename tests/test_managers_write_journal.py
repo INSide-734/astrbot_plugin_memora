@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.managers.write_op_journal import WriteOpJournal
+from core.features.memory.infrastructure.write_op_journal import WriteOpJournal
 
 
 @pytest.mark.asyncio
