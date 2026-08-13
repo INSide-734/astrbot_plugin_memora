@@ -132,7 +132,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`api/AGENTS.md`](api/AGENTS.md)
 - [`base/AGENTS.md`](base/AGENTS.md)
 - [`cleaners/AGENTS.md`](cleaners/AGENTS.md)
-- [`commands/AGENTS.md`](commands/AGENTS.md)
+- [`platform/transport/commands/AGENTS.md`](platform/transport/commands/AGENTS.md)
 - [`dedup/AGENTS.md`](dedup/AGENTS.md)
 - [`diagnostics/AGENTS.md`](diagnostics/AGENTS.md)（已退役目录导航）
 - [`evaluation/AGENTS.md`](evaluation/AGENTS.md)
