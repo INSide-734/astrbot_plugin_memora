@@ -11,7 +11,6 @@ from typing import Any
 import aiosqlite
 from astrbot.api import logger
 
-from ...processors.text_processor import TextProcessor
 from ...shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
@@ -29,6 +28,7 @@ from ..memory.infrastructure.sql_contract import (
     MEMORY_FTS_SEARCH_SQL,
     MEMORY_FTS_TABLE,
 )
+from ..recall.processors.text_processor import TextProcessor
 
 
 @dataclass

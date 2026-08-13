@@ -1,4 +1,4 @@
-[根级 AGENTS.md](../../AGENTS.md) > [core](../) > **processors**
+[根级 AGENTS.md](../../../../../../../../AGENTS.md) / core / features / recall / processors
 
 # 对话到结构化记忆处理管道
 
@@ -23,7 +23,7 @@
 Provider，没有预算、功能门关闭或结构不可用时由该管线生成确定性来源 fallback。
 重建路径强制关闭 Provider，并在写入前二次验证 source revision、scope 和 privacy。
 
-本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`../handlers/AGENTS.md`](../handlers/AGENTS.md)；消息组件标准化见 [`../extractors/AGENTS.md`](../extractors/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
+本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`../handlers/AGENTS.md`](../../../../handlers/AGENTS.md)；消息组件标准化见 [`../extractors/AGENTS.md`](../../../../extractors/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
 
 ## 真实主管道
 
@@ -93,7 +93,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 
 策略输出必须保持输入顺序、边界合法和至少可回退为单段；C/D 的运行成本门控由 handlers 中的 `TopicBatchPreparer` 负责。
 
-Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM proposal 服务已全部归属 `core/features/evolution/application/`；`core/processors/` 不再提供旧路径或兼容导出。其 source/revision、alias、预算和取消契约见 [`../managers/AGENTS.md`](../managers/AGENTS.md) 的 Evolution 生命周期说明。
+Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM proposal 服务已全部归属 `core/features/evolution/application/`；`core/processors/` 不再提供旧路径或兼容导出。其 source/revision、alias、预算和取消契约见 [`../managers/AGENTS.md`](../../../../managers/AGENTS.md) 的 Evolution 生命周期说明。
 
 ## 其他处理器地图
 

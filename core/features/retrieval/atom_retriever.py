@@ -12,7 +12,7 @@ from ..memory.domain.memory_atom import MemoryAtom
 from ..memory.infrastructure.atom_store import AtomStore
 
 if TYPE_CHECKING:
-    from ...processors.text_processor import TextProcessor
+    from ..recall.processors.text_processor import TextProcessor
 
 
 @dataclass(slots=True)

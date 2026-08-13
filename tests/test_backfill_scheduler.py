@@ -509,7 +509,7 @@ class TestBackfillScheduler:
     @pytest.mark.asyncio
     async def test_backfill_one_splits_into_multiple_segments(self):
         """聚类生成多个片段时应写入新记忆并删除旧记忆。"""
-        from core.processors.topic_splitter import MemorySegment
+        from core.features.recall.processors.topic_splitter import MemorySegment
 
         engine = MagicMock()
         engine.add_memory = AsyncMock(side_effect=[101, 102])
@@ -573,7 +573,7 @@ class TestBackfillScheduler:
     @pytest.mark.asyncio
     async def test_backfill_one_marks_schema_v3_and_backfill_source(self):
         """新片段应记录 v3 schema 与旧文档来源。"""
-        from core.processors.topic_splitter import MemorySegment
+        from core.features.recall.processors.topic_splitter import MemorySegment
 
         engine = MagicMock()
         engine.add_memory = AsyncMock(return_value=999)
@@ -616,7 +616,7 @@ class TestBackfillScheduler:
     @pytest.mark.asyncio
     async def test_backfill_one_handles_delete_failure(self):
         """删除旧记忆失败时应标记证据并向任务上抛错误。"""
-        from core.processors.topic_splitter import MemorySegment
+        from core.features.recall.processors.topic_splitter import MemorySegment
 
         engine = MagicMock()
         engine.add_memory = AsyncMock(return_value=1)
@@ -664,7 +664,7 @@ class TestBackfillScheduler:
     @pytest.mark.asyncio
     async def test_backfill_one_passes_session_and_persona(self):
         """回填写入应透传顶层 session 与 persona。"""
-        from core.processors.topic_splitter import MemorySegment
+        from core.features.recall.processors.topic_splitter import MemorySegment
 
         engine = MagicMock()
         engine.add_memory = AsyncMock(return_value=1)
@@ -703,7 +703,7 @@ class TestBackfillScheduler:
     @pytest.mark.asyncio
     async def test_backfill_one_session_from_source_window(self):
         """顶层缺少 session 时应回退到 source window。"""
-        from core.processors.topic_splitter import MemorySegment
+        from core.features.recall.processors.topic_splitter import MemorySegment
 
         engine = MagicMock()
         engine.add_memory = AsyncMock(return_value=1)

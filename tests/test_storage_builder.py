@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.processors.storage_builder import StorageBuilder
+from core.features.recall.processors.storage_builder import StorageBuilder
 
 
 class TestStorageBuilder:

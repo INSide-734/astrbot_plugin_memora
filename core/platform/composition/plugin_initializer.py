@@ -31,8 +31,8 @@ from ...features.quality.application.memory_quality_gate import MemoryQualityGat
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
+from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...managers.memory_engine import MemoryEngine
-from ...processors.memory_processor import MemoryProcessor
 from ...shared.contracts import PromptProtectionPort
 from ...shared.errors import InitializationError
 from ..config.manager import ConfigManager

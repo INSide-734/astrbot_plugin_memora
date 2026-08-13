@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import core.processors.reflection_generation_observability as generation_observability
+import core.features.recall.processors.reflection_generation_observability as generation_observability
+from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.models.conversation_models import Message
-from core.processors.memory_processor import MemoryProcessor
 
 
 @pytest.mark.asyncio

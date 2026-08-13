@@ -183,7 +183,9 @@ class TestPipelineIngest:
         llm_output = self._single_topic_llm_output()
 
         # 用 Strategy A 解析
-        from core.processors.topic_splitter import PromptSegmentationStrategy
+        from core.features.recall.processors.topic_splitter import (
+            PromptSegmentationStrategy,
+        )
 
         strat = PromptSegmentationStrategy()
 
@@ -281,7 +283,9 @@ class TestPipelineIngest:
 
         llm_output = self._multi_topic_llm_output()
 
-        from core.processors.topic_splitter import PromptSegmentationStrategy
+        from core.features.recall.processors.topic_splitter import (
+            PromptSegmentationStrategy,
+        )
 
         strat = PromptSegmentationStrategy()
 
@@ -381,7 +385,9 @@ class TestPipelineIngest:
         # 模拟 LLM 返回空 JSON
         empty_output: dict[str, Any] = {}
 
-        from core.processors.topic_splitter import PromptSegmentationStrategy
+        from core.features.recall.processors.topic_splitter import (
+            PromptSegmentationStrategy,
+        )
 
         strat = PromptSegmentationStrategy()
 

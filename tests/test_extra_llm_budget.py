@@ -23,10 +23,10 @@ from core.shared.extra_llm_budget import (
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
 
+    from core.features.recall.processors.memory_processor import MemoryProcessor
     from core.managers.conversation_manager import ConversationManager
     from core.managers.memory_engine import MemoryEngine
     from core.platform.config import ConfigManager
-    from core.processors.memory_processor import MemoryProcessor
 
 
 class _ConfigStub:
@@ -289,10 +289,10 @@ async def test_passive_recall_and_reflection_share_one_budget(
 ) -> None:
     """查询改写占用额度后，反思 Strategy D 不得再次调用 Provider。"""
 
+    from core.features.recall.processors.topic_splitter import TwoStageLLMStrategy
     from core.features.reflection.application.topic_batch_preparer import (
         TopicBatchPreparer,
     )
-    from core.processors.topic_splitter import TwoStageLLMStrategy
     from core.retrieval.query_rewriter import QueryRewriter
 
     llm_rewrite = AsyncMock(

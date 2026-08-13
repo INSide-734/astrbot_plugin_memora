@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.processors.quality_validator import QualityValidator
+from core.features.recall.processors.quality_validator import QualityValidator
 
 
 class TestValidateSummaryQuality:

@@ -6,7 +6,7 @@ import asyncio
 from typing import Any
 
 from ..features.memory.graph.infrastructure.graph_store import GraphStore
-from ..processors.graph_extractor import GraphExtractor
+from ..features.recall.processors.graph_extractor import GraphExtractor
 from ..retrieval.graph_vector_retriever import GraphVectorRetriever
 
 

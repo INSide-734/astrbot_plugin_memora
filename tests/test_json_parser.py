@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 import pytest
 
-from core.processors.json_parser import JsonParser
-from core.processors.quality_validator import QualityValidator
+from core.features.recall.processors.json_parser import JsonParser
+from core.features.recall.processors.quality_validator import QualityValidator
 
 
 class TestJsonParserFix:

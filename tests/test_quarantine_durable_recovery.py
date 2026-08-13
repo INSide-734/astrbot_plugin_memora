@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.processors.memory_grounding import MemoryGroundingValidator
+from core.features.recall.processors.memory_grounding import MemoryGroundingValidator
 from core.review.memory_quality_gate import MemoryQualityGate
 from core.review.quarantine_store import MemoryQuarantineStore
 

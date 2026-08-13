@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.processors.llm_client import LLMClient
+from core.features.recall.processors.llm_client import LLMClient
 
 
 class TestLLMClient:

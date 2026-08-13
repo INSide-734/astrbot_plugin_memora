@@ -10,7 +10,7 @@ from unittest.mock import Mock
 
 from astrbot.api import logger
 
-from ....processors.topic_splitter import (
+from ...recall.processors.topic_splitter import (
     EmbeddingClusteringStrategy,
     _safe_bool,
 )

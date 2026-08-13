@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ...processors.text_processor import TextProcessor
 from ...shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
@@ -16,6 +15,7 @@ from ...shared.adapter_capabilities import (
 )
 from ...storage.hierarchy_store import EntityHierarchyStore
 from ..memory.graph.infrastructure.graph_store import GraphStore
+from ..recall.processors.text_processor import TextProcessor
 
 
 @dataclass(slots=True)

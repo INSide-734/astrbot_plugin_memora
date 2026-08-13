@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.recall.processors.memory_grounding import GroundingResult
+from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.models.conversation_models import Message
-from core.processors.memory_grounding import GroundingResult
-from core.processors.memory_processor import MemoryProcessor
 
 
 def _messages(*names: str) -> list[Message]:

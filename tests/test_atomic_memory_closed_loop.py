@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.processors.memory_processor import MemoryProcessor
-from core.processors.text_processor import TextProcessor
+from core.features.recall.processors.memory_processor import MemoryProcessor
+from core.features.recall.processors.text_processor import TextProcessor
 from core.retrieval.atom_retriever import AtomRetrievalResult, AtomRetriever
 from core.retrieval.dual_route_retriever import DualRouteRetriever
 from core.retrieval.graph_keyword_retriever import GraphKeywordResult
@@ -271,7 +271,9 @@ async def test_graph_retriever_uses_request_reference_time_and_expiry() -> None:
 def test_atom_graph_entry_contains_complete_time_snapshot() -> None:
     """Atom 图条目必须携带可重建的创建、过期与衰减快照。"""
 
-    from core.processors.atom_graph_extractor import extract_graph_from_atoms
+    from core.features.recall.processors.atom_graph_extractor import (
+        extract_graph_from_atoms,
+    )
 
     atom = SimpleNamespace(
         content="用户下周参加读书会",

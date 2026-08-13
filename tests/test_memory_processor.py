@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.base.cost_control import CostControl
+from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.models.conversation_models import Message
-from core.processors.memory_processor import MemoryProcessor
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 _ProcessorFactory = Callable[..., MemoryProcessor]

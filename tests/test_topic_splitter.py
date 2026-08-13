@@ -8,7 +8,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis.strategies import lists, text
 
-from core.processors.topic_splitter import (
+from core.features.recall.processors.topic_splitter import (
     EmbeddingClusteringStrategy,
     HybridSegmentationStrategy,
     MemorySegment,
@@ -625,7 +625,7 @@ async def test_hybrid_with_embed_fn_for_fallback():
 
 
 def test_safe_bool_true_values():
-    from core.processors.topic_splitter import _safe_bool
+    from core.features.recall.processors.topic_splitter import _safe_bool
 
     assert _safe_bool(True) is True
     assert _safe_bool("True") is True
@@ -638,7 +638,7 @@ def test_safe_bool_true_values():
 
 
 def test_safe_bool_false_values():
-    from core.processors.topic_splitter import _safe_bool
+    from core.features.recall.processors.topic_splitter import _safe_bool
 
     assert _safe_bool(False) is False
     assert _safe_bool("False") is False
@@ -651,7 +651,7 @@ def test_safe_bool_false_values():
 
 
 def test_safe_bool_default():
-    from core.processors.topic_splitter import _safe_bool
+    from core.features.recall.processors.topic_splitter import _safe_bool
 
     assert _safe_bool(None) is True
     assert _safe_bool(object()) is True
@@ -662,7 +662,7 @@ def test_safe_bool_default():
 
 
 def test_msg_text_from_content():
-    from core.processors.topic_splitter import _msg_text
+    from core.features.recall.processors.topic_splitter import _msg_text
 
     class _Msg:
         def __init__(self, content):
@@ -673,7 +673,7 @@ def test_msg_text_from_content():
 
 
 def test_msg_text_from_text_attr():
-    from core.processors.topic_splitter import _msg_text
+    from core.features.recall.processors.topic_splitter import _msg_text
 
     class _Msg:
         text = "hello from text"
@@ -683,7 +683,7 @@ def test_msg_text_from_text_attr():
 
 
 def test_msg_text_from_message_attr():
-    from core.processors.topic_splitter import _msg_text
+    from core.features.recall.processors.topic_splitter import _msg_text
 
     class _Msg:
         message = "hello from message"
@@ -693,7 +693,7 @@ def test_msg_text_from_message_attr():
 
 
 def test_msg_text_fallback_to_str():
-    from core.processors.topic_splitter import _msg_text
+    from core.features.recall.processors.topic_splitter import _msg_text
 
     class _Msg:
         pass
@@ -704,7 +704,7 @@ def test_msg_text_fallback_to_str():
 
 
 def test_msg_text_with_content_to_text():
-    from core.processors.topic_splitter import _msg_text
+    from core.features.recall.processors.topic_splitter import _msg_text
 
     class _Msg:
         def content_to_text(self):
@@ -715,7 +715,7 @@ def test_msg_text_with_content_to_text():
 
 
 def test_msg_text_content_to_text_exception():
-    from core.processors.topic_splitter import _msg_text
+    from core.features.recall.processors.topic_splitter import _msg_text
 
     class _Msg:
         def content_to_text(self):
@@ -731,37 +731,37 @@ def test_msg_text_content_to_text_exception():
 
 
 def test_cosine_sim_identical():
-    from core.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_splitter import _cosine_sim
 
     assert _cosine_sim([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
 
 
 def test_cosine_sim_orthogonal():
-    from core.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_splitter import _cosine_sim
 
     assert _cosine_sim([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
 
 
 def test_cosine_sim_zero_vector():
-    from core.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_splitter import _cosine_sim
 
     assert _cosine_sim([0.0, 0.0], [1.0, 0.0]) == 0.0
 
 
 def test_cosine_sim_empty():
-    from core.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_splitter import _cosine_sim
 
     assert _cosine_sim([], []) == 0.0
 
 
 def test_cosine_sim_dimension_mismatch():
-    from core.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_splitter import _cosine_sim
 
     assert _cosine_sim([1.0, 2.0], [1.0]) == 0.0
 
 
 def test_similarity_matrix_diagonal_is_one():
-    from core.processors.topic_splitter import _similarity_matrix
+    from core.features.recall.processors.topic_splitter import _similarity_matrix
 
     embeddings = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
     mat = _similarity_matrix(embeddings)
@@ -773,7 +773,7 @@ def test_similarity_matrix_diagonal_is_one():
 
 
 def test_dummy_embeddings_deterministic():
-    from core.processors.topic_splitter import _dummy_embeddings
+    from core.features.recall.processors.topic_splitter import _dummy_embeddings
 
     texts = ["hello", "world"]
     vecs1 = _dummy_embeddings(texts)
@@ -782,7 +782,7 @@ def test_dummy_embeddings_deterministic():
 
 
 def test_dummy_embeddings_dimension():
-    from core.processors.topic_splitter import _dummy_embeddings
+    from core.features.recall.processors.topic_splitter import _dummy_embeddings
 
     texts = ["a", "b"]
     vecs = _dummy_embeddings(texts)
@@ -795,7 +795,7 @@ def test_dummy_embeddings_dimension():
 
 
 def test_single_segment_normal():
-    from core.processors.topic_splitter import _single_segment
+    from core.features.recall.processors.topic_splitter import _single_segment
 
     data = {"summary": "test summary", "key_facts": ["fact1"]}
     segments = _single_segment(data, data["key_facts"])
@@ -804,7 +804,7 @@ def test_single_segment_normal():
 
 
 def test_single_segment_empty():
-    from core.processors.topic_splitter import _single_segment
+    from core.features.recall.processors.topic_splitter import _single_segment
 
     segments = _single_segment({"summary": "", "key_facts": []}, [])
     assert segments == []
@@ -814,7 +814,9 @@ def test_single_segment_empty():
 
 
 def test_build_segments_from_clusters_single():
-    from core.processors.topic_splitter import _build_segments_from_clusters
+    from core.features.recall.processors.topic_splitter import (
+        _build_segments_from_clusters,
+    )
 
     data = {"summary": "s", "key_facts": ["f1", "f2"], "importance": 0.5}
     clusters = [["f1", "f2"]]
@@ -823,7 +825,9 @@ def test_build_segments_from_clusters_single():
 
 
 def test_build_segments_from_clusters_multiple():
-    from core.processors.topic_splitter import _build_segments_from_clusters
+    from core.features.recall.processors.topic_splitter import (
+        _build_segments_from_clusters,
+    )
 
     data = {"summary": "s", "key_facts": ["f1", "f2"], "importance": 0.5}
     clusters = [["f1"], ["f2"]]
@@ -834,7 +838,9 @@ def test_build_segments_from_clusters_multiple():
 
 
 def test_build_segments_from_clusters_empty_cluster():
-    from core.processors.topic_splitter import _build_segments_from_clusters
+    from core.features.recall.processors.topic_splitter import (
+        _build_segments_from_clusters,
+    )
 
     data = {"summary": "s"}
     clusters = [["f1"], [], ["f2"]]

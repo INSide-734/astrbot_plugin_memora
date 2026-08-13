@@ -10,7 +10,7 @@ from astrbot.api import logger, sp
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 
-from ..processors.text_processor import TextProcessor
+from ..features.recall.processors.text_processor import TextProcessor
 from .cache_manager import CacheManager, get_cache_manager
 from .data_helpers import (
     OperationContext,

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.processors.topic_splitter import (
+from core.features.recall.processors.topic_splitter import (
     EmbeddingClusteringStrategy,
     HybridSegmentationStrategy,
     PromptSegmentationStrategy,
@@ -615,7 +615,7 @@ class TestPerformanceLatency:
         # NOTE: threshold set to 3.0s (not 1.0s) because in a full test suite
         # concurrent test execution adds system overhead that can push this
         # over tighter limits. In isolation this typically completes < 0.5s.
-        from core.processors.topic_splitter import _similarity_matrix
+        from core.features.recall.processors.topic_splitter import _similarity_matrix
 
         dim = 64
         embeddings = [

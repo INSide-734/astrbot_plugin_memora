@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.processors.prompt_builder import PromptBuilder
+from core.features.recall.processors.prompt_builder import PromptBuilder
 
 
 class TestPromptBuilder:

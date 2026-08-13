@@ -5,7 +5,7 @@ from datetime import datetime
 import pytest
 
 # 导入模块级分类函数。
-from core.processors.atom_classifier import (
+from core.features.recall.processors.atom_classifier import (
     _has_minimal_information,
     _parse_weekday_time,
     classify_atoms,

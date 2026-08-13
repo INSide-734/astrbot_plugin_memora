@@ -14,6 +14,8 @@ import pytest
 from astrbot.api.platform import MessageType
 
 from core.base.config_validator import get_default_config, validate_config
+from core.features.recall.processors.atom_classifier import classify_atoms
+from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.managers.decay_operations import DecayOperationsMixin
 from core.managers.memory_engine import MemoryEngine
 from core.managers.retrieval_optimizer import RetrievalOptimizer
@@ -24,8 +26,6 @@ from core.platform.config import (
     ConfigOwnershipKind,
     resolve_config_ownership,
 )
-from core.processors.atom_classifier import classify_atoms
-from core.processors.memory_processor import MemoryProcessor
 from core.retrieval.rrf_fusion import FusedResult, HybridResult
 from core.retrieval.score_weighting import ScoreWeighting
 from core.tools.memory_search_tool import MemorySearchTool

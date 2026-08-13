@@ -12,6 +12,7 @@ from astrbot.api.platform import MessageType
 
 from ..features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from ..features.observability.application import runtime as observability
+from ..features.recall.processors.memory_processor import MemoryProcessor
 from ..features.reflection.application import llm_budget as budget_ops
 from ..features.reflection.application import reflection_metadata as metadata_ops
 from ..features.reflection.application.candidate_writer import (
@@ -30,7 +31,6 @@ from ..features.reflection.domain.storage_outcomes import (
 from ..managers.conversation_manager import ConversationManager
 from ..managers.memory_engine import MemoryEngine
 from ..platform.config.manager import ConfigManager
-from ..processors.memory_processor import MemoryProcessor
 from ..shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
     PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,

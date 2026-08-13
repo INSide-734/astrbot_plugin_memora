@@ -18,10 +18,10 @@ from astrbot.api import logger
 from ..features.memory.graph.infrastructure.graph_store import GraphStore
 from ..features.memory.infrastructure.atom_store import AtomStore
 from ..features.memory.infrastructure.base import apply_perf_pragmas
+from ..features.recall.processors.graph_extractor import GraphExtractor
+from ..features.recall.processors.text_processor import TextProcessor
 from ..managers.atom_lifecycle_manager import AtomLifecycleManager
 from ..managers.graph_memory_manager import GraphMemoryManager
-from ..processors.graph_extractor import GraphExtractor
-from ..processors.text_processor import TextProcessor
 from ..retrieval.atom_retriever import AtomRetriever
 from ..retrieval.bm25_retriever import BM25Retriever
 from ..retrieval.dual_route_retriever import DualRouteRetriever

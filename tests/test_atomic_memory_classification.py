@@ -7,8 +7,8 @@ from datetime import datetime
 import pytest
 
 from core.features.memory.domain.memory_atom import AtomType
-from core.processors import atom_classifier
-from core.processors.atom_classifier import classify_atoms
+from core.features.recall.processors import atom_classifier
+from core.features.recall.processors.atom_classifier import classify_atoms
 from core.security.guardrails import MemoryAtomSchema
 
 

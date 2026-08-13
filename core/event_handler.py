@@ -26,13 +26,13 @@ from .features.observability.infrastructure.debug_reporter import (
     report_debug_exception,
 )
 from .features.recall.application.injection_cleaner import InjectionCleaner
+from .features.recall.processors.memory_processor import MemoryProcessor
 from .handlers.recall_handler import RecallHandler
 from .handlers.recall_observability import RecallTimingContext
 from .handlers.reflection_handler import ReflectionHandler
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .platform.config.manager import ConfigManager
-from .processors.memory_processor import MemoryProcessor
 from .shared.contracts import IdentityConversationPort
 from .shared.cost_control import CostControl
 from .shared.extra_llm_budget import (

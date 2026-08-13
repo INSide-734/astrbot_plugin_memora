@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.processors.graph_extractor import GraphExtractor
+from core.features.recall.processors.graph_extractor import GraphExtractor
 from core.storage.graph_store import GraphStore
 
 

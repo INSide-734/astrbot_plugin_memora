@@ -55,9 +55,9 @@ from ...features.quality.application.memory_quality_gate import MemoryQualityGat
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
+from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...features.retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ...managers.memory_engine import MemoryEngine
-from ...processors.memory_processor import MemoryProcessor
 from ...shared.cost_control import CostControlConfig
 from ...shared.errors import ProviderNotReadyError
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter
