@@ -42,7 +42,7 @@ from .core.platform.resources import (
     PluginResourceLocator,
     build_package_resource_reader,
 )
-from .core.tools import MemoryMemorizeTool, MemorySearchTool
+from .core.platform.transport.tools import MemoryMemorizeTool, MemorySearchTool
 from .core.utils.version import PLUGIN_VERSION
 from .core.version_check import (  # noqa: F401
     _CURRENT_ASTRBOT_VERSION,
@@ -619,7 +619,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if note_read_enabled or note_write_enabled:
             engine = self.initializer.memory_engine
             if engine and engine.note_manager:
-                from .core.tools.note_tools import (
+                from .core.platform.transport.tools.note_tools import (
                     NoteReadTool,
                     NoteSearchTool,
                     NoteWriteTool,
@@ -635,7 +635,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if self.config_manager.get("agent_tools.enable_knowledge_tools", True):
             engine = self.initializer.memory_engine
             if engine and engine.knowledge_manager:
-                from .core.tools.knowledge_tools import (
+                from .core.platform.transport.tools.knowledge_tools import (
                     KnowledgeReadTool,
                     KnowledgeSearchTool,
                 )
@@ -651,7 +651,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if self.config_manager.get("agent_tools.enable_profile_tools", True):
             engine = self.initializer.memory_engine
             if engine and engine.profile_manager:
-                from .core.tools.profile_tools import ProfileLookupTool
+                from .core.platform.transport.tools.profile_tools import (
+                    ProfileLookupTool,
+                )
 
                 tools.append(ProfileLookupTool(profile_manager=engine.profile_manager))
 
@@ -666,7 +668,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     self.initializer, "jargon_query_service", None
                 )
                 if jargon_query_svc is not None:
-                    from .core.tools.jargon_tools import (
+                    from .core.platform.transport.tools.jargon_tools import (
                         JargonExplainTool,
                         JargonListTool,
                     )
@@ -685,7 +687,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             else:
                 affection_mgr = getattr(self.initializer, "affection_manager", None)
                 if affection_mgr is not None:
-                    from .core.tools.affection_tools import (
+                    from .core.platform.transport.tools.affection_tools import (
                         AffectionCheckTool,
                         BotMoodTool,
                     )
@@ -702,7 +704,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             else:
                 relation_mgr = getattr(self.initializer, "relation_manager", None)
                 if relation_mgr is not None:
-                    from .core.tools.social_tools import (
+                    from .core.platform.transport.tools.social_tools import (
                         RelationGraphTool,
                         RelationLookupTool,
                     )
@@ -721,7 +723,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     self.initializer, "expression_learner", None
                 )
                 if expression_learner is not None:
-                    from .core.tools.expression_tools import ExpressionRecallTool
+                    from .core.platform.transport.tools.expression_tools import (
+                        ExpressionRecallTool,
+                    )
 
                     tools.append(
                         ExpressionRecallTool(expression_learner=expression_learner)

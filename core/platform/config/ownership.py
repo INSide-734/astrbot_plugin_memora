@@ -76,7 +76,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "filtering_settings": _ownership(
         "filtering_settings",
         ConfigOwnershipKind.RUNTIME,
-        "core.tools.memory_search_tool",
+        "core.platform.transport.tools.memory_search_tool",
     ),
     "reflection_engine": _ownership(
         "reflection_engine",

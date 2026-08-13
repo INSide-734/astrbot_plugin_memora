@@ -152,7 +152,8 @@ class TestMemorySearchTool:
         )
 
         with patch(
-            "core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_search_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "p-test"
 
@@ -290,7 +291,8 @@ class TestMemorySearchTool:
         )
 
         with patch(
-            "core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_search_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "p-test"
 
@@ -317,7 +319,8 @@ class TestMemorySearchTool:
         )
 
         with patch(
-            "core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_search_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "p-test"
 
@@ -351,7 +354,8 @@ class TestMemorySearchTool:
         )
 
         with patch(
-            "core.tools.memory_search_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_search_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "p-test"
 
@@ -410,7 +414,8 @@ class TestMemoryMemorizeTool:
         mock_plugin_ctx = MagicMock()
 
         with patch(
-            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_memorize_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "persona-abc"
 
@@ -494,7 +499,8 @@ class TestMemoryMemorizeTool:
         event.get_message_type.return_value = MagicMock(value="PRIVATE_MESSAGE")
 
         with patch(
-            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_memorize_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "p"
 
@@ -529,7 +535,8 @@ class TestMemoryMemorizeTool:
         event.get_message_type.return_value = MagicMock(value="PRIVATE_MESSAGE")
 
         with patch(
-            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_memorize_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "p"
 
@@ -562,7 +569,8 @@ class TestMemoryMemorizeTool:
         event.get_message_type.return_value = MagicMock(value="PRIVATE_MESSAGE")
 
         with patch(
-            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_memorize_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "p"
 
@@ -594,7 +602,8 @@ class TestMemoryMemorizeTool:
         event.get_message_type.return_value = MagicMock(value="PRIVATE_MESSAGE")
 
         with patch(
-            "core.tools.memory_memorize_tool.get_persona_id", new_callable=AsyncMock
+            "core.platform.transport.tools.memory_memorize_tool.get_persona_id",
+            new_callable=AsyncMock,
         ) as mock_gpi:
             mock_gpi.return_value = "p"
 
@@ -616,7 +625,7 @@ class TestMemoryMemorizeTool:
 
 def test_normalize_list_trims_and_limits():
     """列表归一化应去除空白项并限制为五项。"""
-    from core.tools.memory_memorize_tool import _normalize_list
+    from core.platform.transport.tools.memory_memorize_tool import _normalize_list
 
     assert _normalize_list([" a ", " b ", " c "]) == ["a", "b", "c"]
     assert _normalize_list(["  ", "\t"]) == []

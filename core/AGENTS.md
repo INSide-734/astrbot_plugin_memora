@@ -153,7 +153,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`platform/security/AGENTS.md`](platform/security/AGENTS.md)
 - [`features/cognition/social/AGENTS.md`](features/cognition/social/AGENTS.md)
 - [`storage/AGENTS.md`](storage/AGENTS.md)
-- [`tools/AGENTS.md`](tools/AGENTS.md)
+- [`platform/transport/tools/AGENTS.md`](platform/transport/tools/AGENTS.md)
 - [`utils/AGENTS.md`](utils/AGENTS.md)
 - [`validators/AGENTS.md`](validators/AGENTS.md)
 
