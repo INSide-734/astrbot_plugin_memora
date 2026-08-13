@@ -34,6 +34,7 @@ from ..features.recall.processors.stopwords_manager import (
     get_stopwords_manager,
 )
 from ..features.recall.processors.text_processor import TextProcessor
+from ..platform.task_scheduler import TaskScheduler, get_task_scheduler
 from ..shared.cache_manager import CacheManager, get_cache_manager
 from ..shared.data_helpers import (
     OperationContext,
@@ -52,7 +53,6 @@ from ..shared.json_utils import (
     remove_thinking_content,
     safe_parse_llm_json,
 )
-from .task_scheduler import TaskScheduler, get_task_scheduler
 
 
 async def get_persona_id(context: Context, event: AstrMessageEvent) -> str | None:

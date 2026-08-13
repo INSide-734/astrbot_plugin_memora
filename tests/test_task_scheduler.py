@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.utils.task_scheduler import (
+from core.platform.task_scheduler import (
     TaskScheduler,
     _NoOpScheduler,
     get_task_scheduler,
@@ -171,7 +171,7 @@ class TestTaskSchedulerWithAPScheduler:
 class TestTaskSchedulerFallback:
     def test_fallback_when_import_fails(self) -> None:
         with patch(
-            "core.utils.task_scheduler.TaskScheduler._init_scheduler",
+            "core.platform.task_scheduler.TaskScheduler._init_scheduler",
             return_value=None,
         ):
             ts = TaskScheduler.__new__(TaskScheduler)
@@ -212,7 +212,7 @@ class TestTaskSchedulerFallback:
 class TestGetTaskScheduler:
     def test_returns_singleton(self) -> None:
         with patch(
-            "core.utils.task_scheduler.TaskScheduler._init_scheduler",
+            "core.platform.task_scheduler.TaskScheduler._init_scheduler",
             return_value=None,
         ):
             ts1 = get_task_scheduler()
