@@ -43,7 +43,7 @@ from .core.platform.resources import (
     build_package_resource_reader,
 )
 from .core.platform.transport.tools import MemoryMemorizeTool, MemorySearchTool
-from .core.utils.version import PLUGIN_VERSION
+from .core.platform.resources.version import PLUGIN_VERSION
 from .core.version_check import (  # noqa: F401
     _CURRENT_ASTRBOT_VERSION,
     _MIN_ASTRBOT_VERSION,

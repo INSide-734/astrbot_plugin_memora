@@ -16,7 +16,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ....utils.version import PLUGIN_VERSION  # 版本以 metadata.yaml 为唯一来源
+from ....platform.resources.version import PLUGIN_VERSION  # 版本以 metadata.yaml 为唯一来源
 from ..domain import (
     BackupIntegrity,
     BackupOperationError,

@@ -9,8 +9,8 @@ from pathlib import Path
 
 import yaml
 
-# metadata.yaml 位于插件根目录（从 core/utils/version.py 向上 3 层）
-_METADATA_PATH = Path(__file__).resolve().parent.parent.parent / "metadata.yaml"
+# metadata.yaml 位于插件根目录（从 core/platform/resources/version.py 向上 4 层）
+_METADATA_PATH = Path(__file__).resolve().parent.parent.parent.parent / "metadata.yaml"
 
 
 def _load_metadata() -> dict:

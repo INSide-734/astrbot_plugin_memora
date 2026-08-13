@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import yaml
 
-from core.utils.version import PLUGIN_VERSION
+from core.platform.resources.version import PLUGIN_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 

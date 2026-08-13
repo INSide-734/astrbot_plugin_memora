@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit
 import httpx
 from astrbot.api import logger
 
-from ....utils.version import PLUGIN_VERSION
+from ....platform.resources.version import PLUGIN_VERSION
 from ..domain import DownloadedUpdate, UpdateError, UpdateRelease
 
 _REPOSITORY = "INSide-734/astrbot_plugin_memora"
