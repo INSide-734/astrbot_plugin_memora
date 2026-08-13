@@ -6,7 +6,7 @@ from typing import Any
 
 import aiosqlite
 
-from ....models.domain_provenance import (
+from ....shared.domain_provenance import (
     DomainObjectOrigin,
     DomainProvenance,
     merge_domain_provenance,

@@ -7,8 +7,8 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Any
 
-from ..shared.contracts import MemorySourceRef
-from ..shared.temporal import parse_datetime, serialize_datetime
+from .contracts import MemorySourceRef
+from .temporal import parse_datetime, serialize_datetime
 
 _PRIVACY_ORDER = {"public": 0, "shared": 1, "confidential": 2}
 _DOMAIN_SOURCE_ROLES = frozenset({"primary", "supporting"})

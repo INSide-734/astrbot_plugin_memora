@@ -905,7 +905,7 @@ class TestRecallStrategy:
     """测试 RecallStrategy 枚举。"""
 
     def test_all_strategies_exist(self) -> None:
-        from core.models.recall_strategy import RecallStrategy
+        from core.shared.recall_strategy import RecallStrategy
 
         values = {m.value for m in RecallStrategy}
         assert "contextual_similarity" in values
@@ -914,7 +914,7 @@ class TestRecallStrategy:
         assert "relationship_review" in values
 
     def test_is_string_enum(self) -> None:
-        from core.models.recall_strategy import RecallStrategy
+        from core.shared.recall_strategy import RecallStrategy
 
         assert RecallStrategy.CONTEXTUAL_SIMILARITY == "contextual_similarity"
 
@@ -923,7 +923,7 @@ class TestRecallRequest:
     """测试 RecallRequest 冻结数据类。"""
 
     def test_basic_request_creation(self) -> None:
-        from core.models.recall_strategy import RecallRequest, RecallStrategy
+        from core.shared.recall_strategy import RecallRequest, RecallStrategy
 
         req = RecallRequest(
             strategy=RecallStrategy.CONTEXTUAL_SIMILARITY,
@@ -938,7 +938,7 @@ class TestRecallRequest:
         assert req.memory_types is None
 
     def test_request_with_optional_fields(self) -> None:
-        from core.models.recall_strategy import RecallRequest, RecallStrategy
+        from core.shared.recall_strategy import RecallRequest, RecallStrategy
 
         req = RecallRequest(
             strategy=RecallStrategy.TOPIC_ASSOCIATION,
@@ -956,7 +956,7 @@ class TestRecallRequest:
         assert req.memory_types == ["EPISODIC", "FACTUAL"]
 
     def test_request_is_frozen(self) -> None:
-        from core.models.recall_strategy import RecallRequest, RecallStrategy
+        from core.shared.recall_strategy import RecallRequest, RecallStrategy
 
         req = RecallRequest(
             strategy=RecallStrategy.PREFERENCE_QUERY,
@@ -975,7 +975,7 @@ class TestRecallRequest:
         ],
     )
     def test_all_strategies_can_create_request(self, strategy: str) -> None:
-        from core.models.recall_strategy import RecallRequest, RecallStrategy
+        from core.shared.recall_strategy import RecallRequest, RecallStrategy
 
         strat = getattr(RecallStrategy, strategy)
         req = RecallRequest(strategy=strat, query="test")

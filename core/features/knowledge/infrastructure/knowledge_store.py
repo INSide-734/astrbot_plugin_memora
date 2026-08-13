@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any
 
-from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ....shared.list_sorting import SortQuery, order_by_clause
 from ...memory.infrastructure.base import BaseStore
 from ...memory.infrastructure.domain_object_integrity import (

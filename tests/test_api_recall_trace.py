@@ -11,7 +11,7 @@ import pytest
 from core.features.retrieval.explainable_recall import capture_explainable_recall
 from core.features.retrieval.trace_models import RecallTrace, TraceResult, TraceStage
 from core.features.retrieval.trace_store import RecallTraceStore
-from core.models.recall_strategy import RecallStrategy
+from core.shared.recall_strategy import RecallStrategy
 from core.page_api import PluginPageApi
 
 

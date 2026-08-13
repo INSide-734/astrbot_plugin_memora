@@ -10,7 +10,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ....models.recall_strategy import RecallStrategy
+from ....shared.recall_strategy import RecallStrategy
 from ....shared.temporal import canonical_visible_at, normalize_datetime
 from ....utils.number_utils import clamp_float
 from ...observability.application.memory_write_timing import (

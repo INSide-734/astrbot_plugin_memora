@@ -16,7 +16,7 @@ from core.features.retrieval.dual_route_fusion import (
 from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 from core.features.retrieval.graph_retriever import GraphResult
 from core.features.retrieval.rrf_fusion import HybridResult
-from core.models.recall_strategy import RecallStrategy
+from core.shared.recall_strategy import RecallStrategy
 
 
 def _document_result(doc_id: int, score: float) -> HybridResult:

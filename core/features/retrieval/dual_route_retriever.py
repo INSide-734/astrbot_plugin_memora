@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ...models.recall_strategy import RecallStrategy
+from ...shared.recall_strategy import RecallStrategy
 from ...shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,

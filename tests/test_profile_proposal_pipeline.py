@@ -14,7 +14,7 @@ from core.features.profiles.application.profile_proposal_pipeline import (
     ProfileProposalPipeline,
 )
 from core.features.profiles.domain.models import TagCategory, UserTag
-from core.models.domain_provenance import DomainObjectOrigin
+from core.shared.domain_provenance import DomainObjectOrigin
 from core.shared.contracts import MemorySourceRef
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 

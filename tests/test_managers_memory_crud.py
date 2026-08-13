@@ -11,7 +11,7 @@ import pytest
 
 import core.features.observability.infrastructure.metrics as monitoring_metrics
 from core.features.memory.application.memory_engine import MemoryEngine
-from core.models.recall_strategy import RecallStrategy
+from core.shared.recall_strategy import RecallStrategy
 
 
 def _metric_sample_value(

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ....models.domain_provenance import DomainObjectOrigin
+from ....shared.domain_provenance import DomainObjectOrigin
 from ..domain.models import UserPreferences
 
 

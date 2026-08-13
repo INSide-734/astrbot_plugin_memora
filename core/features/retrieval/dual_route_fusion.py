@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from ...models.recall_strategy import RecallStrategy
+from ...shared.recall_strategy import RecallStrategy
 from .intent_keywords import FACTUAL_TERMS, RELATION_TERMS, TEMPORAL_TERMS
 from .rrf_fusion import HybridResult
 

@@ -409,7 +409,7 @@ class TestDualRouteRetriever:
         self, retriever: Any, strategy: str, expected_doc: float, expected_graph: float
     ) -> None:
         """每个 RecallStrategy 都应映射到预定义的文档/图路权重。"""
-        from core.models.recall_strategy import RecallStrategy
+        from core.shared.recall_strategy import RecallStrategy
 
         s = RecallStrategy(strategy)
         doc_w, graph_w = retriever._compute_strategy_weights(s)
@@ -972,7 +972,7 @@ class TestDualRouteRetriever:
     ) -> None:
         """向 search() 传入 strategy 时应触发 _compute_strategy_weights。"""
         from core.features.retrieval.dual_route_retriever import DualRouteRetriever
-        from core.models.recall_strategy import RecallStrategy
+        from core.shared.recall_strategy import RecallStrategy
 
         doc_retriever.search.return_value = [
             _make_hybrid(1, 0.9, "content", {"importance": 0.5}),

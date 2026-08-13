@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.models.domain_provenance import (
+from core.shared.domain_provenance import (
     DomainObjectOrigin,
     DomainProvenance,
     merge_domain_provenance,

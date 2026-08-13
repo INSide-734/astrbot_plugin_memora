@@ -12,7 +12,7 @@ import pytest
 from core.features.profiles.application.profile_manager import ProfileManager
 from core.features.profiles.domain.models import TagCategory, UserPreferences, UserTag
 from core.features.profiles.infrastructure.profile_store import ProfileStore
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.shared.contracts import MemorySourceRef
 from core.shared.entity_editing import (
     EntityNotFoundError,

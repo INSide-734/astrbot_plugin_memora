@@ -6,7 +6,7 @@ import time as _time
 
 from astrbot.api import logger
 
-from ....models.domain_provenance import (
+from ....shared.domain_provenance import (
     DomainObjectOrigin,
     DomainProvenance,
     merge_domain_provenance,

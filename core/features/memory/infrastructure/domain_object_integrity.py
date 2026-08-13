@@ -8,7 +8,7 @@ from typing import Any, Iterable, TypeVar
 
 import aiosqlite
 
-from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from .canonical_source_validation import (
     load_canonical_source_states,
     source_matches_state,

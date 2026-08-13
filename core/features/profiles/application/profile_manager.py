@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
-from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ....shared.entity_editing import (
     EntityNotFoundError,
     EntityValidationError,

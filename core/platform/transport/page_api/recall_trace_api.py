@@ -18,7 +18,7 @@ from ....features.observability.infrastructure.debug_reporter import (
 )
 from ....features.retrieval.explainable_recall import capture_explainable_recall
 from ....features.retrieval.trace_store import RecallTraceStore
-from ....models.recall_strategy import RecallStrategy
+from ....shared.recall_strategy import RecallStrategy
 
 
 class RecallTraceApiMixin:

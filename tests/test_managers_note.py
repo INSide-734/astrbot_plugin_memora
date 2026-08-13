@@ -9,7 +9,7 @@ import pytest
 
 from core.features.notes.application import NoteManager
 from core.features.notes.domain import Note, NoteStatus, NoteVersion
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
+from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.shared.contracts import MemorySourceRef
 
 
