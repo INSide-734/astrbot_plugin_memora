@@ -23,7 +23,7 @@ from core.features.injection.domain.models import (
     RoutingMode,
 )
 from core.platform.security import prompt_sanitizer as prompt_sanitizer_module
-from core.utils.injection_adapter import InjectionAdapter
+from core.features.injection.application.injection_adapter import InjectionAdapter
 
 
 def test_injection_protection_modules_use_astrbot_logger() -> None:

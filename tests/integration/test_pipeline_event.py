@@ -19,8 +19,8 @@ from core.shared.constants import (
     MEMORY_INJECTION_FOOTER,
     MEMORY_INJECTION_HEADER,
 )
-from core.utils.injection_adapter import InjectionAdapter
-from core.utils.memory_formatter import format_memories_for_injection
+from core.features.injection.application.injection_adapter import InjectionAdapter
+from core.features.injection.application.memory_formatter import format_memories_for_injection
 
 # =============================================================================
 # Helpers

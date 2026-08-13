@@ -2,7 +2,7 @@
 
 from core.features.injection.domain.models import ContentLevel
 from core.shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
-from core.utils.injection_budget import (
+from core.features.injection.application.injection_budget import (
     InjectionBudget,
     format_compact_footer,
     format_compact_header,
@@ -10,7 +10,7 @@ from core.utils.injection_budget import (
     format_full_header,
     select_memories_with_budget,
 )
-from core.utils.memory_formatter import format_memories_for_injection
+from core.features.injection.application.memory_formatter import format_memories_for_injection
 
 
 def _memory(content: str, score: float = 1.0) -> dict:

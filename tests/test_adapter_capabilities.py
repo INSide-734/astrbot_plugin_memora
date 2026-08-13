@@ -506,7 +506,7 @@ def test_injection_provider_contract_preserves_legacy_tuple_and_safe_summary() -
     """Provider 新 contract 不得破坏旧 tuple 调用方，也不得输出实例身份。"""
 
     from core.shared.adapter_capabilities import AdapterCapability
-    from core.utils.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_adapter import InjectionAdapter
 
     provider = MagicMock()
     provider.provider_config = {"type": "openai_chat_completion", "id": "secret-id"}
@@ -528,7 +528,7 @@ def test_injection_unknown_provider_does_not_infer_runtime_capabilities() -> Non
     """未知 Provider 不得因 MagicMock 属性或方法存在而获得能力。"""
 
     from core.shared.adapter_capabilities import AdapterCapability
-    from core.utils.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_adapter import InjectionAdapter
 
     snapshot = InjectionAdapter().describe_capabilities(MagicMock())
 

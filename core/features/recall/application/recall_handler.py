@@ -63,8 +63,8 @@ if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import ProviderRequest
 
+    from ....features.injection.application.injection_adapter import InjectionAdapter
     from ....shared.contracts import PromptProtectionPort
-    from ....utils.injection_adapter import InjectionAdapter
     from ...identity.application.enricher import MemoryIdentityEnricher
     from ...injection.infrastructure.recorder import InjectionDecisionRecorder
 

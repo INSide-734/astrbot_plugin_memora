@@ -184,7 +184,7 @@ def build_memories() -> list[Any]:
 
 def build_handler(retrieval_delay_ms: float) -> tuple[Any, HandlerBenchmarkProvider]:
     import core.features.recall.application.recall_handler as recall_module
-    from core.utils.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_adapter import InjectionAdapter
 
     provider = HandlerBenchmarkProvider()
     constructor_values: dict[str, Any] = {

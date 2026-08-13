@@ -10,6 +10,11 @@ from astrbot.api import logger, sp
 from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 
+from ..features.injection.application.memory_formatter import (
+    format_memories_for_fake_tool_call,
+    format_memories_for_fake_tool_call_deepseek_v4,
+    format_memories_for_injection,
+)
 from ..features.recall.processors.text_processor import TextProcessor
 from ..shared.cache_manager import CacheManager, get_cache_manager
 from ..shared.data_helpers import (
@@ -37,11 +42,6 @@ from .diversity_manager import (
     HomogeneityReport,
     ResponseDiversityManager,
     VariationComposition,
-)
-from .memory_formatter import (
-    format_memories_for_fake_tool_call,
-    format_memories_for_fake_tool_call_deepseek_v4,
-    format_memories_for_injection,
 )
 from .stopwords_manager import StopwordsManager, get_stopwords_manager
 from .style_analyzer import StyleAnalyzer, StyleEvolution, StyleProfile

@@ -72,8 +72,8 @@ if not _HANDLER_WORKER_MODE:
         RequestSignals,
         RoutingMode,
     )
-    from core.utils.injection_adapter import InjectionAdapter
-    from core.utils.injection_budget import (
+    from core.features.injection.application.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_budget import (
         InjectionBudget,
         select_memories_with_budget,
     )

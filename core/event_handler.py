@@ -19,6 +19,7 @@ from .features.conversation.application.message_content_extractor import (
     MessageContentExtractor,
 )
 from .features.identity.domain.models import IdentityTrust, ResolvedIdentity
+from .features.injection.application.injection_adapter import InjectionAdapter
 from .features.memory.application.memory_engine import MemoryEngine
 from .features.observability.application.runtime import monitored
 from .features.observability.infrastructure.debug_reporter import (
@@ -40,7 +41,6 @@ from .shared.extra_llm_budget import (
     ExtraLlmBudgetObservation,
     extra_llm_budget_scope,
 )
-from .utils.injection_adapter import InjectionAdapter
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent

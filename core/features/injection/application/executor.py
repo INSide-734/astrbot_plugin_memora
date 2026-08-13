@@ -13,8 +13,11 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from astrbot.core.agent.message import TextPart
 
+from ....features.injection.application.injection_budget import (
+    InjectionBudget,
+    InjectionStats,
+)
 from ....shared.constants import FAKE_TOOL_CALL_ID_PREFIX, FAKE_TOOL_CALL_NAME
-from ....utils.injection_budget import InjectionBudget, InjectionStats
 from ..domain.models import (
     ContentLevel,
     DeliveryMode,
@@ -26,8 +29,8 @@ from ..domain.models import (
 from .selection import candidate_utility, select_candidates
 
 if TYPE_CHECKING:
+    from ....features.injection.application.injection_adapter import InjectionAdapter
     from ....shared.contracts import PromptProtectionPort
-    from ....utils.injection_adapter import InjectionAdapter
 
 __all__ = ["InjectionExecutionContext", "InjectionExecutor", "candidate_utility"]
 
@@ -467,6 +470,8 @@ def format_memories_for_injection(
     content_level: ContentLevel = ContentLevel.COMPACT,
 ) -> str | tuple[str, InjectionStats]:
     """Load the formatter on demand without creating an import cycle."""
-    from ....utils.memory_formatter import format_memories_for_injection as formatter
+    from ....features.injection.application.memory_formatter import (
+        format_memories_for_injection as formatter,
+    )
 
     return formatter(memories, budget=budget, content_level=content_level)

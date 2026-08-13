@@ -27,8 +27,8 @@ from core.features.injection.domain.models import (
     RequestSignals,
     RoutingMode,
 )
-from core.utils.injection_adapter import InjectionAdapter
-from core.utils.injection_budget import InjectionStats
+from core.features.injection.application.injection_adapter import InjectionAdapter
+from core.features.injection.application.injection_budget import InjectionStats
 
 
 async def build_executor_case(req):
@@ -810,10 +810,10 @@ async def test_fake_tool_deliveries_consume_verified_payload_not_raw_memories(
         )
 
     monkeypatch.setattr(
-        "core.utils.memory_formatter.format_memories_for_fake_tool_call", forbidden
+        "core.features.injection.application.memory_formatter.format_memories_for_fake_tool_call", forbidden
     )
     monkeypatch.setattr(
-        "core.utils.memory_formatter.format_memories_for_fake_tool_call_deepseek_v4",
+        "core.features.injection.application.memory_formatter.format_memories_for_fake_tool_call_deepseek_v4",
         forbidden,
     )
     result = await InjectionExecutor(InjectionAdapter()).execute(

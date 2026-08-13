@@ -734,7 +734,7 @@ class TestReflectionHandlerPromptProtection:
             ReflectionHandler,
         )
         from core.platform.security.prompt_sanitizer import PromptProtectionService
-        from core.utils.injection_adapter import InjectionAdapter
+        from core.features.injection.application.injection_adapter import InjectionAdapter
 
         secret = "outbound unique secret alpha beta gamma delta epsilon"
         service = PromptProtectionService(enable_double_check=False)
@@ -1593,7 +1593,7 @@ async def test_provider_getter_exception_continues_recall_and_record(
 async def test_provider_get_model_exception_uses_conservative_capabilities(
     handler_case,
 ) -> None:
-    from core.utils.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_adapter import InjectionAdapter
 
     case = handler_case(config=strategy_config(), memories=high_confidence_memories())
     provider = MagicMock()

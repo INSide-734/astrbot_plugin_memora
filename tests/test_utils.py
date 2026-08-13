@@ -22,8 +22,8 @@ from core.shared.data_helpers import (
     safe_serialize_metadata,
     validate_timestamp,
 )
-from core.utils.injection_budget import InjectionBudget, InjectionStats
-from core.utils.memory_formatter import (
+from core.features.injection.application.injection_budget import InjectionBudget, InjectionStats
+from core.features.injection.application.memory_formatter import (
     format_memories_for_fake_tool_call,
     format_memories_for_fake_tool_call_deepseek_v4,
     format_memories_for_injection,

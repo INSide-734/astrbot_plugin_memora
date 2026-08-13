@@ -150,7 +150,7 @@ def select_memories_with_budget(
 
 def format_compact_header() -> str:
     """紧凑版注入头部 — 缩减安全规则英文文本，降低 token 开销。"""
-    from ..shared.constants import MEMORY_INJECTION_HEADER
+    from ....shared.constants import MEMORY_INJECTION_HEADER
 
     return (
         f"{MEMORY_INJECTION_HEADER}\n"
@@ -161,7 +161,7 @@ def format_compact_header() -> str:
 
 def format_full_header() -> str:
     """完整版注入头部 — 包含详细英文安全规则。"""
-    from ..shared.constants import MEMORY_INJECTION_HEADER
+    from ....shared.constants import MEMORY_INJECTION_HEADER
 
     return (
         f"{MEMORY_INJECTION_HEADER}\n"
@@ -179,14 +179,14 @@ def format_full_header() -> str:
 
 def format_compact_footer() -> str:
     """紧凑版注入尾部 — 保留清理器识别所需的稳定边界。"""
-    from ..shared.constants import MEMORY_INJECTION_FOOTER
+    from ....shared.constants import MEMORY_INJECTION_FOOTER
 
     return f"\n{MEMORY_INJECTION_FOOTER}"
 
 
 def format_full_footer() -> str:
     """完整版注入尾部 — 包含详细英文提醒。"""
-    from ..shared.constants import MEMORY_INJECTION_FOOTER
+    from ....shared.constants import MEMORY_INJECTION_FOOTER
 
     return (
         f"\n\n"

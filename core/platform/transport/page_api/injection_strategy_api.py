@@ -9,6 +9,7 @@ from uuid import UUID
 from astrbot.api import logger
 from quart import request
 
+from ....features.injection.application.injection_adapter import InjectionAdapter
 from ....features.injection.application.presets import PRESETS
 from ....features.injection.domain.models import (
     DeliveryMode,
@@ -20,7 +21,6 @@ from ....features.injection.infrastructure.injection_decision_store import (
     DecisionQuery,
     InjectionDecisionStore,
 )
-from ....utils.injection_adapter import InjectionAdapter
 from .response_utils import error_response, ok_response
 
 _WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
