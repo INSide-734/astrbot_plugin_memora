@@ -7,7 +7,7 @@ from astrbot.api import logger
 from quart import request
 
 from ....features.memory.infrastructure.base import apply_perf_pragmas
-from ....utils.number_utils import clamp_float
+from ....shared.number_utils import clamp_float
 from .response_utils import error_response
 
 

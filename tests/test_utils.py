@@ -15,7 +15,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # data_helpers tests
 # ---------------------------------------------------------------------------
-from core.utils.data_helpers import (
+from core.shared.data_helpers import (
     OperationContext,
     retry_on_failure,
     safe_parse_metadata,
@@ -28,7 +28,7 @@ from core.utils.memory_formatter import (
     format_memories_for_fake_tool_call_deepseek_v4,
     format_memories_for_injection,
 )
-from core.utils.number_utils import clamp_float, safe_float
+from core.shared.number_utils import clamp_float, safe_float
 from core.utils.stopwords_manager import StopwordsManager, get_stopwords_manager
 
 
@@ -186,7 +186,7 @@ class TestRetryOnFailure:
             return 7
 
         with patch(
-            "core.utils.data_helpers.asyncio.sleep", new_callable=AsyncMock
+            "core.shared.data_helpers.asyncio.sleep", new_callable=AsyncMock
         ) as mock_sleep:
             await retry_on_failure(
                 flaky_func, max_retries=5, backoff_factor=2.0, exceptions=(ValueError,)
@@ -836,19 +836,19 @@ class TestGetNowDatetimeFromContext:
 
 class TestDataHelpersEdgeCases:
     def test_safe_parse_metadata_string_with_special_chars(self) -> None:
-        from core.utils.data_helpers import safe_parse_metadata
+        from core.shared.data_helpers import safe_parse_metadata
 
         result = safe_parse_metadata('{"key": "value with \\"quotes\\""}')
         assert isinstance(result, dict)
 
     def test_validate_timestamp_float_edge(self) -> None:
-        from core.utils.data_helpers import validate_timestamp
+        from core.shared.data_helpers import validate_timestamp
 
         assert validate_timestamp(0.0) == 0.0
         assert validate_timestamp(-1.0) == -1.0
 
     def test_validate_timestamp_bool(self) -> None:
-        from core.utils.data_helpers import validate_timestamp
+        from core.shared.data_helpers import validate_timestamp
 
         # bool is a subclass of int in Python, so True == 1 as float
         result = validate_timestamp(True, 42.0)
@@ -856,7 +856,7 @@ class TestDataHelpersEdgeCases:
 
     @pytest.mark.asyncio
     async def test_retry_on_failure_sync_success(self) -> None:
-        from core.utils.data_helpers import retry_on_failure
+        from core.shared.data_helpers import retry_on_failure
 
         def good() -> int:
             return 1
@@ -866,7 +866,7 @@ class TestDataHelpersEdgeCases:
 
     @pytest.mark.asyncio
     async def test_retry_no_exceptions_tuple_uses_default(self) -> None:
-        from core.utils.data_helpers import retry_on_failure
+        from core.shared.data_helpers import retry_on_failure
 
         def fail() -> int:
             raise ValueError("fail")
@@ -876,7 +876,7 @@ class TestDataHelpersEdgeCases:
 
     @pytest.mark.asyncio
     async def test_operation_context_start_time(self) -> None:
-        from core.utils.data_helpers import OperationContext
+        from core.shared.data_helpers import OperationContext
 
         ctx = OperationContext("op")
         assert ctx.start_time is None
@@ -886,7 +886,7 @@ class TestDataHelpersEdgeCases:
 
     @pytest.mark.asyncio
     async def test_operation_context_with_exception(self) -> None:
-        from core.utils.data_helpers import OperationContext
+        from core.shared.data_helpers import OperationContext
 
         ctx = OperationContext("failing_op", session_id="s1")
         try:

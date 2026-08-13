@@ -55,7 +55,7 @@ from .platform.transport.page_api.topic_segmentation_api import (
     TopicSegmentationApiMixin,
 )
 from .platform.transport.page_api.update_api import UpdateApiMixin
-from .utils.number_utils import safe_float
+from .shared.number_utils import safe_float
 
 PLUGIN_NAME = "astrbot_plugin_memora"
 PAGE_API_PREFIX = f"/{PLUGIN_NAME}/page"

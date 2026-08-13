@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from ...shared.temporal import normalize_datetime, parse_datetime
-from ...utils.number_utils import clamp_float
+from ...shared.number_utils import clamp_float
 from .rrf_fusion import HybridResult
 
 if TYPE_CHECKING:

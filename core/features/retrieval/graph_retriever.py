@@ -22,7 +22,7 @@ from ...shared.adapter_capabilities import (
     ScoreSemantics,
 )
 from ...shared.temporal import normalize_datetime
-from ...utils.number_utils import clamp_float, safe_float
+from ...shared.number_utils import clamp_float, safe_float
 from ..memory.domain.memory_atom import compute_decay_score
 from .graph_keyword_retriever import GraphKeywordRetriever
 from .graph_vector_retriever import GraphVectorRetriever

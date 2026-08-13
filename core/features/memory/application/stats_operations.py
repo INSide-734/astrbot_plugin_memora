@@ -21,7 +21,7 @@ from typing import Any, Iterable
 
 from astrbot.api import logger
 
-from ....utils.number_utils import clamp_float, safe_float
+from ....shared.number_utils import clamp_float, safe_float
 from ...decay.application.operations import _normalize_batch_metadata
 from ..infrastructure.sql_contract import (
     MEMORY_FTS_OPTIMIZE_SQL,

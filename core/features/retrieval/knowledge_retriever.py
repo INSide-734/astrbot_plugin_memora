@@ -209,9 +209,9 @@ class KnowledgeRetriever:
 def _tokenize(text: str) -> set[str]:
     """委托共享的关键词分词器处理文本。
 
-    参见 :func:`core.utils.text_utils.tokenize_keywords`。
+    参见 :func:`core.shared.text_utils.tokenize_keywords`。
     """
-    from ...utils.text_utils import tokenize_keywords
+    from ...shared.text_utils import tokenize_keywords
 
     return tokenize_keywords(text)
 

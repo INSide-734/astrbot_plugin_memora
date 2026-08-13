@@ -7,7 +7,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ....utils.number_utils import clamp_float, safe_float
+from ....shared.number_utils import clamp_float, safe_float
 from ...memory.application.write_coordinator import (
     ConnectionRegistry,
     check_db_alive,

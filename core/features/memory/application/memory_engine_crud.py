@@ -12,7 +12,7 @@ from astrbot.api import logger
 
 from ....shared.recall_strategy import RecallStrategy
 from ....shared.temporal import canonical_visible_at, normalize_datetime
-from ....utils.number_utils import clamp_float
+from ....shared.number_utils import clamp_float
 from ...observability.application.memory_write_timing import (
     measure_memory_write_stage,
 )

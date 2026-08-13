@@ -10,7 +10,7 @@ import math
 
 from astrbot.api import logger
 
-from ...utils.number_utils import clamp_float, safe_float
+from ...shared.number_utils import clamp_float, safe_float
 from .rrf_fusion import FusedResult, HybridResult
 
 

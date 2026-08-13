@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 from ....shared.temporal import canonical_visible_at, reference_time_key
-from ....utils.number_utils import safe_float
+from ....shared.number_utils import safe_float
 from ...retrieval.rrf_fusion import HybridResult
 from .human_like_recall import (
     apply_emotion_boost as apply_human_like_emotion_boost,

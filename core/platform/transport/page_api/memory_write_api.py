@@ -7,7 +7,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ....utils.number_utils import clamp_float
+from ....shared.number_utils import clamp_float
 from .history_tracker import HistoryTracker
 from .response_utils import error_response
 

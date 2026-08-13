@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from ....utils.number_utils import safe_float
+from ....shared.number_utils import safe_float
 from ...retrieval.emotion_scorer import compute_emotion_boost, emotion_similarity
 from ...retrieval.rrf_fusion import HybridResult
 from ...retrieval.seasonal_recall import seasonal_boost

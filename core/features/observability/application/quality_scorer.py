@@ -613,7 +613,7 @@ class MemoryQualityScorer:
 
 def _tokenize(text: str) -> list[str]:
     """委托给共享的双字分词器处理。"""
-    from ....utils.text_utils import tokenize_bigrams
+    from ....shared.text_utils import tokenize_bigrams
 
     return tokenize_bigrams(text)
 

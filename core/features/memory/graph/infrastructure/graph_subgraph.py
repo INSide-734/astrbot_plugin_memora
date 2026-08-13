@@ -8,7 +8,7 @@ from typing import Any
 
 import aiosqlite
 
-from .....utils.number_utils import safe_float
+from .....shared.number_utils import safe_float
 from ...infrastructure.base import BaseStore
 
 

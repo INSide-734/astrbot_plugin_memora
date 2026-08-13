@@ -15,7 +15,7 @@ import time
 
 from astrbot.api import logger
 
-from ....utils.number_utils import clamp_float, safe_float
+from ....shared.number_utils import clamp_float, safe_float
 from ...decay.application.operations import _normalize_batch_metadata
 from .write_coordinator import ConnectionRegistry, check_db_alive, is_connection_fatal
 
