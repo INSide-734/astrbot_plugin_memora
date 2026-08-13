@@ -210,7 +210,7 @@ class MemoryEngineLifecycleMixin:
                 )
                 await self.atom_lifecycle_manager.start()
             self.graph_extractor = GraphExtractor(self.config)
-            from ....storage.hierarchy_store import EntityHierarchyStore
+            from ..infrastructure.hierarchy_store import EntityHierarchyStore
 
             self.hierarchy_store = EntityHierarchyStore(self.db_connection)
             await self.hierarchy_store.init_table()

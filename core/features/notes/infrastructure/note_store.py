@@ -7,11 +7,11 @@ import time
 from typing import Any
 
 from ....models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from ....storage.domain_object_integrity import (
+from ...memory.infrastructure.base import BaseStore
+from ...memory.infrastructure.domain_object_integrity import (
     filter_current_domain_objects,
     validate_domain_object_write,
 )
-from ...memory.infrastructure.base import BaseStore
 from ..domain.models import Note, NoteStatus, NoteVersion
 
 _CREATE_NOTES = """CREATE TABLE IF NOT EXISTS notes (

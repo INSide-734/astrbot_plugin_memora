@@ -11,10 +11,12 @@ from ....models.domain_provenance import (
     DomainProvenance,
     merge_domain_provenance,
 )
-from ....storage.domain_object_integrity import filter_current_domain_objects
 from ...memory.infrastructure.base import BaseStore
 from ...memory.infrastructure.canonical_source_validation import (
     validate_domain_provenance,
+)
+from ...memory.infrastructure.domain_object_integrity import (
+    filter_current_domain_objects,
 )
 from ..domain.models import TagCategory, UserTag
 

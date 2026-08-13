@@ -13,8 +13,8 @@ from ...shared.adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
-from ...storage.hierarchy_store import EntityHierarchyStore
 from ..memory.graph.infrastructure.graph_store import GraphStore
+from ..memory.infrastructure.hierarchy_store import EntityHierarchyStore
 from ..recall.processors.text_processor import TextProcessor
 
 
