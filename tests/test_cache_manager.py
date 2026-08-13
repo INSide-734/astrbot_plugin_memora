@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from core.utils.cache_manager import (
+from core.shared.cache_manager import (
     CacheManager,
     _LRUCache,
     _TTLCache,

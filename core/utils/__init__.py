@@ -11,6 +11,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.star import Context
 
 from ..features.recall.processors.text_processor import TextProcessor
+from ..shared.cache_manager import CacheManager, get_cache_manager
 from ..shared.data_helpers import (
     OperationContext,
     retry_on_failure,
@@ -28,7 +29,6 @@ from ..shared.json_utils import (
     remove_thinking_content,
     safe_parse_llm_json,
 )
-from .cache_manager import CacheManager, get_cache_manager
 from .diversity_manager import (
     EXPRESSION_VARIATIONS,
     LANGUAGE_STYLES,
