@@ -12,7 +12,7 @@ import pytest
 
 from core.features.cognition.jargon.jargon_store import JargonStore
 from core.features.cognition.jargon.models import JargonMeaning
-from core.page_api import (
+from core.platform.transport.page_api.page_api import (
     PAGE_API_ALIAS_PREFIXES,
     PAGE_API_PREFIX,
     PLUGIN_NAME,
@@ -1407,7 +1407,7 @@ class TestMaintenanceWriteGuard:
         backup_manager.list_pending_restores.side_effect = RuntimeError(secret)
         api = PluginPageApi(SimpleNamespace(_backup_manager=backup_manager))
 
-        with patch("core.page_api.logger.debug") as log_debug:
+        with patch("core.platform.transport.page_api.page_api.logger.debug") as log_debug:
             result = api._maintenance_write_guard()
 
         assert result == {
@@ -2308,7 +2308,7 @@ class TestMaintenanceWriteGuardCoverage:
         )
 
         with (
-            patch("core.page_api.logger.error") as log_error,
+            patch("core.platform.transport.page_api.page_api.logger.error") as log_error,
             patch("core.platform.transport.page_api.profile_api.request", request_mock),
         ):
             result = await api.create_profile()

@@ -12,7 +12,7 @@ from core.features.retrieval.explainable_recall import capture_explainable_recal
 from core.features.retrieval.trace_models import RecallTrace, TraceResult, TraceStage
 from core.features.retrieval.trace_store import RecallTraceStore
 from core.shared.recall_strategy import RecallStrategy
-from core.page_api import PluginPageApi
+from core.platform.transport.page_api.page_api import PluginPageApi
 
 
 def _trace(

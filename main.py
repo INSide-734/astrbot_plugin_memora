@@ -153,7 +153,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             return
 
         try:
-            from .core.page_api import PluginPageApi
+            from .core.platform.transport.page_api.page_api import PluginPageApi
         except Exception as exc:
             logger.warning(
                 f"官方插件页面 API 不可用，已跳过注册并保留旧版兼容模式：{exc}"

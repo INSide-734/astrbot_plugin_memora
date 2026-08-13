@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.page_api import PAGE_API_PREFIX, PluginPageApi
+from core.platform.transport.page_api.page_api import PAGE_API_PREFIX, PluginPageApi
 from core.review import (
     ReviewAction,
     ReviewItem,

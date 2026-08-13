@@ -23,7 +23,7 @@ from core.features.observability.infrastructure import debug_reporter
 from core.features.recall.application.recall_handler import RecallHandler
 from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.features.retrieval.trace_store import RecallTraceStore
-from core.page_api import PluginPageApi
+from core.platform.transport.page_api.page_api import PluginPageApi
 
 
 @pytest.fixture(autouse=True)

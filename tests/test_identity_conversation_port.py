@@ -78,7 +78,7 @@ def test_command_handler_retains_explicit_identity_port() -> None:
 async def test_page_ready_context_exposes_initializer_identity_port() -> None:
     """Page 就绪上下文必须直接发布组合根拥有的身份端口。"""
 
-    from core.page_api import PluginPageApi
+    from core.platform.transport.page_api.page_api import PluginPageApi
 
     runtime = MagicMock()
     plugin = MagicMock()

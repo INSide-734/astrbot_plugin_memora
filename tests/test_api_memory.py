@@ -1046,7 +1046,7 @@ class TestMemoryWriteValidation:
 
     @pytest.mark.asyncio
     async def test_update_memory_rejected_during_pending_restore(self) -> None:
-        from core.page_api import PluginPageApi
+        from core.platform.transport.page_api.page_api import PluginPageApi
         from core.platform.transport.page_api.memory_write_api import (
             MemoryWriteApiMixin,
         )

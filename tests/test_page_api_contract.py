@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from core.page_api import PAGE_API_ALIAS_PREFIXES, PAGE_API_PREFIX, PluginPageApi
+from core.platform.transport.page_api.page_api import PAGE_API_ALIAS_PREFIXES, PAGE_API_PREFIX, PluginPageApi
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_SRC = REPO_ROOT / "pages" / "dashboard" / "src"

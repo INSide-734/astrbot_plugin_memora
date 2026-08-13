@@ -15,7 +15,7 @@ from core.features.evolution.domain import (
     RelationView,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
-from core.page_api import PAGE_API_PREFIX, PluginPageApi
+from core.platform.transport.page_api.page_api import PAGE_API_PREFIX, PluginPageApi
 
 
 def _mock_request(*, args: dict[str, str] | None = None, payload=None):

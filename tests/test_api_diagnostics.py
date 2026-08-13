@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.features.diagnostics.infrastructure.event_store import DiagnosticEventStore
-from core.page_api import PAGE_API_PREFIX, PluginPageApi
+from core.platform.transport.page_api.page_api import PAGE_API_PREFIX, PluginPageApi
 
 
 @pytest.fixture
