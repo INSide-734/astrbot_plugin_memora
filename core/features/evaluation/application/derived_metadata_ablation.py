@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from ....models.derived_metadata import (
+from ..domain.derived_metadata import (
     DerivedMetadataAnnotation,
     DerivedMetadataProposal,
     DerivedMetadataValidationResult,
