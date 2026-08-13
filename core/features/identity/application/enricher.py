@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 from ....shared.contracts import IDENTITY_SCHEMA_VERSION
-from ...conversation.domain.models import Message
+from ....shared.contracts.conversation import Message
 from ..domain.models import IdentityTrust, ResolvedIdentity
 
 if TYPE_CHECKING:
