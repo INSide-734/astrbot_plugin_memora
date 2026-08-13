@@ -16,6 +16,7 @@ from astrbot.api.platform import MessageType
 
 from ....platform.config.manager import ConfigManager
 from ....shared.constants import FAKE_TOOL_CALL_NAME
+from ....shared.contracts import RecallPort
 from ....shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
     PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
@@ -48,7 +49,6 @@ from ...injection.domain.models import (
     RequestSignals,
     RoutingMode,
 )
-from ...memory.application.memory_engine import MemoryEngine
 from ...observability.application import runtime as observability
 from ...observability.domain import recall_timing as rt
 from ...retrieval.query_planner import QueryPlanner
@@ -95,7 +95,7 @@ class RecallHandler:
         self,
         context: Any,
         config_manager: ConfigManager,
-        memory_engine: MemoryEngine,
+        memory_engine: RecallPort,
         conversation_manager: ConversationManager,
         injection_adapter: InjectionAdapter,
         enforce_limit_cb: Callable,

@@ -67,31 +67,35 @@ class DerivedWorkPublisher(Protocol):
 class RecallPort(Protocol):
     """召回热路径的授权查询端口。"""
 
-    async def recall(
+    async def search_memories(
         self,
         query: str,
         *,
-        scope_key: str,
-        stable_user_id: str,
-        user_role: str,
+        k: int = 5,
+        session_id: str | None = None,
+        persona_id: str | None = None,
         **kwargs: Any,
-    ) -> Sequence[Mapping[str, Any]]:
+    ) -> list[Any]:
         """返回已完成隐私和身份过滤的候选。"""
+        ...
 
 
 @runtime_checkable
 class ReflectionWritePort(Protocol):
     """反思候选写入端口；质量门失败不得推进 canonical 窗口。"""
 
-    async def write_candidate(
+    async def add_memory(
         self,
-        candidate: Mapping[str, Any],
+        content: str,
         *,
-        scope_key: str,
-        stable_user_id: str,
-        **kwargs: Any,
-    ) -> Mapping[str, Any]:
-        """校验并写入候选，或返回 quarantine 状态。"""
+        session_id: str | None = None,
+        persona_id: str | None = None,
+        importance: float = 0.5,
+        metadata: dict[str, Any] | None = None,
+        atoms: list | None = None,
+    ) -> int:
+        """校验并写入 canonical 候选，或返回 quarantine 状态。"""
+        ...
 
 
 @runtime_checkable

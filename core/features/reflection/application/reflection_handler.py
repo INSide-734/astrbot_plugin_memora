@@ -11,6 +11,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ....platform.config.manager import ConfigManager
+from ....shared.contracts import ReflectionWritePort
 from ....shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
     PROMPT_PROTECTION_REQUIRED_EXTRA_KEY,
@@ -21,7 +22,6 @@ from ....shared.cost_control import CostControl
 from ....utils import OperationContext, get_persona_id
 from ...conversation.application.conversation_manager import ConversationManager
 from ...identity.domain.models import IdentityTrust, ResolvedIdentity
-from ...memory.application.memory_engine import MemoryEngine
 from ...observability.application import runtime as observability
 from ...recall.processors.memory_processor import MemoryProcessor
 from ...reflection.application import llm_budget as budget_ops
@@ -54,7 +54,7 @@ class ReflectionHandler(ReflectionBacklogMixin):
         self,
         context: Any,
         config_manager: ConfigManager,
-        memory_engine: MemoryEngine,
+        memory_engine: ReflectionWritePort,
         memory_processor: MemoryProcessor,
         conversation_manager: ConversationManager,
         enforce_limit_cb: Callable,
