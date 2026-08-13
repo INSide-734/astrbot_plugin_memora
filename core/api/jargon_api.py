@@ -11,8 +11,8 @@ from astrbot.api import logger
 from quart import request
 
 from ..base.feature_config import is_jargon_discovery_enabled
-from ..jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS
-from ..jargon.statistical_filter import JARGON_CANDIDATE_SORT_FIELDS
+from ..features.cognition.jargon.jargon_store import JARGON_MEANING_SORT_COLUMNS
+from ..features.cognition.jargon.statistical_filter import JARGON_CANDIDATE_SORT_FIELDS
 from ..shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -343,7 +343,9 @@ class JargonApiMixin:
             if obj is not None:
                 return obj
         # 惰性创建并缓存
-        from ..jargon.statistical_filter import JargonStatisticalFilter
+        from ..features.cognition.jargon.statistical_filter import (
+            JargonStatisticalFilter,
+        )
 
         jf = JargonStatisticalFilter()
         plugin._jargon_filter = jf
@@ -364,7 +366,7 @@ class JargonApiMixin:
     def _is_closed_jargon_store(store: Any) -> bool:
         """仅识别已初始化后关闭的真实 ``JargonStore`` 实例。"""
 
-        from ..jargon.jargon_store import JargonStore
+        from ..features.cognition.jargon.jargon_store import JargonStore
 
         return (
             isinstance(store, JargonStore)
@@ -422,7 +424,7 @@ class JargonApiMixin:
 
         from pathlib import Path
 
-        from ..jargon.jargon_store import JargonStore
+        from ..features.cognition.jargon.jargon_store import JargonStore
 
         data_dir = getattr(plugin, "data_dir", None)
         initializer = getattr(plugin, "initializer", None)
@@ -515,7 +517,9 @@ class JargonApiMixin:
                     )
                     return None
 
-                from ..jargon.jargon_admin_service import JargonAdminService
+                from ..features.cognition.jargon.jargon_admin_service import (
+                    JargonAdminService,
+                )
 
                 service = JargonAdminService(
                     store,
@@ -557,7 +561,7 @@ class JargonApiMixin:
                 return obj
 
         # ── 惰性创建并缓存 ──
-        from ..jargon.jargon_miner import JargonMiner
+        from ..features.cognition.jargon.jargon_miner import JargonMiner
 
         # 解析依赖项
         jf = self._get_jargon_filter()

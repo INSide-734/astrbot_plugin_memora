@@ -397,7 +397,7 @@ class TestMoodAdminOperations:
             store_clock = MagicMock()
             store_clock.time.side_effect = (100.0, 101.0)
             monkeypatch.setattr(
-                "core.affection.affection_store.time",
+                "core.features.cognition.affection.affection_store.time",
                 store_clock,
             )
             manager = AffectionManager(store)

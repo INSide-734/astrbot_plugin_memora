@@ -9,8 +9,8 @@ from typing import Any
 from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
-from ..expression.models import ExpressionPattern
-from ..expression.pattern_learner import ExpressionPatternLearner
+from ..features.cognition.expression.models import ExpressionPattern
+from ..features.cognition.expression.pattern_learner import ExpressionPatternLearner
 from .function_tool import AgentFunctionTool
 
 

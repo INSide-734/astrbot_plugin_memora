@@ -569,7 +569,9 @@ class TestJargonAdminServiceResolution:
             second_resolution_started.set()
             return await api._get_jargon_admin_service()
 
-        with patch("core.jargon.jargon_store.JargonStore", GatedStore):
+        with patch(
+            "core.features.cognition.jargon.jargon_store.JargonStore", GatedStore
+        ):
             first_task = asyncio.create_task(api._get_jargon_admin_service())
             await initialize_started.wait()
             second_task = asyncio.create_task(resolve_second())
@@ -618,7 +620,9 @@ class TestJargonAdminServiceResolution:
         api = JargonApiMixin()
         api.plugin = plugin
 
-        with patch("core.jargon.jargon_store.JargonStore", FailingStore):
+        with patch(
+            "core.features.cognition.jargon.jargon_store.JargonStore", FailingStore
+        ):
             with pytest.raises(RuntimeError) as caught:
                 await api._get_jargon_store()
 
@@ -663,7 +667,9 @@ class TestJargonAdminServiceResolution:
         api = JargonApiMixin()
         api.plugin = plugin
         close_waiter = asyncio.create_task(close_started.wait())
-        with patch("core.jargon.jargon_store.JargonStore", CancelledStore):
+        with patch(
+            "core.features.cognition.jargon.jargon_store.JargonStore", CancelledStore
+        ):
             resolver = asyncio.create_task(api._get_jargon_store())
             await initialize_started.wait()
             resolver.cancel()
@@ -715,7 +721,10 @@ class TestJargonAdminServiceResolution:
             data_dir=tmp_path,
             initializer=SimpleNamespace(jargon_query_service=None),
         )
-        with patch("core.jargon.jargon_store.JargonStore", CleanupFailingStore):
+        with patch(
+            "core.features.cognition.jargon.jargon_store.JargonStore",
+            CleanupFailingStore,
+        ):
             with pytest.raises(RuntimeError) as caught:
                 await api._get_jargon_store()
 
@@ -759,7 +768,9 @@ class TestJargonAdminServiceResolution:
         api = JargonApiMixin()
         api.plugin = plugin
         resolution_lock = api._get_jargon_resolution_lock()
-        with patch("core.jargon.jargon_store.JargonStore", RetryStore):
+        with patch(
+            "core.features.cognition.jargon.jargon_store.JargonStore", RetryStore
+        ):
             first = await api._get_jargon_admin_service()
             second = await api._get_jargon_admin_service()
             third = await api._get_jargon_admin_service()

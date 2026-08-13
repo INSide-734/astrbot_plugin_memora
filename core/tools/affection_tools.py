@@ -13,8 +13,8 @@ from typing import Any
 from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
-from ..affection.affection_manager import AffectionManager
-from ..affection.models import AffectionLevel
+from ..features.cognition.affection.affection_manager import AffectionManager
+from ..features.cognition.affection.models import AffectionLevel
 from .function_tool import AgentFunctionTool
 
 # ---- 好感度等级显示名称 ---------------------------------------------------------------

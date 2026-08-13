@@ -1299,7 +1299,7 @@ class TestRelationStorePooledTransactions:
                 raise asyncio.CancelledError()
 
             monkeypatch.setattr(
-                "core.social.relation_store.compute_entity_revision",
+                "core.features.cognition.social.relation_store.compute_entity_revision",
                 cancel_revision,
             )
             with pytest.raises(asyncio.CancelledError):

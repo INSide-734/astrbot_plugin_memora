@@ -1,28 +1,3 @@
-"""好感度系统 -- 用户好感度评分、Bot 情绪动态与交互分类。"""
+"""affection 旧路径兼容导出。"""
 
-from .affection_manager import AffectionManager, LLMAdapter
-from .affection_store import AffectionStore
-from .models import (
-    INTERACTION_RULES,
-    KEYWORD_INTERACTION_MAP,
-    AffectionLevel,
-    BotMood,
-    InteractionType,
-    MoodType,
-    UserAffection,
-    classify_by_keywords,
-)
-
-__all__ = [
-    "AffectionLevel",
-    "AffectionManager",
-    "AffectionStore",
-    "BotMood",
-    "INTERACTION_RULES",
-    "InteractionType",
-    "LLMAdapter",
-    "MoodType",
-    "UserAffection",
-    "classify_by_keywords",
-    "KEYWORD_INTERACTION_MAP",
-]
+from ..features.cognition.affection import *  # noqa: F401,F403

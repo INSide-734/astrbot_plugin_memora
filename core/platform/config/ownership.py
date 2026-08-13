@@ -174,7 +174,9 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "agent_tools": _ownership(
         "agent_tools", ConfigOwnershipKind.RUNTIME, "main.MemoraPlugin"
     ),
-    "jargon": _ownership("jargon", ConfigOwnershipKind.RUNTIME, "core.jargon"),
+    "jargon": _ownership(
+        "jargon", ConfigOwnershipKind.RUNTIME, "core.features.cognition.jargon"
+    ),
     "dashboard": _ownership(
         "dashboard",
         ConfigOwnershipKind.DASHBOARD_ONLY,

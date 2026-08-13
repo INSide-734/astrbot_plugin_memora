@@ -7,7 +7,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..expression.pattern_store import EXPRESSION_SORT_COLUMNS
+from ..features.cognition.expression.pattern_store import EXPRESSION_SORT_COLUMNS
 from ..shared.list_sorting import SortQuery, parse_sort_query
 from .response_utils import error_response, ok_response
 
@@ -181,7 +181,7 @@ class ExpressionApiMixin:
             return error_response("表达模式存储不可用")
 
         try:
-            from ..expression.models import PatternScope
+            from ..features.cognition.expression.models import PatternScope
 
             scope = PatternScope(
                 group_id=group_id or "default",

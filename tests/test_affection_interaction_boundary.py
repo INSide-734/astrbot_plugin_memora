@@ -30,7 +30,9 @@ async def test_invalid_identity_is_rejected_before_any_write(
     await store.initialize()
     try:
         manager = AffectionManager(store)
-        with patch("core.affection.affection_manager.logger") as logger:
+        with patch(
+            "core.features.cognition.affection.affection_manager.logger"
+        ) as logger:
             result = await manager.process_interaction(
                 user_id,
                 group_id,
@@ -80,7 +82,9 @@ async def test_internal_failure_log_does_not_include_identity(tmp_db_path: str) 
         manager._ensure_mood = AsyncMock(return_value=mood)
         store.upsert_affection = AsyncMock(side_effect=RuntimeError("测试故障"))
 
-        with patch("core.affection.affection_manager.logger") as logger:
+        with patch(
+            "core.features.cognition.affection.affection_manager.logger"
+        ) as logger:
             result = await manager.process_interaction(
                 "private-user",
                 "private-group",

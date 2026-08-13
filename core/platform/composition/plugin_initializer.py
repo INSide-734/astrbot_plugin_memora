@@ -476,7 +476,7 @@ class PluginInitializer(InitializerReadinessMixin):
 
         component_started = time.perf_counter()
         try:
-            from ...affection import AffectionManager, AffectionStore
+            from ...features.cognition.affection import AffectionManager, AffectionStore
 
             self.affection_store = AffectionStore(db_path)
             await self.affection_store.initialize()
@@ -518,7 +518,10 @@ class PluginInitializer(InitializerReadinessMixin):
 
         component_started = time.perf_counter()
         try:
-            from ...expression import ExpressionPatternLearner, ExpressionPatternStore
+            from ...features.cognition.expression import (
+                ExpressionPatternLearner,
+                ExpressionPatternStore,
+            )
 
             self.expression_store = ExpressionPatternStore(db_path)
             await self.expression_store.initialize()
@@ -563,7 +566,7 @@ class PluginInitializer(InitializerReadinessMixin):
         else:
             component_started = time.perf_counter()
             try:
-                from ...jargon import (
+                from ...features.cognition.jargon import (
                     JargonMiner,
                     JargonQueryService,
                     JargonStatisticalFilter,
@@ -615,7 +618,7 @@ class PluginInitializer(InitializerReadinessMixin):
 
         component_started = time.perf_counter()
         try:
-            from ...social import RelationManager, RelationStore
+            from ...features.cognition.social import RelationManager, RelationStore
 
             self.relation_store = RelationStore(db_path)
             await self.relation_store.initialize()

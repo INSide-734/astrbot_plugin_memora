@@ -9,7 +9,7 @@ from typing import Any
 from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
-from ..jargon.jargon_query import JargonQueryService
+from ..features.cognition.jargon.jargon_query import JargonQueryService
 from .function_tool import AgentFunctionTool
 
 

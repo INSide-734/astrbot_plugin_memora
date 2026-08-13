@@ -11,6 +11,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
+from ..features.cognition.social.relation_store import SOCIAL_SORT_COLUMNS
 from ..shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -18,7 +19,6 @@ from ..shared.entity_editing import (
     EntityValidationError,
 )
 from ..shared.list_sorting import parse_sort_query
-from ..social.relation_store import SOCIAL_SORT_COLUMNS
 from .editing_utils import (
     conflict_error,
     entity_ok,
@@ -175,7 +175,7 @@ def _relation_to_dict(rel: Any) -> dict[str, Any]:
     """将 SocialRelation 转换为 JSON 响应所需字典。"""
     category = "unknown"
     try:
-        from ..social.models import get_relation_category
+        from ..features.cognition.social.models import get_relation_category
 
         category = (
             get_relation_category(getattr(rel, "relation_type", "stranger"))

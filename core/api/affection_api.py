@@ -8,11 +8,11 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ..affection.affection_store import (
+from ..features.cognition.affection.affection_store import (
     AFFECTION_USER_SORT_COLUMNS,
     MOOD_HISTORY_SORT_COLUMNS,
 )
-from ..affection.models import MoodType
+from ..features.cognition.affection.models import MoodType
 from ..shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
