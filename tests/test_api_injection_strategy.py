@@ -67,7 +67,9 @@ def _make_api(
     config: dict[str, object] | None = None,
     tools_registered: bool = True,
 ):
-    from core.api.injection_strategy_api import InjectionStrategyApiMixin
+    from core.platform.transport.page_api.injection_strategy_api import (
+        InjectionStrategyApiMixin,
+    )
 
     class _Api(InjectionStrategyApiMixin):
         pass

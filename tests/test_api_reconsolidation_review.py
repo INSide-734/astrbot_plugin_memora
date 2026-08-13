@@ -151,7 +151,10 @@ async def test_list_uses_true_server_pagination_and_safe_fields(tmp_path: Path) 
         args={"status": "pending", "offset": "1", "limit": "1"}
     )
 
-    with patch("core.api.reconsolidation_review_api.request", request_mock):
+    with patch(
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
+        request_mock,
+    ):
         response = await api.list_reconsolidation_review_candidates()
 
     assert response["status"] == "ok"
@@ -180,7 +183,7 @@ async def test_detail_exposes_content_diff_but_hides_internal_source_fields(
     api, store, _, candidates = await _api_with_candidates(tmp_path)
     candidate_id = candidates[0]["candidate_id"]
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(args={"candidate_id": candidate_id}),
     ):
         response = await api.get_reconsolidation_review_candidate()
@@ -229,7 +232,7 @@ async def test_approve_action_applies_candidate_with_source_revision_cas(
     payload = {"candidate_id": candidate_id, "action": "approve"}
 
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload=payload),
     ):
         response = await api.apply_reconsolidation_review_action()
@@ -257,7 +260,7 @@ async def test_reject_action_persists_terminal_state_and_audit(tmp_path: Path) -
     api, store, _, candidates = await _api_with_candidates(tmp_path)
     candidate_id = candidates[0]["candidate_id"]
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": candidate_id, "action": "reject"}),
     ):
         response = await api.apply_reconsolidation_review_action()
@@ -289,7 +292,7 @@ async def test_rollback_action_restores_old_content_with_current_revision_cas(
     assert applied["applied"] is True
     engine.update_memory.reset_mock()
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": candidate_id, "action": "rollback"}),
     ):
         response = await api.apply_reconsolidation_review_action()
@@ -317,7 +320,7 @@ async def test_approve_returns_stable_source_revision_mismatch_code(
     engine.update_memory._last_write_reason_code = "source_revision_mismatch"
     candidate_id = candidates[0]["candidate_id"]
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": candidate_id, "action": "approve"}),
     ):
         response = await api.apply_reconsolidation_review_action()
@@ -337,7 +340,7 @@ async def test_action_returns_not_found_and_status_conflict_codes(
 
     api, store, _, candidates = await _api_with_candidates(tmp_path)
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": "missing", "action": "reject"}),
     ):
         missing = await api.apply_reconsolidation_review_action()
@@ -350,7 +353,7 @@ async def test_action_returns_not_found_and_status_conflict_codes(
         action="reject",
     )
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": candidate_id, "action": "approve"}),
     ):
         conflict = await api.apply_reconsolidation_review_action()
@@ -369,7 +372,7 @@ async def test_action_honors_maintenance_write_guard(tmp_path: Path) -> None:
     api.plugin._backup_manager = backup_manager
     candidate_id = candidates[0]["candidate_id"]
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": candidate_id, "action": "reject"}),
     ):
         response = await api.apply_reconsolidation_review_action()
@@ -391,17 +394,17 @@ async def test_handlers_report_disabled_list_state_and_reject_actions(
     engine.reconsolidation = None
     engine.config = {"reconsolidation.enabled": False}
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(),
     ):
         listed = await api.list_reconsolidation_review_candidates()
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(args={"candidate_id": "one"}),
     ):
         detailed = await api.get_reconsolidation_review_candidate()
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload={"candidate_id": "one", "action": "reject"}),
     ):
         acted = await api.apply_reconsolidation_review_action()
@@ -429,7 +432,7 @@ async def test_list_reports_enabled_store_gap_as_unavailable(tmp_path: Path) -> 
     engine.config = {"reconsolidation.enabled": True}
 
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(),
     ):
         listed = await api.list_reconsolidation_review_candidates()
@@ -458,7 +461,7 @@ async def test_action_rejects_invalid_or_unknown_payload_fields(
 
     api, store, _, candidates = await _api_with_candidates(tmp_path)
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(payload=payload),
     ):
         response = await api.apply_reconsolidation_review_action()
@@ -489,7 +492,7 @@ async def test_list_rejects_invalid_query_parameters(
 
     api, store, _, _ = await _api_with_candidates(tmp_path)
     with patch(
-        "core.api.reconsolidation_review_api.request",
+        "core.platform.transport.page_api.reconsolidation_review_api.request",
         _mock_request(args=args),
     ):
         response = await api.list_reconsolidation_review_candidates()

@@ -618,7 +618,7 @@ async def test_memory_search_formatter_mode_can_return_structured_only() -> None
 async def test_config_apply_reports_restart_and_graph_rebuild_effects() -> None:
     """配置 API 必须区分重启需求、自动重载与图重建需求。"""
 
-    from core.api.config_api import ConfigApiMixin
+    from core.platform.transport.page_api.config_api import ConfigApiMixin
 
     class _ConfigApi(ConfigApiMixin):
         """暴露配置 API mixin 的最小测试实现。"""

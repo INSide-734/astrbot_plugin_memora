@@ -14,12 +14,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.jargon_api import JargonApiMixin
-from core.api.response_utils import error_response
 from core.jargon.jargon_admin_service import JargonAdminService
 from core.jargon.jargon_query import JargonQueryService
 from core.jargon.jargon_store import JargonStore
 from core.page_api import PluginPageApi
+from core.platform.transport.page_api.jargon_api import JargonApiMixin
+from core.platform.transport.page_api.response_utils import error_response
 from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -168,7 +168,7 @@ class TestJargonCandidates:
     async def test_requires_group_id(self) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
         assert result["status"] == "error"
         assert "group_id" in result["message"].lower()
@@ -181,7 +181,7 @@ class TestJargonCandidates:
         ]
         stub = _make_stub(candidates=cands)
         mock_req = _make_mock_request(group_id="g1", limit="10")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
         assert result["status"] == "ok"
         assert len(result["data"]["candidates"]) == 2
@@ -198,7 +198,7 @@ class TestJargonCandidates:
             sort_order="asc",
         )
 
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
 
         assert result["status"] == "ok"
@@ -230,7 +230,7 @@ class TestJargonCandidates:
             sort_order=sort_order,
         )
 
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
 
         assert result["code"] == "invalid_query"
@@ -241,7 +241,7 @@ class TestJargonCandidates:
     async def test_no_filter_returns_error(self) -> None:
         stub = _make_stub(has_filter=False, has_store=False)
         mock_req = _make_mock_request(group_id="g1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
         assert result["status"] == "error"
 
@@ -253,7 +253,7 @@ class TestJargonCandidates:
         ]
         stub = _make_stub(candidates=cands)
         mock_req = _make_mock_request(group_id="g1", limit="-1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
         assert result["status"] == "ok"
         stub.plugin._jargon_filter.get_candidates.assert_called_once_with(
@@ -272,7 +272,7 @@ class TestJargonCandidates:
         cands = [_make_jargon_candidate("破防", "g1"), broken]
         stub = _make_stub(candidates=cands)
         mock_req = _make_mock_request(group_id="g1", limit="10")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
         assert result["status"] == "ok"
         assert result["data"]["total"] == 1
@@ -297,8 +297,8 @@ class TestJargonCandidates:
         mock_req = _make_mock_request(group_id=group_secret, limit="10")
 
         with (
-            patch("core.api.jargon_api.request", mock_req),
-            patch("core.api.jargon_api.logger") as logged,
+            patch("core.platform.transport.page_api.jargon_api.request", mock_req),
+            patch("core.platform.transport.page_api.jargon_api.logger") as logged,
         ):
             result = await stub.get_jargon_candidates()
 
@@ -330,7 +330,7 @@ class TestJargonCandidates:
             return_value=BrokenCandidates()
         )
         mock_req = _make_mock_request(group_id="g1", limit="10")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_candidates()
         assert result["status"] == "ok"
         assert result["data"]["candidates"] == []
@@ -347,7 +347,7 @@ class TestJargonMeanings:
     async def test_requires_group_id(self) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_meanings()
         assert result["status"] == "error"
 
@@ -362,7 +362,7 @@ class TestJargonMeanings:
         service.revision_for = MagicMock(side_effect=lambda item: f"rev-{item.term}")
         stub._get_jargon_admin_service = AsyncMock(return_value=service)
         mock_req = _make_mock_request(group_id="g1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_meanings()
         assert result["status"] == "ok"
         assert len(result["data"]["meanings"]) == 2
@@ -388,7 +388,7 @@ class TestJargonMeanings:
             sort_order="asc",
         )
 
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_meanings()
 
         assert result["status"] == "ok"
@@ -420,7 +420,7 @@ class TestJargonMeanings:
             sort_order=sort_order,
         )
 
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_meanings()
 
         assert result["code"] == "invalid_query"
@@ -431,7 +431,7 @@ class TestJargonMeanings:
     async def test_no_store_returns_error(self) -> None:
         stub = _make_stub(has_store=False)
         mock_req = _make_mock_request(group_id="g1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_meanings()
         assert result["status"] == "error"
 
@@ -454,7 +454,7 @@ class TestJargonMeanings:
         )
         stub._get_jargon_admin_service = AsyncMock(return_value=service)
         mock_req = _make_mock_request(group_id="g1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_meanings()
         assert result["status"] == "ok"
         assert result["data"]["total"] == 1
@@ -494,8 +494,8 @@ class TestJargonMeanings:
         mock_req = _make_mock_request(group_id="group-secret-995c")
 
         with (
-            patch("core.api.jargon_api.request", mock_req),
-            patch("core.api.jargon_api.logger") as logged,
+            patch("core.platform.transport.page_api.jargon_api.request", mock_req),
+            patch("core.platform.transport.page_api.jargon_api.logger") as logged,
         ):
             result = await api.get_jargon_meanings()
 
@@ -946,7 +946,9 @@ class TestJargonAdminServiceResolution:
             side_effect=RuntimeError("initialization failed " + secret)
         )
 
-        with patch("core.api.jargon_api.logger.error") as logged:
+        with patch(
+            "core.platform.transport.page_api.jargon_api.logger.error"
+        ) as logged:
             service = await api._get_jargon_admin_service()
 
         assert service is None
@@ -996,7 +998,10 @@ class TestJargonCrud:
                 "meaning": "Gradual rollout",
                 "confidence": 0.9,
             }
-            with patch("core.api.jargon_api.request", _request_json(create_payload)):
+            with patch(
+                "core.platform.transport.page_api.jargon_api.request",
+                _request_json(create_payload),
+            ):
                 created_response = await api.create_jargon()
             assert created_response["status"] == "ok"
             created = await store.get_by_term("灰度", "g1")
@@ -1011,7 +1016,10 @@ class TestJargonCrud:
                 "changes": {"meaning": "Updated rollout"},
                 "expected_revision": created_response["data"]["revision"],
             }
-            with patch("core.api.jargon_api.request", _request_json(update_payload)):
+            with patch(
+                "core.platform.transport.page_api.jargon_api.request",
+                _request_json(update_payload),
+            ):
                 updated_response = await api.update_jargon()
             updated = await store.get_by_term("灰度", "g1")
             assert updated_response["status"] == "ok"
@@ -1022,7 +1030,10 @@ class TestJargonCrud:
                 "identity": {"term": "灰度", "group_id": "g1"},
                 "expected_revision": updated_response["data"]["revision"],
             }
-            with patch("core.api.jargon_api.request", _request_json(delete_payload)):
+            with patch(
+                "core.platform.transport.page_api.jargon_api.request",
+                _request_json(delete_payload),
+            ):
                 deleted_response = await api.delete_jargon()
             assert deleted_response["status"] == "ok"
             assert await store.get_by_term("灰度", "g1") is None
@@ -1051,8 +1062,11 @@ class TestJargonCrud:
         }
 
         with (
-            patch("core.api.jargon_api.request", _request_json(payload)),
-            patch("core.api.jargon_api.logger.info") as audit,
+            patch(
+                "core.platform.transport.page_api.jargon_api.request",
+                _request_json(payload),
+            ),
+            patch("core.platform.transport.page_api.jargon_api.logger.info") as audit,
         ):
             result = await api.create_jargon()
 
@@ -1103,7 +1117,10 @@ class TestJargonCrud:
             extra_field: "forbidden",
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await api.create_jargon()
 
         assert result["code"] == "validation_error"
@@ -1139,7 +1156,10 @@ class TestJargonCrud:
             "expected_revision": "rev-1",
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await api.update_jargon()
 
         assert result["code"] == "validation_error"
@@ -1162,7 +1182,10 @@ class TestJargonCrud:
             "expected_revision": "rev-old",
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await api.update_jargon()
 
         assert result["data"]["revision"] == "rev-updated"
@@ -1191,7 +1214,10 @@ class TestJargonCrud:
         if handler_name == "update_jargon":
             payload["changes"] = {"meaning": "updated"}
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await getattr(api, handler_name)()
 
         assert result["code"] == "validation_error"
@@ -1222,7 +1248,10 @@ class TestJargonCrud:
         if handler_name == "update_jargon":
             payload["changes"] = {"meaning": "local value"}
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await getattr(api, handler_name)()
 
         assert result["code"] == "edit_conflict"
@@ -1249,7 +1278,8 @@ class TestJargonCrud:
         }
 
         with patch(
-            "core.api.jargon_api.request", _request_json(payload)
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
         ) as request_mock:
             result = await api.create_jargon()
 
@@ -1303,7 +1333,10 @@ class TestJargonCrud:
             "confidence": 0.9,
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await api.create_jargon()
 
         audits = [
@@ -1338,7 +1371,10 @@ class TestJargonCrud:
         }
 
         with (
-            patch("core.api.jargon_api.request", _request_json(payload)),
+            patch(
+                "core.platform.transport.page_api.jargon_api.request",
+                _request_json(payload),
+            ),
             pytest.raises(asyncio.CancelledError),
         ):
             await api.create_jargon()
@@ -1358,7 +1394,10 @@ class TestJargonCrud:
             "meaning": "meaning",
             "confidence": 0.9,
         }
-        with patch("core.api.jargon_api.request", _request_json(create_payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(create_payload),
+        ):
             duplicate_result = await create_api.create_jargon()
 
         missing = MagicMock()
@@ -1369,7 +1408,10 @@ class TestJargonCrud:
             "changes": {"meaning": "updated"},
             "expected_revision": "rev-1",
         }
-        with patch("core.api.jargon_api.request", _request_json(update_payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(update_payload),
+        ):
             missing_result = await update_api.update_jargon()
 
         assert duplicate_result["code"] == "already_exists"
@@ -1388,7 +1430,10 @@ class TestJargonCrud:
             "expected_revision": "rev-1",
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await api.delete_jargon()
 
         assert result["data"] == {
@@ -1417,7 +1462,7 @@ class TestJargonCrud:
             side_effect=AssertionError("JSON must not be parsed")
         )
 
-        with patch("core.api.jargon_api.request", mock_request):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_request):
             result = await getattr(api, handler_name)()
 
         assert result is guard_response
@@ -1435,7 +1480,10 @@ class TestJargonCrud:
             "confidence": 0.9,
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await api.create_jargon()
 
         assert result["code"] == "component_unavailable"
@@ -1461,8 +1509,11 @@ class TestJargonCrud:
         }
 
         with (
-            patch("core.api.jargon_api.request", _request_json(payload)),
-            patch("core.api.jargon_api.logger.error") as logged,
+            patch(
+                "core.platform.transport.page_api.jargon_api.request",
+                _request_json(payload),
+            ),
+            patch("core.platform.transport.page_api.jargon_api.logger.error") as logged,
         ):
             result = await api.create_jargon()
 
@@ -1526,7 +1577,7 @@ class TestJargonBatch:
         ]
 
         with patch(
-            "core.api.jargon_api.request",
+            "core.platform.transport.page_api.jargon_api.request",
             _request_json({"action": "delete", "items": items}),
         ):
             result = await api.batch_jargon()
@@ -1556,7 +1607,10 @@ class TestJargonBatch:
             ],
         }
 
-        with patch("core.api.jargon_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ):
             result = await api.batch_jargon()
 
         assert result["code"] == "validation_error"
@@ -1574,7 +1628,7 @@ class TestJargonStats:
         cands = [_make_jargon_candidate("破防", "g1")]
         stub = _make_stub(candidates=cands, store_count=5, store_confirmed=3)
         mock_req = _make_mock_request(group_id="g1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_stats()
         assert result["status"] == "ok"
         assert result["data"]["store_total"] == 5
@@ -1598,8 +1652,8 @@ class TestJargonStats:
         mock_req = _make_mock_request(group_id=group_secret)
 
         with (
-            patch("core.api.jargon_api.request", mock_req),
-            patch("core.api.jargon_api.logger") as logged,
+            patch("core.platform.transport.page_api.jargon_api.request", mock_req),
+            patch("core.platform.transport.page_api.jargon_api.logger") as logged,
         ):
             result = await stub.get_jargon_stats()
 
@@ -1642,8 +1696,8 @@ class TestJargonStats:
         mock_req = _make_mock_request(group_id=group_secret)
 
         with (
-            patch("core.api.jargon_api.request", mock_req),
-            patch("core.api.jargon_api.logger") as logged,
+            patch("core.platform.transport.page_api.jargon_api.request", mock_req),
+            patch("core.platform.transport.page_api.jargon_api.logger") as logged,
         ):
             result = await stub.get_jargon_stats()
 
@@ -1692,7 +1746,10 @@ class TestJargonStats:
                 )
             handler = stub.get_jargon_stats
 
-        with patch("core.api.jargon_api.request", _make_mock_request(group_id="g1")):
+        with patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _make_mock_request(group_id="g1"),
+        ):
             with pytest.raises(asyncio.CancelledError):
                 await handler()
 
@@ -1700,7 +1757,7 @@ class TestJargonStats:
     async def test_requires_group_id(self) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_stats()
         assert result["status"] == "error"
 
@@ -1717,7 +1774,7 @@ class TestJargonStats:
         ]
         stub = _make_stub(candidates=cands, store_count=5, store_confirmed=3)
         mock_req = _make_mock_request(group_id="g1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_stats()
         assert result["status"] == "ok"
         assert [item["term"] for item in result["data"]["top_candidates"]] == [
@@ -1743,7 +1800,7 @@ class TestJargonStats:
         stub = _make_stub(candidates=[], store_count=5, store_confirmed=3)
         stub.plugin._jargon_filter.get_stats = MagicMock(return_value=broken_stats)
         mock_req = _make_mock_request(group_id="g1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_stats()
         assert result["status"] == "ok"
         assert result["data"]["top_candidates"] == []
@@ -1759,7 +1816,7 @@ class TestJargonStats:
         stub = _make_stub(candidates=[], store_count=5, store_confirmed=3)
         stub.plugin._jargon_filter.get_stats = MagicMock(return_value=broken_stats)
         mock_req = _make_mock_request(group_id="g1")
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.get_jargon_stats()
         assert result["status"] == "error"
         assert result["code"] == "internal_error"
@@ -1786,7 +1843,7 @@ class TestJargonConfirm:
             side_effect=AssertionError("JSON parsing must not run")
         )
 
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await api.confirm_jargon()
 
         assert result is guard_response
@@ -1805,7 +1862,7 @@ class TestJargonConfirm:
                 "confirmed": True,
             }
         )
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["status"] == "ok"
         assert result["data"]["action"] == "confirmed"
@@ -1821,7 +1878,7 @@ class TestJargonConfirm:
                 "confirmed": False,
             }
         )
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["status"] == "ok"
         assert result["data"]["action"] == "rejected"
@@ -1840,7 +1897,7 @@ class TestJargonConfirm:
                 "confirmed": confirmed,
             }
         )
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["code"] == "validation_error"
         stub.plugin._jargon_store.confirm.assert_not_awaited()
@@ -1855,7 +1912,7 @@ class TestJargonConfirm:
                 "confirmed": True,
             }
         )
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["status"] == "error"
         assert "term" in result["message"].lower()
@@ -1865,7 +1922,7 @@ class TestJargonConfirm:
         stub = _make_stub()
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(side_effect=ValueError("bad json"))
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.confirm_jargon()
         assert result["status"] == "error"
 
@@ -1893,7 +1950,7 @@ class TestJargonMine:
             side_effect=AssertionError("JSON parsing must not run")
         )
 
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await api.mine_jargon()
 
         assert result is guard_response
@@ -1907,7 +1964,7 @@ class TestJargonMine:
         stub = _make_stub(has_miner=True, has_store=True)
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"limit": 5})
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "error"
         assert "group_id" in result["message"].lower()
@@ -1924,7 +1981,7 @@ class TestJargonMine:
                 "limit": 5,
             }
         )
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "ok"
         assert result["data"]["inferred_count"] == 1
@@ -1934,7 +1991,7 @@ class TestJargonMine:
         stub = _make_stub(has_miner=False)
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"group_id": "g1"})
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "error"
 
@@ -1950,7 +2007,7 @@ class TestJargonMine:
                 "limit": -3,
             }
         )
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "ok"
         stub.plugin._jargon_miner.run_once.assert_awaited_once_with("g1", limit=5)
@@ -1976,7 +2033,7 @@ class TestJargonMine:
                 "limit": 5,
             }
         )
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "ok"
         assert result["data"]["inferred_count"] == 3
@@ -2003,7 +2060,7 @@ class TestJargonMine:
                 "limit": 5,
             }
         )
-        with patch("core.api.jargon_api.request", mock_req):
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
             result = await stub.mine_jargon()
         assert result["status"] == "ok"
         assert result["data"]["inferred_count"] == 0
@@ -2024,8 +2081,8 @@ async def test_legacy_invalid_json_failure_is_redacted(handler_name: str) -> Non
     mock_req.get_json = AsyncMock(side_effect=ValueError("invalid " + secret))
 
     with (
-        patch("core.api.jargon_api.request", mock_req),
-        patch("core.api.jargon_api.logger") as logged,
+        patch("core.platform.transport.page_api.jargon_api.request", mock_req),
+        patch("core.platform.transport.page_api.jargon_api.logger") as logged,
     ):
         result = await getattr(api, handler_name)()
 
@@ -2076,8 +2133,11 @@ async def test_legacy_component_and_execution_failures_are_redacted(
         else {"group_id": group_secret, "limit": 5}
     )
     with (
-        patch("core.api.jargon_api.request", _request_json(payload)),
-        patch("core.api.jargon_api.logger") as logged,
+        patch(
+            "core.platform.transport.page_api.jargon_api.request",
+            _request_json(payload),
+        ),
+        patch("core.platform.transport.page_api.jargon_api.logger") as logged,
     ):
         result = await getattr(api, "confirm_jargon" if is_confirm else "mine_jargon")()
 
@@ -2115,7 +2175,7 @@ async def test_miner_provider_fallback_failure_is_redacted() -> None:
     )
     api._maintenance_write_guard = MagicMock(return_value=None)
 
-    with patch("core.api.jargon_api.logger") as logged:
+    with patch("core.platform.transport.page_api.jargon_api.logger") as logged:
         result = await api.mine_jargon()
 
     rendered = json.dumps(result, ensure_ascii=False) + str(logged.method_calls)
@@ -2150,6 +2210,8 @@ async def test_legacy_execution_does_not_swallow_cancellation(
         else {"group_id": "g1", "limit": 5}
     )
 
-    with patch("core.api.jargon_api.request", _request_json(payload)):
+    with patch(
+        "core.platform.transport.page_api.jargon_api.request", _request_json(payload)
+    ):
         with pytest.raises(asyncio.CancelledError):
             await getattr(api, handler_name)()

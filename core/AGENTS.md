@@ -129,7 +129,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 以下 Python 子模块与已退役目录导航维护各自的详细上下文：
 
 - [`features/cognition/affection/AGENTS.md`](features/cognition/affection/AGENTS.md)
-- [`api/AGENTS.md`](api/AGENTS.md)
+- [`platform/transport/page_api/AGENTS.md`](platform/transport/page_api/AGENTS.md)
 - [`base/AGENTS.md`](base/AGENTS.md)
 - [`cleaners/AGENTS.md`](cleaners/AGENTS.md)
 - [`platform/transport/commands/AGENTS.md`](platform/transport/commands/AGENTS.md)

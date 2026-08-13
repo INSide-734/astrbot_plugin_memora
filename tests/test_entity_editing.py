@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.api.editing_utils import (
+from core.platform.transport.page_api.editing_utils import (
     bounded_int,
     conflict_error,
     entity_ok,

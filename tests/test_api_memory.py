@@ -36,7 +36,9 @@ class TestMemoryBatchValidation:
 
     @pytest.mark.asyncio
     async def test_batch_memories_requires_ids(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_memories = MemoryBatchApiMixin.batch_memories
@@ -49,13 +51,15 @@ class TestMemoryBatchValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"memory_ids": [], "action": "delete"})
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_memories()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_batch_memories_rejects_non_object_json_payload(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_memories = MemoryBatchApiMixin.batch_memories
@@ -68,14 +72,16 @@ class TestMemoryBatchValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-memory"])
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_memories()
         assert result["status"] == "error"
         assert "JSON" in result["message"]
 
     @pytest.mark.asyncio
     async def test_batch_memories_unsupported_action(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_memories = MemoryBatchApiMixin.batch_memories
@@ -90,14 +96,16 @@ class TestMemoryBatchValidation:
         req.get_json = AsyncMock(
             return_value={"memory_ids": [1, 2], "action": "invalid"}
         )
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_memories()
         assert result["status"] == "error"
         assert "不支持" in result.get("message", "")
 
     @pytest.mark.asyncio
     async def test_batch_delete_valid_ids(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_delete_memories = MemoryBatchApiMixin.batch_delete_memories
@@ -120,7 +128,7 @@ class TestMemoryBatchValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"memory_ids": [1, 2]})
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_delete_memories()
         assert result["status"] == "ok"
         assert result["data"]["deleted_count"] == 2
@@ -128,7 +136,9 @@ class TestMemoryBatchValidation:
 
     @pytest.mark.asyncio
     async def test_batch_delete_rejects_non_object_json_payload(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_delete_memories = MemoryBatchApiMixin.batch_delete_memories
@@ -151,14 +161,16 @@ class TestMemoryBatchValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-memory"])
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_delete_memories()
         assert result["status"] == "error"
         assert "JSON" in result["message"]
 
     @pytest.mark.asyncio
     async def test_batch_delete_reports_not_found_ids(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_delete_memories = MemoryBatchApiMixin.batch_delete_memories
@@ -189,7 +201,7 @@ class TestMemoryBatchValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"memory_ids": [1, 999, "bad"]})
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_delete_memories()
         assert result["status"] == "ok"
         assert result["data"]["deleted_count"] == 1
@@ -201,7 +213,9 @@ class TestMemoryBatchValidation:
     async def test_batch_delete_tolerates_malformed_delete_aggregate_payload(
         self,
     ) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class BrokenList:
             def __iter__(self):
@@ -235,7 +249,7 @@ class TestMemoryBatchValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"memory_ids": [1, "bad"]})
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_delete_memories()
         assert result["status"] == "ok"
         assert result["data"]["deleted_count"] == 0
@@ -246,7 +260,9 @@ class TestMemoryBatchValidation:
 
     @pytest.mark.asyncio
     async def test_batch_update_invalid_field(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_update_memories = MemoryBatchApiMixin.batch_update_memories
@@ -265,13 +281,15 @@ class TestMemoryBatchValidation:
         req.get_json = AsyncMock(
             return_value={"memory_ids": [1], "field": "invalid_field", "value": "x"}
         )
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_update_memories()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_batch_update_rejects_non_object_json_payload(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_update_memories = MemoryBatchApiMixin.batch_update_memories
@@ -288,14 +306,16 @@ class TestMemoryBatchValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-memory"])
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await Stub().batch_update_memories()
         assert result["status"] == "error"
         assert "JSON" in result["message"]
 
     @pytest.mark.asyncio
     async def test_batch_delete_rejects_boolean_ids(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_delete_memories = MemoryBatchApiMixin.batch_delete_memories
@@ -320,7 +340,7 @@ class TestMemoryBatchValidation:
         stub = Stub()
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"memory_ids": [True, 2]})
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await stub.batch_delete_memories()
         assert result["status"] == "ok"
         stub.engine.batch_delete_memories.assert_awaited_once_with([2])
@@ -331,7 +351,9 @@ class TestMemoryBatchValidation:
     async def test_batch_update_importance_rejects_boolean_ids_and_normalizes_value(
         self,
     ) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_update_memories = MemoryBatchApiMixin.batch_update_memories
@@ -358,7 +380,7 @@ class TestMemoryBatchValidation:
                 "value": 5,
             }
         )
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await stub.batch_update_memories()
         assert result["status"] == "ok"
         stub.engine.update_memory.assert_awaited_once_with(3, {"importance": 0.5})
@@ -368,7 +390,9 @@ class TestMemoryBatchValidation:
 
     @pytest.mark.asyncio
     async def test_batch_update_importance_rejects_boolean_value(self) -> None:
-        from core.api.memory_batch_api import MemoryBatchApiMixin
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
 
         class Stub:
             batch_update_memories = MemoryBatchApiMixin.batch_update_memories
@@ -395,7 +419,7 @@ class TestMemoryBatchValidation:
                 "value": True,
             }
         )
-        with patch("core.api.memory_batch_api.request", req):
+        with patch("core.platform.transport.page_api.memory_batch_api.request", req):
             result = await stub.batch_update_memories()
         assert result["status"] == "ok"
         stub.engine.update_memory.assert_not_awaited()
@@ -414,7 +438,7 @@ class TestMemoryReadValidation:
 
     @pytest.mark.asyncio
     async def test_list_memories_plugin_not_ready(self) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             list_memories = MemoryReadApiMixin.list_memories
@@ -429,13 +453,13 @@ class TestMemoryReadValidation:
                 return None, self._error("not ready")
 
         req = _mock_request()
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().list_memories()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_list_memories_invalid_pagination(self) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             list_memories = MemoryReadApiMixin.list_memories
@@ -452,13 +476,13 @@ class TestMemoryReadValidation:
                 return {"memory_engine": engine}, None
 
         req = _mock_request(page="abc")
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().list_memories()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_get_memory_detail_non_integer_id(self) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
@@ -474,14 +498,14 @@ class TestMemoryReadValidation:
                 return {"memory_engine": engine}, None
 
         req = _mock_request(memory_id="not_a_number")
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().get_memory_detail()
         assert result["status"] == "error"
         assert "整数" in result.get("message", "")
 
     @pytest.mark.asyncio
     async def test_get_memory_detail_not_found(self) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
@@ -506,14 +530,14 @@ class TestMemoryReadValidation:
                 return md or {}
 
         req = _mock_request(memory_id="999")
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().get_memory_detail()
         assert result["status"] == "error"
         assert "不存在" in result.get("message", "")
 
     @pytest.mark.asyncio
     async def test_get_memory_detail_tolerates_non_mapping_record(self) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
@@ -538,7 +562,7 @@ class TestMemoryReadValidation:
                 return md or {}
 
         req = _mock_request(memory_id="123")
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().get_memory_detail()
         assert result["status"] == "error"
         assert "不存在" in result.get("message", "")
@@ -547,7 +571,7 @@ class TestMemoryReadValidation:
     async def test_get_memory_detail_tolerates_non_mapping_normalized_metadata(
         self,
     ) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
@@ -579,7 +603,7 @@ class TestMemoryReadValidation:
                 return "bad-metadata"
 
         req = _mock_request(memory_id="123")
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().get_memory_detail()
         assert result["status"] == "ok"
         assert result["data"]["memory_id"] == 123
@@ -593,7 +617,7 @@ class TestMemoryReadValidation:
     async def test_get_memory_detail_tolerates_non_mapping_subgraph_payload(
         self,
     ) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
@@ -627,7 +651,7 @@ class TestMemoryReadValidation:
                 return {}
 
         req = _mock_request(memory_id="123")
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().get_memory_detail()
         assert result["status"] == "ok"
         assert result["data"]["memory_id"] == 123
@@ -637,7 +661,7 @@ class TestMemoryReadValidation:
     async def test_get_memory_detail_tolerates_malformed_subgraph_collections(
         self,
     ) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
@@ -677,7 +701,7 @@ class TestMemoryReadValidation:
                 return {}
 
         req = _mock_request(memory_id="123")
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().get_memory_detail()
         assert result["status"] == "ok"
         assert result["data"]["memory_id"] == 123
@@ -689,7 +713,7 @@ class TestMemoryReadValidation:
 
     @pytest.mark.asyncio
     async def test_get_memory_detail_normalizes_list_like_metadata_fields(self) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
@@ -728,7 +752,7 @@ class TestMemoryReadValidation:
                 }
 
         req = _mock_request(memory_id="123")
-        with patch("core.api.memory_read_api.request", req):
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
             result = await Stub().get_memory_detail()
         assert result["status"] == "ok"
         assert result["data"]["memory_id"] == 123
@@ -743,7 +767,7 @@ class TestMemoryReadValidation:
     async def test_list_memories_tolerates_non_mapping_normalized_metadata(
         self,
     ) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class FakeCursor:
             def __init__(self, *, one=None, many=None):
@@ -799,9 +823,15 @@ class TestMemoryReadValidation:
 
         req = _mock_request()
         with (
-            patch("core.api.memory_read_api.request", req),
-            patch("core.api.memory_read_api.aiosqlite.connect", fake_connect),
-            patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()),
+            patch("core.platform.transport.page_api.memory_read_api.request", req),
+            patch(
+                "core.platform.transport.page_api.memory_read_api.aiosqlite.connect",
+                fake_connect,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_read_api.apply_perf_pragmas",
+                AsyncMock(),
+            ),
         ):
             result = await Stub().list_memories()
         assert result["status"] == "ok"
@@ -824,7 +854,7 @@ class TestMemoryReadValidation:
 
     @pytest.mark.asyncio
     async def test_list_memories_skips_malformed_result_rows(self) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class FakeCursor:
             def __init__(self, *, one=None, many=None):
@@ -881,9 +911,15 @@ class TestMemoryReadValidation:
 
         req = _mock_request()
         with (
-            patch("core.api.memory_read_api.request", req),
-            patch("core.api.memory_read_api.aiosqlite.connect", fake_connect),
-            patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()),
+            patch("core.platform.transport.page_api.memory_read_api.request", req),
+            patch(
+                "core.platform.transport.page_api.memory_read_api.aiosqlite.connect",
+                fake_connect,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_read_api.apply_perf_pragmas",
+                AsyncMock(),
+            ),
         ):
             result = await Stub().list_memories()
         assert result["status"] == "ok"
@@ -906,7 +942,7 @@ class TestMemoryReadValidation:
 
     @pytest.mark.asyncio
     async def test_list_memories_accepts_mapping_like_result_rows(self) -> None:
-        from core.api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class MappingLikeRow:
             def __init__(self, data):
@@ -971,9 +1007,15 @@ class TestMemoryReadValidation:
 
         req = _mock_request()
         with (
-            patch("core.api.memory_read_api.request", req),
-            patch("core.api.memory_read_api.aiosqlite.connect", fake_connect),
-            patch("core.api.memory_read_api.apply_perf_pragmas", AsyncMock()),
+            patch("core.platform.transport.page_api.memory_read_api.request", req),
+            patch(
+                "core.platform.transport.page_api.memory_read_api.aiosqlite.connect",
+                fake_connect,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_read_api.apply_perf_pragmas",
+                AsyncMock(),
+            ),
         ):
             result = await Stub().list_memories()
         assert result["status"] == "ok"
@@ -1004,8 +1046,10 @@ class TestMemoryWriteValidation:
 
     @pytest.mark.asyncio
     async def test_update_memory_rejected_during_pending_restore(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
         from core.page_api import PluginPageApi
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1034,7 +1078,9 @@ class TestMemoryWriteValidation:
 
     @pytest.mark.asyncio
     async def test_update_memory_invalid_id(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1053,13 +1099,15 @@ class TestMemoryWriteValidation:
         req.get_json = AsyncMock(
             return_value={"memory_id": "not_int", "field": "importance", "value": 0.5}
         )
-        with patch("core.api.memory_write_api.request", req):
+        with patch("core.platform.transport.page_api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_update_memory_rejects_non_object_json_payload(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1076,14 +1124,16 @@ class TestMemoryWriteValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["not", "an", "object"])
-        with patch("core.api.memory_write_api.request", req):
+        with patch("core.platform.transport.page_api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
         assert "JSON" in result["message"]
 
     @pytest.mark.asyncio
     async def test_update_memory_rejects_boolean_id(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1102,13 +1152,15 @@ class TestMemoryWriteValidation:
         req.get_json = AsyncMock(
             return_value={"memory_id": True, "field": "importance", "value": 0.5}
         )
-        with patch("core.api.memory_write_api.request", req):
+        with patch("core.platform.transport.page_api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_update_memory_missing_field_or_value(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1127,13 +1179,15 @@ class TestMemoryWriteValidation:
         req.get_json = AsyncMock(
             return_value={"memory_id": 1, "field": "", "value": None}
         )
-        with patch("core.api.memory_write_api.request", req):
+        with patch("core.platform.transport.page_api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_update_memory_not_found(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1158,14 +1212,16 @@ class TestMemoryWriteValidation:
         req.get_json = AsyncMock(
             return_value={"memory_id": 999, "field": "status", "value": "archived"}
         )
-        with patch("core.api.memory_write_api.request", req):
+        with patch("core.platform.transport.page_api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
         assert "不存在" in result.get("message", "")
 
     @pytest.mark.asyncio
     async def test_update_memory_invalid_status(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1193,13 +1249,15 @@ class TestMemoryWriteValidation:
         req.get_json = AsyncMock(
             return_value={"memory_id": 1, "field": "status", "value": "invalid_status"}
         )
-        with patch("core.api.memory_write_api.request", req):
+        with patch("core.platform.transport.page_api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_update_memory_rejects_boolean_importance_value(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1230,7 +1288,7 @@ class TestMemoryWriteValidation:
         req.get_json = AsyncMock(
             return_value={"memory_id": 1, "field": "importance", "value": True}
         )
-        with patch("core.api.memory_write_api.request", req):
+        with patch("core.platform.transport.page_api.memory_write_api.request", req):
             result = await stub.update_memory()
         assert result["status"] == "error"
         assert "重要性必须是数字" in result["message"]
@@ -1238,7 +1296,9 @@ class TestMemoryWriteValidation:
 
     @pytest.mark.asyncio
     async def test_update_memory_unsupported_field(self) -> None:
-        from core.api.memory_write_api import MemoryWriteApiMixin
+        from core.platform.transport.page_api.memory_write_api import (
+            MemoryWriteApiMixin,
+        )
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory
@@ -1266,7 +1326,7 @@ class TestMemoryWriteValidation:
         req.get_json = AsyncMock(
             return_value={"memory_id": 1, "field": "unsupported", "value": "x"}
         )
-        with patch("core.api.memory_write_api.request", req):
+        with patch("core.platform.transport.page_api.memory_write_api.request", req):
             result = await Stub().update_memory()
         assert result["status"] == "error"
 
@@ -1281,7 +1341,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_stats_plugin_not_ready(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
@@ -1295,13 +1357,18 @@ class TestMemoryStatsRecallValidation:
             async def _ensure_plugin_ready(self):
                 return None, self._error("not ready")
 
-        with patch("core.api.memory_stats_recall_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            _mock_request(),
+        ):
             result = await Stub().get_stats()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_stats_returns_data(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
@@ -1328,7 +1395,10 @@ class TestMemoryStatsRecallValidation:
                 )
                 return {"memory_engine": engine}, None
 
-        with patch("core.api.memory_stats_recall_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            _mock_request(),
+        ):
             result = await Stub().get_stats()
         assert result["status"] == "ok"
         assert result["data"]["daily_memory_counts"] == [
@@ -1337,7 +1407,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_stats_tolerates_malformed_aggregate_payloads(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
@@ -1369,7 +1441,10 @@ class TestMemoryStatsRecallValidation:
                 )
                 return {"memory_engine": engine}, None
 
-        with patch("core.api.memory_stats_recall_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            _mock_request(),
+        ):
             result = await Stub().get_stats()
         assert result["status"] == "ok"
         assert result["data"]["active_count"] == 0
@@ -1387,7 +1462,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_stats_merges_partial_importance_distribution(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
@@ -1414,7 +1491,10 @@ class TestMemoryStatsRecallValidation:
                 )
                 return {"memory_engine": engine}, None
 
-        with patch("core.api.memory_stats_recall_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            _mock_request(),
+        ):
             result = await Stub().get_stats()
         assert result["status"] == "ok"
         assert result["data"]["importance_distribution"]["0-1"] == 2
@@ -1424,7 +1504,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_stats_tolerates_malformed_recent_session_counts(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             get_stats = MemoryStatsRecallApiMixin.get_stats
@@ -1450,7 +1532,10 @@ class TestMemoryStatsRecallValidation:
                 )
                 return {"memory_engine": engine}, None
 
-        with patch("core.api.memory_stats_recall_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            _mock_request(),
+        ):
             result = await Stub().get_stats()
         assert result["status"] == "ok"
         assert result["data"]["recent_sessions"] == [
@@ -1460,7 +1545,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_recall_requires_query(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
@@ -1477,14 +1564,18 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"query": "", "k": 5})
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "error"
         assert "查询内容" in result.get("message", "")
 
     @pytest.mark.asyncio
     async def test_recall_rejects_non_object_json_payload(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
@@ -1502,14 +1593,18 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-query"])
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "error"
         assert "JSON" in result["message"]
 
     @pytest.mark.asyncio
     async def test_recall_invalid_k(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
@@ -1526,13 +1621,17 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"query": "test query", "k": "invalid"})
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_recall_rejects_boolean_k(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
@@ -1550,14 +1649,18 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"query": "test query", "k": True})
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "error"
         assert "k 必须是整数" in result["message"]
 
     @pytest.mark.asyncio
     async def test_recall_with_valid_params(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class MockResult:
             def __init__(self, doc_id, content, score):
@@ -1599,7 +1702,9 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"query": "test query", "k": 5})
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "ok"
         assert len(result["data"]["results"]) == 2
@@ -1609,7 +1714,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_recall_clamps_k_and_preserves_session_filter(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class Stub:
             test_recall = MemoryStatsRecallApiMixin.test_recall
@@ -1635,7 +1742,9 @@ class TestMemoryStatsRecallValidation:
                 "session_id": "sess-1",
             }
         )
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await stub.test_recall()
         assert result["status"] == "ok"
         stub.engine.search_memories.assert_awaited_once_with(
@@ -1649,7 +1758,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_recall_filters_non_numeric_score_breakdown_values(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class MockResult:
             def __init__(self):
@@ -1689,7 +1800,9 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"query": "edge", "k": 1})
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "ok"
         item = result["data"]["results"][0]
@@ -1705,7 +1818,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_recall_skips_malformed_result_objects(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class MockResult:
             def __init__(self, doc_id, final_score, metadata, content="content"):
@@ -1766,7 +1881,9 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"query": "edge", "k": 10})
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "ok"
         assert result["data"]["total"] == 1
@@ -1801,7 +1918,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_recall_tolerates_non_iterable_result_container(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class BrokenResults:
             def __iter__(self):
@@ -1826,7 +1945,9 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"query": "edge", "k": 5})
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "ok"
         assert result["data"]["results"] == []
@@ -1834,7 +1955,9 @@ class TestMemoryStatsRecallValidation:
 
     @pytest.mark.asyncio
     async def test_recall_tolerates_malformed_score_breakdown_container(self) -> None:
-        from core.api.memory_stats_recall_api import MemoryStatsRecallApiMixin
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
 
         class BrokenBreakdown:
             def items(self):
@@ -1875,7 +1998,9 @@ class TestMemoryStatsRecallValidation:
 
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"query": "edge", "k": 5})
-        with patch("core.api.memory_stats_recall_api.request", req):
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
             result = await Stub().test_recall()
         assert result["status"] == "ok"
         assert result["data"]["total"] == 1
@@ -1914,7 +2039,7 @@ class TestRealtimeSSE:
     def test_register_returns_client_id_and_queue(self) -> None:
         import asyncio
 
-        from core.api.realtime_api import RealtimeSSE
+        from core.platform.transport.page_api.realtime_api import RealtimeSSE
 
         engine = MagicMock()
         sse = RealtimeSSE(engine)
@@ -1924,7 +2049,7 @@ class TestRealtimeSSE:
         assert sse.connected == 1
 
     def test_unregister_removes_client(self) -> None:
-        from core.api.realtime_api import RealtimeSSE
+        from core.platform.transport.page_api.realtime_api import RealtimeSSE
 
         engine = MagicMock()
         sse = RealtimeSSE(engine)
@@ -1934,7 +2059,7 @@ class TestRealtimeSSE:
         assert sse.connected == 0
 
     def test_connected_reflects_registrations(self) -> None:
-        from core.api.realtime_api import RealtimeSSE
+        from core.platform.transport.page_api.realtime_api import RealtimeSSE
 
         engine = MagicMock()
         sse = RealtimeSSE(engine)
@@ -1946,7 +2071,7 @@ class TestRealtimeSSE:
     def test_try_put_returns_false_on_success(self) -> None:
         import asyncio
 
-        from core.api.realtime_api import RealtimeSSE
+        from core.platform.transport.page_api.realtime_api import RealtimeSSE
 
         q = asyncio.Queue(maxsize=256)
         assert RealtimeSSE._try_put(q, "test") is False
@@ -1954,7 +2079,7 @@ class TestRealtimeSSE:
     def test_try_put_returns_true_on_full(self) -> None:
         import asyncio
 
-        from core.api.realtime_api import RealtimeSSE
+        from core.platform.transport.page_api.realtime_api import RealtimeSSE
 
         q = asyncio.Queue(maxsize=1)
         q.put_nowait("blocking")
@@ -1965,7 +2090,7 @@ class TestLearningApi:
     """Tests for core/api/learning_api.py — shadow candidate views."""
 
     def test_candidate_view_allowlist(self) -> None:
-        from core.api.learning_api import _candidate_view
+        from core.platform.transport.page_api.learning_api import _candidate_view
 
         result = _candidate_view(
             {
@@ -1987,7 +2112,7 @@ class TestLearningApi:
         assert "secret" not in result
 
     def test_candidate_view_tolerates_partial_payload(self) -> None:
-        from core.api.learning_api import _candidate_view
+        from core.platform.transport.page_api.learning_api import _candidate_view
 
         result = _candidate_view(
             {"status": "rejected", "reason_code": "insufficient_evidence"}

@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.response_utils import error_response
+from core.platform.transport.page_api.response_utils import error_response
 
 # ── helpers ───────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ def _make_mixin(
     has_exporter: bool = False,
     backup_path: str = "/tmp/backup.zip",
 ):
-    from core.api.maintenance_api import MaintenanceApiMixin
+    from core.platform.transport.page_api.maintenance_api import MaintenanceApiMixin
 
     class Stub:
         rebuild_index = MaintenanceApiMixin.rebuild_index
@@ -239,7 +239,7 @@ class TestMaintenanceHappyPath:
         validator = MagicMock()
         validator.check = AsyncMock(return_value={"ok": True, "issues": {}})
         with patch(
-            "core.api.maintenance_api.PersistenceHealthValidator",
+            "core.platform.transport.page_api.maintenance_api.PersistenceHealthValidator",
             return_value=validator,
         ):
             result = await mixin.get_persistence_health()

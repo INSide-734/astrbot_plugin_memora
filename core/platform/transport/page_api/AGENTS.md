@@ -1,4 +1,4 @@
-[根级 AGENTS.md](../../AGENTS.md) / core / api
+[根级 AGENTS.md](../../../../../../../AGENTS.md) / core / platform / transport / page_api
 
 # Page API 混入层
 
@@ -87,12 +87,12 @@ flowchart TD
 - 召回 trace 只预览路由/检索，不执行 `InjectionExecutor`、不写决策记录；空白 `session_id`、`persona_id`、`user_id` 必须规范化为未提供，不能下传为空字符串过滤器。创建和详情端点只返回 `sanitize_trace_payload()` 的安全 DTO，不得返回 query、正文/preview、canonical ID、候选 ID、request metadata、source/revision/scope/privacy/role/job 信息。
 - trace metadata 中 `debug_reporting_enabled` 表示插件问题报告记录器是否开启，`debug_trace_available` 只表示本次候选评分明细是否存在；零候选时后者为 `false` 不代表配置开关失效。控制台追踪完成或失败时也要写入脱敏问题报告事件，普通 INFO 日志仅包含候选计数和两个布尔状态。
 - Diagnostics 事件列表/详情只能返回 Store 标量 allowlist；历史行也必须在读取时重新脱敏。Diagnostics 与 Recall Trace 普通失败只返回稳定错误码，日志只记录异常类型，不得回显 action 输入、`str(exc)`、异常 `repr` 或 traceback。
-- 动态记忆传输不提供 `system_prompt`，API catalog 的 deliveries 也不得出现该值；详见 [注入模块 AGENTS.md](../injection/AGENTS.md)。
+- 动态记忆传输不提供 `system_prompt`，API catalog 的 deliveries 也不得出现该值；详见 [注入模块 AGENTS.md](../../../../injection/AGENTS.md)。
 - SSE 每客户端队列上限 256；满队列客户端被移除，30 秒心跳，断开时注销。
 
 ## 依赖方向
 
-`core/page_api.py` → 本目录 mixin → managers/stores/services/config/injection。Dashboard 通过已注册路径消费接口；可对照 [Dashboard AGENTS.md](../../pages/dashboard/AGENTS.md)。领域层不得反向导入 Page API。
+`core/page_api.py` → 本目录 mixin → managers/stores/services/config/injection。Dashboard 通过已注册路径消费接口；可对照 [Dashboard AGENTS.md](../../../../../pages/dashboard/AGENTS.md)。领域层不得反向导入 Page API。
 
 ## 测试定位与精确验证
 
@@ -110,8 +110,8 @@ python -m pytest tests/test_api_memory_evolution_review.py tests/test_page_api_c
 
 ## 相关上下文
 
-- [根级 AGENTS.md](../../AGENTS.md)
-- [注入模块 AGENTS.md](../injection/AGENTS.md)
-- [Dashboard AGENTS.md](../../pages/dashboard/AGENTS.md)
+- [根级 AGENTS.md](../../../../../AGENTS.md)
+- [注入模块 AGENTS.md](../../../../injection/AGENTS.md)
+- [Dashboard AGENTS.md](../../../../../pages/dashboard/AGENTS.md)
 - `core/page_api.py`
 - `core/platform/config/manager.py`

@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.quality_api import QualityApiMixin
 from core.managers.memory_engine import MemoryEngine
 from core.platform.composition.plugin_initializer import PluginInitializer
+from core.platform.transport.page_api.quality_api import QualityApiMixin
 
 
 class _QualityApiStub(QualityApiMixin):

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.api.delegation_api import DelegationApiMixin
+from core.platform.transport.page_api.delegation_api import DelegationApiMixin
 
 
 def _make_stub(*, has_delegation=True, delegation_status=None):

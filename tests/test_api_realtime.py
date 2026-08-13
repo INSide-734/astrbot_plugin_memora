@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 import pytest
 from starlette.responses import StreamingResponse
 
-from core.api.realtime_api import RealtimeSSE
 from core.page_api import PluginPageApi
+from core.platform.transport.page_api.realtime_api import RealtimeSSE
 
 
 class TestRealtimeSSE:

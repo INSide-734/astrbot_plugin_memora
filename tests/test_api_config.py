@@ -72,7 +72,7 @@ def _make_api(
     config_manager: Any = None,
     hot_reload: bool = False,
 ) -> tuple[Any, Any]:
-    from core.api.config_api import ConfigApiMixin
+    from core.platform.transport.page_api.config_api import ConfigApiMixin
 
     class _ConfigApi(ConfigApiMixin):
         plugin: Any
@@ -624,7 +624,7 @@ class TestConfigApplyApi:
             hot_reload=True,
         )
 
-        with patch("core.api.config_api.logger") as mock_logger:
+        with patch("core.platform.transport.page_api.config_api.logger") as mock_logger:
             result = await api.apply_config()
 
         manager.apply_config_changes.assert_awaited_once_with(
@@ -693,8 +693,12 @@ class TestConfigApplyApi:
         plugin.context.get_config = lambda: {"timezone": "Asia/Shanghai"}
 
         with (
-            patch("core.api.config_api.set_debug_mode") as set_debug_mode,
-            patch("core.api.config_api.report_debug_event") as report_debug_event,
+            patch(
+                "core.platform.transport.page_api.config_api.set_debug_mode"
+            ) as set_debug_mode,
+            patch(
+                "core.platform.transport.page_api.config_api.report_debug_event"
+            ) as report_debug_event,
         ):
             result = await api.apply_config()
 

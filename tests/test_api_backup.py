@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from core.api.backup_api import BackupApiMixin
+from core.platform.transport.page_api.backup_api import BackupApiMixin
 
 # ---------------------------------------------------------------------------
 # 最小化 Mixin 设置辅助函数
@@ -25,12 +25,12 @@ def _make_mixin(plugin) -> BackupApiMixin:
             self.plugin = plugin  # type: ignore
 
         def _ok(self, data):
-            from core.api.response_utils import ok_response
+            from core.platform.transport.page_api.response_utils import ok_response
 
             return ok_response(data)
 
         def _error(self, msg):
-            from core.api.response_utils import error_response
+            from core.platform.transport.page_api.response_utils import error_response
 
             return error_response(msg)
 
@@ -82,7 +82,7 @@ class TestBackupApiListBackups:
             {"name": "backup-b", "path": "b.zip"},
         ]
         with patch(
-            "core.api.backup_api.BackupManager.list_backups",
+            "core.platform.transport.page_api.backup_api.BackupManager.list_backups",
             return_value=backups,
         ) as mock_list:
             result = await mixin.list_backups()
@@ -98,7 +98,7 @@ class TestBackupApiListBackups:
         )()
         mixin = _make_mixin(plugin)
         with patch(
-            "core.api.backup_api.BackupManager.list_backups",
+            "core.platform.transport.page_api.backup_api.BackupManager.list_backups",
             return_value="bad-backups",
         ):
             result = await mixin.list_backups()
@@ -117,7 +117,7 @@ class TestBackupApiListBackups:
             {"name": "backup-b", "path": "b.zip"},
         )
         with patch(
-            "core.api.backup_api.BackupManager.list_backups",
+            "core.platform.transport.page_api.backup_api.BackupManager.list_backups",
             return_value=backups,
         ):
             result = await mixin.list_backups()

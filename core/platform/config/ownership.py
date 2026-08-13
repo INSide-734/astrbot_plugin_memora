@@ -182,7 +182,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "dashboard": _ownership(
         "dashboard",
         ConfigOwnershipKind.DASHBOARD_ONLY,
-        "core.api.maintenance_api",
+        "core.platform.transport.page_api.maintenance_api",
     ),
     "update_settings": _ownership(
         "update_settings",

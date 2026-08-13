@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.graph_api import GraphApiMixin
 from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.platform.transport.page_api.graph_api import GraphApiMixin
 from core.storage.graph_store import GraphStore
 
 
@@ -153,7 +153,7 @@ async def test_overview_without_limits_requests_full_snapshot() -> None:
     request_stub = MagicMock()
     request_stub.args = {}
 
-    with patch("core.api.graph_api.request", request_stub):
+    with patch("core.platform.transport.page_api.graph_api.request", request_stub):
         result = await host.get_graph_overview()
 
     assert result["status"] == "ok"

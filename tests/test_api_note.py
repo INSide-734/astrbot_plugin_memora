@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.note_api import NoteApiMixin
 from core.features.notes.domain import Note, NoteStatus
+from core.platform.transport.page_api.note_api import NoteApiMixin
 
 
 def _mock_request(**args):
@@ -91,7 +91,7 @@ class TestNoteValidation:
     async def test_create_requires_title_and_content(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"title": "", "content": ""})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.create_note()
         assert result["status"] == "error"
@@ -100,7 +100,7 @@ class TestNoteValidation:
     async def test_create_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-note"])
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.create_note()
         assert result["status"] == "error"
@@ -109,7 +109,7 @@ class TestNoteValidation:
     @pytest.mark.asyncio
     async def test_search_requires_query(self) -> None:
         req = _mock_request(query="")
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.search_notes()
         assert result["status"] == "error"
@@ -117,7 +117,7 @@ class TestNoteValidation:
     @pytest.mark.asyncio
     async def test_search_rejects_non_numeric_limit(self) -> None:
         req = _mock_request(query="topic", limit="abc")
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.search_notes()
         assert result["status"] == "error"
@@ -125,7 +125,7 @@ class TestNoteValidation:
     @pytest.mark.asyncio
     async def test_get_detail_requires_note_id(self) -> None:
         req = _mock_request(note_id="0")
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.get_note_detail()
         assert result["status"] == "error"
@@ -133,7 +133,7 @@ class TestNoteValidation:
     @pytest.mark.asyncio
     async def test_get_detail_rejects_non_numeric_note_id(self) -> None:
         req = _mock_request(note_id="abc")
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.get_note_detail()
         assert result["status"] == "error"
@@ -142,7 +142,7 @@ class TestNoteValidation:
     async def test_delete_requires_note_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 0})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.delete_note()
         assert result["status"] == "error"
@@ -151,7 +151,7 @@ class TestNoteValidation:
     async def test_delete_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-note"])
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.delete_note()
         assert result["status"] == "error"
@@ -161,7 +161,7 @@ class TestNoteValidation:
     async def test_delete_rejects_non_numeric_note_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": "abc"})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.delete_note()
         assert result["status"] == "error"
@@ -170,7 +170,7 @@ class TestNoteValidation:
     async def test_delete_rejects_boolean_note_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": True})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.delete_note()
         assert result["status"] == "error"
@@ -180,7 +180,7 @@ class TestNoteValidation:
     async def test_update_requires_note_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 0, "title": "new"})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -189,7 +189,7 @@ class TestNoteValidation:
     async def test_update_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-note"])
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -199,7 +199,7 @@ class TestNoteValidation:
     async def test_update_rejects_non_numeric_note_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": "abc", "title": "new"})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -210,7 +210,7 @@ class TestNoteValidation:
         req.get_json = AsyncMock(
             return_value={"note_id": True, "field": "title", "value": "new"}
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=_make_note(note_id_val=1))
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -222,7 +222,7 @@ class TestNoteValidation:
         req.get_json = AsyncMock(
             return_value={"note_id": 999, "title": "new", "content": "body"}
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=None)
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -242,7 +242,7 @@ class TestNoteValidation:
                 },
             }
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.update_note()
         assert result["status"] == "ok"
@@ -259,7 +259,7 @@ class TestNoteValidation:
         note = _make_note(title="old", content="body", note_id_val=2)
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 2, "changes": {"note_id": 3}})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -272,7 +272,7 @@ class TestNoteValidation:
         req.get_json = AsyncMock(
             return_value={"note_id": 2, "field": "title", "value": "new title"}
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.update_note()
         assert result["status"] == "ok"
@@ -290,7 +290,7 @@ class TestNoteValidation:
                 "changes": {"title": "new title", "status": "invalid"},
             }
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -306,7 +306,7 @@ class TestNoteValidation:
         note = _make_note(title="old", content="body", note_id_val=2)
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 2, "changes": {field: "   "}})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -323,7 +323,7 @@ class TestNoteValidation:
         req.get_json = AsyncMock(
             return_value={"note_id": 2, "changes": {"tags": ["ok", 2]}}
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -347,7 +347,7 @@ class TestNoteValidation:
                 },
             }
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note, manager_available=True)
             result = await mixin.update_note()
         assert result["status"] == "ok"
@@ -365,7 +365,7 @@ class TestNoteValidation:
     async def test_archive_requires_note_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 0})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.archive_note()
         assert result["status"] == "error"
@@ -374,7 +374,7 @@ class TestNoteValidation:
     async def test_archive_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-note"])
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.archive_note()
         assert result["status"] == "error"
@@ -384,7 +384,7 @@ class TestNoteValidation:
     async def test_archive_rejects_non_numeric_note_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": "abc"})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.archive_note()
         assert result["status"] == "error"
@@ -393,7 +393,7 @@ class TestNoteValidation:
     async def test_archive_rejects_boolean_note_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": True})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=_make_note(note_id_val=1))
             result = await mixin.archive_note()
         assert result["status"] == "error"
@@ -403,7 +403,7 @@ class TestNoteValidation:
     async def test_batch_requires_ids(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_ids": [], "action": "delete"})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_notes()
         assert result["status"] == "error"
@@ -412,7 +412,7 @@ class TestNoteValidation:
     async def test_batch_notes_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-note"])
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_notes()
         assert result["status"] == "error"
@@ -422,7 +422,7 @@ class TestNoteValidation:
     async def test_batch_unsupported_action(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_ids": [1], "action": "invalid"})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_notes()
         assert result["status"] == "error"
@@ -431,7 +431,7 @@ class TestNoteValidation:
     @pytest.mark.asyncio
     async def test_list_rejects_non_numeric_limit_or_offset(self) -> None:
         req = _mock_request(limit="abc", offset="1x")
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.list_notes()
         assert result["status"] == "error"
@@ -440,7 +440,7 @@ class TestNoteValidation:
     async def test_batch_delete_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-note"])
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_delete_notes()
         assert result["status"] == "error"
@@ -450,7 +450,7 @@ class TestNoteValidation:
     async def test_batch_update_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-note"])
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_update_notes()
         assert result["status"] == "error"
@@ -469,7 +469,7 @@ class TestNoteHappyPath:
         )
         good_1 = _make_note(title="A", content="body-a", note_id_val=1)
         good_2 = _make_note(title="B", content="body-b", note_id_val=2)
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(notes_list=[good_1, broken, good_2], notes_total=3)
             result = await mixin.list_notes()
         assert result["status"] == "ok"
@@ -480,7 +480,7 @@ class TestNoteHappyPath:
     async def test_list_coerces_malformed_total_count(self) -> None:
         req = _mock_request(limit="10", offset="0")
         good = _make_note(title="A", content="body-a", note_id_val=1)
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(notes_list=[good], notes_total="bad-total")
             result = await mixin.list_notes()
         assert result["status"] == "ok"
@@ -495,7 +495,7 @@ class TestNoteHappyPath:
             RuntimeError("broken note")
         )
         good = _make_note(title="A", content="body-a", note_id_val=1)
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(search_notes=[good, broken], search_total=2)
             result = await mixin.search_notes()
         assert result["status"] == "ok"
@@ -506,7 +506,7 @@ class TestNoteHappyPath:
     async def test_search_coerces_malformed_total_count(self) -> None:
         req = _mock_request(query="topic", limit="10")
         good = _make_note(title="A", content="body-a", note_id_val=1)
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(search_notes=[good], search_total="bad-total")
             result = await mixin.search_notes()
         assert result["status"] == "ok"
@@ -524,7 +524,7 @@ class TestNoteHappyPath:
                 "user_id": "u1",
             }
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(create_id=42)
             result = await mixin.create_note()
         assert result["status"] == "ok"
@@ -534,7 +534,7 @@ class TestNoteHappyPath:
     async def test_delete_returns_result(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 1})
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.delete_note()
         assert result["status"] == "ok"
@@ -545,7 +545,7 @@ class TestNoteHappyPath:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"note_id": 1})
         note = _make_note(note_id_val=1, status=NoteStatus.ACTIVE)
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.archive_note()
         assert result["status"] == "ok"
@@ -566,7 +566,7 @@ class TestNoteHappyPath:
             def version(self):
                 raise RuntimeError("broken note version")
 
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=BrokenVersionNote())
             result = await mixin.archive_note()
         assert result["status"] == "error"
@@ -578,7 +578,7 @@ class TestNoteHappyPath:
         req.get_json = AsyncMock(
             return_value={"note_ids": [1, 2, 3], "action": "delete"}
         )
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.batch_notes()
         assert result["status"] == "ok"
@@ -594,7 +594,7 @@ class TestNoteHappyPath:
             return_value={"note_ids": [True, 2], "action": "archive"}
         )
         note = _make_note(note_id_val=2, status=NoteStatus.ACTIVE)
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.batch_notes()
         assert result["status"] == "ok"
@@ -615,7 +615,7 @@ class TestNoteHappyPath:
             }
         )
         note = _make_note(note_id_val=2, status=NoteStatus.ACTIVE)
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.batch_update_notes()
         assert result["status"] == "ok"
@@ -636,7 +636,7 @@ class TestNoteHappyPath:
             }
         )
         note = _make_note(note_id_val=1, status=NoteStatus.ACTIVE)
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note)
             result = await mixin.batch_update_notes()
         assert result["status"] == "ok"
@@ -661,7 +661,7 @@ class TestNoteHappyPath:
             def version(self):
                 raise RuntimeError("broken note version")
 
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=BrokenVersionNote())
             result = await mixin.update_note()
         assert result["status"] == "error"
@@ -670,7 +670,7 @@ class TestNoteHappyPath:
     @pytest.mark.asyncio
     async def test_detail_not_found(self) -> None:
         req = _mock_request(note_id="5")
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=None)
             result = await mixin.get_note_detail()
         assert result["status"] == "error"
@@ -684,7 +684,7 @@ class TestNoteHappyPath:
             MagicMock(version=1, content="v1", created_at="2024-01-01"),
             MagicMock(version=2, content="v2", created_at="2024-01-02"),
         ]
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note, versions_list=versions)
             result = await mixin.get_note_detail()
         assert result["status"] == "ok"
@@ -697,7 +697,7 @@ class TestNoteHappyPath:
         note = MagicMock()
         note.to_dict.side_effect = RuntimeError("broken note")
         versions = [MagicMock(version=1, content="v1", created_at="2024-01-01")]
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note, versions_list=versions)
             result = await mixin.get_note_detail()
         assert result["status"] == "error"
@@ -717,7 +717,7 @@ class TestNoteHappyPath:
             MagicMock(version=1, content="v1", created_at="2024-01-01"),
             BrokenVersion(),
         ]
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note, versions_list=versions)
             result = await mixin.get_note_detail()
         assert result["status"] == "ok"
@@ -737,7 +737,7 @@ class TestNoteHappyPath:
             def __bool__(self):
                 return True
 
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(detail_note=note, versions_list=BrokenVersions())
             result = await mixin.get_note_detail()
         assert result["status"] == "ok"
@@ -747,7 +747,7 @@ class TestNoteHappyPath:
     @pytest.mark.asyncio
     async def test_get_versions_requires_note_id(self) -> None:
         req = _mock_request(note_id="0")
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.get_note_versions()
         assert result["status"] == "error"
@@ -755,7 +755,7 @@ class TestNoteHappyPath:
     @pytest.mark.asyncio
     async def test_get_versions_rejects_non_numeric_note_id(self) -> None:
         req = _mock_request(note_id="abc")
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin()
             result = await mixin.get_note_versions()
         assert result["status"] == "error"
@@ -773,7 +773,7 @@ class TestNoteHappyPath:
             MagicMock(version=2, content="v2", created_at="2024-01-02"),
             BrokenVersion(),
         ]
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(versions_list=versions)
             result = await mixin.get_note_versions()
         assert result["status"] == "ok"
@@ -792,7 +792,7 @@ class TestNoteHappyPath:
             def __bool__(self):
                 return True
 
-        with patch("core.api.note_api.request", req):
+        with patch("core.platform.transport.page_api.note_api.request", req):
             mixin = _make_mixin(versions_list=BrokenVersions())
             result = await mixin.get_note_versions()
         assert result["status"] == "ok"
@@ -811,8 +811,8 @@ async def test_versions_backend_failure_is_redacted_and_safely_logged() -> None:
     )
     request_mock = _mock_request(note_id="7")
     with (
-        patch("core.api.note_api.request", request_mock),
-        patch("core.api.note_api.logger.error") as logged,
+        patch("core.platform.transport.page_api.note_api.request", request_mock),
+        patch("core.platform.transport.page_api.note_api.logger.error") as logged,
     ):
         result = await mixin.get_note_versions()
     assert result["code"] == "internal_error"
@@ -834,7 +834,7 @@ async def test_full_form_update_backend_failure_is_redacted() -> None:
     )
     request_mock = _mock_request()
     request_mock.get_json = AsyncMock(return_value={"note_id": 7, "title": "After"})
-    with patch("core.api.note_api.request", request_mock):
+    with patch("core.platform.transport.page_api.note_api.request", request_mock):
         result = await mixin.update_note()
     assert result["code"] == "internal_error"
     assert secret not in repr(result)

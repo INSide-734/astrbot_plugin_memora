@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.api.response_utils import error_response, ok_response
+from core.platform.transport.page_api.response_utils import error_response, ok_response
 
 
 class TestOkResponse:

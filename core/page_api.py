@@ -11,40 +11,50 @@ from typing import Any
 
 from astrbot.api import logger
 
-from .api.affection_api import AffectionApiMixin
-from .api.backup_api import BackupApiMixin
-from .api.config_api import ConfigApiMixin
-from .api.delegation_api import DelegationApiMixin
-from .api.diagnostics_api import DiagnosticsApiMixin
-from .api.evaluation_api import EvaluationApiMixin
-from .api.expression_api import ExpressionApiMixin
-from .api.graph_api import GraphApiMixin
-from .api.injection_strategy_api import InjectionStrategyApiMixin
-from .api.jargon_api import JargonApiMixin
-from .api.knowledge_api import KnowledgeApiMixin
-from .api.learning_api import LearningApiMixin
-from .api.maintenance_api import MaintenanceApiMixin
-from .api.memory_batch_api import MemoryBatchApiMixin
-from .api.memory_evolution_review_api import MemoryEvolutionReviewApiMixin
-from .api.memory_read_api import MemoryReadApiMixin
-from .api.memory_stats_recall_api import MemoryStatsRecallApiMixin
-from .api.memory_write_api import MemoryWriteApiMixin
-from .api.metrics_api import MetricsApiMixin
-from .api.note_api import NoteApiMixin
-from .api.profile_api import ProfileApiMixin
-from .api.quality_api import QualityApiMixin
-from .api.quarantine_api import QuarantineApiMixin
-from .api.recall_trace_api import RecallTraceApiMixin
-from .api.reconsolidation_review_api import ReconsolidationReviewApiMixin
-from .api.response_utils import error_response, ok_response
-from .api.review_api import ReviewApiMixin
-from .api.route_registration import make_page_route_registrar
-from .api.social_api import SocialApiMixin
-from .api.topic_segmentation_api import TopicSegmentationApiMixin
-from .api.update_api import UpdateApiMixin
 from .features.observability.infrastructure.debug_reporter import (
     report_debug_exception,
 )
+from .platform.transport.page_api.affection_api import AffectionApiMixin
+from .platform.transport.page_api.backup_api import BackupApiMixin
+from .platform.transport.page_api.config_api import ConfigApiMixin
+from .platform.transport.page_api.delegation_api import DelegationApiMixin
+from .platform.transport.page_api.diagnostics_api import DiagnosticsApiMixin
+from .platform.transport.page_api.evaluation_api import EvaluationApiMixin
+from .platform.transport.page_api.expression_api import ExpressionApiMixin
+from .platform.transport.page_api.graph_api import GraphApiMixin
+from .platform.transport.page_api.injection_strategy_api import (
+    InjectionStrategyApiMixin,
+)
+from .platform.transport.page_api.jargon_api import JargonApiMixin
+from .platform.transport.page_api.knowledge_api import KnowledgeApiMixin
+from .platform.transport.page_api.learning_api import LearningApiMixin
+from .platform.transport.page_api.maintenance_api import MaintenanceApiMixin
+from .platform.transport.page_api.memory_batch_api import MemoryBatchApiMixin
+from .platform.transport.page_api.memory_evolution_review_api import (
+    MemoryEvolutionReviewApiMixin,
+)
+from .platform.transport.page_api.memory_read_api import MemoryReadApiMixin
+from .platform.transport.page_api.memory_stats_recall_api import (
+    MemoryStatsRecallApiMixin,
+)
+from .platform.transport.page_api.memory_write_api import MemoryWriteApiMixin
+from .platform.transport.page_api.metrics_api import MetricsApiMixin
+from .platform.transport.page_api.note_api import NoteApiMixin
+from .platform.transport.page_api.profile_api import ProfileApiMixin
+from .platform.transport.page_api.quality_api import QualityApiMixin
+from .platform.transport.page_api.quarantine_api import QuarantineApiMixin
+from .platform.transport.page_api.recall_trace_api import RecallTraceApiMixin
+from .platform.transport.page_api.reconsolidation_review_api import (
+    ReconsolidationReviewApiMixin,
+)
+from .platform.transport.page_api.response_utils import error_response, ok_response
+from .platform.transport.page_api.review_api import ReviewApiMixin
+from .platform.transport.page_api.route_registration import make_page_route_registrar
+from .platform.transport.page_api.social_api import SocialApiMixin
+from .platform.transport.page_api.topic_segmentation_api import (
+    TopicSegmentationApiMixin,
+)
+from .platform.transport.page_api.update_api import UpdateApiMixin
 from .utils.number_utils import safe_float
 
 PLUGIN_NAME = "astrbot_plugin_memora"

@@ -476,7 +476,7 @@ class MemoryEngineLifecycleMixin:
             )
 
         # D4：实时 SSE 事件流。
-        from ..api.realtime_api import RealtimeSSE
+        from ..platform.transport.page_api.realtime_api import RealtimeSSE
         from ..platform.transport.realtime_hub import RealtimeHub
 
         realtime_hub = self.config.get("realtime_hub")

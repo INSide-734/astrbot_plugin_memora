@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.learning_api import _schedule_learning_reload
+from core.platform.transport.page_api.learning_api import _schedule_learning_reload
 
 _CANDIDATE_ID = "candidate_plugin_reload01"
 _OPERATION_ID = "operation_plugin_reload01"

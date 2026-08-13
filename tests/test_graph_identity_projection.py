@@ -46,7 +46,7 @@ def _stable_person_node() -> dict[str, object]:
 def _projection_harness():
     """绑定待测图谱身份投影方法。"""
 
-    from core.api.graph_api import GraphApiMixin
+    from core.platform.transport.page_api.graph_api import GraphApiMixin
 
     class Harness:
         _enrich_graph_identity_nodes = GraphApiMixin._enrich_graph_identity_nodes
@@ -150,7 +150,7 @@ async def test_graph_identity_projection_degrades_errors_and_propagates_cancella
 async def test_graph_overview_projects_identity_runtime_into_response() -> None:
     """图谱概览端点把共享身份运行时的当前昵称投影到响应节点。"""
 
-    from core.api.graph_api import GraphApiMixin
+    from core.platform.transport.page_api.graph_api import GraphApiMixin
 
     graph_store = MagicMock()
     graph_store.get_graph_snapshot = AsyncMock(
@@ -196,7 +196,7 @@ async def test_graph_overview_projects_identity_runtime_into_response() -> None:
             return {"status": "error", "message": message}
 
     request = SimpleNamespace(args={})
-    with patch("core.api.graph_api.request", request):
+    with patch("core.platform.transport.page_api.graph_api.request", request):
         result = await Harness().get_graph_overview()
 
     assert result["data"]["nodes"][0]["label"] == "当前昵称"

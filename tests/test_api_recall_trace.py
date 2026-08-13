@@ -467,11 +467,11 @@ async def test_recall_trace_reports_debug_mode_separately_from_score_trace(
     engine.search_memories = AsyncMock(return_value=[])
     report_debug_event = MagicMock()
     monkeypatch.setattr(
-        "core.api.recall_trace_api.is_debug_reporting_enabled",
+        "core.platform.transport.page_api.recall_trace_api.is_debug_reporting_enabled",
         lambda: True,
     )
     monkeypatch.setattr(
-        "core.api.recall_trace_api.report_debug_event",
+        "core.platform.transport.page_api.recall_trace_api.report_debug_event",
         report_debug_event,
     )
 

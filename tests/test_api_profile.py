@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.profile_api import ProfileApiMixin
 from core.features.profiles.application.profile_manager import ProfileManager
 from core.features.profiles.infrastructure.profile_store import ProfileStore
+from core.platform.transport.page_api.profile_api import ProfileApiMixin
 from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
@@ -112,7 +112,7 @@ class TestProfileValidation:
     @pytest.mark.asyncio
     async def test_list_rejects_non_numeric_limit_or_offset(self) -> None:
         req = _mock_request(limit="abc", offset="1x")
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.list_profiles()
         assert result["status"] == "error"
@@ -133,7 +133,7 @@ class TestProfileValidation:
         req = _mock_request(sort_by=sort_by, sort_order=sort_order)
         mixin = _make_mixin()
 
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             result = await mixin.list_profiles()
 
         assert result["status"] == "error"
@@ -144,7 +144,7 @@ class TestProfileValidation:
     @pytest.mark.asyncio
     async def test_get_detail_requires_user_id(self) -> None:
         req = _mock_request(user_id="")
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.get_profile_detail()
         assert result["status"] == "error"
@@ -153,7 +153,7 @@ class TestProfileValidation:
     async def test_update_requires_user_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": ""})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.update_profile()
         assert result["status"] == "error"
@@ -162,7 +162,7 @@ class TestProfileValidation:
     async def test_update_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-profile"])
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.update_profile()
         assert result["status"] == "error"
@@ -174,7 +174,7 @@ class TestProfileValidation:
         req.get_json = AsyncMock(
             return_value={"user_id": True, "display_name": "New Name"}
         )
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=_make_profile())
             result = await mixin.update_profile()
         assert result["status"] == "error"
@@ -186,7 +186,7 @@ class TestProfileValidation:
         req.get_json = AsyncMock(
             return_value={"user_id": "u999", "display_name": "New Name"}
         )
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=None)
             result = await mixin.update_profile()
         assert result["status"] == "error"
@@ -195,7 +195,7 @@ class TestProfileValidation:
     async def test_delete_requires_user_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": ""})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.delete_profile()
         assert result["status"] == "error"
@@ -204,7 +204,7 @@ class TestProfileValidation:
     async def test_delete_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-profile"])
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.delete_profile()
         assert result["status"] == "error"
@@ -214,7 +214,7 @@ class TestProfileValidation:
     async def test_delete_rejects_boolean_user_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": True})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.delete_profile()
         assert result["status"] == "error"
@@ -224,7 +224,7 @@ class TestProfileValidation:
     async def test_batch_delete_requires_ids(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_ids": []})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_delete_profiles()
         assert result["status"] == "error"
@@ -233,7 +233,7 @@ class TestProfileValidation:
     async def test_batch_delete_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-profile"])
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_delete_profiles()
         assert result["status"] == "error"
@@ -243,7 +243,7 @@ class TestProfileValidation:
     async def test_manage_tags_requires_user_id(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": "", "action": "add"})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -252,7 +252,7 @@ class TestProfileValidation:
     async def test_manage_tags_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-profile"])
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -268,7 +268,7 @@ class TestProfileValidation:
                 "tag": {"category": "interest", "value": "reading", "confidence": 0.8},
             }
         )
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=_make_profile())
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -278,7 +278,7 @@ class TestProfileValidation:
     async def test_manage_tags_invalid_action(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": "u1", "action": "invalid"})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -289,7 +289,7 @@ class TestProfileValidation:
         req.get_json = AsyncMock(
             return_value={"user_id": "u1", "action": "add", "tag": "not_a_dict"}
         )
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=_make_profile())
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -308,7 +308,7 @@ class TestProfileValidation:
                 },
             }
         )
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=_make_profile())
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -328,7 +328,7 @@ class TestProfileValidation:
                 },
             }
         )
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=_make_profile())
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -352,7 +352,7 @@ class TestProfileValidation:
             }
         )
         mixin = _make_mixin(detail_profile=_make_profile())
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
         mixin.profile_manager.add_tag.assert_not_awaited()
@@ -373,7 +373,7 @@ class TestProfileValidation:
             }
         )
         mixin = _make_mixin(detail_profile=_make_profile())
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             result = await mixin.manage_profile_tags()
         assert result["code"] == "validation_error"
         mixin.profile_manager.add_tag.assert_not_awaited()
@@ -386,7 +386,7 @@ class TestProfileValidation:
             return_value={"user_id": "u1", "preferences": {field: 12}}
         )
         mixin = _make_mixin(detail_profile=_make_profile())
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             result = await mixin.update_profile()
         assert result["code"] == "validation_error"
         mixin.profile_manager.update_profile_fields.assert_not_awaited()
@@ -399,7 +399,7 @@ class TestProfileHappyPath:
     async def test_list_returns_profiles(self) -> None:
         req = _mock_request()
         p = _make_profile()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(profiles_list=[p], profiles_total=1)
             result = await mixin.list_profiles()
         assert result["status"] == "ok"
@@ -415,7 +415,7 @@ class TestProfileHappyPath:
         )
         mixin = _make_mixin()
 
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             result = await mixin.list_profiles()
 
         assert result["status"] == "ok"
@@ -434,7 +434,7 @@ class TestProfileHappyPath:
         )
         p1 = _make_profile(user_id="u1", display_name="User 1")
         p2 = _make_profile(user_id="u2", display_name="User 2")
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(profiles_list=[p1, broken, p2], profiles_total=3)
             result = await mixin.list_profiles()
         assert result["status"] == "ok"
@@ -462,7 +462,7 @@ class TestProfileHappyPath:
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             result = await Stub().list_profiles()
         assert result["status"] == "ok"
         assert result["data"]["profiles"] == []
@@ -472,7 +472,7 @@ class TestProfileHappyPath:
     async def test_get_detail_returns_profile(self) -> None:
         req = _mock_request(user_id="u1")
         p = _make_profile()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
             result = await mixin.get_profile_detail()
         assert result["status"] == "ok"
@@ -483,7 +483,7 @@ class TestProfileHappyPath:
         req = _mock_request(user_id="u1")
         broken = _make_profile()
         broken.to_dict.side_effect = RuntimeError("broken profile")
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=broken)
             result = await mixin.get_profile_detail()
         assert result["status"] == "error"
@@ -494,7 +494,7 @@ class TestProfileHappyPath:
     async def test_delete_returns_result(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": "u1"})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.delete_profile()
         assert result["status"] == "ok"
@@ -504,7 +504,7 @@ class TestProfileHappyPath:
     async def test_batch_delete_profiles(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_ids": ["u1", "u2", "u3"]})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_delete_profiles()
         assert result["status"] == "ok"
@@ -516,7 +516,7 @@ class TestProfileHappyPath:
     ) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_ids": [True, "u2"]})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_delete_profiles()
         assert result["status"] == "ok"
@@ -535,7 +535,7 @@ class TestProfileHappyPath:
             }
         )
         p = _make_profile()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
             result = await mixin.manage_profile_tags()
         assert result["status"] == "ok"
@@ -552,7 +552,7 @@ class TestProfileHappyPath:
         )
         broken = _make_profile()
         broken.to_dict.side_effect = RuntimeError("broken profile")
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=broken)
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -570,7 +570,7 @@ class TestProfileHappyPath:
             }
         )
         p = _make_profile()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
             result = await mixin.manage_profile_tags()
         assert result["status"] == "ok"
@@ -582,7 +582,7 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_list_profiles_no_manager(self) -> None:
         req = _mock_request()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(profile_manager_available=False)
             result = await mixin.list_profiles()
         assert result["status"] == "ok"
@@ -591,7 +591,7 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_get_detail_no_manager(self) -> None:
         req = _mock_request(user_id="u1")
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(profile_manager_available=False)
             result = await mixin.get_profile_detail()
         assert result["status"] == "error"
@@ -599,7 +599,7 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_get_detail_not_found(self) -> None:
         req = _mock_request(user_id="u999")
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=None)
             result = await mixin.get_profile_detail()
         assert result["status"] == "error"
@@ -608,7 +608,7 @@ class TestProfileEdgeCases:
     async def test_update_no_manager(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": "u1"})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(profile_manager_available=False)
             result = await mixin.update_profile()
         assert result["status"] == "error"
@@ -624,7 +624,7 @@ class TestProfileEdgeCases:
             }
         )
         p = _make_profile()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
             result = await mixin.update_profile()
         assert result["status"] == "ok"
@@ -641,7 +641,7 @@ class TestProfileEdgeCases:
         )
         broken = _make_profile()
         broken.to_dict.side_effect = RuntimeError("broken profile")
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=broken)
             result = await mixin.update_profile()
         assert result["status"] == "error"
@@ -652,7 +652,7 @@ class TestProfileEdgeCases:
     async def test_delete_no_manager(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": "u1"})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(profile_manager_available=False)
             result = await mixin.delete_profile()
         assert result["status"] == "error"
@@ -661,7 +661,7 @@ class TestProfileEdgeCases:
     async def test_batch_delete_with_failed_ids(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_ids": ["u1", "", "u2"]})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_delete_profiles()
         assert result["status"] == "ok"
@@ -672,7 +672,7 @@ class TestProfileEdgeCases:
     async def test_batch_delete_no_manager(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_ids": ["u1"]})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(profile_manager_available=False)
             result = await mixin.batch_delete_profiles()
         assert result["status"] == "error"
@@ -681,7 +681,7 @@ class TestProfileEdgeCases:
     async def test_batch_delete_non_list(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_ids": "not_a_list"})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin()
             result = await mixin.batch_delete_profiles()
         assert result["status"] == "error"
@@ -697,7 +697,7 @@ class TestProfileEdgeCases:
             }
         )
         p = _make_profile()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=p)
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -712,7 +712,7 @@ class TestProfileEdgeCases:
                 "tag": {"category": "interest", "value": "reading"},
             }
         )
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(profile_manager_available=False)
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -727,7 +727,7 @@ class TestProfileEdgeCases:
                 "tag": {"category": "interest", "value": "reading"},
             }
         )
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(detail_profile=None)
             result = await mixin.manage_profile_tags()
         assert result["status"] == "error"
@@ -735,7 +735,7 @@ class TestProfileEdgeCases:
     @pytest.mark.asyncio
     async def test_plugin_not_ready_list(self) -> None:
         req = _mock_request()
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(plugin_ready=False)
             result = await mixin.list_profiles()
         assert result["status"] == "error"
@@ -744,7 +744,7 @@ class TestProfileEdgeCases:
     async def test_plugin_not_ready_delete(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value={"user_id": "u1"})
-        with patch("core.api.profile_api.request", req):
+        with patch("core.platform.transport.page_api.profile_api.request", req):
             mixin = _make_mixin(plugin_ready=False)
             result = await mixin.delete_profile()
         assert result["status"] == "error"
@@ -825,8 +825,8 @@ class TestRevisionedProfileApi:
         request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
 
         with (
-            patch("core.api.profile_api.request", request_mock),
-            patch("core.api.profile_api.logger.info") as audit,
+            patch("core.platform.transport.page_api.profile_api.request", request_mock),
+            patch("core.platform.transport.page_api.profile_api.logger.info") as audit,
         ):
             result = await mixin.create_profile()
 
@@ -861,7 +861,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.create_profile()
 
         assert result["status"] == "error"
@@ -875,7 +877,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.create_profile()
 
         assert result["code"] == "component_unavailable"
@@ -909,7 +913,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.create_profile()
 
         assert result["code"] == "validation_error"
@@ -922,7 +928,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.create_profile()
 
         assert result["status"] == "error"
@@ -934,9 +942,14 @@ class TestRevisionedProfileApi:
         mixin = _make_mixin(
             profiles_list=[profile], profiles_total=1, detail_profile=profile
         )
-        with patch("core.api.profile_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", _mock_request()
+        ):
             listed = await mixin.list_profiles()
-        with patch("core.api.profile_api.request", _mock_request(user_id="u1")):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request",
+            _mock_request(user_id="u1"),
+        ):
             detail = await mixin.get_profile_detail()
 
         assert listed["data"]["profiles"][0]["revision"] == "rev-profile"
@@ -950,7 +963,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=_update_envelope())
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.update_profile()
 
         assert result["data"]["revision"] == "rev-profile"
@@ -973,7 +988,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=_update_envelope())
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.update_profile()
 
         assert result["code"] == "edit_conflict"
@@ -1022,7 +1039,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.update_profile()
 
         assert result["code"] == "validation_error"
@@ -1040,7 +1059,9 @@ class TestRevisionedProfileApi:
             }
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.delete_profile()
 
         assert result == {
@@ -1079,7 +1100,9 @@ class TestRevisionedProfileApi:
             }
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.delete_profile()
 
         assert result["code"] == code
@@ -1108,7 +1131,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.delete_profile()
 
         assert result["code"] == "validation_error"
@@ -1134,7 +1159,9 @@ class TestRevisionedProfileApi:
             side_effect=AssertionError("JSON parsing must not run")
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await getattr(mixin, method_name)()
 
         assert result is blocked
@@ -1154,7 +1181,9 @@ class TestRevisionedProfileApi:
             return_value={**_complete_profile_payload(), "unknown": secret}
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.create_profile()
 
         audits = [
@@ -1204,7 +1233,9 @@ class TestRevisionedProfileApi:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.create_profile()
 
         audits = [
@@ -1236,7 +1267,7 @@ class TestRevisionedProfileApi:
         request_mock.get_json = AsyncMock(return_value=_complete_profile_payload())
 
         with (
-            patch("core.api.profile_api.request", request_mock),
+            patch("core.platform.transport.page_api.profile_api.request", request_mock),
             pytest.raises(asyncio.CancelledError),
         ):
             await mixin.create_profile()
@@ -1259,8 +1290,10 @@ class TestRevisionedProfileApi:
         request_mock.get_json = AsyncMock(return_value=payload)
 
         with (
-            patch("core.api.profile_api.request", request_mock),
-            patch("core.api.profile_api.logger.error") as log_error,
+            patch("core.platform.transport.page_api.profile_api.request", request_mock),
+            patch(
+                "core.platform.transport.page_api.profile_api.logger.error"
+            ) as log_error,
         ):
             result = await mixin.create_profile()
 
@@ -1286,7 +1319,10 @@ class TestProfileMutationAuditContract:
             "detail-revision-secret-85bc"
         )
 
-        with patch("core.api.profile_api.request", _mock_request(user_id="read-user")):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request",
+            _mock_request(user_id="read-user"),
+        ):
             read_result = await read_mixin.get_profile_detail()
 
         assert read_result["status"] == "error"
@@ -1299,7 +1335,9 @@ class TestProfileMutationAuditContract:
         request_mock.get_json = AsyncMock(
             return_value=_complete_profile_payload("write-user")
         )
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             write_result = await write_mixin.create_profile()
 
         assert write_result["status"] == "ok"
@@ -1317,7 +1355,10 @@ class TestProfileMutationAuditContract:
         mixin.profile_manager.get_profile.side_effect = asyncio.CancelledError()
 
         with (
-            patch("core.api.profile_api.request", _mock_request(user_id="u1")),
+            patch(
+                "core.platform.transport.page_api.profile_api.request",
+                _mock_request(user_id="u1"),
+            ),
             pytest.raises(asyncio.CancelledError),
         ):
             await mixin.get_profile_detail()
@@ -1392,7 +1433,9 @@ class TestProfileMutationAuditContract:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await getattr(mixin, method_name)()
 
         assert result["status"] == "ok"
@@ -1422,7 +1465,9 @@ class TestProfileMutationAuditContract:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=None)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await getattr(mixin, method_name)()
 
         assert result["status"] == "error"
@@ -1480,7 +1525,9 @@ class TestProfileMutationAuditContract:
             return_value={"user_id": structured_user_id, **payload_fields}
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await getattr(mixin, method_name)()
 
         assert result["status"] == "error"
@@ -1549,7 +1596,7 @@ class TestProfileMutationAuditContract:
         request_mock.get_json = AsyncMock(return_value=payload)
 
         with (
-            patch("core.api.profile_api.request", request_mock),
+            patch("core.platform.transport.page_api.profile_api.request", request_mock),
             pytest.raises(asyncio.CancelledError),
         ):
             await getattr(mixin, method_name)()
@@ -1594,7 +1641,9 @@ class TestProfileMutationAuditContract:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await getattr(mixin, method_name)()
 
         action = "update" if method_name == "update_profile" else "delete"
@@ -1644,7 +1693,9 @@ class TestProfileMutationAuditContract:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await getattr(mixin, method_name)()
 
         assert result["code"] == "internal_error"
@@ -1687,7 +1738,9 @@ class TestProfileMutationAuditContract:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await getattr(mixin, method_name)()
 
         assert result["code"] == "component_unavailable"
@@ -1710,7 +1763,9 @@ class TestProfileMutationAuditContract:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value={"user_id": "u1"})
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.delete_profile()
 
         assert result == {
@@ -1775,7 +1830,9 @@ class TestProfileMutationAuditContract:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await getattr(mixin, method_name)()
 
         assert result["code"] == "validation_error"
@@ -1813,7 +1870,9 @@ class TestProfileMutationAuditContract:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.create_profile()
 
         assert result["code"] == "internal_error"
@@ -1857,7 +1916,9 @@ class TestProfileMutationAuditContract:
             }
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.manage_profile_tags()
 
         assert result["code"] == "internal_error"
@@ -1921,7 +1982,9 @@ class TestProfileMutationAuditContract:
             }
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         assert result["status"] == "ok"
@@ -1969,7 +2032,9 @@ class TestRevisionedProfileBatch:
             ],
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         assert result["data"] == {
@@ -2035,7 +2100,9 @@ class TestRevisionedProfileBatch:
             },
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         assert result["data"]["succeeded_count"] == 1
@@ -2066,7 +2133,9 @@ class TestRevisionedProfileBatch:
             ],
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         assert result["data"]["succeeded_ids"] == [{"user_id": "u2"}]
@@ -2091,7 +2160,9 @@ class TestRevisionedProfileBatch:
             ],
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         assert result["data"]["succeeded_ids"] == [{"user_id": "u2"}]
@@ -2112,7 +2183,9 @@ class TestRevisionedProfileBatch:
             ],
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         assert result["code"] == "validation_error"
@@ -2177,7 +2250,9 @@ class TestRevisionedProfileBatch:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         if item_failure:
@@ -2192,7 +2267,9 @@ class TestRevisionedProfileBatch:
         mixin = _make_mixin(profile_manager_available=False)
         request_mock = self._request("delete")
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         assert result["code"] == "component_unavailable"
@@ -2205,7 +2282,9 @@ class TestRevisionedProfileBatch:
             return_value={"action": "delete", "user_ids": ["u1", "u2"]}
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await mixin.batch_delete_profiles()
 
         assert result["data"] == {
@@ -2303,7 +2382,9 @@ class TestRevisionedProfileBatchIntegration:
             return_value=self._batch_payload(action, manager.revision_for(current))
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await self._mixin(manager).batch_delete_profiles()
 
         assert result["data"]["failures"] == [], result
@@ -2352,7 +2433,9 @@ class TestRevisionedProfileBatchIntegration:
             return_value=self._batch_payload("tags_add", stale_revision)
         )
 
-        with patch("core.api.profile_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.profile_api.request", request_mock
+        ):
             result = await self._mixin(manager).batch_delete_profiles()
 
         failure = result["data"]["failures"][0]
@@ -2375,7 +2458,7 @@ async def test_legacy_update_rejects_invalid_display_name_without_mutation(
     request_mock.get_json = AsyncMock(
         return_value={"user_id": "u1", "display_name": display_name}
     )
-    with patch("core.api.profile_api.request", request_mock):
+    with patch("core.platform.transport.page_api.profile_api.request", request_mock):
         result = await mixin.update_profile()
     assert result["code"] == "validation_error"
     mixin.profile_manager.update_profile_fields.assert_not_awaited()
@@ -2401,7 +2484,7 @@ async def test_legacy_update_rejects_invalid_nested_preferences_without_mutation
     request_mock.get_json = AsyncMock(
         return_value={"user_id": "u1", "preferences": preferences}
     )
-    with patch("core.api.profile_api.request", request_mock):
+    with patch("core.platform.transport.page_api.profile_api.request", request_mock):
         result = await mixin.update_profile()
     assert result["code"] == "validation_error"
     mixin.profile_manager.update_profile_fields.assert_not_awaited()
@@ -2423,7 +2506,7 @@ async def test_legacy_tags_reject_invalid_strings_without_mutation(tag) -> None:
     request_mock.get_json = AsyncMock(
         return_value={"user_id": "u1", "action": "add", "tag": tag}
     )
-    with patch("core.api.profile_api.request", request_mock):
+    with patch("core.platform.transport.page_api.profile_api.request", request_mock):
         result = await mixin.manage_profile_tags()
     assert result["status"] == "error"
     mixin.profile_manager.add_tag.assert_not_awaited()

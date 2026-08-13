@@ -19,7 +19,7 @@ def _make_mixin(
 ):
     """创建带有 GraphApiMixin 方法和模拟依赖的测试替身。"""
 
-    from core.api.graph_api import GraphApiMixin
+    from core.platform.transport.page_api.graph_api import GraphApiMixin
 
     class Stub:
         search_graph = GraphApiMixin.search_graph
@@ -28,12 +28,12 @@ def _make_mixin(
         _query_graph_impl = GraphApiMixin._query_graph_impl
 
         def _ok(self, data):
-            from core.api.response_utils import ok_response
+            from core.platform.transport.page_api.response_utils import ok_response
 
             return ok_response(data)
 
         def _error(self, msg):
-            from core.api.response_utils import error_response
+            from core.platform.transport.page_api.response_utils import error_response
 
             return error_response(msg)
 
@@ -71,7 +71,7 @@ class TestGraphApiValidation:
     @pytest.mark.asyncio
     async def test_search_graph_plugin_not_ready(self) -> None:
         req = _mock_request()
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=False)
             result = await mixin.search_graph()
         assert result["status"] == "error"
@@ -79,7 +79,7 @@ class TestGraphApiValidation:
     @pytest.mark.asyncio
     async def test_get_graph_overview_plugin_not_ready(self) -> None:
         req = _mock_request()
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=False)
             result = await mixin.get_graph_overview()
         assert result["status"] == "error"
@@ -87,7 +87,7 @@ class TestGraphApiValidation:
     @pytest.mark.asyncio
     async def test_query_graph_plugin_not_ready(self) -> None:
         req = _mock_request()
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=False)
             result = await mixin.query_graph()
         assert result["status"] == "error"
@@ -96,7 +96,7 @@ class TestGraphApiValidation:
     async def test_query_graph_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-query"])
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True)
             result = await mixin.query_graph()
         assert result["status"] == "error"
@@ -113,7 +113,7 @@ class TestGraphApiHappyPath:
         mock_gs.get_graph_snapshot = AsyncMock(
             return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
         )
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.get_graph_overview()
         assert result["status"] == "ok"
@@ -126,7 +126,7 @@ class TestGraphApiHappyPath:
     @pytest.mark.asyncio
     async def test_overview_without_graph_store_returns_empty(self) -> None:
         req = _mock_request()
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=None)
             result = await mixin.get_graph_overview()
         assert result["status"] == "ok"
@@ -140,7 +140,7 @@ class TestGraphApiHappyPath:
         mock_gs.get_graph_snapshot = AsyncMock(
             return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
         )
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.get_graph_overview()
         assert result["status"] == "ok"
@@ -153,7 +153,7 @@ class TestGraphApiHappyPath:
         mock_gs.get_graph_snapshot = AsyncMock(
             return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
         )
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.query_graph()
         assert result["status"] == "ok"
@@ -193,7 +193,7 @@ class TestGraphApiHappyPath:
             }
         )
 
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.search_graph()
 
@@ -216,8 +216,11 @@ class TestGraphApiHappyPath:
         mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
 
         with (
-            patch("core.api.graph_api.request", req),
-            patch("core.api.graph_api.time.time", return_value=1_000_000.0),
+            patch("core.platform.transport.page_api.graph_api.request", req),
+            patch(
+                "core.platform.transport.page_api.graph_api.time.time",
+                return_value=1_000_000.0,
+            ),
         ):
             result = await mixin.search_graph()
 
@@ -253,7 +256,7 @@ class TestGraphApiHappyPath:
         mock_gs.get_canvas_snapshot = AsyncMock(return_value={"nodes": [], "edges": []})
         mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
 
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             result = await mixin.search_graph()
 
         assert result["status"] == "error"
@@ -282,7 +285,10 @@ class TestGraphApiHappyPath:
         )
         mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
 
-        with patch("core.api.graph_api.time.time", return_value=1_000_000.0):
+        with patch(
+            "core.platform.transport.page_api.graph_api.time.time",
+            return_value=1_000_000.0,
+        ):
             result = await mixin._query_graph_impl(
                 {"memory_id": 42, "time_start_hours": 0, "time_end_hours": 1}
             )
@@ -303,7 +309,7 @@ class TestGraphApiHappyPath:
         mock_gs.get_subgraph_for_memories = AsyncMock(
             return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
         )
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(
                 plugin_ready=True, graph_store=mock_gs, search_memories_result=[]
             )
@@ -313,7 +319,7 @@ class TestGraphApiHappyPath:
     @pytest.mark.asyncio
     async def test_error_response_has_message(self) -> None:
         req = _mock_request()
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=False)
             result = await mixin.query_graph()
         assert result["status"] == "error"
@@ -336,7 +342,7 @@ class TestGraphApiEdgeCases:
                 "memories": [],
             }
         )
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.search_graph()
         assert result["status"] == "ok"
@@ -347,7 +353,7 @@ class TestGraphApiEdgeCases:
     async def test_search_graph_invalid_memory_id(self) -> None:
         """非整数 memory_id 返回错误。"""
         req = _mock_request(query="test", memory_id="not_a_number")
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True)
             result = await mixin.search_graph()
         assert result["status"] == "error"
@@ -356,7 +362,7 @@ class TestGraphApiEdgeCases:
     async def test_get_graph_overview_invalid_params(self) -> None:
         """非整数概览限制参数返回错误。"""
         req = _mock_request(limit_memories="bad")
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True)
             result = await mixin.get_graph_overview()
         assert result["status"] == "error"
@@ -381,7 +387,7 @@ class TestGraphApiEdgeCases:
                 "memories": [],
             }
         )
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.get_graph_overview()
         assert result["status"] == "ok"
@@ -760,7 +766,7 @@ class TestGraphApiEdgeCases:
         mock_gs.get_graph_snapshot = AsyncMock(
             return_value={"nodes": [], "edges": [], "entries": [], "memories": []}
         )
-        with patch("core.api.graph_api.request", req):
+        with patch("core.platform.transport.page_api.graph_api.request", req):
             mixin = _make_mixin(plugin_ready=True, graph_store=mock_gs)
             result = await mixin.get_graph_overview()
         assert result["status"] == "ok"

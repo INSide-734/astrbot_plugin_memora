@@ -339,8 +339,8 @@ def test_diagnostics_snapshot_includes_anomaly_summary() -> None:
         memory_engine=SimpleNamespace(anomaly_detector=detector)
     )
 
-    from core.api.diagnostics_api import DiagnosticsApiMixin
-    from core.api.metrics_api import MetricsApiMixin
+    from core.platform.transport.page_api.diagnostics_api import DiagnosticsApiMixin
+    from core.platform.transport.page_api.metrics_api import MetricsApiMixin
 
     class _DiagnosticsStub(DiagnosticsApiMixin, MetricsApiMixin):
         """组合诊断与指标快照构造器的测试替身。"""

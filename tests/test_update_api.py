@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.api.update_api import UpdateApiMixin
 from core.features.updates.application.manager import UpdateManager
 from core.features.updates.domain import DownloadedUpdate, UpdateError, UpdateRelease
+from core.platform.transport.page_api.update_api import UpdateApiMixin
 
 
 def _release() -> UpdateRelease:
@@ -90,7 +90,7 @@ async def test_update_actions_delegate_to_manager(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """忽略和下载接口应调用管理器，并返回稳定的 JSON 摘要。"""
-    from core.api import update_api
+    from core.platform.transport.page_api import update_api
 
     release = _release()
     result_path = Path("updates") / release.runtime_filename
@@ -129,7 +129,7 @@ async def test_apply_and_status_delegate_to_runtime_installer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """一键更新与状态查询应只返回安装器的安全状态摘要。"""
-    from core.api import update_api
+    from core.platform.transport.page_api import update_api
 
     manager = UpdateManager(tmp_path)
     operation = {
@@ -218,7 +218,7 @@ async def test_update_api_returns_stable_error_codes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """管理器失败时接口不应泄漏内部错误文本。"""
-    from core.api import update_api
+    from core.platform.transport.page_api import update_api
 
     manager = UpdateManager(tmp_path, current_version="1.0.0")
     manager.check = AsyncMock(side_effect=UpdateError("远端细节"))  # type: ignore[method-assign]

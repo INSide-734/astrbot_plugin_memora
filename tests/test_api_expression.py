@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.expression_api import ExpressionApiMixin
+from core.platform.transport.page_api.expression_api import ExpressionApiMixin
 from core.shared.list_sorting import SortQuery
 
 
@@ -60,7 +60,7 @@ class TestExpressionPatterns:
         )
 
         mock_req = _make_mock_request(group_id="room-1", limit="-1")
-        with patch("core.api.expression_api.request", mock_req):
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
             result = await stub.get_expression_patterns()
 
         assert result["status"] == "ok"
@@ -87,7 +87,7 @@ class TestExpressionPatterns:
         stub.plugin._expression_store = store
 
         mock_req = _make_mock_request(group_id="room-2", persona_id="p1", limit="-7")
-        with patch("core.api.expression_api.request", mock_req):
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
             result = await stub.get_expression_patterns()
 
         assert result["status"] == "ok"
@@ -123,7 +123,7 @@ class TestExpressionPatterns:
             sort_by="usage_count",
             sort_order="desc",
         )
-        with patch("core.api.expression_api.request", mock_req):
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
             result = await stub.get_expression_patterns()
 
         assert result["status"] == "ok"
@@ -170,7 +170,7 @@ class TestExpressionPatterns:
             sort_by=sort_by,
             sort_order=sort_order,
         )
-        with patch("core.api.expression_api.request", mock_req):
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
             result = await stub.get_expression_patterns()
 
         assert result["code"] == "invalid_query"
@@ -206,7 +206,7 @@ class TestExpressionPatterns:
         )
 
         mock_req = _make_mock_request(group_id="room-1")
-        with patch("core.api.expression_api.request", mock_req):
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
             result = await stub.get_expression_patterns()
 
         assert result["status"] == "ok"
@@ -242,7 +242,7 @@ class TestExpressionPatterns:
         )
 
         mock_req = _make_mock_request(group_id="room-2", persona_id="p1")
-        with patch("core.api.expression_api.request", mock_req):
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
             result = await stub.get_expression_patterns()
 
         assert result["status"] == "ok"
@@ -279,7 +279,7 @@ class TestExpressionPatterns:
         )
 
         mock_req = _make_mock_request(group_id="room-3", persona_id="p2")
-        with patch("core.api.expression_api.request", mock_req):
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
             result = await stub.get_expression_patterns()
 
         assert result["status"] == "ok"
@@ -308,7 +308,7 @@ class TestExpressionPatterns:
         )
 
         mock_req = _make_mock_request(group_id="room-4", persona_id="p3")
-        with patch("core.api.expression_api.request", mock_req):
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
             result = await stub.get_expression_patterns()
 
         assert result["status"] == "ok"

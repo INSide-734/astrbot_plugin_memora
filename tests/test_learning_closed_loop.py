@@ -318,7 +318,7 @@ def test_auto_learning_no_longer_exposes_online_feedback_collector() -> None:
 def test_learning_summary_exposes_candidates_without_mutation() -> None:
     """指标摘要应暴露候选与反馈摘要，且不触发任何写入。"""
 
-    from core.api.metrics_api import MetricsApiMixin
+    from core.platform.transport.page_api.metrics_api import MetricsApiMixin
 
     auto = MagicMock()
     auto.safe_summary.return_value = {
@@ -350,7 +350,7 @@ def test_learning_summary_exposes_candidates_without_mutation() -> None:
 def test_learning_summary_isolates_feedback_store_failure() -> None:
     """反馈隔离 Store 读取失败时仍应返回安全的学习摘要。"""
 
-    from core.api.metrics_api import MetricsApiMixin
+    from core.platform.transport.page_api.metrics_api import MetricsApiMixin
 
     auto = MagicMock()
     auto.safe_summary.return_value = {
@@ -383,7 +383,7 @@ def test_learning_summary_isolates_feedback_store_failure() -> None:
 def test_review_feedback_records_trusted_event() -> None:
     """管理员复核动作应写入统一反馈管线，正负结果映射正确。"""
 
-    from core.api.review_api import ReviewApiMixin
+    from core.platform.transport.page_api.review_api import ReviewApiMixin
 
     manager = MagicMock()
     manager.policy = FeedbackSignalPolicy()

@@ -196,13 +196,13 @@ async def test_list_and_detail_use_review_store_items(tmp_path) -> None:
     )
 
     req = _mock_request(status="approved")
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         listed = await api.list_review_items()
     assert listed["status"] == "ok"
     assert listed["data"]["items"][0]["item_id"] == "rev-one"
 
     req = _mock_request(review_id="rev-one")
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         detail = await api.get_review_item_detail()
     assert detail["status"] == "ok"
     assert detail["data"]["item"]["item_id"] == "rev-one"
@@ -214,7 +214,7 @@ async def test_refresh_detects_and_upserts_review_items(tmp_path) -> None:
     api, _engine = _api_with_store(tmp_path)
 
     req = _mock_request(limit="20")
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.refresh_review_items()
 
     assert result["status"] == "ok"
@@ -246,7 +246,7 @@ async def test_approve_closes_review_item_without_mutating_memory(tmp_path) -> N
     req.get_json = AsyncMock(
         return_value={"review_id": "rev-approve", "action": "approve", "payload": {}}
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.apply_review_action()
 
     assert result["status"] == "ok"
@@ -272,7 +272,7 @@ async def test_archive_mutates_engine_and_records_action(tmp_path) -> None:
     req.get_json = AsyncMock(
         return_value={"review_id": "rev-archive", "action": "archive", "payload": {}}
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.apply_review_action()
 
     assert result["status"] == "ok"
@@ -300,7 +300,7 @@ async def test_delete_requires_confirmation_and_then_deletes(tmp_path) -> None:
     req.get_json = AsyncMock(
         return_value={"review_id": "rev-delete", "action": "delete", "payload": {}}
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.apply_review_action()
 
     assert result == {"status": "error", "message": "confirmation_required"}
@@ -315,7 +315,7 @@ async def test_delete_requires_confirmation_and_then_deletes(tmp_path) -> None:
             "payload": {},
         }
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.apply_review_action()
 
     assert result["status"] == "ok"
@@ -350,7 +350,7 @@ async def test_mark_safe_closes_matching_open_reasons_for_same_memory(tmp_path) 
     req.get_json = AsyncMock(
         return_value={"review_id": "rev-safe-one", "action": "mark_safe", "payload": {}}
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.apply_review_action()
 
     assert result["status"] == "ok"
@@ -417,7 +417,7 @@ async def test_mark_safe_pages_through_open_review_items(tmp_path) -> None:
             "payload": {},
         }
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.apply_review_action()
 
     assert result["status"] == "ok"
@@ -449,7 +449,7 @@ async def test_edit_replaces_memory_when_engine_exposes_add_and_delete(
             "payload": {"content": "replacement content"},
         }
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.apply_review_action()
 
     assert result["status"] == "ok"
@@ -487,7 +487,7 @@ async def test_merge_replaces_target_and_archives_source_with_replacement_engine
             "payload": {"target_memory_id": "3"},
         }
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         result = await api.apply_review_action()
 
     assert result["status"] == "ok"
@@ -515,7 +515,7 @@ async def test_apply_review_action_validation_errors_are_consistent(tmp_path) ->
 
     req = _mock_request()
     req.get_json = AsyncMock(return_value={"action": "approve", "payload": {}})
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         missing_id = await api.apply_review_action()
     assert missing_id == {"status": "error", "message": "review_id required"}
 
@@ -523,7 +523,7 @@ async def test_apply_review_action_validation_errors_are_consistent(tmp_path) ->
     req.get_json = AsyncMock(
         return_value={"review_id": "rev-missing", "action": "bad", "payload": {}}
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         unsupported = await api.apply_review_action()
     assert unsupported["status"] == "error"
     assert "unsupported review action" in unsupported["message"]
@@ -541,7 +541,7 @@ async def test_apply_review_action_validation_errors_are_consistent(tmp_path) ->
     req.get_json = AsyncMock(
         return_value={"review_id": "rev-bad-edit", "action": "edit", "payload": {}}
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         bad_edit = await api.apply_review_action()
     assert bad_edit == {"status": "error", "message": "content required"}
 
@@ -575,7 +575,7 @@ async def test_edit_and_merge_smoke(tmp_path) -> None:
             "payload": {"content": "updated content"},
         }
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         edit_result = await api.apply_review_action()
     assert edit_result["status"] == "ok"
     assert edit_result["data"]["new_status"] == "edited"
@@ -589,7 +589,7 @@ async def test_edit_and_merge_smoke(tmp_path) -> None:
             "payload": {"target_memory_id": "1"},
         }
     )
-    with patch("core.api.review_api.request", req):
+    with patch("core.platform.transport.page_api.review_api.request", req):
         merge_result = await api.apply_review_action()
     assert merge_result["status"] == "ok"
     assert merge_result["data"]["new_status"] == "merged"
