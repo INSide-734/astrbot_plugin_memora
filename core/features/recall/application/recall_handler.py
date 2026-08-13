@@ -15,6 +15,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ....platform.config.manager import ConfigManager
+from ....platform.context_helpers import get_persona_id
 from ....shared.constants import FAKE_TOOL_CALL_NAME
 from ....shared.contracts import RecallPort
 from ....shared.contracts.prompt_protection import (
@@ -24,7 +25,7 @@ from ....shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ....shared.cost_control import CostControl
-from ....utils import OperationContext, get_persona_id
+from ....utils import OperationContext
 from ...conversation.application.conversation_manager import ConversationManager
 from ...conversation.application.message_content_extractor import (
     MessageContentExtractor,

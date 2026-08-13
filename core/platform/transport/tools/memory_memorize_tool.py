@@ -10,7 +10,7 @@ from astrbot.api.event import AstrMessageEvent
 from astrbot.api.platform import MessageType
 from pydantic.dataclasses import dataclass
 
-from ....utils import get_persona_id
+from ....platform.context_helpers import get_persona_id
 from .function_tool import AgentFunctionTool
 
 

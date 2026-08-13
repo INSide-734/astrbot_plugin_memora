@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ....utils import get_persona_id
+from ....platform.context_helpers import get_persona_id
 from ...observability.infrastructure.debug_reporter import report_debug_event
 
 if TYPE_CHECKING:

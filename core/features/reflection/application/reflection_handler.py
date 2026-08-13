@@ -11,6 +11,7 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from ....platform.config.manager import ConfigManager
+from ....platform.context_helpers import get_persona_id
 from ....shared.contracts import ReflectionWritePort
 from ....shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
@@ -19,7 +20,7 @@ from ....shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ....shared.cost_control import CostControl
-from ....utils import OperationContext, get_persona_id
+from ....utils import OperationContext
 from ...conversation.application.conversation_manager import ConversationManager
 from ...identity.domain.models import IdentityTrust, ResolvedIdentity
 from ...observability.application import runtime as observability

@@ -325,12 +325,22 @@ def detect_llm_provider(model_name: str) -> str:
     return "generic"
 
 
+def extract_json_from_response(text: str) -> str:
+    """从可能包含 Markdown 代码块的文本中提取纯 JSON 字符串。"""
+
+    match = re.search(r"```(json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
+    if match:
+        return match.group(2)
+    return text.strip()
+
+
 __all__ = [
     "safe_parse_llm_json",
     "remove_thinking_content",
     "clean_markdown_blocks",
     "clean_control_characters",
     "extract_json_content",
+    "extract_json_from_response",
     "fix_common_json_errors",
     "_convert_single_quotes",
     "detect_llm_provider",

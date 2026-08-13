@@ -202,7 +202,7 @@ class CommandHandler(
                 return
 
             # 获取 persona_id
-            from .utils import get_persona_id
+            from .platform.context_helpers import get_persona_id
 
             persona_id = await get_persona_id(self.context, event)
 
