@@ -128,7 +128,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 
 以下 Python 子模块与已退役目录导航维护各自的详细上下文：
 
-- [`affection/AGENTS.md`](affection/AGENTS.md)
+- [`features/cognition/affection/AGENTS.md`](features/cognition/affection/AGENTS.md)
 - [`api/AGENTS.md`](api/AGENTS.md)
 - [`base/AGENTS.md`](base/AGENTS.md)
 - [`cleaners/AGENTS.md`](cleaners/AGENTS.md)
@@ -136,13 +136,13 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`dedup/AGENTS.md`](dedup/AGENTS.md)
 - [`diagnostics/AGENTS.md`](diagnostics/AGENTS.md)（已退役目录导航）
 - [`evaluation/AGENTS.md`](evaluation/AGENTS.md)
-- [`expression/AGENTS.md`](expression/AGENTS.md)
+- [`features/cognition/expression/AGENTS.md`](features/cognition/expression/AGENTS.md)
 - [`extractors/AGENTS.md`](extractors/AGENTS.md)
 - [`handlers/AGENTS.md`](handlers/AGENTS.md)
 - [`identity/AGENTS.md`](identity/AGENTS.md)
 - [`injection/AGENTS.md`](injection/AGENTS.md)
 - [`initializer/AGENTS.md`](initializer/AGENTS.md)（已退役目录导航）
-- [`jargon/AGENTS.md`](jargon/AGENTS.md)
+- [`features/cognition/jargon/AGENTS.md`](features/cognition/jargon/AGENTS.md)
 - [`managers/AGENTS.md`](managers/AGENTS.md)
 - [`models/AGENTS.md`](models/AGENTS.md)
 - [`monitoring/AGENTS.md`](monitoring/AGENTS.md)（已退役目录导航）
@@ -151,7 +151,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`review/AGENTS.md`](review/AGENTS.md)
 - [`schedulers/AGENTS.md`](schedulers/AGENTS.md)
 - [`security/AGENTS.md`](security/AGENTS.md)
-- [`social/AGENTS.md`](social/AGENTS.md)
+- [`features/cognition/social/AGENTS.md`](features/cognition/social/AGENTS.md)
 - [`storage/AGENTS.md`](storage/AGENTS.md)
 - [`tools/AGENTS.md`](tools/AGENTS.md)
 - [`utils/AGENTS.md`](utils/AGENTS.md)

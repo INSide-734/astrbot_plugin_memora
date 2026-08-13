@@ -1,4 +1,4 @@
-[根目录](../../AGENTS.md) > [core](../AGENTS.md) > **jargon**
+[根目录](../../../../AGENTS.md) > [core](../../../AGENTS.md) > **jargon**
 
 # 群组术语发现与解释模块
 
@@ -51,7 +51,7 @@ flowchart LR
 - 本模块：`statistical_filter.py -> models.py`；`jargon_miner.py -> filter + store + models`；`jargon_query.py` 和 `jargon_admin_service.py -> store`。
 - 下游：`jieba`、可选 LLM 客户端、`core/storage/base_store.py`、`core/shared/entity_editing.py`。
 - 包入口使用懒加载；新增公共导出必须同步 `__all__` 与 `__getattr__`。
-- 相关上下文：[存储模块](../storage/AGENTS.md)、[基础领域能力](../base/AGENTS.md)。
+- 相关上下文：[存储模块](../../../storage/AGENTS.md)、[基础领域能力](../../../base/AGENTS.md)。
 
 ## 隐私、安全与修改约束
 

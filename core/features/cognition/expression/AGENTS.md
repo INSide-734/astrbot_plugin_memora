@@ -1,4 +1,4 @@
-[根目录](../../AGENTS.md) > [core](../AGENTS.md) > **expression**
+[根目录](../../../../AGENTS.md) > [core](../../../AGENTS.md) > **expression**
 
 # 表达模式学习模块
 
@@ -48,7 +48,7 @@ flowchart LR
 - 上游：`core/platform/composition/plugin_initializer.py`、`core/api/expression_api.py`、`core/tools/expression_tools.py`。
 - 本模块：`pattern_learner.py -> models.py + pattern_store.py`。
 - 下游：`core/storage/base.py` 的 PRAGMA、`aiosqlite`；无 LLM 依赖。
-- 相关上下文：[存储模块](../storage/AGENTS.md)、[工具模块](../tools/AGENTS.md)。
+- 相关上下文：[存储模块](../../../storage/AGENTS.md)、[工具模块](../../../tools/AGENTS.md)。
 
 ## 隐私、安全与修改约束
 
