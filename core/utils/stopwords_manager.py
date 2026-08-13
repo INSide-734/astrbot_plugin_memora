@@ -4,7 +4,7 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ..models.default_stopwords import DEFAULT_STOPWORDS
+from ..shared.default_stopwords import DEFAULT_STOPWORDS
 
 
 class StopwordsManager:

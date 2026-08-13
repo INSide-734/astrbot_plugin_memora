@@ -13,7 +13,7 @@ import core.features.reflection.application.reflection_handler as reflection_han
 from core.features.quality.application.memory_quality_gate import MemoryGateResult
 from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.features.reflection.application.reflection_handler import ReflectionHandler
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 
 def _pipeline_message(index: int, role: str, content: str) -> Message:

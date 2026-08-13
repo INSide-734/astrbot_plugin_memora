@@ -7,7 +7,7 @@ import time
 import pytest
 
 from core.features.recall.processors.conversation_formatter import ConversationFormatter
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 
 class TestConversationFormatter:

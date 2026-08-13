@@ -21,7 +21,7 @@ class TestMessageModel:
     """测试 Message 数据类。"""
 
     def test_basic_message_creation(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=1,
@@ -40,7 +40,7 @@ class TestMessageModel:
         assert msg.platform is None
 
     def test_message_with_optional_fields(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=2,
@@ -57,7 +57,7 @@ class TestMessageModel:
         assert msg.platform == "qq"
 
     def test_to_dict_roundtrip(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         original = Message(
             id=3,
@@ -75,7 +75,7 @@ class TestMessageModel:
         assert d["content"] == "测试消息"
 
     def test_from_dict_reconstructs_message(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         data: dict[str, Any] = {
             "id": 4,
@@ -95,7 +95,7 @@ class TestMessageModel:
         assert msg.sender_name == "MyBot"
 
     def test_from_dict_minimal_data(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         data: dict[str, Any] = {
             "session_id": "sess-005",
@@ -109,7 +109,7 @@ class TestMessageModel:
         assert msg.sender_name is None
 
     def test_from_dict_metadata_as_json_string(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         data: dict[str, Any] = {
             "session_id": "sess-006",
@@ -123,7 +123,7 @@ class TestMessageModel:
         assert msg.metadata["key"] == "value"
 
     def test_from_dict_metadata_invalid_json_defaults_to_empty(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         data: dict[str, Any] = {
             "session_id": "sess-007",
@@ -137,36 +137,36 @@ class TestMessageModel:
         assert msg.metadata == {}
 
     def test_content_to_text_none(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         assert Message.content_to_text(None) == ""
 
     def test_content_to_text_string(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         assert Message.content_to_text("hello world") == "hello world"
 
     def test_content_to_text_int_float_bool(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         assert Message.content_to_text(42) == "42"
         assert Message.content_to_text(3.14) == "3.14"
         assert Message.content_to_text(True) == "True"
 
     def test_content_to_text_dict_with_text_type(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         result = Message.content_to_text({"type": "text", "text": "你好"})
         assert result == "你好"
 
     def test_content_to_text_dict_with_content_key(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         result = Message.content_to_text({"type": "custom", "content": "some content"})
         assert result == "some content"
 
     def test_content_to_text_dict_with_image_type(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         result = Message.content_to_text(
             {"type": "image", "image_url": "http://example.com/img.png"}
@@ -174,7 +174,7 @@ class TestMessageModel:
         assert result == "[图片消息]"
 
     def test_content_to_text_list_of_parts(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         result = Message.content_to_text(
             [{"type": "text", "text": "Hello"}, {"type": "text", "text": "World"}]
@@ -182,7 +182,7 @@ class TestMessageModel:
         assert result == "Hello World"
 
     def test_format_for_llm_direct_message(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=1,
@@ -196,7 +196,7 @@ class TestMessageModel:
         assert formatted["content"] == "你好"
 
     def test_format_for_llm_group_with_bot(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=5,
@@ -212,7 +212,7 @@ class TestMessageModel:
         assert "[Bot:" in formatted["content"]
 
     def test_format_for_llm_group_with_user_uses_sender_name(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=6,
@@ -231,7 +231,7 @@ class TestSessionModel:
     """测试 Session 数据类。"""
 
     def test_basic_session_creation(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -247,7 +247,7 @@ class TestSessionModel:
         assert sess.message_count == 0
 
     def test_add_participant(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -262,7 +262,7 @@ class TestSessionModel:
         assert len(sess.participants) == 1
 
     def test_add_duplicate_participant_is_ignored(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -277,7 +277,7 @@ class TestSessionModel:
         assert len(sess.participants) == 1
 
     def test_update_activity(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         old_time = time.time() - 100
         sess = Session(
@@ -291,7 +291,7 @@ class TestSessionModel:
         assert sess.last_active_at > old_time
 
     def test_increment_message_count(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -308,7 +308,7 @@ class TestSessionModel:
         assert sess.message_count == 2
 
     def test_to_dict_and_from_dict_roundtrip(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -330,7 +330,7 @@ class TestSessionModel:
         assert "user_2" in reconstructed.participants
 
     def test_from_dict_participants_as_json_string(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         data: dict[str, Any] = {
@@ -351,7 +351,7 @@ class TestMemoryEventModel:
     """测试 MemoryEvent 数据类。"""
 
     def test_basic_memory_event_creation(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         evt = MemoryEvent(
             memory_content="用户喜欢咖啡",
@@ -363,7 +363,7 @@ class TestMemoryEventModel:
         assert evt.session_id == "sess-001"
 
     def test_is_important_default_threshold(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         important = MemoryEvent(
             memory_content="重要",
@@ -379,7 +379,7 @@ class TestMemoryEventModel:
         assert trivial.is_important() is False
 
     def test_is_important_custom_threshold(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         evt = MemoryEvent(
             memory_content="边界",
@@ -390,7 +390,7 @@ class TestMemoryEventModel:
         assert evt.is_important(threshold=0.51) is False
 
     def test_to_dict_and_from_dict_roundtrip(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         evt = MemoryEvent(
             memory_content="周末计划去西湖",
@@ -406,7 +406,7 @@ class TestMemoryEventModel:
         assert reconstructed.metadata["source"] == "reflection"
 
     def test_from_dict_metadata_as_json_string(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         data: dict[str, Any] = {
             "memory_content": "test",
@@ -423,45 +423,45 @@ class TestSerializationHelpers:
     """测试 serialize_to_json 与 deserialize_from_json。"""
 
     def test_serialize_list(self) -> None:
-        from core.models.conversation_models import serialize_to_json
+        from core.shared.contracts.conversation import serialize_to_json
 
         result = serialize_to_json(["a", "b"])
         parsed = json.loads(result)
         assert parsed == ["a", "b"]
 
     def test_serialize_dict(self) -> None:
-        from core.models.conversation_models import serialize_to_json
+        from core.shared.contracts.conversation import serialize_to_json
 
         result = serialize_to_json({"key": "value"})
         parsed = json.loads(result)
         assert parsed == {"key": "value"}
 
     def test_serialize_non_json_type_falls_back_to_str(self) -> None:
-        from core.models.conversation_models import serialize_to_json
+        from core.shared.contracts.conversation import serialize_to_json
 
         result = serialize_to_json(42)
         assert result == "42"
 
     def test_deserialize_valid_json(self) -> None:
-        from core.models.conversation_models import deserialize_from_json
+        from core.shared.contracts.conversation import deserialize_from_json
 
         result = deserialize_from_json('{"a": 1}')
         assert result == {"a": 1}
 
     def test_deserialize_none_returns_default(self) -> None:
-        from core.models.conversation_models import deserialize_from_json
+        from core.shared.contracts.conversation import deserialize_from_json
 
         assert deserialize_from_json(None) == {}
         assert deserialize_from_json(None, []) == []
 
     def test_deserialize_empty_string_returns_default(self) -> None:
-        from core.models.conversation_models import deserialize_from_json
+        from core.shared.contracts.conversation import deserialize_from_json
 
         assert deserialize_from_json("") == {}
         assert deserialize_from_json("", "fallback") == "fallback"
 
     def test_deserialize_invalid_json_returns_default(self) -> None:
-        from core.models.conversation_models import deserialize_from_json
+        from core.shared.contracts.conversation import deserialize_from_json
 
         assert deserialize_from_json("not json{{{") == {}
         assert deserialize_from_json("bad", []) == []
@@ -1417,23 +1417,23 @@ class TestDefaultStopwords:
     """测试 DEFAULT_STOPWORDS 冻结集合。"""
 
     def test_is_frozenset(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         assert isinstance(DEFAULT_STOPWORDS, frozenset)
 
     def test_non_empty(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         assert len(DEFAULT_STOPWORDS) > 100
 
     def test_all_elements_are_strings(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         for word in DEFAULT_STOPWORDS:
             assert isinstance(word, str), f"Expected str, got {type(word)}: {word!r}"
 
     def test_contains_common_chinese_stopwords(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         # 常见中文停用词应全部存在。
         expected = {"的", "了", "是", "我", "你", "他", "在", "和"}
@@ -1441,7 +1441,7 @@ class TestDefaultStopwords:
         assert found == expected, f"Missing common stopwords: {expected - found}"
 
     def test_contains_function_words_from_multiple_categories(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         pronouns = {"我", "你", "他们"}
         particles = {"的", "了", "吗", "吧"}
@@ -1456,14 +1456,14 @@ class TestDefaultStopwords:
         assert measure_words & DEFAULT_STOPWORDS == measure_words
 
     def test_is_immutable(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         # frozenset 不允许修改。
         with pytest.raises(AttributeError):
             DEFAULT_STOPWORDS.add("new_word")  # type: ignore[union-attr]
 
     def test_no_duplicates(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         # frozenset 天然去重，仍需确认其大小等于来源字符串的唯一值数量。
         assert len(DEFAULT_STOPWORDS) == len(set(DEFAULT_STOPWORDS))

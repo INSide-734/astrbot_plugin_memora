@@ -20,7 +20,7 @@ from core.features.identity.domain.models import (
     ResolvedIdentity,
 )
 from core.features.identity.infrastructure.store import ProtocolIdentityStore
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 
 def _identity(

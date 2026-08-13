@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from core.features.identity.application.enricher import build_memory_identity_context
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 
 def _message(metadata: dict[str, object], *, role: str = "user") -> Message:

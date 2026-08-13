@@ -3,7 +3,7 @@
 包含Message、Session、MemoryEvent等数据模型
 """
 
-from .conversation_models import (
+from ..shared.contracts.conversation import (
     MemoryEvent,
     Message,
     Session,

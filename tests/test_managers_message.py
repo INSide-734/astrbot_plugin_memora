@@ -9,7 +9,7 @@ import pytest
 from core.features.conversation.application.message_operations import (
     MessageOperationsMixin,
 )
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 # ---------------------------------------------------------------------------
 # 具体测试类

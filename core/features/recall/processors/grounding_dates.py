@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ....models.conversation_models import Message
+    from ....shared.contracts.conversation import Message
 
 _ISO_DATE_RE = re.compile(
     r"(?<!\d)(?P<year>(?:19|20)\d{2})[-/.]"

@@ -11,7 +11,7 @@ import pytest
 
 import core.features.recall.processors.reflection_generation_observability as generation_observability
 from core.features.recall.processors.memory_processor import MemoryProcessor
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 
 @pytest.mark.asyncio

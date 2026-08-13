@@ -8,7 +8,7 @@ import pytest
 from core.features.conversation.infrastructure.conversation_store import (
     ConversationStore,
 )
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 
 class TestConversationStoreSessions:

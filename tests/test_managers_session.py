@@ -48,7 +48,7 @@ class TestSessionCacheMixin:
     async def test_update_cache_adds_entry(self) -> None:
         """_update_cache stores messages with timestamp."""
         mgr = _TestSessionManager()
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msgs = [
             Message(
@@ -67,7 +67,7 @@ class TestSessionCacheMixin:
     async def test_update_cache_moves_existing_to_end(self) -> None:
         """Existing entries are moved to the end (most recent)."""
         mgr = _TestSessionManager()
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msgs1 = [
             Message(
@@ -111,7 +111,7 @@ class TestSessionCacheMixin:
     async def test_get_from_cache_returns_messages(self) -> None:
         """_get_from_cache returns stored messages."""
         mgr = _TestSessionManager()
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msgs = [
             Message(
@@ -133,7 +133,7 @@ class TestSessionCacheMixin:
     async def test_get_from_cache_moves_to_end(self) -> None:
         """_get_from_cache treats as access and moves to end."""
         mgr = _TestSessionManager()
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msgs1 = [
             Message(
@@ -175,7 +175,7 @@ class TestSessionCacheMixin:
     async def test_invalidate_cache_removes_entry(self) -> None:
         """invalidate_cache removes the session from cache."""
         mgr = _TestSessionManager()
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msgs = [
             Message(
@@ -204,7 +204,7 @@ class TestSessionCacheMixin:
         """当 cache exceeds max_cache_size, oldest entry is evicted."""
         mgr = _TestSessionManager()
         mgr.max_cache_size = 3
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         for i in range(5):
             msgs = [
@@ -318,7 +318,7 @@ class TestSessionLifecycleMixin:
         mgr.store.delete_old_sessions = AsyncMock(return_value=5)
 
         # Pre-populate cache
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msgs = [
             Message(

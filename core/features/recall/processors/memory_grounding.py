@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from typing import Any
 
-from ....models.conversation_models import Message
+from ....shared.contracts.conversation import Message
 from .grounding_dates import supported_claim_date_numbers
 
 _MAX_REFERENCES = 8

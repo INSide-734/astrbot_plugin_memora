@@ -16,7 +16,7 @@ from core.features.quality.application.memory_quality_gate import (
     QuarantineApprovalPendingError,
 )
 from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 
 def _source_message(content: str = "我喜欢咖啡。") -> Message:

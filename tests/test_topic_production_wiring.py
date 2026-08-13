@@ -8,7 +8,7 @@ import pytest
 
 from core.features.recall.processors.memory_grounding import GroundingResult
 from core.features.recall.processors.memory_processor import MemoryProcessor
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 
 
 def _messages(*names: str) -> list[Message]:

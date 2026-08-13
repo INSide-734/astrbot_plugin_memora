@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ....models.conversation_models import Message
+from ....shared.contracts.conversation import Message
 from ....platform.security.guardrails import (
     MemoryExtractionResult,
     validate_and_clean_json,

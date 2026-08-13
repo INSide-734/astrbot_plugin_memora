@@ -13,7 +13,7 @@ from core.shared.cost_control import CostControl
 from core.features.recall.processors.conversation_formatter import ConversationFormatter
 from core.features.recall.processors.memory_grounding import MemoryGroundingValidator
 from core.features.recall.processors.memory_processor import MemoryProcessor
-from core.models.conversation_models import Message
+from core.shared.contracts.conversation import Message
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 

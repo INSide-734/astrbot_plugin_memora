@@ -151,7 +151,7 @@ async def test_approve_persists_candidate_correlation_in_canonical_metadata(
 ) -> None:
     """canonical metadata 必须携带可用于崩溃恢复的 quarantine 关联。"""
 
-    from core.models.conversation_models import Message
+    from core.shared.contracts.conversation import Message
 
     store = MemoryQuarantineStore(tmp_path / "memory_quarantine.sqlite3")
     await store.initialize()

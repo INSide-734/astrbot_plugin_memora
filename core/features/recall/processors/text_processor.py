@@ -9,7 +9,7 @@ import warnings
 from collections import Counter
 from pathlib import Path
 
-from ....models.default_stopwords import DEFAULT_STOPWORDS as FALLBACK_STOPWORDS
+from ....shared.default_stopwords import DEFAULT_STOPWORDS as FALLBACK_STOPWORDS
 
 try:
     import jieba
