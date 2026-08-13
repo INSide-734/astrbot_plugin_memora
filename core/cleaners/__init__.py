@@ -1,5 +1,5 @@
-"""注入清理模块"""
+"""注入清理器旧路径兼容导出。"""
 
-from .injection_cleaner import InjectionCleaner
+from ..features.recall.application.injection_cleaner import InjectionCleaner
 
 __all__ = ["InjectionCleaner"]

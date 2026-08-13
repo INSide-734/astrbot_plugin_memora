@@ -14,9 +14,10 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from .base.cost_control import build_cost_control_from_config
-from .cleaners.injection_cleaner import InjectionCleaner
-from .dedup.dedup_manager import DedupManager
-from .extractors.message_content_extractor import MessageContentExtractor
+from .features.conversation.application.dedup_manager import DedupManager
+from .features.conversation.application.message_content_extractor import (
+    MessageContentExtractor,
+)
 from .features.identity.domain.models import IdentityTrust, ResolvedIdentity
 from .features.observability.application.runtime import monitored
 from .features.observability.infrastructure.debug_reporter import (
@@ -24,6 +25,7 @@ from .features.observability.infrastructure.debug_reporter import (
     report_debug_event,
     report_debug_exception,
 )
+from .features.recall.application.injection_cleaner import InjectionCleaner
 from .handlers.recall_handler import RecallHandler
 from .handlers.recall_observability import RecallTimingContext
 from .handlers.reflection_handler import ReflectionHandler
