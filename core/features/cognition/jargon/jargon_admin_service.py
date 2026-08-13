@@ -10,7 +10,7 @@ from typing import Any, TypeVar
 
 from astrbot.api import logger
 
-from ....api.editing_utils import finite_float, required_text
+from ....platform.transport.page_api.editing_utils import finite_float, required_text
 from ....shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
