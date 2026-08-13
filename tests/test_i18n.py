@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-import core.i18n_backend as i18n_mod
+import core.platform.resources.i18n_backend as i18n_mod
 
 
 class TestGetHelper:
@@ -60,13 +60,13 @@ class TestTranslateList:
 
     def test_returns_list_of_strings(self) -> None:
         """If a list value is found, all items are converted to strings."""
-        with patch("core.i18n_backend._get", return_value=[1, 2, 3]):
+        with patch("core.platform.resources.i18n_backend._get", return_value=[1, 2, 3]):
             result = i18n_mod.t_list("some.list")
             assert result == ["1", "2", "3"]
 
     def test_returns_empty_list_for_non_list_value(self) -> None:
         """When the value exists but is not a list, return empty list."""
-        with patch("core.i18n_backend._get", return_value="not_a_list"):
+        with patch("core.platform.resources.i18n_backend._get", return_value="not_a_list"):
             result = i18n_mod.t_list("some.non.list")
             assert result == []
 

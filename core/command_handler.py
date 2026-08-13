@@ -15,8 +15,8 @@ from .features.memory.infrastructure.validators import IndexValidator
 from .features.reflection.application.candidate_writer import (
     build_reflection_idempotency_key,
 )
-from .i18n_backend import t, t_list
 from .platform.config.manager import ConfigManager
+from .platform.resources.i18n_backend import t, t_list
 from .platform.transport.commands.diagnostic_commands import (
     DiagnosticCommandMixin,
     DiagnosticProvider,

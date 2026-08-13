@@ -18,7 +18,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.feature_delegation import FeatureDelegation
+from core.platform.feature_delegation import FeatureDelegation
 
 # ---------------------------------------------------------------------------
 # Helper: build a mock Star instance

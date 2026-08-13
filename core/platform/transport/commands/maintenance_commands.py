@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
-from ....i18n_backend import t, t_list
+from ....platform.resources.i18n_backend import t, t_list
 from ....shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
 

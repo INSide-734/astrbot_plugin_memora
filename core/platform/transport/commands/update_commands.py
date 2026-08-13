@@ -10,7 +10,7 @@ from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
 from ....features.updates.application import RuntimeUpdateInstaller, UpdateManager
 from ....features.updates.domain import RuntimeUpdateError, UpdateError
-from ....i18n_backend import t
+from ....platform.resources.i18n_backend import t
 
 
 class UpdateCommandMixin:

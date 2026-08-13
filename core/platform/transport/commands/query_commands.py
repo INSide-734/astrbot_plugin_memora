@@ -14,7 +14,7 @@ from astrbot.api.platform import MessageType
 
 from ....features.identity.domain.models import IdentityTrust
 from ....features.learning.application import record_explicit_correction
-from ....i18n_backend import t, t_list
+from ....platform.resources.i18n_backend import t, t_list
 
 
 class _QueryMemoryEngine(Protocol):

@@ -16,7 +16,7 @@ def init(language: str = "zh"):
     if not language or language not in ("zh", "en", "ru"):
         language = "zh"
     _current_lang = language
-    base = Path(__file__).parent / "i18n"
+    base = Path(__file__).parent.parent.parent / "i18n"
 
     # 加载中文回退包
     fallback_path = base / "zh.json"

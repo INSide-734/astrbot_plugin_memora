@@ -20,15 +20,12 @@ from astrbot.api.star import Context, Star, StarTools, register
 from .core.command_endpoints import CommandEndpointsMixin
 from .core.command_handler import CommandHandler
 from .core.event_handler import EventHandler
-from .core.feature_delegation import FeatureDelegation
 from .core.features.backup.application import BackupManager
 from .core.features.backup.domain import BackupOperationError
 from .core.features.observability.application import PerfTracker
 from .core.features.observability.application import runtime as observability
 from .core.features.recall.application.recall_observability import RecallTimingContext
 from .core.features.updates.application import RuntimeUpdateInstaller, UpdateManager
-from .core.i18n_backend import init as i18n_init
-from .core.i18n_backend import t
 from .core.platform.composition.plugin_initializer import PluginInitializer
 from .core.platform.composition.reload_lifecycle import (
     run_scheduled_plugin_reload,
@@ -38,13 +35,16 @@ from .core.platform.composition.reload_lifecycle import (
 )
 from .core.platform.composition.shutdown_lifecycle import stop_runtime_producers
 from .core.platform.config.manager import ConfigManager
+from .core.platform.feature_delegation import FeatureDelegation
 from .core.platform.resources import (
     PluginResourceLocator,
     build_package_resource_reader,
 )
-from .core.platform.transport.tools import MemoryMemorizeTool, MemorySearchTool
+from .core.platform.resources.i18n_backend import init as i18n_init
+from .core.platform.resources.i18n_backend import t
 from .core.platform.resources.version import PLUGIN_VERSION
-from .core.version_check import (  # noqa: F401
+from .core.platform.transport.tools import MemoryMemorizeTool, MemorySearchTool
+from .core.platform.version_check import (  # noqa: F401
     _CURRENT_ASTRBOT_VERSION,
     _MIN_ASTRBOT_VERSION,
     _version_lt,

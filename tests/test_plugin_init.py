@@ -87,42 +87,42 @@ class TestParseVersion:
     """测试 _parse_version()."""
 
     def test_standard_version(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("4.24.2") == (4, 24, 2)
 
     def test_version_with_v_prefix(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("v4.24.2") == (4, 24, 2)
 
     def test_version_with_whitespace(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("  4.24.2  ") == (4, 24, 2)
 
     def test_empty_string_returns_empty_tuple(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("") == ()
 
     def test_nonsense_string_returns_empty_tuple(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("not-a-version") == ()
 
     def test_single_component(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("1") == (1,)
 
     def test_two_component_version(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("2.4") == (2, 4)
 
     def test_multi_digit_components(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("10.100.1000") == (10, 100, 1000)
 
@@ -131,50 +131,50 @@ class TestVersionLt:
     """测试 _version_lt()."""
 
     def test_lower_version_is_less(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.0.0", "4.24.2") is True
 
     def test_equal_version_is_not_less(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.24.2", "4.24.2") is False
 
     def test_higher_version_is_not_less(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("5.0.0", "4.24.2") is False
 
     def test_invalid_current_returns_false(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("invalid", "4.24.2") is False
 
     def test_invalid_minimum_returns_false(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.24.2", "invalid") is False
 
     def test_different_width_versions(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         # 单独的 "4" 按 (4, 0, 0) 与 (4, 0, 1) 比较。
         assert _version_lt("4", "4.0.1") is True
         assert _version_lt("4.0.1", "4") is False
 
     def test_with_v_prefix(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("v4.0.0", "v4.24.2") is True
 
     def test_minor_version_comparison(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.23.0", "4.24.0") is True
         assert _version_lt("4.25.0", "4.24.0") is False
 
     def test_patch_version_comparison(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.24.0", "4.24.2") is True
         assert _version_lt("4.24.5", "4.24.2") is False
@@ -195,10 +195,10 @@ class TestDetectAstrbotVersion:
             # 重新加载模块以再次执行 _detect_astrbot_version()。
             import importlib
 
-            import core.version_check
+            import core.platform.version_check
 
-            importlib.reload(core.version_check)
-            assert core.version_check._detect_astrbot_version() is None
+            importlib.reload(core.platform.version_check)
+            assert core.platform.version_check._detect_astrbot_version() is None
 
     def test_returns_version_when_package_found(self) -> None:
         """验证 importlib_metadata 找到包时的结果。"""
@@ -211,23 +211,23 @@ class TestDetectAstrbotVersion:
         ):
             import importlib
 
-            import core.version_check
+            import core.platform.version_check
 
-            importlib.reload(core.version_check)
-            assert core.version_check._detect_astrbot_version() == "4.24.2"
+            importlib.reload(core.platform.version_check)
+            assert core.platform.version_check._detect_astrbot_version() == "4.24.2"
 
 
 class TestModuleConstants:
     """测试模块级常量。"""
 
     def test_min_version_is_defined(self) -> None:
-        from core.version_check import _MIN_ASTRBOT_VERSION
+        from core.platform.version_check import _MIN_ASTRBOT_VERSION
 
         assert isinstance(_MIN_ASTRBOT_VERSION, str)
         assert _parse_version_safe(_MIN_ASTRBOT_VERSION) != ()
 
     def test_current_version_is_str_or_none(self) -> None:
-        from core.version_check import _CURRENT_ASTRBOT_VERSION
+        from core.platform.version_check import _CURRENT_ASTRBOT_VERSION
 
         assert _CURRENT_ASTRBOT_VERSION is None or isinstance(
             _CURRENT_ASTRBOT_VERSION, str
@@ -235,7 +235,7 @@ class TestModuleConstants:
 
 
 def _parse_version_safe(v: str) -> tuple:
-    from core.version_check import _parse_version
+    from core.platform.version_check import _parse_version
 
     return _parse_version(v)
 

@@ -12,7 +12,7 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.api.platform import MessageType
 
-from ....i18n_backend import t
+from ....platform.resources.i18n_backend import t
 
 DiagnosticProvider = Callable[..., Awaitable[Mapping[str, Any]]]
 
