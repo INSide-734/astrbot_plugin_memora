@@ -15,6 +15,10 @@ from ..features.injection.application.memory_formatter import (
     format_memories_for_fake_tool_call_deepseek_v4,
     format_memories_for_injection,
 )
+from ..features.recall.processors.stopwords_manager import (
+    StopwordsManager,
+    get_stopwords_manager,
+)
 from ..features.recall.processors.text_processor import TextProcessor
 from ..shared.cache_manager import CacheManager, get_cache_manager
 from ..shared.data_helpers import (
@@ -43,7 +47,6 @@ from .diversity_manager import (
     ResponseDiversityManager,
     VariationComposition,
 )
-from .stopwords_manager import StopwordsManager, get_stopwords_manager
 from .style_analyzer import StyleAnalyzer, StyleEvolution, StyleProfile
 from .task_scheduler import TaskScheduler, get_task_scheduler
 

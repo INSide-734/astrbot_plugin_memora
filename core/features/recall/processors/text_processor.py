@@ -64,7 +64,9 @@ class TextProcessor:
         如果提供了 stopwords_dir，则使用 StopwordsManager 下载停用词
         """
         if self.stopwords_dir:
-            from ....utils.stopwords_manager import StopwordsManager
+            from ....features.recall.processors.stopwords_manager import (
+                StopwordsManager,
+            )
 
             manager = StopwordsManager(self.stopwords_dir)
             stopwords = await manager.load_stopwords()

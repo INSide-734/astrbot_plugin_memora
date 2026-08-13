@@ -29,7 +29,7 @@ from core.features.injection.application.memory_formatter import (
     format_memories_for_injection,
 )
 from core.shared.number_utils import clamp_float, safe_float
-from core.utils.stopwords_manager import StopwordsManager, get_stopwords_manager
+from core.features.recall.processors.stopwords_manager import StopwordsManager, get_stopwords_manager
 
 
 class TestSafeParseMetadata:
@@ -644,7 +644,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_get_stopwords_builtin_exists(self, tmp_path: Path) -> None:
         """Test get_stopwords when builtin file exists."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         mgr.stopwords = set()
@@ -662,7 +662,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_get_stopwords_fallback(self, tmp_path: Path) -> None:
         """Test get_stopwords falls back to custom dir when builtin missing."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         mgr.stopwords = set()
@@ -678,7 +678,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_get_stopwords_no_dirs(self) -> None:
         """Test get_stopwords returns None when no dirs available."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         mgr.stopwords = set()
@@ -691,7 +691,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_write_fallback_stopwords(self, tmp_path: Path) -> None:
         """Test _write_fallback_stopwords writes a valid file."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         mgr.stopwords = set()
@@ -705,7 +705,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_write_fallback_skips_existing(self, tmp_path: Path) -> None:
         """Test _write_fallback_stopwords does not overwrite existing."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         filepath = tmp_path / "existing.txt"
