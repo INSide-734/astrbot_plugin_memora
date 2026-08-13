@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
-from .base.cost_control import build_cost_control_from_config
 from .features.conversation.application.conversation_manager import ConversationManager
 from .features.conversation.application.dedup_manager import DedupManager
 from .features.conversation.application.message_content_extractor import (
@@ -32,6 +31,7 @@ from .features.recall.application.recall_handler import RecallHandler
 from .features.recall.application.recall_observability import RecallTimingContext
 from .features.recall.processors.memory_processor import MemoryProcessor
 from .features.reflection.application.reflection_handler import ReflectionHandler
+from .platform.config.cost_control import build_cost_control_from_config
 from .platform.config.manager import ConfigManager
 from .shared.contracts import IdentityConversationPort
 from .shared.cost_control import CostControl

@@ -2,7 +2,7 @@
 
 import pytest
 
-from core.base.cost_control import CostControl
+from core.shared.cost_control import CostControl
 from core.shared import extra_llm_budget as shared
 from core.shared.contracts import CostControlPort
 

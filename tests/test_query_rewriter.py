@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.base.cost_control import CostControl
+from core.shared.cost_control import CostControl
 from core.features.retrieval.query_rewriter import QueryIntent, QueryRewriter
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 

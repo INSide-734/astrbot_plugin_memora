@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.cost_control import CostControl
+from core.shared.cost_control import CostControl
 from core.features.knowledge.application import (
     KnowledgeManager,
     KnowledgeProposalPipeline,

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.cost_control import CostControl
+from core.shared.cost_control import CostControl
 from core.features.memory.application.memory_engine import MemoryEngine
 from core.features.profiles.application.profile_proposal_pipeline import (
     ProfileProposalPipeline,

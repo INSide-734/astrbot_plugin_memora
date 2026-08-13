@@ -12,7 +12,8 @@ import pytest
 from pydantic import ValidationError
 
 from core.base.config_validator import CostControlConfig
-from core.base.cost_control import CostControl, build_cost_control_from_config
+from core.platform.config.cost_control import build_cost_control_from_config
+from core.shared.cost_control import CostControl
 from core.shared.extra_llm_budget import (
     ExtraLlmBudget,
     budgeted_extra_llm_call,

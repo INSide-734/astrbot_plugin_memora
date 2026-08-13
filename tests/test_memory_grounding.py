@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.cost_control import CostControl
+from core.shared.cost_control import CostControl
 from core.features.recall.processors.conversation_formatter import ConversationFormatter
 from core.features.recall.processors.memory_grounding import MemoryGroundingValidator
 from core.features.recall.processors.memory_processor import MemoryProcessor

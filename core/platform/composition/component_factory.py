@@ -8,7 +8,6 @@ from typing import Any, cast
 from astrbot.api import logger
 from astrbot.api.provider import Provider
 
-from ...base.cost_control import build_cost_control_from_config
 from ...features.backup.application import BackupManager
 from ...features.conversation.application.conversation_manager import (
     ConversationManager,
@@ -60,6 +59,7 @@ from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...features.retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ...shared.cost_control import CostControlConfig
 from ...shared.errors import ProviderNotReadyError
+from ..config.cost_control import build_cost_control_from_config
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..transport.realtime_hub import RealtimeHub
 from .derived_rebuild_coordinator import DerivedRebuildCoordinator
