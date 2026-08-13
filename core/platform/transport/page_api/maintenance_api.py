@@ -20,7 +20,7 @@ class MaintenanceApiMixin:
     _dashboard_runtime_lock: asyncio.Lock | None = None
 
     @staticmethod
-    def _json_object_payload_or_error(payload):
+    def _maintenance_json_object_payload_or_error(payload):
         if isinstance(payload, dict):
             return payload, None
         return None, error_response("请求体必须为 JSON 对象")
@@ -238,7 +238,9 @@ class MaintenanceApiMixin:
         from quart import request
 
         payload = await request.get_json(silent=True) or {}
-        payload, error = MaintenanceApiMixin._json_object_payload_or_error(payload)
+        payload, error = MaintenanceApiMixin._maintenance_json_object_payload_or_error(
+            payload
+        )
         if error:
             return error
         targets = payload.get("targets")
@@ -299,7 +301,9 @@ class MaintenanceApiMixin:
         from quart import request
 
         payload = await request.get_json(silent=True) or {}
-        payload, error = MaintenanceApiMixin._json_object_payload_or_error(payload)
+        payload, error = MaintenanceApiMixin._maintenance_json_object_payload_or_error(
+            payload
+        )
         if error:
             return error
         export_format = str(payload.get("format", "jsonl")).strip().lower()

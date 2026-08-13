@@ -61,8 +61,8 @@ class DiagnosticsApiMixin:
                 default=50,
                 maximum=500,
             )
-            domain = self._optional_text(payload.get("domain"))
-            severity = self._optional_text(payload.get("severity"))
+            domain = self._diagnostics_optional_text(payload.get("domain"))
+            severity = self._diagnostics_optional_text(payload.get("severity"))
             include_resolved = self._diagnostics_bool(
                 payload.get("include_resolved"),
                 default=True,
@@ -283,7 +283,7 @@ class DiagnosticsApiMixin:
         return bool(value)
 
     @staticmethod
-    def _optional_text(value: Any) -> str | None:
+    def _diagnostics_optional_text(value: Any) -> str | None:
         """把可选筛选值规范化为非空文本。"""
         text = str(value or "").strip()
         return text or None

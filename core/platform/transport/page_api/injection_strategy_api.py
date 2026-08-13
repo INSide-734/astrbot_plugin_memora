@@ -269,10 +269,10 @@ class InjectionStrategyApiMixin:
             "outcome",
             {item.value for item in InjectionOutcome},
         )
-        provider_type = InjectionStrategyApiMixin._optional_text(
+        provider_type = InjectionStrategyApiMixin._strategy_optional_text(
             payload, "provider_type"
         )
-        primary_reason = InjectionStrategyApiMixin._optional_text(
+        primary_reason = InjectionStrategyApiMixin._strategy_optional_text(
             payload, "primary_reason"
         )
         fallback_applied = InjectionStrategyApiMixin._optional_bool(
@@ -346,7 +346,7 @@ class InjectionStrategyApiMixin:
         return value
 
     @staticmethod
-    def _optional_text(payload: dict[str, Any], field: str) -> str | None:
+    def _strategy_optional_text(payload: dict[str, Any], field: str) -> str | None:
         if field not in payload:
             return None
         value = payload[field]

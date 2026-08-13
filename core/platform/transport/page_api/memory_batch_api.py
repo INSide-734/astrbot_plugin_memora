@@ -17,7 +17,7 @@ class MemoryBatchApiMixin:
     """Mixin: 批量删除 / 批量更新 / 统一批量操作"""
 
     @staticmethod
-    def _json_object_payload_or_error(payload: Any):
+    def _batch_json_object_payload_or_error(payload: Any):
         if isinstance(payload, dict):
             return payload, None
         return None, "请求体必须为 JSON 对象"
@@ -87,7 +87,9 @@ class MemoryBatchApiMixin:
         if guard:
             return guard
         payload = await request.get_json(silent=True) or {}
-        payload, error = MemoryBatchApiMixin._json_object_payload_or_error(payload)
+        payload, error = MemoryBatchApiMixin._batch_json_object_payload_or_error(
+            payload
+        )
         if error:
             return self._error(error)
         memory_ids = payload.get("memory_ids", [])
@@ -202,7 +204,9 @@ class MemoryBatchApiMixin:
         memory_engine = ready["memory_engine"]
 
         payload = await request.get_json(silent=True) or {}
-        payload, error = MemoryBatchApiMixin._json_object_payload_or_error(payload)
+        payload, error = MemoryBatchApiMixin._batch_json_object_payload_or_error(
+            payload
+        )
         if error:
             return self._error(error)
         memory_ids = payload.get("memory_ids", [])
@@ -244,7 +248,9 @@ class MemoryBatchApiMixin:
         memory_engine = ready["memory_engine"]
 
         payload = await request.get_json(silent=True) or {}
-        payload, error = MemoryBatchApiMixin._json_object_payload_or_error(payload)
+        payload, error = MemoryBatchApiMixin._batch_json_object_payload_or_error(
+            payload
+        )
         if error:
             return self._error(error)
         memory_ids = payload.get("memory_ids", [])

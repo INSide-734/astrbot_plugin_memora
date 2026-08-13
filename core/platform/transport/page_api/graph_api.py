@@ -18,7 +18,7 @@ class GraphApiMixin:
     """混入类：图谱概览 / 图谱查询 / 图谱搜索 (GET) / 图谱视图构建"""
 
     @staticmethod
-    def _json_object_payload_or_error(payload: Any):
+    def _graph_json_object_payload_or_error(payload: Any):
         """校验请求体为 JSON 对象并返回稳定错误文本。"""
 
         if isinstance(payload, dict):
@@ -287,7 +287,7 @@ class GraphApiMixin:
     async def query_graph(self):
         """处理 POST /graph/query，并从 JSON 请求体读取参数。"""
         payload = await request.get_json(silent=True) or {}
-        payload, error = GraphApiMixin._json_object_payload_or_error(payload)
+        payload, error = GraphApiMixin._graph_json_object_payload_or_error(payload)
         if error:
             return self._error(error)
         return await self._query_graph_impl(payload)

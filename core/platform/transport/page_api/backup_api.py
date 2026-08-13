@@ -78,7 +78,7 @@ class BackupApiMixin:
         return manager if manager is not None else None
 
     @staticmethod
-    def _json_object_payload_or_error(
+    def _backup_json_object_payload_or_error(
         payload: object,
     ) -> tuple[dict[Any, Any] | None, dict[str, Any] | None]:
         """校验 JSON 对象，并返回可直接使用的载荷和可选错误。"""
@@ -202,7 +202,7 @@ class BackupApiMixin:
 
         from quart import request
 
-        payload, error = BackupApiMixin._json_object_payload_or_error(
+        payload, error = BackupApiMixin._backup_json_object_payload_or_error(
             await request.get_json(silent=True)
         )
         if error:
@@ -308,7 +308,7 @@ class BackupApiMixin:
 
         from quart import request
 
-        payload, error = BackupApiMixin._json_object_payload_or_error(
+        payload, error = BackupApiMixin._backup_json_object_payload_or_error(
             await request.get_json(silent=True)
         )
         if error:
@@ -338,7 +338,7 @@ class BackupApiMixin:
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
             return guard
-        payload, error = BackupApiMixin._json_object_payload_or_error(
+        payload, error = BackupApiMixin._backup_json_object_payload_or_error(
             await request.get_json(silent=True)
         )
         if error:
@@ -369,7 +369,7 @@ class BackupApiMixin:
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
             return guard
-        payload, error = BackupApiMixin._json_object_payload_or_error(
+        payload, error = BackupApiMixin._backup_json_object_payload_or_error(
             await request.get_json(silent=True)
         )
         if error:
