@@ -12,9 +12,9 @@ import aiosqlite
 import pytest
 
 from core.base.cost_control import CostControl
+from core.features.memory.application.memory_engine import MemoryEngine
 from core.features.notes.application import NoteManager, NoteProposalPipeline
 from core.features.notes.infrastructure import NoteGenerator, NoteStore
-from core.managers.memory_engine import MemoryEngine
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.platform.composition import DerivedRebuildCoordinator
 from core.shared.contracts import MemorySourceRef

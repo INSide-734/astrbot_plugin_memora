@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.memory.application.retrieval_timing import RetrievalTimingSink
 from core.features.recall.application.auxiliary_recall import AuxiliaryRecall
-from core.managers.retrieval_timing import RetrievalTimingSink
 
 
 def _config(values: dict[str, object]) -> MagicMock:

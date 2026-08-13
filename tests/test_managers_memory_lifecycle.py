@@ -31,7 +31,7 @@ from core.features.learning.infrastructure.learning_config_adapter import (
     LearningConfigApplyResult,
     LearningConfigSnapshot,
 )
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
 
 
 class TestMemoryEngineInitialize:
@@ -62,7 +62,7 @@ class TestMemoryEngineInitialize:
         engine._schema.create_tables = AsyncMock()
         # 替换 BM25Retriever 初始化以隔离生命周期编排。
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25 = mock_bm25_cls.return_value
             mock_bm25.initialize = AsyncMock()
@@ -104,7 +104,7 @@ class TestMemoryEngineInitialize:
         )
         engine._schema.create_tables = AsyncMock()
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
@@ -138,7 +138,7 @@ class TestMemoryEngineInitialize:
         )
         engine._schema.create_tables = AsyncMock()
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
@@ -179,7 +179,7 @@ class TestMemoryEngineInitialize:
         )
         engine._schema.create_tables = AsyncMock()
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
@@ -211,7 +211,7 @@ class TestMemoryEngineInitialize:
         )
         engine._schema.create_tables = AsyncMock()
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
@@ -246,7 +246,7 @@ class TestMemoryEngineInitialize:
         )
         engine._schema.create_tables = AsyncMock()
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
@@ -300,7 +300,7 @@ class TestMemoryEngineInitialize:
             return_value=mock_al_instance,
         ) as mock_al_cls:
             with patch(
-                "core.managers.memory_engine_lifecycle.BM25Retriever"
+                "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
             ) as mock_bm25_cls:
                 mock_bm25_cls.return_value.initialize = AsyncMock()
                 await engine.initialize()
@@ -463,7 +463,7 @@ class TestMemoryEngineInitialize:
             return engine
 
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             enabled_engine = build_engine(True)
@@ -491,7 +491,7 @@ class TestMemoryEngineInitialize:
         await enabled_engine.close()
 
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             disabled_engine = build_engine(False)
@@ -546,7 +546,7 @@ class TestMemoryEngineInitialize:
         )
         engine._schema.create_tables = AsyncMock()
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             with patch(
@@ -588,7 +588,7 @@ class TestMemoryEngineInitialize:
         )
         engine._schema.create_tables = AsyncMock()
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
@@ -627,7 +627,7 @@ class TestMemoryEngineLifecycleClose:
         )
         engine._schema.create_tables = AsyncMock()
         with patch(
-            "core.managers.memory_engine_lifecycle.BM25Retriever"
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
         ) as mock_bm25_cls:
             mock_bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()

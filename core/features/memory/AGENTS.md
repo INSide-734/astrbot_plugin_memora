@@ -1,21 +1,21 @@
-[根级 AGENTS.md](../../AGENTS.md) > **core/managers**
+[根级 AGENTS.md](../../../AGENTS.md) > **core/features/memory**
 
-# Managers 模块上下文
+# Memory 模块上下文
 
 **最后更新：** 2026-07-21
-**源码范围：** `core/managers/*.py` 与各 feature 自有应用服务
+**源码范围：** `core/features/memory/application/*.py`（MemoryEngine 门面与协作对象）；旧 `core/managers/` 仅保留兼容 re-export
 
 ## 职责与边界
 
-`core/managers/` 是业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、备份、导入导出、衰减与写故障恢复。
+`core/features/memory/` 是记忆门面的业务生命周期与编排层。它把 SQLite 文档表、BM25、FAISS、记忆原子和图记忆组合成统一的 `MemoryEngine`，并提供会话、备份、导入导出、衰减与写故障恢复。
 
-用户画像的领域服务与 proposal 管线唯一归属 `core/features/profiles/application/`；`core/managers/` 只保留 `MemoryEngine` 的画像写后钩子，不再转发画像应用类型。
-知识领域服务与 proposal 管线唯一归属 `core/features/knowledge/application/`；`core/managers/` 只保留 `MemoryEngine` 的知识写后钩子，不再转发知识应用类型。
-笔记领域服务与 proposal 管线唯一归属 `core/features/notes/application/`；`core/managers/` 只保留 `MemoryEngine` 的笔记写后钩子，不再转发笔记应用类型。
-自主学习与反馈聚合唯一归属 `core/features/learning/`：application 管理可信反馈聚合、shadow 候选和单一 CAS 发布，domain 保存候选与反馈模型，infrastructure 保存隔离事件、状态和配置适配；`core/managers/` 只在 `MemoryEngine` 生命周期中装配和持有这些组件，不再转发 Learning 类型。自主学习不得直接修改生产检索权重或调用 `update_memory()`。
-Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection 应用与语义压缩唯一归属 `core/features/evolution/application/`，Store 唯一归属 `core/features/evolution/infrastructure/`；`core/managers/` 只保留 MemoryEngine 写后钩子，不再转发 Evolution 应用类型。
+用户画像的领域服务与 proposal 管线唯一归属 `core/features/profiles/application/`；`core/features/memory/` 只保留 `MemoryEngine` 的画像写后钩子，不再转发画像应用类型。
+知识领域服务与 proposal 管线唯一归属 `core/features/knowledge/application/`；`core/features/memory/` 只保留 `MemoryEngine` 的知识写后钩子，不再转发知识应用类型。
+笔记领域服务与 proposal 管线唯一归属 `core/features/notes/application/`；`core/features/memory/` 只保留 `MemoryEngine` 的笔记写后钩子，不再转发笔记应用类型。
+自主学习与反馈聚合唯一归属 `core/features/learning/`：application 管理可信反馈聚合、shadow 候选和单一 CAS 发布，domain 保存候选与反馈模型，infrastructure 保存隔离事件、状态和配置适配；`core/features/memory/` 只在 `MemoryEngine` 生命周期中装配和持有这些组件，不再转发 Learning 类型。自主学习不得直接修改生产检索权重或调用 `update_memory()`。
+Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection 应用与语义压缩唯一归属 `core/features/evolution/application/`，Store 唯一归属 `core/features/evolution/infrastructure/`；`core/features/memory/` 只保留 MemoryEngine 写后钩子，不再转发 Evolution 应用类型。
 
-本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务与 revision 校验由 feature application 编排，具体 SQLite 表访问属于 feature infrastructure。
+本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务与 revision 校验由 feature application 编排，具体 SQLite 表访问属于 feature infrastructure。
 
 ```mermaid
 graph TD

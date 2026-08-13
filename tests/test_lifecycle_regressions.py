@@ -364,7 +364,9 @@ async def test_shutdown_removes_only_routes_owned_by_current_page_instance() -> 
 async def test_engine_pending_tasks_are_cancelled_before_shared_store_close() -> None:
     """生命周期 helper 必须在消费者关闭前收敛已跟踪任务。"""
 
-    from core.managers.memory_engine_lifecycle import MemoryEngineLifecycleMixin
+    from core.features.memory.application.memory_engine_lifecycle import (
+        MemoryEngineLifecycleMixin,
+    )
 
     engine = object.__new__(MemoryEngineLifecycleMixin)
     engine._pending_tasks = set()
@@ -394,7 +396,9 @@ async def test_engine_pending_tasks_are_cancelled_before_shared_store_close() ->
 async def test_engine_rejects_new_tasks_after_convergence() -> None:
     """关停开始后任何生产者都不能继续提交工作。"""
 
-    from core.managers.memory_engine_lifecycle import MemoryEngineLifecycleMixin
+    from core.features.memory.application.memory_engine_lifecycle import (
+        MemoryEngineLifecycleMixin,
+    )
 
     engine = object.__new__(MemoryEngineLifecycleMixin)
     engine._pending_tasks = set()

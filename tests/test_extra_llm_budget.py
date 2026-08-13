@@ -23,9 +23,9 @@ from core.shared.extra_llm_budget import (
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
 
+    from core.features.memory.application.memory_engine import MemoryEngine
     from core.features.recall.processors.memory_processor import MemoryProcessor
     from core.managers.conversation_manager import ConversationManager
-    from core.managers.memory_engine import MemoryEngine
     from core.platform.config import ConfigManager
 
 
@@ -440,7 +440,7 @@ async def test_event_handler_reuses_and_clears_turn_budget() -> None:
 async def test_quality_runtime_constructs_llm_reranker(tmp_db_path: str) -> None:
     """质量档与 LLM 策略必须在真实引擎初始化链中创建 LLM reranker。"""
 
-    from core.managers.memory_engine import MemoryEngine
+    from core.features.memory.application.memory_engine import MemoryEngine
 
     control = _quality_control(max_calls=2)
     engine = MemoryEngine(
@@ -467,9 +467,11 @@ async def test_quality_runtime_constructs_llm_reranker(tmp_db_path: str) -> None
 
     try:
         with (
-            patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_class,
             patch(
-                "core.retrieval.reranker_factory.create_reranker",
+                "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+            ) as bm25_class,
+            patch(
+                "core.features.retrieval.reranker_factory.create_reranker",
                 new=AsyncMock(return_value=expected_reranker),
             ) as create_reranker,
         ):

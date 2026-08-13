@@ -46,6 +46,7 @@ from ...features.learning.infrastructure.feedback_learning_evidence_store import
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
 )
+from ...features.memory.application.memory_engine import MemoryEngine
 from ...features.memory.infrastructure.validators import IndexValidator
 from ...features.notes.application import NoteProposalPipeline
 from ...features.notes.infrastructure import NoteGenerator
@@ -57,7 +58,6 @@ from ...features.quality.infrastructure.quarantine_store import (
 )
 from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...features.retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
-from ...managers.memory_engine import MemoryEngine
 from ...shared.cost_control import CostControlConfig
 from ...shared.errors import ProviderNotReadyError
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter

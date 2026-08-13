@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.managers.mood_state import _VALENCE_MAP, MoodState
+from core.features.memory.application.mood_state import _VALENCE_MAP, MoodState
 
 
 class TestMoodStateDefaults:

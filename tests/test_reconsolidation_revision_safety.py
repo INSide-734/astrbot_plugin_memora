@@ -9,13 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.memory.application.memory_engine import MemoryEngine
 from core.features.reconsolidation.application.reconsolidation import (
     ReconsolidationManager,
 )
 from core.features.reconsolidation.infrastructure.reconsolidation_store import (
     ReconsolidationStore,
 )
-from core.managers.memory_engine import MemoryEngine
 
 
 def _memory(

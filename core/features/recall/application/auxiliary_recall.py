@@ -10,7 +10,7 @@ from typing import Any, TypeVar
 
 from astrbot.api import logger
 
-from ....managers.retrieval_timing import RetrievalTimingSink
+from ...memory.application.retrieval_timing import RetrievalTimingSink
 from ...retrieval.rrf_fusion import HybridResult
 
 T = TypeVar("T")

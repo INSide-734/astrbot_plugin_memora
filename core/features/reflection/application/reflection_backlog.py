@@ -9,7 +9,7 @@ from astrbot.api import logger
 from .reflection_trigger import ReflectionWindowRequest
 
 if TYPE_CHECKING:
-    from ....managers.conversation_manager import ConversationManager
+    from ...conversation.application.conversation_manager import ConversationManager
     from .reflection_trigger import ReflectionTrigger
 
 

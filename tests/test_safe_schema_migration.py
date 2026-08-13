@@ -13,12 +13,12 @@ import pytest
 
 from core.features.backup.application import BackupManager
 from core.features.backup.infrastructure import snapshot_sqlite
-from core.managers.memory_engine import MemoryEngine
-from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager
-from core.managers.schema_migration import (
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.memory.application.schema_migration import (
     SchemaMigrationCoordinator,
     SchemaMigrationError,
 )
+from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager
 
 
 def _create_legacy_database(

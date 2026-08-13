@@ -13,8 +13,8 @@ import pytest
 
 from core.features.decay.application import DecayScheduler
 from core.features.diagnostics.application.health_scorer import HealthScorer
-from core.managers.anomaly_detector import AnomalyDetector
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.anomaly_detector import AnomalyDetector
+from core.features.memory.application.memory_engine import MemoryEngine
 
 
 def _day_ts(days_ago: int = 0) -> int:
@@ -68,7 +68,9 @@ async def test_real_engine_builds_anomaly_detector_from_runtime_config(
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
@@ -93,7 +95,9 @@ async def test_disabled_anomaly_never_feeds_or_writes_state(tmp_path: Path) -> N
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
         assert engine.anomaly_detector is None
@@ -179,7 +183,9 @@ async def test_sqlite_count_aggregates_canonical_created_at(tmp_path: Path) -> N
         await connection.commit()
         host = SimpleNamespace(db_connection=connection)
 
-        from core.managers.stats_operations import StatsOperationsMixin
+        from core.features.memory.application.stats_operations import (
+            StatsOperationsMixin,
+        )
 
         count_today = await StatsOperationsMixin.count_canonical_created_on(
             host, _day_ts(0)

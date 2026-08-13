@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from ....managers.retrieval_timing import RetrievalTimingSink
+from ...memory.application.retrieval_timing import RetrievalTimingSink
 
 
 @dataclass(slots=True)

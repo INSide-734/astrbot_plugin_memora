@@ -12,13 +12,13 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import aiosqlite
 import pytest
 
+from core.features.memory.application.memory_engine import MemoryEngine
 from core.features.reconsolidation.application.reconsolidation import (
     ReconsolidationManager,
 )
 from core.features.reconsolidation.infrastructure.reconsolidation_store import (
     ReconsolidationStore,
 )
-from core.managers.memory_engine import MemoryEngine
 from core.retrieval.rrf_fusion import HybridResult
 
 
@@ -669,7 +669,9 @@ async def test_real_engine_wires_reconsolidation_when_enabled(tmp_path: Path) ->
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 

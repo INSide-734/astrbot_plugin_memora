@@ -187,7 +187,7 @@ def test_query_intent_resolves_explicit_iso_reference_time() -> None:
 
 
 def test_cache_key_separates_historical_reference_times() -> None:
-    from core.managers.retrieval_optimizer import RetrievalOptimizer
+    from core.features.memory.application.retrieval_optimizer import RetrievalOptimizer
 
     optimizer = RetrievalOptimizer({})
     old = optimizer.cache_key("q", 5, "s", None, reference_time=AS_OF)

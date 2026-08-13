@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
 
 _ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,7 +52,9 @@ async def test_engine_ignores_legacy_trait_config(tmp_path: Path) -> None:
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
         assert not hasattr(engine, "trait_tracker")

@@ -113,15 +113,15 @@ def __getattr__(name: str) -> Any:
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
-    # ── managers ──
+    # ── managers（门面已迁至 features/memory 与 features/conversation）──
     if name in ("ConversationManager", "GraphMemoryManager", "MemoryEngine"):
-        from .managers import (
+        from .features.conversation.application.conversation_manager import (
             ConversationManager as ConversationManager,
         )
-        from .managers import (
+        from .features.memory.application.graph_memory_manager import (
             GraphMemoryManager as GraphMemoryManager,
         )
-        from .managers import (
+        from .features.memory.application.memory_engine import (
             MemoryEngine as MemoryEngine,
         )
 

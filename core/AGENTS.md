@@ -21,7 +21,7 @@
 | `platform/composition/component_factory.py` · `ComponentFactory` | 在 `build_all(...)` 中构造共享数据库、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、协议身份 Runtime、验证器、调度器、注入记录与 Memory Evolution 组件；旧 initializer 路径已删除 | `base/`、`identity/`、`storage/`、`retrieval/`、`managers/`、`processors/` |
 | `shared/adapter_capabilities.py` / `platform/provider/adapters.py` | 定义不可变能力快照，并在构建时冻结 LLM/Embedding Provider 调用入口；它们是各自契约的唯一导入路径 | `platform/composition/`、`processors/`、`validators/`、`retrieval/`、`utils/` |
 | `event_handler.py` · `EventHandler` | 处理全量群消息、LLM 请求前召回注入、LLM 响应后反思、会话重置与维护任务关闭 | `handlers/`、`injection/`、`cleaners/`、`dedup/`、`extractors/` |
-| `managers/memory_engine.py` · `MemoryEngine` | 长期记忆的统一运行时门面；组合 managers 中的生命周期、CRUD、召回、统计等能力 | `storage/`、`retrieval/`、`processors/`、`models/` |
+| `features/memory/application/memory_engine.py` · `MemoryEngine` | 长期记忆的统一运行时门面；组合 memory feature 中的生命周期、CRUD、召回、统计等能力 | `features/memory/`、`features/retrieval/`、`features/recall/processors/`、`models/` |
 | `page_api.py` · `PluginPageApi` | 以 `PAGE_API_PREFIX` 为主前缀聚合 `api/` mixin，注册仪表盘读写、维护、诊断与评估端点 | `api/`、初始化器发布的共享组件 |
 | `command_handler.py` · `CommandHandler` | AstrBot 命令适配；解析命令后委托 `command_endpoints.py` 与 `commands/` | `command_endpoints.py`、`commands/`、共享 manager |
 | `feature_delegation.py` · `FeatureDelegation` | 探测伴侣插件并决定相关能力由 Memora 本地处理还是委托 | AstrBot 插件上下文、`api/delegation_api.py` |
@@ -100,7 +100,7 @@ flowchart TD
 
 ### MemoryEngine
 
-`MemoryEngine` 位于 `managers/` 并以 mixin/协作对象组合记忆生命周期、CRUD、召回和统计能力。调用方使用门面，不应直接拼接其内部 store 与 retriever。持久化标识、事务、软删除、FTS/图/向量一致性属于 `storage/`；排序、融合与可解释召回属于 `retrieval/`；抽取和结构化转换属于 `processors/`。
+`MemoryEngine` 位于 `features/memory/application/` 并以 mixin/协作对象组合记忆生命周期、CRUD、召回和统计能力。调用方使用门面，不应直接拼接其内部 store 与 retriever。持久化标识、事务、软删除、FTS/图/向量一致性属于 `features/memory/infrastructure/`；排序、融合与可解释召回属于 `features/retrieval/`；抽取和结构化转换属于 `features/recall/processors/`。
 
 Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 relation/projection 解释平面。在线召回顺序固定为 direct/graph 合并 → relation expansion → projection attachment → reranker → privacy filter；Projection 只附着到命中 primary source 的 canonical candidate，不增加候选数、不改变 canonical `doc_id`/正文/分数，也不得成为第二套权威记忆。
 
@@ -143,7 +143,7 @@ AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注�
 - [`features/injection/AGENTS.md`](features/injection/AGENTS.md)
 - [`initializer/AGENTS.md`](initializer/AGENTS.md)（已退役目录导航）
 - [`features/cognition/jargon/AGENTS.md`](features/cognition/jargon/AGENTS.md)
-- [`managers/AGENTS.md`](managers/AGENTS.md)
+- [`features/memory/AGENTS.md`](features/memory/AGENTS.md)
 - [`models/AGENTS.md`](models/AGENTS.md)
 - [`monitoring/AGENTS.md`](monitoring/AGENTS.md)（已退役目录导航）
 - [`features/recall/processors/AGENTS.md`](features/recall/processors/AGENTS.md)

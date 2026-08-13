@@ -15,7 +15,7 @@ from ...observability.infrastructure.debug_reporter import (
 )
 
 if TYPE_CHECKING:
-    from ....managers.conversation_manager import ConversationManager
+    from ...conversation.application.conversation_manager import ConversationManager
 
 
 async def _write_summary_metadata_once(

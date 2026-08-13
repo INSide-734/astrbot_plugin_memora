@@ -21,6 +21,7 @@ from ...features.injection.infrastructure.injection_decision_store import (
     InjectionDecisionStore,
 )
 from ...features.injection.infrastructure.recorder import InjectionDecisionRecorder
+from ...features.memory.application.memory_engine import MemoryEngine
 from ...features.memory.infrastructure.validators import IndexValidator
 from ...features.observability.application import MemoryQualityScorer
 from ...features.observability.infrastructure.debug_reporter import (
@@ -32,7 +33,6 @@ from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
 from ...features.recall.processors.memory_processor import MemoryProcessor
-from ...managers.memory_engine import MemoryEngine
 from ...shared.contracts import PromptProtectionPort
 from ...shared.errors import InitializationError
 from ..config.manager import ConfigManager

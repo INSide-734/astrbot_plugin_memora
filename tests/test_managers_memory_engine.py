@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
 
 
 class TestMemoryEngineConstructor:

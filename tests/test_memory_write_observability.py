@@ -9,11 +9,11 @@ import pytest
 
 import core.features.observability.application.memory_write_timing as write_timing
 import core.features.reflection.application.reflection_handler as reflection_handler_module
-from core.features.reflection.application.reflection_handler import ReflectionHandler
-from core.managers.memory_engine import MemoryEngine
-from core.managers.memory_engine_evolution_hooks import (
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine_evolution_hooks import (
     MemoryEngineEvolutionHooksMixin,
 )
+from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.retrieval.memory_lifecycle import MemoryLifecycleManager
 
 
@@ -110,7 +110,7 @@ async def test_engine_evolution_disabled_skips_source_loading(
     manager.store.load_sources = AsyncMock()
     events: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "core.managers.memory_engine_evolution_hooks.report_debug_event",
+        "core.features.memory.application.memory_engine_evolution_hooks.report_debug_event",
         lambda event_name, **fields: events.append({"event": event_name, **fields}),
     )
 
@@ -136,7 +136,7 @@ async def test_engine_evolution_reports_actual_gate_decision(
     )
     events: list[dict[str, object]] = []
     monkeypatch.setattr(
-        "core.managers.memory_engine_evolution_hooks.report_debug_event",
+        "core.features.memory.application.memory_engine_evolution_hooks.report_debug_event",
         lambda event_name, **fields: events.append({"event": event_name, **fields}),
     )
 

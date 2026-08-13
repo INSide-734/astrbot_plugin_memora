@@ -9,15 +9,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.features.recall.application.recall_handler import RecallHandler
-from core.features.reflection.application import continuity as reflection_continuity
-from core.features.reflection.application.reflection_handler import ReflectionHandler
-from core.managers.continuity_tracker import ContinuityTracker
-from core.managers.memory_engine import MemoryEngine
-from core.managers.memory_engine_lifecycle import (
+from core.features.memory.application.continuity_tracker import ContinuityTracker
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine_lifecycle import (
     MemoryEngineLifecycleMixin,
     _build_continuity_tracker,
 )
+from core.features.recall.application.recall_handler import RecallHandler
+from core.features.reflection.application import continuity as reflection_continuity
+from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.review.memory_quality_gate import MemoryGateResult
 
 record_continuity_topics = reflection_continuity.record_continuity_topics
@@ -127,7 +127,9 @@ async def test_memory_engine_starts_and_closes_real_continuity_tracker(
         },
     )
     engine._schema.create_tables = AsyncMock()
-    with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+    with patch(
+        "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+    ) as bm25_cls:
         bm25_cls.return_value.initialize = AsyncMock()
         await engine.initialize()
 

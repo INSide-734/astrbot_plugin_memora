@@ -9,13 +9,13 @@ from collections.abc import AsyncGenerator
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 
+from .features.conversation.application.conversation_manager import ConversationManager
+from .features.memory.application.memory_engine import MemoryEngine
 from .features.memory.infrastructure.validators import IndexValidator
 from .features.reflection.application.candidate_writer import (
     build_reflection_idempotency_key,
 )
 from .i18n_backend import t, t_list
-from .managers.conversation_manager import ConversationManager
-from .managers.memory_engine import MemoryEngine
 from .platform.config.manager import ConfigManager
 from .platform.transport.commands.diagnostic_commands import (
     DiagnosticCommandMixin,

@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 
 if TYPE_CHECKING:
-    from ....managers.memory_engine import MemoryEngine
     from ...backup.application import BackupManager
+    from ...memory.application.memory_engine import MemoryEngine
 
 
 class DecayScheduler:
@@ -392,7 +392,7 @@ class DecayScheduler:
     async def _run_anomaly_feed(self) -> None:
         """按 UTC 日补齐创建量，告警写入成功后才标记日期已投喂。"""
 
-        from ....managers.anomaly_detector import AnomalyDetector
+        from ...memory.application.anomaly_detector import AnomalyDetector
 
         detector = getattr(self.memory_engine, "anomaly_detector", None)
         if not isinstance(detector, AnomalyDetector):

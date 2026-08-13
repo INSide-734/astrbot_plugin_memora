@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
 
 
 def _engine_with_memory(metadata: dict[str, object]) -> MemoryEngine:

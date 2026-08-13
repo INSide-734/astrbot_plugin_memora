@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
-from ....managers.conversation_manager import ConversationManager
-from ....managers.memory_engine import MemoryEngine
 from ....platform.config.manager import ConfigManager
 from ....shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_REQUIRED_ATTR,
@@ -21,7 +19,9 @@ from ....shared.contracts.prompt_protection import (
 )
 from ....shared.cost_control import CostControl
 from ....utils import OperationContext, get_persona_id
+from ...conversation.application.conversation_manager import ConversationManager
 from ...identity.domain.models import IdentityTrust, ResolvedIdentity
+from ...memory.application.memory_engine import MemoryEngine
 from ...observability.application import runtime as observability
 from ...recall.processors.memory_processor import MemoryProcessor
 from ...reflection.application import llm_budget as budget_ops

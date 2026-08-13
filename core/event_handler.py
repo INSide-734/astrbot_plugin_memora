@@ -14,11 +14,13 @@ from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
 from .base.cost_control import build_cost_control_from_config
+from .features.conversation.application.conversation_manager import ConversationManager
 from .features.conversation.application.dedup_manager import DedupManager
 from .features.conversation.application.message_content_extractor import (
     MessageContentExtractor,
 )
 from .features.identity.domain.models import IdentityTrust, ResolvedIdentity
+from .features.memory.application.memory_engine import MemoryEngine
 from .features.observability.application.runtime import monitored
 from .features.observability.infrastructure.debug_reporter import (
     debug_operation,
@@ -30,8 +32,6 @@ from .features.recall.application.recall_handler import RecallHandler
 from .features.recall.application.recall_observability import RecallTimingContext
 from .features.recall.processors.memory_processor import MemoryProcessor
 from .features.reflection.application.reflection_handler import ReflectionHandler
-from .managers.conversation_manager import ConversationManager
-from .managers.memory_engine import MemoryEngine
 from .platform.config.manager import ConfigManager
 from .shared.contracts import IdentityConversationPort
 from .shared.cost_control import CostControl

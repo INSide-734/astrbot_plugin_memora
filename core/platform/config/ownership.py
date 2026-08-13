@@ -88,12 +88,12 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "graph_memory": _ownership(
         "graph_memory",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.memory_engine",
+        "core.features.memory.application.memory_engine",
     ),
     "human_like_memory": _ownership(
         "human_like_memory",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.retrieval_optimizer",
+        "core.features.memory.application.retrieval_optimizer",
     ),
     "migration_settings": _ownership(
         "migration_settings",
@@ -156,12 +156,12 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "anomaly_detection": _ownership(
         "anomaly_detection",
         ConfigOwnershipKind.EXPERIMENTAL,
-        "core.managers.anomaly_detector",
+        "core.features.memory.application.anomaly_detector",
     ),
     "continuity_tracking": _ownership(
         "continuity_tracking",
         ConfigOwnershipKind.EXPERIMENTAL,
-        "core.managers.continuity_tracker",
+        "core.features.memory.application.continuity_tracker",
     ),
     "semantic_compression": _ownership(
         "semantic_compression",
@@ -203,7 +203,9 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
         "core.features.reconsolidation.application.reconsolidation",
     ),
     "export": _ownership(
-        "export", ConfigOwnershipKind.RUNTIME, "core.managers.memory_exporter"
+        "export",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.memory.application.memory_exporter",
     ),
     "topic_segmentation": _ownership(
         "topic_segmentation",

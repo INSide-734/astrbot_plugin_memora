@@ -4,7 +4,7 @@ import json
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from core.managers.retrieval_optimizer import RetrievalOptimizer
+from core.features.memory.application.retrieval_optimizer import RetrievalOptimizer
 from core.retrieval.multi_query_fusion import fuse_query_results, split_candidate_budget
 from core.retrieval.query_planner import QueryPlanner
 from core.retrieval.query_rewriter import QueryIntent, QueryRewriter

@@ -14,11 +14,11 @@ import pytest
 from astrbot.api.platform import MessageType
 
 from core.base.config_validator import get_default_config, validate_config
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.memory.application.retrieval_optimizer import RetrievalOptimizer
 from core.features.recall.processors.atom_classifier import classify_atoms
 from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.managers.decay_operations import DecayOperationsMixin
-from core.managers.memory_engine import MemoryEngine
-from core.managers.retrieval_optimizer import RetrievalOptimizer
 from core.platform.composition.component_factory import ComponentFactory
 from core.platform.config import (
     ConfigApplyResult,
@@ -187,8 +187,12 @@ async def test_projected_lifecycle_flags_control_real_engine_components(
     engine._schema.create_tables = AsyncMock()
 
     with (
-        patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_class,
-        patch("core.managers.anomaly_detector.AnomalyDetector") as detector_class,
+        patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_class,
+        patch(
+            "core.features.memory.application.anomaly_detector.AnomalyDetector"
+        ) as detector_class,
     ):
         bm25_class.return_value.initialize = AsyncMock()
         await engine.initialize()

@@ -14,8 +14,6 @@ from typing import TYPE_CHECKING, Any, cast
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
-from ....managers.conversation_manager import ConversationManager
-from ....managers.memory_engine import MemoryEngine
 from ....platform.config.manager import ConfigManager
 from ....shared.constants import FAKE_TOOL_CALL_NAME
 from ....shared.contracts.prompt_protection import (
@@ -26,6 +24,7 @@ from ....shared.contracts.prompt_protection import (
 )
 from ....shared.cost_control import CostControl
 from ....utils import OperationContext, get_persona_id
+from ...conversation.application.conversation_manager import ConversationManager
 from ...conversation.application.message_content_extractor import (
     MessageContentExtractor,
 )
@@ -49,6 +48,7 @@ from ...injection.domain.models import (
     RequestSignals,
     RoutingMode,
 )
+from ...memory.application.memory_engine import MemoryEngine
 from ...observability.application import runtime as observability
 from ...observability.domain import recall_timing as rt
 from ...retrieval.query_planner import QueryPlanner

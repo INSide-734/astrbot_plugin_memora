@@ -8,7 +8,7 @@ import aiosqlite
 import pytest
 
 import core.features.observability.infrastructure.metrics as monitoring_metrics
-from core.managers.write_coordinator import (
+from core.features.memory.application.write_coordinator import (
     ConnectionRegistry,
     check_db_alive,
     coordinated_transaction,

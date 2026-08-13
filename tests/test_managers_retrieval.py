@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from core.managers.retrieval_optimizer import RetrievalOptimizer, _safe_json
+from core.features.memory.application.retrieval_optimizer import (
+    RetrievalOptimizer,
+    _safe_json,
+)
 from core.retrieval.rrf_fusion import HybridResult
 
 

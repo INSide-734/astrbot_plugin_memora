@@ -10,7 +10,7 @@ import aiosqlite
 import pytest
 
 import core.features.observability.infrastructure.metrics as monitoring_metrics
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
 from core.models.recall_strategy import RecallStrategy
 
 

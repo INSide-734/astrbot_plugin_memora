@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 
+from core.features.memory.application.graph_memory_manager import GraphMemoryManager
 from core.features.recall.processors.graph_extractor import GraphExtractor
-from core.managers.graph_memory_manager import GraphMemoryManager
 from core.storage.graph_store import GraphReplaceResult
 
 

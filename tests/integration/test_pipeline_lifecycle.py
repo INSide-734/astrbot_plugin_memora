@@ -162,7 +162,9 @@ async def test_expired_memories_cleanup(
     4. 验证未过期记忆不受影响
     5. 验证 FAISS 索引与 SQLite 数据一致
     """
-    from core.managers.atom_lifecycle_manager import AtomLifecycleManager
+    from core.features.memory.application.atom_lifecycle_manager import (
+        AtomLifecycleManager,
+    )
 
     # Arrange — 清除已有数据
     store = integration_atom_store

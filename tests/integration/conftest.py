@@ -156,7 +156,7 @@ async def integration_engine(
 
     返回一个完全初始化、可用于 CRUD / 搜索操作的引擎。
     """
-    from core.managers.memory_engine import MemoryEngine
+    from core.features.memory.application.memory_engine import MemoryEngine
 
     # 构造 Mock LLM 提供者。
     mock_llm = MagicMock()

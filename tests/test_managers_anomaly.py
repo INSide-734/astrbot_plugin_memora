@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import time
 
-from core.managers.anomaly_detector import AnomalyDetector
+from core.features.memory.application.anomaly_detector import AnomalyDetector
 
 # ---------------------------------------------------------------------------
 # Helpers

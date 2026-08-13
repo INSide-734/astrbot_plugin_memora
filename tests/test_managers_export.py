@@ -9,7 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.memory_exporter import MemoryExporter, MemoryImporter
+from core.features.memory.application.memory_exporter import (
+    MemoryExporter,
+    MemoryImporter,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers

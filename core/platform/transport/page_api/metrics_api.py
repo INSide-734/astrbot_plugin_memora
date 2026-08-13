@@ -494,7 +494,9 @@ class MetricsApiMixin:
     @staticmethod
     def _build_write_coordinator_summary() -> dict[str, Any]:
         try:
-            from ....managers.write_coordinator import get_write_metrics_snapshot
+            from ....features.memory.application.write_coordinator import (
+                get_write_metrics_snapshot,
+            )
 
             snapshot = get_write_metrics_snapshot()
         except Exception as exc:

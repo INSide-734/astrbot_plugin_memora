@@ -218,7 +218,7 @@ class InjectionDecisionStore(BaseStore):
                 raise
             return self.connection.total_changes - before
 
-        from ....managers.write_coordinator import write_transaction
+        from ...memory.application.write_coordinator import write_transaction
 
         return await write_transaction(operation)
 
@@ -421,7 +421,7 @@ class InjectionDecisionStore(BaseStore):
                 raise
             return CleanupResult(deleted_expired, deleted_overflow)
 
-        from ....managers.write_coordinator import write_transaction
+        from ...memory.application.write_coordinator import write_transaction
 
         return await write_transaction(operation)
 

@@ -11,7 +11,7 @@ from astrbot.api.web import stream_response
 from ..realtime_hub import RealtimeHub, RealtimeHubClosed
 
 if TYPE_CHECKING:
-    from ....managers.memory_engine import MemoryEngine
+    from ....features.memory.application.memory_engine import MemoryEngine
 
 
 class RealtimeSSE:

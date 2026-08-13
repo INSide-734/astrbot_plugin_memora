@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from core.base.runtime_feature_config import RuntimeFeatureConfigSections
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
 from core.platform.composition.engine_runtime_config import ENGINE_RUNTIME_FIELDS
 from core.platform.config import resolve_config_ownership
 
@@ -62,7 +62,9 @@ async def test_engine_never_builds_legacy_relationship_tracker(tmp_path: Path) -
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 

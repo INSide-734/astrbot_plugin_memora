@@ -6,8 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core.features.memory.application.write_coordinator import (
+    reset_write_metrics_snapshot,
+)
 from core.features.observability.application import PerfTracker
-from core.managers.write_coordinator import reset_write_metrics_snapshot
 from core.platform.transport.page_api.metrics_api import MetricsApiMixin
 
 

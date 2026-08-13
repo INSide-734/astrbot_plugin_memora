@@ -13,8 +13,8 @@ from ...observability.infrastructure.debug_reporter import report_debug_event
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
 
-    from ....managers.conversation_manager import ConversationManager
     from ....platform.config.manager import ConfigManager
+    from ...conversation.application.conversation_manager import ConversationManager
 
 
 @dataclass(frozen=True, slots=True)

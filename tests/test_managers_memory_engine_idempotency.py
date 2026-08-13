@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
 from core.storage.canonical_idempotency import create_canonical_idempotency_schema
 
 

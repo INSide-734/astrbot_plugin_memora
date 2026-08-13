@@ -7,7 +7,7 @@ import os
 import time
 from pathlib import Path
 
-from core.managers.continuity_tracker import ContinuityTracker
+from core.features.memory.application.continuity_tracker import ContinuityTracker
 
 # ---------------------------------------------------------------------------
 # mark_topics

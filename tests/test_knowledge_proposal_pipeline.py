@@ -15,7 +15,7 @@ from core.features.knowledge.application import (
     KnowledgeProposalPipeline,
 )
 from core.features.knowledge.domain import KnowledgeEntry, KnowledgeType
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
 from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.shared.contracts import MemorySourceRef
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
