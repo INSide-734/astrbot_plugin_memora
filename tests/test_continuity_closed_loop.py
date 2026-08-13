@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.features.recall.application.recall_handler import RecallHandler
 from core.features.reflection.application import continuity as reflection_continuity
-from core.handlers.recall_handler import RecallHandler
-from core.handlers.reflection_handler import ReflectionHandler
+from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.managers.continuity_tracker import ContinuityTracker
 from core.managers.memory_engine import MemoryEngine
 from core.managers.memory_engine_lifecycle import (

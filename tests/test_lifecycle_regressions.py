@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-from core.handlers.recall_handler import RecallHandler
+from core.features.recall.application.recall_handler import RecallHandler
 from core.platform.composition.shutdown_lifecycle import stop_runtime_producers
 
 

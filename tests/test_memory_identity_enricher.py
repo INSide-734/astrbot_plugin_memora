@@ -562,7 +562,7 @@ async def test_recall_handler_enriches_safe_candidates_before_execution() -> Non
 
     from astrbot.api.platform import MessageType
 
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     config = MagicMock()
     config.filtering_settings = {

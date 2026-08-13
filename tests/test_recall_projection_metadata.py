@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from core.handlers.recall_handler import RecallHandler
+from core.features.recall.application.recall_handler import RecallHandler
 
 
 def test_safe_candidates_only_keeps_projection_allowlist() -> None:

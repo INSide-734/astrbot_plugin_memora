@@ -12,7 +12,9 @@ import pytest
 def _build_storage_handler(conversation_manager: MagicMock) -> Any:
     """构造仅用于元数据提交回归的反思处理器。"""
 
-    from core.handlers.reflection_handler import ReflectionHandler
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
 
     processor = MagicMock()
     processor.process_conversation = AsyncMock(
@@ -71,10 +73,10 @@ class TestReflectionMetadataPersistence:
                 "core.features.reflection.application.reflection_metadata.report_debug_event"
             ) as metadata_report,
             patch(
-                "core.handlers.reflection_handler.observability.report_debug_event"
+                "core.features.reflection.application.reflection_handler.observability.report_debug_event"
             ) as storage_report,
             patch(
-                "core.handlers.reflection_handler.resolve_continuity_session"
+                "core.features.reflection.application.reflection_handler.resolve_continuity_session"
             ) as resolve_continuity,
         ):
             await _run_storage_task(handler)

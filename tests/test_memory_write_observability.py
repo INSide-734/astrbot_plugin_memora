@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import core.features.observability.application.memory_write_timing as write_timing
-import core.handlers.reflection_handler as reflection_handler_module
-from core.handlers.reflection_handler import ReflectionHandler
+import core.features.reflection.application.reflection_handler as reflection_handler_module
+from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.managers.memory_engine import MemoryEngine
 from core.managers.memory_engine_evolution_hooks import (
     MemoryEngineEvolutionHooksMixin,

@@ -26,7 +26,7 @@ class TestRecallHandlerConstruction:
     """Tests for RecallHandler.__init__."""
 
     def test_stores_all_dependencies(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         ctx = MagicMock()
         cfg = MagicMock()
@@ -51,7 +51,7 @@ class TestRecallHandlerConstruction:
         assert handler._enforce_limit_cb is enforce_cb
 
     def test_creates_sub_components(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         handler = RecallHandler(
             context=MagicMock(),
@@ -71,7 +71,7 @@ class TestRecallHandlerFallbackQuery:
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_recent_messages(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         conv = MagicMock()
         conv.get_context = AsyncMock(return_value=[])
@@ -89,7 +89,7 @@ class TestRecallHandlerFallbackQuery:
 
     @pytest.mark.asyncio
     async def test_returns_none_with_single_message(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         conv = MagicMock()
         conv.get_context = AsyncMock(
@@ -109,7 +109,7 @@ class TestRecallHandlerFallbackQuery:
 
     @pytest.mark.asyncio
     async def test_builds_query_from_multiple_messages(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         conv = MagicMock()
         conv.get_context = AsyncMock(
@@ -135,7 +135,7 @@ class TestRecallHandlerFallbackQuery:
 
     @pytest.mark.asyncio
     async def test_handles_error_gracefully(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         conv = MagicMock()
         conv.get_context = AsyncMock(side_effect=RuntimeError("DB error"))
@@ -153,7 +153,7 @@ class TestRecallHandlerFallbackQuery:
 
     @pytest.mark.asyncio
     async def test_filters_empty_content_messages(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         conv = MagicMock()
         conv.get_context = AsyncMock(
@@ -185,7 +185,7 @@ class TestRecallHandlerSpontaneousRecall:
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_disabled(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         cfg = MagicMock()
         cfg.get.return_value = False  # spontaneous_recall_enabled = False
@@ -205,7 +205,7 @@ class TestRecallHandlerSpontaneousRecall:
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_probability_not_met(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         cfg = MagicMock()
         cfg.get.side_effect = lambda key, default=None: {
@@ -233,7 +233,7 @@ class TestRecallHandlerProspectiveRecall:
 
     @pytest.mark.asyncio
     async def test_returns_empty_when_disabled(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         cfg = MagicMock()
         cfg.get.return_value = False  # prospective_recall_enabled = False
@@ -260,7 +260,7 @@ class TestRecallHandlerSearchParameters:
         from astrbot.api.platform import MessageType
 
         from core.features.observability.application import PerfTracker
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         cfg = MagicMock()
         cfg.filtering_settings = {
@@ -329,7 +329,7 @@ class TestRecallHandlerFinalizeCandidates:
     """Tests for final recall candidate de-duplication and budget enforcement."""
 
     def test_finalizes_unique_candidates_with_top_k_limit(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
         from core.retrieval.rrf_fusion import HybridResult
 
         handler = RecallHandler(
@@ -423,7 +423,7 @@ class TestRecallHandlerFinalizeCandidates:
         assert finalized[0].metadata["recall_source"] == "prospective"
 
     def test_enabled_prefers_recall_engine_key(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         cfg = MagicMock()
         cfg.get.side_effect = lambda key, default=None: {
@@ -443,7 +443,7 @@ class TestRecallHandlerFinalizeCandidates:
         assert handler._prospective_recall_enabled() is False
 
     def test_enabled_falls_back_to_legacy_key(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         cfg = MagicMock()
         cfg.get.side_effect = lambda key, default=None: {
@@ -465,7 +465,7 @@ class TestRecallHandlerFinalizeCandidates:
 class TestRecallHandlerProspectiveStore:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_atom_store(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         cfg = MagicMock()
         cfg.get.return_value = True
@@ -494,7 +494,9 @@ class TestReflectionHandlerConstruction:
     """Tests for ReflectionHandler.__init__."""
 
     def test_stores_all_dependencies(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         ctx = MagicMock()
         cfg = MagicMock()
@@ -519,7 +521,9 @@ class TestReflectionHandlerConstruction:
         assert handler._enforce_limit_cb is enforce_cb
 
     def test_initial_state(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -539,7 +543,9 @@ class TestReflectionHandlerShutdown:
 
     @pytest.mark.asyncio
     async def test_sets_shutting_down_flag(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -554,7 +560,9 @@ class TestReflectionHandlerShutdown:
 
     @pytest.mark.asyncio
     async def test_clears_storage_state(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -575,7 +583,9 @@ class TestReflectionHandlerMessageFiltering:
 
     @pytest.mark.asyncio
     async def test_skips_non_assistant_role(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -596,7 +606,9 @@ class TestReflectionHandlerMessageFiltering:
 
     @pytest.mark.asyncio
     async def test_skips_tool_call_responses(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -617,7 +629,9 @@ class TestReflectionHandlerMessageFiltering:
 
     @pytest.mark.asyncio
     async def test_skips_empty_response_text(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -640,7 +654,9 @@ class TestReflectionHandlerMessageFiltering:
 
     @pytest.mark.asyncio
     async def test_skips_error_responses(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -666,7 +682,9 @@ class TestReflectionHandlerPromptProtection:
     """Tests for LLM response sanitization before storage."""
 
     def test_sanitize_response_text_removes_internal_tags(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
         from core.security.prompt_sanitizer import PromptProtectionService
 
         cfg = MagicMock()
@@ -699,7 +717,9 @@ class TestReflectionHandlerPromptProtection:
     async def test_registered_injection_is_removed_from_visible_and_stored_response(
         self,
     ) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
         from core.injection.executor import InjectionExecutionContext, InjectionExecutor
         from core.injection.models import PresetName, RequestSignals, RoutingMode
         from core.injection.router import (
@@ -766,7 +786,9 @@ class TestReflectionHandlerPromptProtection:
         assert secret not in stored
 
     def test_sanitize_response_text_respects_disabled_config(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
         from core.security.prompt_sanitizer import PromptProtectionService
 
         cfg = MagicMock()
@@ -793,7 +815,9 @@ class TestPrepareMessageBatches:
 
     @pytest.mark.asyncio
     async def test_single_batch_for_strategy_a_b_hybrid(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         cfg = MagicMock()
         cfg.get.return_value = "a_b_hybrid"
@@ -816,7 +840,9 @@ class TestPrepareMessageBatches:
 
     @pytest.mark.asyncio
     async def test_single_batch_for_few_messages_strategy_c(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         cfg = MagicMock()
         cfg.get.return_value = "c"  # Strategy C
@@ -843,7 +869,9 @@ class TestStorageTaskDone:
 
     @pytest.mark.asyncio
     async def test_removes_from_sets_on_success(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -874,7 +902,9 @@ class TestRecordPendingSummary:
 
     @pytest.mark.asyncio
     async def test_skips_when_no_conversation_manager(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -889,7 +919,9 @@ class TestRecordPendingSummary:
 
     @pytest.mark.asyncio
     async def test_increments_retry_count(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         conv = MagicMock()
         conv.update_session_metadata = AsyncMock(return_value=True)
@@ -920,7 +952,9 @@ class TestReflectionStorageTaskCommit:
     async def test_partial_memory_write_keeps_pending_and_does_not_advance(
         self,
     ) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         conv = MagicMock()
         conv.get_session_metadata = AsyncMock(return_value=0)
@@ -973,7 +1007,9 @@ class TestReflectionStorageTaskCommit:
 
     @pytest.mark.asyncio
     async def test_successful_retry_advances_and_clears_pending(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         conv = MagicMock()
         conv.get_session_metadata = AsyncMock(return_value=0)
@@ -1021,7 +1057,9 @@ class TestReflectionStorageTaskCommit:
 
     @pytest.mark.asyncio
     async def test_summary_window_locker_serializes_session(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         handler = ReflectionHandler(
             context=MagicMock(),
@@ -1091,7 +1129,7 @@ class TestEventHandlerInjectionLifecycle:
         recorder.close.assert_awaited_once_with(timeout=5.0)
 
     def test_recall_handler_stores_injection_dependencies(self) -> None:
-        from core.handlers.recall_handler import RecallHandler
+        from core.features.recall.application.recall_handler import RecallHandler
 
         recorder = MagicMock()
         handler = RecallHandler(
@@ -1149,7 +1187,7 @@ def high_confidence_memories() -> list[HybridResult]:
 
 @pytest.fixture
 def handler_case(monkeypatch):
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     def build(
         *,
@@ -1228,7 +1266,7 @@ def handler_case(monkeypatch):
         handler._maybe_prospective_recall = AsyncMock(return_value=[])
         handler._build_cognitive_context = AsyncMock(return_value="")
         monkeypatch.setattr(
-            "core.handlers.recall_handler.get_persona_id",
+            "core.features.recall.application.recall_handler.get_persona_id",
             AsyncMock(return_value="persona-1"),
         )
         return SimpleNamespace(
@@ -1520,7 +1558,7 @@ async def test_recall_logs_only_sanitized_counts(handler_case, caplog) -> None:
 
 
 def test_safe_candidates_keep_only_stable_scalar_ids() -> None:
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     candidates = [
         SimpleNamespace(doc_id="b", content="same", final_score=1.0, metadata={}),
@@ -1627,7 +1665,9 @@ async def test_recall_correlates_scope_without_recording_token(handler_case) -> 
 async def test_reflection_sanitizes_visible_response_before_early_gates(
     early_gate,
 ) -> None:
-    from core.handlers.reflection_handler import ReflectionHandler
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
     from core.security.prompt_sanitizer import PromptProtectionService
 
     secret = f"{early_gate} scoped secret alpha beta gamma delta epsilon"
@@ -1669,7 +1709,9 @@ async def test_reflection_sanitizes_visible_response_before_early_gates(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", ["exception", "validation"])
 async def test_reflection_visible_sanitizer_failures_are_closed(failure) -> None:
-    from core.handlers.reflection_handler import ReflectionHandler
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
 
     service = MagicMock()
     if failure == "exception":
@@ -1730,7 +1772,9 @@ async def test_recall_scope_setter_exception_uses_private_scope_without_leaking_
 
 @pytest.mark.asyncio
 async def test_reflection_scope_getter_exception_uses_private_fallback() -> None:
-    from core.handlers.reflection_handler import ReflectionHandler
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
     from core.security.prompt_sanitizer import PromptProtectionService
 
     secret = "private fallback secret alpha beta gamma delta epsilon"
@@ -1761,7 +1805,9 @@ async def test_reflection_scope_getter_exception_uses_private_fallback() -> None
 
 
 def _reflection_handler_for_scope(service, *, now_config=True):
-    from core.handlers.reflection_handler import ReflectionHandler
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
 
     cfg = MagicMock()
     cfg.get.side_effect = lambda key, default=None: {

@@ -715,7 +715,7 @@ async def test_recall_proposes_candidate_but_never_writes_canonical() -> None:
     handler = object.__new__(type("RecallHandlerStub", (), {}))
     handler._memory_engine = engine
 
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     normalized = RecallHandler._safe_candidates(
         [

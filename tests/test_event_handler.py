@@ -69,7 +69,9 @@ class TestEventHandlerConstruction:
     async def test_reflection_schedules_only_after_reloaded_canonical_source(
         self,
     ) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         source = MagicMock(memory_id=17)
         manager = MagicMock()
@@ -94,7 +96,9 @@ class TestEventHandlerConstruction:
     async def test_reflection_skips_schedule_when_canonical_source_missing(
         self,
     ) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         manager = MagicMock()
         manager.store.load_sources = AsyncMock(return_value=[])
@@ -115,7 +119,9 @@ class TestEventHandlerConstruction:
 
     @pytest.mark.asyncio
     async def test_reflection_schedule_propagates_cancelled_error(self) -> None:
-        from core.handlers.reflection_handler import ReflectionHandler
+        from core.features.reflection.application.reflection_handler import (
+            ReflectionHandler,
+        )
 
         manager = MagicMock()
         manager.store.load_sources = AsyncMock(side_effect=asyncio.CancelledError())

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.handlers.recall_observability import RecallTimingContext
+from core.features.recall.application.recall_observability import RecallTimingContext
 from core.managers.memory_engine import MemoryEngine
 from core.managers.retrieval_timing import RetrievalTimingSink
 

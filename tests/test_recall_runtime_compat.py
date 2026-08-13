@@ -49,7 +49,7 @@ def test_missing_provider_context_limit_keeps_injection_budget_available() -> No
 def test_injection_result_is_visible_without_debug_mode() -> None:
     """普通 AstrBot INFO 日志应给出脱敏注入摘要，便于定位静默跳过。"""
 
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     decision = SimpleNamespace(
         resolved_delivery=SimpleNamespace(value="extra_user_content"),
@@ -66,7 +66,9 @@ def test_injection_result_is_visible_without_debug_mode() -> None:
         actual_payload_chars=0,
     )
 
-    with patch("core.handlers.recall_handler.logger.info") as log_info:
+    with patch(
+        "core.features.recall.application.recall_handler.logger.info"
+    ) as log_info:
         RecallHandler._report_injection_result(decision, signals, result)
 
     log_info.assert_called_once_with(

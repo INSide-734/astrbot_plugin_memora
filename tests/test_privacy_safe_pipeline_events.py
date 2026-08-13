@@ -11,8 +11,8 @@ from types import SimpleNamespace
 import pytest
 
 from core.features.observability.infrastructure import debug_reporter
-from core.handlers.recall_handler import RecallHandler
-from core.handlers.reflection_handler import ReflectionHandler
+from core.features.recall.application.recall_handler import RecallHandler
+from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.injection.models import (
     DeliveryMode,
     InjectionDecision,

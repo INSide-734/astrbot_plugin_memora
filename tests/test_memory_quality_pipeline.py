@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-import core.handlers.reflection_handler as reflection_handler_module
+import core.features.reflection.application.reflection_handler as reflection_handler_module
 from core.features.recall.processors.memory_processor import MemoryProcessor
-from core.handlers.reflection_handler import ReflectionHandler
+from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.models.conversation_models import Message
 from core.review.memory_quality_gate import MemoryGateResult
 

@@ -8,7 +8,9 @@ import pytest
 @pytest.mark.asyncio
 async def test_retry_skips_previously_completed_memory_candidates() -> None:
     """重试只写未完成候选，并报告成功、跳过与失败计数。"""
-    from core.handlers.reflection_handler import ReflectionHandler
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
 
     conversation_manager = MagicMock()
     conversation_manager.get_session_metadata = AsyncMock(
@@ -55,7 +57,7 @@ async def test_retry_skips_previously_completed_memory_candidates() -> None:
     )
 
     with patch(
-        "core.handlers.reflection_handler.observability.report_debug_event"
+        "core.features.reflection.application.reflection_handler.observability.report_debug_event"
     ) as report:
         await handler._storage_task(
             session_id="session-1",

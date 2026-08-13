@@ -26,10 +26,10 @@ from .features.observability.infrastructure.debug_reporter import (
     report_debug_exception,
 )
 from .features.recall.application.injection_cleaner import InjectionCleaner
+from .features.recall.application.recall_handler import RecallHandler
+from .features.recall.application.recall_observability import RecallTimingContext
 from .features.recall.processors.memory_processor import MemoryProcessor
-from .handlers.recall_handler import RecallHandler
-from .handlers.recall_observability import RecallTimingContext
-from .handlers.reflection_handler import ReflectionHandler
+from .features.reflection.application.reflection_handler import ReflectionHandler
 from .managers.conversation_manager import ConversationManager
 from .managers.memory_engine import MemoryEngine
 from .platform.config.manager import ConfigManager

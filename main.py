@@ -25,8 +25,8 @@ from .core.features.backup.application import BackupManager
 from .core.features.backup.domain import BackupOperationError
 from .core.features.observability.application import PerfTracker
 from .core.features.observability.application import runtime as observability
+from .core.features.recall.application.recall_observability import RecallTimingContext
 from .core.features.updates.application import RuntimeUpdateInstaller, UpdateManager
-from .core.handlers.recall_observability import RecallTimingContext
 from .core.i18n_backend import init as i18n_init
 from .core.i18n_backend import t
 from .core.platform.composition.plugin_initializer import PluginInitializer

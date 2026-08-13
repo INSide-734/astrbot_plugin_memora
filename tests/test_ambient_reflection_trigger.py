@@ -11,10 +11,10 @@ from astrbot.api.platform import MessageType
 
 from core.event_handler import EventHandler
 from core.features.identity.domain.models import IdentityTrust, ResolvedIdentity
+from core.features.reflection.application.reflection_handler import ReflectionHandler
 from core.features.reflection.application.reflection_trigger import (
     ReflectionWindowRequest,
 )
-from core.handlers.reflection_handler import ReflectionHandler
 
 
 def _unsupported_group_identity() -> ResolvedIdentity:

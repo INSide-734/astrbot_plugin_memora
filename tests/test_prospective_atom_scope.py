@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.handlers.recall_handler import RecallHandler
+from core.features.recall.application.recall_handler import RecallHandler
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,10 @@
 [根级 AGENTS.md](../../AGENTS.md) > [core](../) > **handlers**
 
-# 消息主链处理器
+# 消息主链处理器（已迁移）
 
-**最后更新：** 2026-07-27
+**最后更新：** 2026-08-13
+**迁移去向：** `core/features/recall/application/`（RecallHandler 及其辅助）、`core/features/reflection/application/`（ReflectionHandler）；`core/handlers/` 仅保留单实现 re-export。
+
 **入口：** `RecallHandler.handle_memory_recall()`、`ReflectionHandler.handle_memory_reflection()`、`ReflectionHandler.maybe_schedule_summary()`
 **公开导出：** `RecallHandler`、`ReflectionHandler`
 

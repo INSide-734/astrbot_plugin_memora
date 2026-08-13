@@ -94,7 +94,7 @@ def recall_case() -> SimpleNamespace:
 
     from astrbot.api.platform import MessageType
 
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     config = MagicMock()
     config.filtering_settings = {
@@ -498,7 +498,9 @@ async def test_reflection_passes_identity_and_uses_canonical_affection_user(
 ) -> None:
     """助手写入保留身份作用域，用户级好感度只使用可信 canonical QQ。"""
 
-    from core.handlers.reflection_handler import ReflectionHandler
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
 
     config = MagicMock()
     config.get.side_effect = lambda _key, default=None: default
@@ -511,7 +513,7 @@ async def test_reflection_passes_identity_and_uses_canonical_affection_user(
     affection = MagicMock()
     affection.process_interaction = AsyncMock()
     monkeypatch.setattr(
-        "core.handlers.reflection_handler.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         AsyncMock(return_value="persona-1"),
     )
     handler = ReflectionHandler(

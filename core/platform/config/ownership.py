@@ -56,7 +56,9 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
         "core.features.conversation.application.conversation_manager",
     ),
     "recall_engine": _ownership(
-        "recall_engine", ConfigOwnershipKind.RUNTIME, "core.handlers.recall_handler"
+        "recall_engine",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.recall.application.recall_handler",
     ),
     "importance_decay": _ownership(
         "importance_decay",
@@ -81,7 +83,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "reflection_engine": _ownership(
         "reflection_engine",
         ConfigOwnershipKind.RUNTIME,
-        "core.handlers.reflection_handler",
+        "core.features.reflection.application.reflection_handler",
     ),
     "graph_memory": _ownership(
         "graph_memory",
