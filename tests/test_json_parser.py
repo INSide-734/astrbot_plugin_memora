@@ -164,7 +164,7 @@ class TestJsonParser:
         parser = JsonParser(QualityValidator())
         # Something that causes a non-JSON/non-ValueError exception during parsing
         with patch(
-            "core.processors.json_parser.json.loads",
+            "core.features.recall.processors.json_parser.json.loads",
             side_effect=TypeError("unexpected type error"),
         ):
             result = parser.parse_llm_response('{"key": "value"}', is_group_chat=False)
