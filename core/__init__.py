@@ -137,22 +137,22 @@ def __getattr__(name: str) -> Any:
         "TextProcessor",
         "store_round_with_length_check",
     ):
-        from .processors import (
+        from .features.recall.processors import (
             ChatroomContextParser as ChatroomContextParser,
         )
-        from .processors import (
+        from .features.recall.processors import (
             EntityResolver as EntityResolver,
         )
-        from .processors import (
+        from .features.recall.processors import (
             GraphExtractor as GraphExtractor,
         )
-        from .processors import (
+        from .features.recall.processors import (
             MemoryProcessor as MemoryProcessor,
         )
-        from .processors import (
+        from .features.recall.processors import (
             TextProcessor as TextProcessor,
         )
-        from .processors import (
+        from .features.recall.processors import (
             store_round_with_length_check as store_round_with_length_check,
         )
 
