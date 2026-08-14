@@ -6,15 +6,21 @@ import asyncio
 import hashlib
 import sqlite3
 import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 
+from core.features.quality.application.gate_runtime import (
+    GateRuntime,
+    build_gate_snapshot,
+)
 from core.features.quality.application.memory_quality_gate import (
     MemoryQualityGate,
     QuarantineApprovalPendingError,
 )
+from core.features.quality.domain.gate_config import GateConfig
 from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
 from core.shared.contracts.conversation import Message
 
@@ -33,7 +39,7 @@ def _source_message(content: str = "我喜欢咖啡。") -> Message:
     )
 
 
-def _candidate(*, quality: str = "low") -> dict[str, object]:
+def _candidate(*, quality: str = "low") -> dict[str, Any]:
     """构造可进入质量门的记忆候选。"""
 
     source = "我喜欢咖啡。"
@@ -792,3 +798,313 @@ async def test_unknown_canonical_write_result_prevents_automatic_retry(
             actor_id="admin",
         )
     engine.add_memory.assert_awaited_once()
+
+
+def _gate_runtime_with(
+    disposition: str,
+    rules: list[dict[str, object]] | None = None,
+) -> GateRuntime:
+    """构造默认 profile 处置与可选规则的独立门禁快照。"""
+    payload: dict[str, object] = {
+        "profiles": [
+            {
+                "name": "private",
+                "disposition": disposition,
+                "rules": rules or [],
+            }
+        ],
+        "bindings": [],
+    }
+    return GateRuntime(build_gate_snapshot(GateConfig.model_validate(payload)))
+
+
+@pytest.mark.asyncio
+async def test_route_discard_disposition(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """profile 默认处置为 discard 时候选不进入隔离库。"""
+
+    engine = MagicMock()
+    engine.add_memory = AsyncMock(return_value=77)
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=engine,
+        memory_processor=MagicMock(),
+        conversation_manager=MagicMock(),
+        gate_runtime=_gate_runtime_with("discard"),
+    )
+    candidate = _candidate()
+    candidate["metadata"]["grounding_status"] = "unverified"
+    candidate["metadata"]["grounding_reason_codes"] = ["grounding_numeric_conflict"]
+
+    result = await gate.route_candidate(
+        candidate,
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+
+    assert result.action == "discard"
+    engine.add_memory.assert_not_awaited()
+    assert await quarantine_store.list_candidates() == []
+
+
+@pytest.mark.asyncio
+async def test_route_mark_write_tags_metadata_and_builds_atoms(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """mark_write 候选带低置信标记并经 processor 重建原子。"""
+
+    engine = MagicMock()
+    engine.add_memory = AsyncMock(return_value=77)
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata = MagicMock(return_value=["rebuilt-atom"])
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=MagicMock(),
+        gate_runtime=_gate_runtime_with("mark_write"),
+    )
+    candidate = _candidate()
+    candidate["metadata"]["grounding_status"] = "unverified"
+    candidate["metadata"]["grounding_reason_codes"] = ["grounding_numeric_conflict"]
+
+    result = await gate.route_candidate(
+        candidate,
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+
+    assert result.action == "mark_write"
+    assert result.atoms == ["rebuilt-atom"]
+    assert candidate["metadata"]["gate_disposition"] == "mark_write"
+    assert candidate["metadata"]["quality_gate_action"] == "mark_write"
+    assert "grounding_numeric_conflict" in candidate["metadata"]["gate_reason_codes"]
+    processor.classify_atoms_from_metadata.assert_called_once_with(
+        metadata=candidate["metadata"],
+        parent_importance=candidate["importance"],
+        session_id="session-1",
+        persona_id="persona-1",
+    )
+    assert await quarantine_store.list_candidates() == []
+
+
+@pytest.mark.asyncio
+async def test_rule_force_overrides_default(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """规则 force_disposition 覆盖 profile 默认处置。"""
+
+    engine = MagicMock()
+    engine.add_memory = AsyncMock(return_value=77)
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata = MagicMock(return_value=[])
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=MagicMock(),
+        gate_runtime=_gate_runtime_with(
+            "discard",
+            rules=[
+                {
+                    "id": "r1",
+                    "when": {"op": "exists", "field": "content"},
+                    "action": {"kind": "force_disposition", "value": "mark_write"},
+                }
+            ],
+        ),
+    )
+
+    result = await gate.route_candidate(
+        _candidate(),
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+
+    assert result.action == "mark_write"
+    assert result.atoms == []
+    engine.add_memory.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rule_importance_actions_apply_and_clamp(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """规则重要性动作落在候选 importance 上，set_importance 覆盖 delta 且 clamp [0,1]。"""
+
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata = MagicMock(return_value=[])
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=MagicMock(),
+        memory_processor=processor,
+        conversation_manager=MagicMock(),
+        gate_runtime=_gate_runtime_with(
+            "mark_write",
+            rules=[
+                {
+                    "id": "r1",
+                    "when": {"op": "exists", "field": "content"},
+                    "action": {"kind": "importance_delta", "delta": 0.9},
+                },
+                {
+                    "id": "r2",
+                    "when": {"op": "exists", "field": "content"},
+                    "action": {"kind": "set_importance", "value": 0.3},
+                },
+            ],
+        ),
+    )
+    candidate = _candidate()  # importance=0.7
+
+    await gate.route_candidate(
+        candidate,
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+
+    assert candidate["importance"] == pytest.approx(0.3)
+
+
+@pytest.mark.asyncio
+async def test_rule_metadata_actions_dedupe_truncate_and_privacy(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """add_topics 去重截断、set_privacy 与 drop_atoms 跳过原子构建。"""
+
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata = MagicMock(return_value=["atom"])
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=MagicMock(),
+        memory_processor=processor,
+        conversation_manager=MagicMock(),
+        gate_runtime=_gate_runtime_with(
+            "mark_write",
+            rules=[
+                {
+                    "id": "r1",
+                    "when": {"op": "exists", "field": "content"},
+                    "action": {"kind": "add_topics", "values": ["猫", "咖啡", "猫"]},
+                },
+                {
+                    "id": "r2",
+                    "when": {"op": "exists", "field": "content"},
+                    "action": {"kind": "set_privacy", "value": "public"},
+                },
+                {
+                    "id": "r3",
+                    "when": {"op": "exists", "field": "content"},
+                    "action": {"kind": "drop_atoms", "value": True},
+                },
+            ],
+        ),
+    )
+    candidate = _candidate()  # topics=["咖啡"]
+
+    result = await gate.route_candidate(
+        candidate,
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+
+    assert result.action == "mark_write"
+    assert result.atoms == []
+    assert candidate["metadata"]["topics"] == ["咖啡", "猫"]
+    assert candidate["metadata"]["privacy_level"] == "public"
+    processor.classify_atoms_from_metadata.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_route_mark_write_classify_failure_degrades_to_empty_atoms(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """原子派生普通异常不阻断 mark_write，降级为空原子列表。"""
+
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata = MagicMock(side_effect=RuntimeError("boom"))
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=MagicMock(),
+        memory_processor=processor,
+        conversation_manager=MagicMock(),
+        gate_runtime=_gate_runtime_with("mark_write"),
+    )
+
+    result = await gate.route_candidate(
+        _candidate(),
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+
+    assert result.action == "mark_write"
+    assert result.atoms == []
+
+
+@pytest.mark.asyncio
+async def test_route_mark_write_cancellation_propagates(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """原子派生被取消必须向上传播，不得吞成普通降级。"""
+
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata = MagicMock(
+        side_effect=asyncio.CancelledError()
+    )
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=MagicMock(),
+        memory_processor=processor,
+        conversation_manager=MagicMock(),
+        gate_runtime=_gate_runtime_with("mark_write"),
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await gate.route_candidate(
+            _candidate(),
+            session_id="session-1",
+            persona_id="persona-1",
+            source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+            is_group_chat=False,
+        )
+
+
+@pytest.mark.asyncio
+async def test_default_quarantine_profile_still_stages(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """默认配置（disposition=quarantine）仍走隔离库，行为与未启用门禁一致。"""
+
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=MagicMock(),
+        gate_runtime=GateRuntime(build_gate_snapshot(GateConfig())),
+    )
+
+    result = await gate.route_candidate(
+        _candidate(),
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+
+    assert result.action == "quarantined"
+    stored = await quarantine_store.get_candidate(result.candidate_id)
+    assert stored is not None
+    assert stored["status"] == "pending"

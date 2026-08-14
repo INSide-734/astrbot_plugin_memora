@@ -12,6 +12,8 @@ from typing import Any
 
 from ...recall.processors.memory_grounding import MemoryGroundingValidator
 from ..infrastructure.quarantine_store import MemoryQuarantineStore
+from .gate_rule_engine import CandidateView, evaluate_disposition, evaluate_rules
+from .gate_runtime import GateRuntime
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +23,7 @@ class MemoryGateResult:
     action: str
     candidate_id: str | None = None
     reason_codes: tuple[str, ...] = ()
+    atoms: list | None = None
 
 
 class QuarantineApprovalPendingError(RuntimeError):
@@ -46,14 +49,16 @@ class MemoryQualityGate:
         memory_processor: Any,
         conversation_manager: Any,
         grounding_validator: MemoryGroundingValidator | None = None,
+        gate_runtime: GateRuntime | None = None,
     ) -> None:
-        """绑定隔离 Store、canonical 写入入口和来源复核依赖。"""
+        """绑定隔离 Store、canonical 写入入口、来源复核与门禁运行时。"""
 
         self.store = store
         self.memory_engine = memory_engine
         self.memory_processor = memory_processor
         self.conversation_manager = conversation_manager
         self.grounding_validator = grounding_validator or MemoryGroundingValidator()
+        self.gate_runtime = gate_runtime
 
     async def route_candidate(
         self,
@@ -63,8 +68,10 @@ class MemoryQualityGate:
         persona_id: str | None,
         source_window: dict[str, Any],
         is_group_chat: bool,
+        group_id: str | None = None,
+        chat_type: str | None = None,
     ) -> MemoryGateResult:
-        """允许可信候选继续写入，其余候选幂等进入隔离队列。"""
+        """允许可信候选继续写入，其余候选按门禁配置路由。"""
 
         metadata = candidate.get("metadata")
         if not isinstance(metadata, dict):
@@ -73,6 +80,75 @@ class MemoryQualityGate:
         reason_codes = self._reason_codes(metadata)
         if not reason_codes:
             return MemoryGateResult(action="allow")
+
+        if self.gate_runtime is not None:
+            snapshot = self.gate_runtime.snapshot()
+            if snapshot.enabled:
+                profile = snapshot.resolve_profile(
+                    chat_type or ("group" if is_group_chat else "private"),
+                    group_id,
+                    persona_id,
+                )
+                outcome = evaluate_rules(
+                    CandidateView(
+                        content=str(candidate.get("content") or ""),
+                        summary=str(candidate.get("summary") or ""),
+                        key_facts=tuple(metadata.get("key_facts") or ()),
+                        topics=tuple(metadata.get("topics") or ()),
+                        participants=tuple(metadata.get("participants") or ()),
+                        importance=float(candidate.get("importance", 0.5)),
+                        chat_type="group" if is_group_chat else "private",
+                    ),
+                    profile,
+                )
+                disposition = evaluate_disposition(
+                    tuple(reason_codes), outcome, profile
+                )
+                # 应用重要性动作：set_importance 覆盖，否则累加 delta，最终 clamp [0,1]
+                base_importance = float(candidate.get("importance", 0.5))
+                if outcome.set_importance is not None:
+                    candidate["importance"] = max(0.0, min(1.0, outcome.set_importance))
+                elif outcome.importance_delta:
+                    candidate["importance"] = max(
+                        0.0, min(1.0, base_importance + outcome.importance_delta)
+                    )
+                if outcome.add_topics:
+                    metadata["topics"] = list(
+                        dict.fromkeys(
+                            list(metadata.get("topics") or [])
+                            + list(outcome.add_topics)
+                        )
+                    )[:5]
+                if outcome.set_privacy is not None:
+                    metadata["privacy_level"] = outcome.set_privacy
+                if disposition == "discard":
+                    return MemoryGateResult(
+                        action="discard", reason_codes=tuple(reason_codes)
+                    )
+                if disposition == "mark_write":
+                    metadata["gate_disposition"] = "mark_write"
+                    metadata["gate_reason_codes"] = list(reason_codes)
+                    metadata["quality_gate_action"] = "mark_write"
+                    atoms: list = []
+                    if not outcome.drop_atoms:
+                        try:
+                            atoms = self.memory_processor.classify_atoms_from_metadata(
+                                metadata=metadata,
+                                parent_importance=float(
+                                    candidate.get("importance", 0.5)
+                                ),
+                                session_id=session_id,
+                                persona_id=persona_id,
+                            )
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            atoms = []
+                    return MemoryGateResult(
+                        action="mark_write",
+                        reason_codes=tuple(reason_codes),
+                        atoms=atoms,
+                    )
 
         candidate_key = self._candidate_key(
             candidate,
