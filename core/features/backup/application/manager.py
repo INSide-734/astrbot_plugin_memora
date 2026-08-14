@@ -16,7 +16,9 @@ from pathlib import Path
 
 from astrbot.api import logger
 
-from ....platform.resources.version import PLUGIN_VERSION  # 版本以 metadata.yaml 为唯一来源
+from ....platform.resources.version import (
+    PLUGIN_VERSION,
+)  # 版本以 metadata.yaml 为唯一来源
 from ..domain import (
     BackupIntegrity,
     BackupOperationError,
@@ -136,7 +138,7 @@ class BackupManager(BackupRestoreTransactionMixin):
     ) -> tuple[dict[str, dict[str, object]], int]:
         """把白名单文件快照到临时目录并返回 manifest 条目和总大小。"""
 
-        feedback_pair_expected = backup_integrity.prepare_feedback_backup(self.data_dir)
+        feedback_initial_state = backup_integrity.prepare_feedback_backup(self.data_dir)
         ensure_free_space(self.data_dir, self._estimated_backup_size())
         snapshots: dict[str, dict[str, object]] = {}
         total_size = 0
@@ -166,7 +168,7 @@ class BackupManager(BackupRestoreTransactionMixin):
 
         backup_integrity.validate_feedback_snapshot(
             temporary_dir,
-            require_pair=feedback_pair_expected,
+            expected_state=feedback_initial_state,
         )
         return snapshots, total_size
 

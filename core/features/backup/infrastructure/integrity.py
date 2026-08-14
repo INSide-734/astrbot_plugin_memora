@@ -7,6 +7,7 @@ import os
 import secrets
 import sqlite3
 import stat
+from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
@@ -32,11 +33,25 @@ OPERATIONAL_FILE_SPECS: dict[str, tuple[FileRole, str, bool]] = {
 OPERATIONAL_BACKUP_PATTERNS = tuple(OPERATIONAL_FILE_SPECS)
 
 
-def prepare_feedback_backup(data_dir: Path) -> bool:
-    """校验 live 反馈文件对，并返回本次快照是否必须包含整对。"""
+class _FeedbackPairState(Enum):
+    """反馈文件对的可识别状态。"""
 
-    validate_feedback_hmac_pair(data_dir, error_scope="backup")
-    return (data_dir / FEEDBACK_SIGNAL_DB_NAME).is_file()
+    ABSENT = "absent"
+    LEGACY_DB = "legacy_db"
+    COMPLETE = "complete"
+
+
+_FEEDBACK_STATE_RANK = {
+    _FeedbackPairState.ABSENT: 0,
+    _FeedbackPairState.LEGACY_DB: 1,
+    _FeedbackPairState.COMPLETE: 2,
+}
+
+
+def prepare_feedback_backup(data_dir: Path) -> _FeedbackPairState:
+    """校验 live 反馈文件对，并返回快照发布校验所需的初始状态。"""
+
+    return _inspect_feedback_pair(data_dir, error_scope="backup")
 
 
 def finalize_snapshot_file(
@@ -52,14 +67,20 @@ def finalize_snapshot_file(
     metadata["mode"] = stat.S_IMODE(target.stat().st_mode)
 
 
-def validate_feedback_snapshot(root: Path, *, require_pair: bool) -> None:
-    """发布快照前再次校验 DB/key，拒绝复制期间产生的半对状态。"""
+def validate_feedback_snapshot(
+    root: Path,
+    *,
+    expected_state: _FeedbackPairState,
+) -> None:
+    """发布快照前再次校验 DB/key，拒绝复制期间退化的状态。
 
-    validate_feedback_hmac_pair(
-        root,
-        error_scope="backup",
-        require_pair=require_pair,
-    )
+    初始存在的数据（旧版单库或完整对）必须在快照中保留等价或更强的
+    完整性；只有初始为 ABSENT 时才允许最终缺失。
+    """
+
+    final_state = _inspect_feedback_pair(root, error_scope="backup")
+    if _FEEDBACK_STATE_RANK[final_state] < _FEEDBACK_STATE_RANK[expected_state]:
+        raise _feedback_error("backup", "pair_missing")
 
 
 def validate_feedback_hmac_pair(
@@ -115,6 +136,59 @@ def validate_feedback_hmac_pair(
         raise _feedback_error(error_scope, "fingerprint_mismatch")
 
 
+def _feedback_db_is_legacy(db_path: Path) -> bool:
+    """判断反馈库是否为 HMAC 方案引入前的旧版单库。
+
+    以 ``feedback_store_metadata`` 表是否存在为判别依据：该表与 HMAC
+    key/fingerprint 同时引入，旧版数据库没有该表，初始化时会由
+    FeedbackSignalStore 补建 key。无法打开或非普通文件按非旧版处理，
+    以便后续校验 fail closed。
+    """
+
+    if db_path.is_symlink() or not db_path.is_file():
+        return False
+    try:
+        with sqlite3.connect(str(db_path)) as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM sqlite_master
+                WHERE type = 'table' AND name = 'feedback_store_metadata'
+                """
+            ).fetchone()
+    except (OSError, sqlite3.DatabaseError):
+        return False
+    return row is None
+
+
+def _inspect_feedback_pair(
+    data_dir: Path,
+    *,
+    error_scope: str,
+) -> _FeedbackPairState:
+    """分类反馈文件对状态；部分缺失或校验失败一律 fail closed。
+
+    旧版单库（无 metadata 表）不参与 HMAC 契约，允许以单库形态备份；
+    其余部分对状态（孤立 key、HMAC 库缺 key）视为完整性破坏。
+    """
+
+    if error_scope not in {"backup", "restore"}:
+        raise ValueError("invalid feedback HMAC error scope")
+    db_path = data_dir / FEEDBACK_SIGNAL_DB_NAME
+    key_path = data_dir / FEEDBACK_HMAC_KEY_NAME
+    db_present = _path_present(db_path)
+    key_present = _path_present(key_path)
+    if not db_present:
+        if not key_present:
+            return _FeedbackPairState.ABSENT
+        raise _feedback_error(error_scope, "pair_missing")
+    if not key_present:
+        if _feedback_db_is_legacy(db_path):
+            return _FeedbackPairState.LEGACY_DB
+        raise _feedback_error(error_scope, "pair_missing")
+    validate_feedback_hmac_pair(data_dir, error_scope=error_scope, require_pair=True)
+    return _FeedbackPairState.COMPLETE
+
+
 def _feedback_error(scope: str, suffix: str) -> BackupOperationError:
     """构造稳定且不含敏感信息的备份或恢复错误码。"""
 
@@ -151,18 +225,21 @@ def _read_feedback_hmac_key(path: Path, error_scope: str) -> bytes:
 
 
 def validate_feedback_backup_files(root: Path, names: set[str]) -> None:
-    """拒绝缺少任一成员或内部不一致的反馈备份文件对。"""
+    """拒绝缺少任一成员或内部不一致的反馈备份文件对。
+
+    允许旧版单库（无 metadata 表）以单文件形态进入恢复计划：恢复完成后
+    由 FeedbackSignalStore 初始化补建 HMAC key。
+    """
 
     pair = {FEEDBACK_SIGNAL_DB_NAME, FEEDBACK_HMAC_KEY_NAME}
     present = pair.intersection(names)
-    if present and present != pair:
+    if not present:
+        return
+    state = _inspect_feedback_pair(root, error_scope="backup")
+    if state is _FeedbackPairState.LEGACY_DB and present == {FEEDBACK_SIGNAL_DB_NAME}:
+        return
+    if present != pair or state is not _FeedbackPairState.COMPLETE:
         raise BackupOperationError("backup_feedback_hmac_pair_missing")
-    if present:
-        validate_feedback_hmac_pair(
-            root,
-            error_scope="backup",
-            require_pair=True,
-        )
 
 
 def validate_feedback_backup_specs(
@@ -178,23 +255,31 @@ def validate_feedback_backup_specs(
 
 
 def validate_feedback_restore_files(data_dir: Path, names: set[str]) -> None:
-    """确保恢复计划不会只替换反馈数据库或 sidecar。"""
+    """确保恢复计划不会只替换反馈数据库或 sidecar。
+
+    旧版单库不参与 HMAC 契约：计划只恢复旧版单库、或 live 侧仅存在
+    旧版单库时，允许按单文件处理；HMAC 对仍必须整体恢复。
+    """
 
     pair = {FEEDBACK_SIGNAL_DB_NAME, FEEDBACK_HMAC_KEY_NAME}
     planned = pair.intersection(names)
     touches_feedback_contract = bool(planned) or "memora.db" in names
     if not touches_feedback_contract:
         return
-    live_pair_present = any((data_dir / name).exists() for name in pair)
-    if planned != pair:
-        if planned or live_pair_present:
+    live_state = _inspect_feedback_pair(data_dir, error_scope="restore")
+    if planned == pair:
+        if live_state is not _FeedbackPairState.COMPLETE:
             raise BackupOperationError("restore_feedback_hmac_pair_missing")
         return
-    validate_feedback_hmac_pair(
-        data_dir,
-        error_scope="restore",
-        require_pair=True,
-    )
+    if planned == {FEEDBACK_SIGNAL_DB_NAME}:
+        if live_state is _FeedbackPairState.LEGACY_DB:
+            return
+        raise BackupOperationError("restore_feedback_hmac_pair_missing")
+    if planned:
+        raise BackupOperationError("restore_feedback_hmac_pair_missing")
+    # 未计划任何反馈文件（仅恢复 canonical）：live 侧存在 HMAC 对时拒绝
+    if live_state is _FeedbackPairState.COMPLETE:
+        raise BackupOperationError("restore_feedback_hmac_pair_missing")
 
 
 def rollback_restore_files(

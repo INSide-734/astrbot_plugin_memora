@@ -277,6 +277,45 @@ async def test_backup_failure_prevents_migration(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_pre_migration_backup_tolerates_legacy_feedback_database(
+    tmp_path: Path,
+) -> None:
+    """HMAC 方案前的旧版反馈单库不得阻断迁移前备份（升级回归）。"""
+
+    db_path = tmp_path / "memora.db"
+    _create_legacy_database(db_path, version=8, canonical_count=2)
+    feedback_db = tmp_path / "feedback_signals.db"
+    feedback_connection = sqlite3.connect(feedback_db)
+    try:
+        feedback_connection.execute(
+            "CREATE TABLE feedback_events (id INTEGER PRIMARY KEY)"
+        )
+        feedback_connection.commit()
+    finally:
+        feedback_connection.close()
+    backup_manager = BackupManager(str(tmp_path))
+    connection = await aiosqlite.connect(db_path)
+    try:
+        coordinator = SchemaMigrationCoordinator(
+            SchemaManager(connection),
+            db_path=db_path,
+            data_dir=tmp_path,
+            auto_migrate=True,
+            create_backup=True,
+            backup_manager=backup_manager,
+        )
+        result = await coordinator.run()
+    finally:
+        await connection.close()
+
+    assert result.stage == "completed"
+    assert result.migration_id == f"schema-v8-to-v{CURRENT_DB_VERSION}"
+    assert result.from_version == 8
+    assert result.canonical_count == 2
+    assert (tmp_path / "backups").is_dir()
+
+
+@pytest.mark.asyncio
 async def test_mid_migration_failure_restores_canonical_and_version(
     tmp_path: Path,
 ) -> None:

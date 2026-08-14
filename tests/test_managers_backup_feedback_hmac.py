@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from core.features.backup.application.manager import _BACKUP_INFO_FILE, BackupManager
+from core.features.backup.infrastructure import integrity as backup_integrity
 
 
 def _write_marker_database(path: Path, label: str) -> None:
@@ -66,6 +67,23 @@ def _write_feedback_hmac_pair(
     return db_path, key_path
 
 
+def _write_legacy_feedback_database(data_dir: Path) -> Path:
+    """写入 HMAC 方案引入前的旧版反馈单库（无 metadata 表、无 key）。"""
+
+    db_path = data_dir / "feedback_signals.db"
+    key_path = data_dir / "feedback_signals.db.hmac.key"
+    db_path.unlink(missing_ok=True)
+    key_path.unlink(missing_ok=True)
+    connection = sqlite3.connect(db_path)
+    try:
+        connection.execute("CREATE TABLE feedback_events (id INTEGER PRIMARY KEY)")
+        connection.execute("CREATE TABLE feedback_aggregates (id INTEGER PRIMARY KEY)")
+        connection.commit()
+    finally:
+        connection.close()
+    return db_path
+
+
 class TestFeedbackHmacBackupRestore:
     """验证反馈数据库与 HMAC key 始终作为单个恢复单元。"""
 
@@ -80,8 +98,9 @@ class TestFeedbackHmacBackupRestore:
         manager = BackupManager(str(tmp_path))
 
         backup = await manager.create_backup()
+        backup_dir = Path(str(backup["directory"]))
         manifest = json.loads(
-            (Path(backup["directory"]) / _BACKUP_INFO_FILE).read_text(encoding="utf-8")
+            (backup_dir / _BACKUP_INFO_FILE).read_text(encoding="utf-8")
         )
 
         assert {
@@ -92,7 +111,7 @@ class TestFeedbackHmacBackupRestore:
         assert key_metadata["role"] == "operational"
         assert key_metadata["kind"] == "secret"
         assert key_metadata["mode"] == 0o600
-        snapshot_key = Path(backup["directory"]) / key_path.name
+        snapshot_key = backup_dir / key_path.name
         assert snapshot_key.read_bytes() == key_path.read_bytes()
         assert stat.S_IMODE(snapshot_key.stat().st_mode) == 0o600
 
@@ -183,8 +202,10 @@ class TestFeedbackHmacBackupRestore:
             path.name: path.read_bytes()
             for path in (tmp_path / "memora.db", live_db, live_key)
         } == live_bytes
+        restore_status = manager.get_restore_status(str(staged["operation_id"]))
+        assert restore_status is not None
         assert (
-            manager.get_restore_status(str(staged["operation_id"]))["reason_code"]
+            restore_status["reason_code"]
             == "restore_feedback_hmac_fingerprint_mismatch"
         )
 
@@ -221,10 +242,9 @@ class TestFeedbackHmacBackupRestore:
             path.name: path.read_bytes()
             for path in (tmp_path / "memora.db", live_db, live_key)
         } == live_bytes
-        assert (
-            manager.get_restore_status(str(staged["operation_id"]))["reason_code"]
-            == "restore_apply_failed"
-        )
+        restore_status = manager.get_restore_status(str(staged["operation_id"]))
+        assert restore_status is not None
+        assert restore_status["reason_code"] == "restore_apply_failed"
 
     @pytest.mark.asyncio
     async def test_feedback_key_install_failure_rolls_back_database_and_key(
@@ -281,3 +301,72 @@ class TestFeedbackHmacBackupRestore:
             / "previous"
             / source_key.name
         ).exists()
+
+    @pytest.mark.asyncio
+    async def test_backup_accepts_legacy_feedback_database_without_key(
+        self, tmp_path: Path
+    ) -> None:
+        """HMAC 方案前的旧版单库应允许单独备份，不因缺少 key 阻断升级。"""
+
+        _write_marker_database(tmp_path / "memora.db", "legacy-feedback")
+        legacy_db = _write_legacy_feedback_database(tmp_path)
+        manager = BackupManager(str(tmp_path))
+
+        backup = await manager.create_backup()
+        backup_dir = Path(str(backup["directory"]))
+        manifest = json.loads(
+            (backup_dir / _BACKUP_INFO_FILE).read_text(encoding="utf-8")
+        )
+
+        assert "feedback_signals.db" in manifest["files"]
+        assert "feedback_signals.db.hmac.key" not in manifest["files"]
+        snapshot_db = backup_dir / legacy_db.name
+        assert snapshot_db.is_file()
+        with sqlite3.connect(snapshot_db) as connection:
+            assert (
+                connection.execute(
+                    """
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'feedback_events'
+                    """
+                ).fetchone()
+                is not None
+            )
+
+    @pytest.mark.asyncio
+    async def test_restore_legacy_feedback_database_backup_round_trip(
+        self, tmp_path: Path
+    ) -> None:
+        """旧版单库备份可恢复；恢复后由反馈 Store 初始化补建 key。"""
+
+        _write_marker_database(tmp_path / "memora.db", "source")
+        _write_legacy_feedback_database(tmp_path)
+        manager = BackupManager(str(tmp_path))
+        backup = await manager.create_backup()
+
+        # live 侧清空反馈文件，模拟需要恢复旧版单库的目标状态
+        (tmp_path / "feedback_signals.db").unlink(missing_ok=True)
+        staged = manager.stage_restore(str(backup["name"]))
+        applied = manager.apply_pending_restores()
+
+        assert applied["restore_status"] == "validating"
+        assert (tmp_path / "feedback_signals.db").is_file()
+        assert not (tmp_path / "feedback_signals.db.hmac.key").exists()
+        manager.mark_restore_succeeded(str(staged["operation_id"]))
+
+    @pytest.mark.asyncio
+    async def test_snapshot_rejects_legacy_feedback_db_lost_between_checks(
+        self, tmp_path: Path
+    ) -> None:
+        """初始为旧版单库时，快照最终缺失必须被拒绝（防复制窗口遗漏）。"""
+
+        _write_marker_database(tmp_path / "memora.db", "legacy-vanish")
+        legacy_db = _write_legacy_feedback_database(tmp_path)
+        expected_state = backup_integrity.prepare_feedback_backup(tmp_path)
+        legacy_db.unlink()
+
+        with pytest.raises(RuntimeError, match="backup_feedback_hmac_pair_missing"):
+            backup_integrity.validate_feedback_snapshot(
+                tmp_path,
+                expected_state=expected_state,
+            )

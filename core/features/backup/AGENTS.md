@@ -35,7 +35,7 @@ flowchart LR
 1. `memora.db` 是 canonical；`conversations.db`、状态/队列是 operational；FAISS/graph/index 是 derived。角色决定恢复策略，不能把派生文件当新的权威。
 2. SQLite 统一使用 Online Backup API 并执行 quick_check；普通文件复制前后检查 regular file、路径边界和 SHA-256。临时文件必须同目录原子替换。
 3. manifest 记录文件角色、大小、digest、quick check 和版本/插件来源；只在全部必需文件验证通过后发布 `ready`，禁止半成品备份进入可选列表。
-4. 反馈学习 `feedback_signals.db` 与 `.hmac.key` 必须成对备份/恢复；缺一、权限错误或 fingerprint mismatch 必须 fail closed。
+4. HMAC 方案（含 `feedback_store_metadata` 表）的反馈学习 `feedback_signals.db` 与 `.hmac.key` 必须成对备份/恢复；缺一、权限错误或 fingerprint mismatch 必须 fail closed。HMAC 方案引入前的旧版单库（无 metadata 表、无 key）允许以单库形态备份/恢复，恢复后由反馈 Store 初始化补建 key；孤立 key 始终 fail closed。
 5. 恢复计划保存在 `.restore/<operation_id>/restore_plan.json` 等事务目录；只接受固定文件名/模式，拒绝绝对路径、分隔符、`..`、符号链接和未声明文件。
 6. 恢复在初始化器发布 provider/engine/page/command 前应用；manifest、checksum、quick_check、quarantine canonical 引用或原子替换任一失败都必须进入失败/回滚状态。
 7. 每个文件保存 moved/installed/validated progress；部分安装也能按逆序回滚。rollback 失败时保留 `rollback_pending`，不能伪造成功。
