@@ -10,9 +10,9 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
-from ....shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ....shared.contracts import MemorySourceRef
 from ....shared.cost_control import CostControl
+from ....shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ....shared.extra_llm_budget import budgeted_extra_llm_call
 from ..contracts import (
     KnowledgeExtractorPort,

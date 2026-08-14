@@ -14,8 +14,8 @@ from core.features.profiles.domain.models import (
     UserProfile,
     UserTag,
 )
-from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.shared.contracts import MemorySourceRef
+from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.shared.entity_editing import EntityValidationError
 from core.shared.list_sorting import SortQuery
 

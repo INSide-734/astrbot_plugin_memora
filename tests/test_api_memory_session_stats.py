@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.shared.contracts.conversation import Session
 from core.platform.transport.page_api.memory_stats_recall_api import (
     MemoryStatsRecallApiMixin,
 )
+from core.shared.contracts.conversation import Session
 
 
 class _StatsHarness:

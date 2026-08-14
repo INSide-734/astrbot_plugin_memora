@@ -17,8 +17,8 @@ import pytest
 from core.features.cognition.jargon.jargon_admin_service import JargonAdminService
 from core.features.cognition.jargon.jargon_query import JargonQueryService
 from core.features.cognition.jargon.jargon_store import JargonStore
-from core.platform.transport.page_api.page_api import PluginPageApi
 from core.platform.transport.page_api.jargon_api import JargonApiMixin
+from core.platform.transport.page_api.page_api import PluginPageApi
 from core.platform.transport.page_api.response_utils import error_response
 from core.shared.entity_editing import (
     EditConflictError,

@@ -12,8 +12,8 @@ from core.features.knowledge.domain import KnowledgeEntry
 from core.features.knowledge.infrastructure import KnowledgeStore
 from core.features.notes.domain import Note
 from core.features.notes.infrastructure import NoteStore
-from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.shared.contracts import MemorySourceRef
+from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 
 _OCCURRED_AT = datetime(2026, 7, 21, tzinfo=timezone.utc)
 

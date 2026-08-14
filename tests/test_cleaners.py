@@ -450,6 +450,7 @@ async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -
         InjectionExecutionContext,
         InjectionExecutor,
     )
+    from core.features.injection.application.injection_adapter import InjectionAdapter
     from core.features.injection.application.router import (
         InjectionRoutingConfig,
         InjectionStrategyRouter,
@@ -460,7 +461,6 @@ async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -
         RequestSignals,
         RoutingMode,
     )
-    from core.features.injection.application.injection_adapter import InjectionAdapter
 
     class Part:
         def __init__(self, text):
@@ -687,8 +687,10 @@ def test_fake_tool_cleaner_preserves_non_exact_pairs(
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_fake_tool_cleaner_removes_real_legacy_json_pair(wrapped) -> None:
+    from core.features.injection.application.memory_formatter import (
+        format_memories_for_fake_tool_call,
+    )
     from core.platform.security.prompt_sanitizer import PromptProtectionService
-    from core.features.injection.application.memory_formatter import format_memories_for_fake_tool_call
 
     contexts = format_memories_for_fake_tool_call(
         [

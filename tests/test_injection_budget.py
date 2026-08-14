@@ -1,7 +1,5 @@
 """Behavioral contract tests for hard memory-injection budgets."""
 
-from core.features.injection.domain.models import ContentLevel
-from core.shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 from core.features.injection.application.injection_budget import (
     InjectionBudget,
     format_compact_footer,
@@ -10,7 +8,11 @@ from core.features.injection.application.injection_budget import (
     format_full_header,
     select_memories_with_budget,
 )
-from core.features.injection.application.memory_formatter import format_memories_for_injection
+from core.features.injection.application.memory_formatter import (
+    format_memories_for_injection,
+)
+from core.features.injection.domain.models import ContentLevel
+from core.shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
 
 def _memory(content: str, score: float = 1.0) -> dict:

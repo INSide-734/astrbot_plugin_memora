@@ -66,7 +66,9 @@ class TestTranslateList:
 
     def test_returns_empty_list_for_non_list_value(self) -> None:
         """When the value exists but is not a list, return empty list."""
-        with patch("core.platform.resources.i18n_backend._get", return_value="not_a_list"):
+        with patch(
+            "core.platform.resources.i18n_backend._get", return_value="not_a_list"
+        ):
             result = i18n_mod.t_list("some.non.list")
             assert result == []
 

@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.features.injection.domain.models import DeliveryMode
 from core.features.injection.application.injection_adapter import InjectionAdapter
+from core.features.injection.domain.models import DeliveryMode
 
 
 class TestInjectionAdapter:

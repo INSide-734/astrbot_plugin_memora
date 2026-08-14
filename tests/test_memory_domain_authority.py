@@ -7,12 +7,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from core.shared.contracts import MemorySourceRef
 from core.shared.domain_provenance import (
     DomainObjectOrigin,
     DomainProvenance,
     merge_domain_provenance,
 )
-from core.shared.contracts import MemorySourceRef
 
 REFERENCE_TIME = datetime(2026, 7, 21, 8, 0, tzinfo=timezone.utc)
 

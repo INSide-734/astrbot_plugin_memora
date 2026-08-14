@@ -2,9 +2,9 @@
 
 import pytest
 
-from core.shared.cost_control import CostControl
 from core.shared import extra_llm_budget as shared
 from core.shared.contracts import CostControlPort
+from core.shared.cost_control import CostControl
 
 
 def test_cost_control_implements_shared_port() -> None:

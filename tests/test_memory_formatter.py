@@ -5,13 +5,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.features.injection.domain.models import ContentLevel
-from core.features.injection.application.injection_budget import InjectionBudget, InjectionStats
+from core.features.injection.application.injection_budget import (
+    InjectionBudget,
+    InjectionStats,
+)
 from core.features.injection.application.memory_formatter import (
     format_memories_for_fake_tool_call,
     format_memories_for_fake_tool_call_deepseek_v4,
     format_memories_for_injection,
 )
+from core.features.injection.domain.models import ContentLevel
 
 
 class TestFormatMemoriesForInjection:

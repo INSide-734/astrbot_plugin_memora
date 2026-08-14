@@ -9,15 +9,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.shared.cost_control import CostControl
 from core.features.knowledge.application import (
     KnowledgeManager,
     KnowledgeProposalPipeline,
 )
 from core.features.knowledge.domain import KnowledgeEntry, KnowledgeType
 from core.features.memory.application.memory_engine import MemoryEngine
-from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.shared.contracts import MemorySourceRef
+from core.shared.cost_control import CostControl
+from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 

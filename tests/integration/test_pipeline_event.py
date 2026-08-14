@@ -13,14 +13,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.injection.application.injection_adapter import InjectionAdapter
+from core.features.injection.application.memory_formatter import (
+    format_memories_for_injection,
+)
 from core.features.recall.application.injection_cleaner import InjectionCleaner
 from core.features.recall.application.recall_handler import RecallHandler
 from core.shared.constants import (
     MEMORY_INJECTION_FOOTER,
     MEMORY_INJECTION_HEADER,
 )
-from core.features.injection.application.injection_adapter import InjectionAdapter
-from core.features.injection.application.memory_formatter import format_memories_for_injection
 
 # =============================================================================
 # Helpers

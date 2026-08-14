@@ -7,18 +7,28 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 # ---------------------------------------------------------------------------
 # 优雅降级：真实 prometheus_client 或轻量级 stub
 # ---------------------------------------------------------------------------
 if TYPE_CHECKING:  # pragma: no cover - help static analyzers resolve imports
-    from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram  # type: ignore
+    from prometheus_client import (  # type: ignore
+        CollectorRegistry,
+        Counter,
+        Gauge,
+        Histogram,
+    )
 
 
 try:
     # runtime import: keep original behavior but static analyzers can still resolve symbols
-    from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram # type: ignore
+    from prometheus_client import (  # type: ignore
+        CollectorRegistry,
+        Counter,
+        Gauge,
+        Histogram,
+    )
 
     _HAS_PROMETHEUS = True
 except Exception:

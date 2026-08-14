@@ -721,6 +721,9 @@ class TestReflectionHandlerPromptProtection:
             InjectionExecutionContext,
             InjectionExecutor,
         )
+        from core.features.injection.application.injection_adapter import (
+            InjectionAdapter,
+        )
         from core.features.injection.application.router import (
             InjectionRoutingConfig,
             InjectionStrategyRouter,
@@ -734,7 +737,6 @@ class TestReflectionHandlerPromptProtection:
             ReflectionHandler,
         )
         from core.platform.security.prompt_sanitizer import PromptProtectionService
-        from core.features.injection.application.injection_adapter import InjectionAdapter
 
         secret = "outbound unique secret alpha beta gamma delta epsilon"
         service = PromptProtectionService(enable_double_check=False)

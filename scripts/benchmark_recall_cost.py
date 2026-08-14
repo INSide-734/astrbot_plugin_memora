@@ -60,6 +60,11 @@ if not _HANDLER_WORKER_MODE:
         InjectionExecutionContext,
         InjectionExecutor,
     )
+    from core.features.injection.application.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_budget import (
+        InjectionBudget,
+        select_memories_with_budget,
+    )
     from core.features.injection.application.presets import PRESETS
     from core.features.injection.application.router import (
         InjectionRoutingConfig,
@@ -71,11 +76,6 @@ if not _HANDLER_WORKER_MODE:
         PresetName,
         RequestSignals,
         RoutingMode,
-    )
-    from core.features.injection.application.injection_adapter import InjectionAdapter
-    from core.features.injection.application.injection_budget import (
-        InjectionBudget,
-        select_memories_with_budget,
     )
 
 
