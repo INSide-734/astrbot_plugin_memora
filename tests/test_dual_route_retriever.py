@@ -358,6 +358,25 @@ class TestDualRouteRetriever:
         assert 2 not in doc_ids  # confidential 记忆已过滤
 
     @pytest.mark.asyncio
+    async def test_search_filters_mark_write_before_truncation(
+        self, retriever: Any, doc_retriever: AsyncMock
+    ) -> None:
+        """mark_write 候选不得占用 k 名额；显式包含时可召回。"""
+        doc_retriever.search.return_value = [
+            _make_hybrid(1, 0.9, "低置信", {"gate_disposition": "mark_write"}),
+            _make_hybrid(2, 0.8, "普通甲"),
+            _make_hybrid(3, 0.7, "普通乙"),
+        ]
+
+        results = await retriever.search("test", k=2)
+
+        assert [item.doc_id for item in results] == [2, 3]
+
+        included = await retriever.search("test", k=2, include_mark_write=True)
+
+        assert [item.doc_id for item in included] == [1, 2]
+
+    @pytest.mark.asyncio
     async def test_privacy_filter_private_chat(
         self, retriever: Any, doc_retriever: AsyncMock
     ) -> None:

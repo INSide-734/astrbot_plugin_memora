@@ -44,8 +44,8 @@ class SemanticCompressor:
         """绑定 canonical 读取器、派生写入边界和聚类门槛。
 
         Args:
-            source_store: 提供 ``load_all_sources`` 的只读 canonical Store。
-            proposal_applier: 写前二次校验 source revision 的异步回调。
+            source_store: 提供 ``load_all_sources`` 的只读 canonical Store，
+                可选提供 ``load_mark_write_ids`` 以排除低置信 mark_write 来源。
             enabled: 是否允许扫描和生成语义摘要。
             age_days: canonical 写入时间达到该天数后才成为候选。
             similarity_threshold: topic Jaccard 相似度下限。
@@ -95,10 +95,19 @@ class SemanticCompressor:
             loaded = await self._source_store.load_all_sources(
                 max_content_chars=_MAX_CONTENT_CHARS,
             )
+            load_mark_write_ids: Any = getattr(
+                self._source_store, "load_mark_write_ids", None
+            )
+            mark_write_ids: frozenset[int] = frozenset()
+            if callable(load_mark_write_ids):
+                loaded_ids: Any = await load_mark_write_ids()
+                if isinstance(loaded_ids, (set, frozenset)):
+                    mark_write_ids = frozenset(int(i) for i in loaded_ids)
             sources = [
                 source
                 for source in loaded
                 if isinstance(source, MemorySourceRef)
+                and source.memory_id not in mark_write_ids
                 and _eligible_source(source, cutoff)
             ]
             for partition in _partition_sources(sources).values():

@@ -281,20 +281,19 @@ class MemoryEngineCRUDMixin(
             memory_types=memory_types,
             query_intent=cache_intent,
             chain_depth=chain_depth,
-            emotion_context=emotion_context,
             recall_strategy=recall_strategy,
             reference_time=requested_reference_time,
+            include_mark_write=include_mark_write,
         )
         cached_results = (
             None if trace_requested else self._retrieval.get_cached(cache_key)
         )
         if cached_results is not None:
             _t_cache_end = time.perf_counter()
-            ids = [
-                r.doc_id
-                for r in cached_results
-                if getattr(r, "doc_id", None) is not None
-            ]
+            visible = filter_mark_write(
+                cached_results, include_mark_write=include_mark_write
+            )
+            ids = [r.doc_id for r in visible if getattr(r, "doc_id", None) is not None]
             if ids:
                 self._create_tracked_task(
                     self._maintenance.update_access_times_batch(ids, recall_type)
@@ -306,9 +305,7 @@ class MemoryEngineCRUDMixin(
             }
             if timing_sink is not None:
                 timing_sink.update(self._last_search_timing)
-            return filter_mark_write(
-                cached_results, include_mark_write=include_mark_write
-            )
+            return visible
 
         # 请求级会话缓存：消除 Bridge→RecallHandler 同一请求的重复搜索
         session_cached = None
@@ -323,14 +320,16 @@ class MemoryEngineCRUDMixin(
                 memory_types=memory_types,
                 query_intent=cache_intent,
                 chain_depth=chain_depth,
-                emotion_context=emotion_context,
                 recall_strategy=recall_strategy,
                 reference_time=requested_reference_time,
+                include_mark_write=include_mark_write,
             )
         _t_cache_end = time.perf_counter()
         if session_cached is not None:
-            # 会话缓存可能用不同 k 检索，截断到请求的 k 值
-            truncated = session_cached[:k]
+            # 会话缓存可能用不同 k 检索，先过滤 mark_write 再截断到请求的 k 值
+            truncated = filter_mark_write(
+                session_cached, include_mark_write=include_mark_write
+            )[:k]
             # 仍更新 access time
             ids = [
                 r.doc_id for r in truncated if getattr(r, "doc_id", None) is not None
@@ -347,7 +346,7 @@ class MemoryEngineCRUDMixin(
             }
             if timing_sink is not None:
                 timing_sink.update(self._last_search_timing)
-            return filter_mark_write(truncated, include_mark_write=include_mark_write)
+            return truncated
         if session_id and ":" in session_id:
             self._create_tracked_task(
                 self._maintenance.migrate_session_if_needed(session_id)
@@ -383,6 +382,7 @@ class MemoryEngineCRUDMixin(
                 query_plan=query_plan,
                 timing_sink=route_timing,
                 deadline_monotonic=deadline_monotonic,
+                include_mark_write=include_mark_write,
             )
             _t_doc_route = float(route_timing.get("document_route_ms", 0.0))
             _t_graph_route = float(route_timing.get("graph_route_ms", 0.0))
@@ -414,6 +414,8 @@ class MemoryEngineCRUDMixin(
             for item in results
             if canonical_visible_at(item.metadata or {}, requested_reference_time)
         ]
+        # mark_write 在截断与链式扩展之前过滤，避免占用 k 名额或充当扩展种子。
+        results = filter_mark_write(results, include_mark_write=include_mark_write)
         _t_boost = 0.0
         if results:
             _t_boost_start = time.perf_counter()
@@ -472,9 +474,9 @@ class MemoryEngineCRUDMixin(
                 memory_types=memory_types,
                 query_intent=cache_intent,
                 chain_depth=chain_depth,
-                emotion_context=emotion_context,
                 recall_strategy=recall_strategy,
                 reference_time=requested_reference_time,
+                include_mark_write=include_mark_write,
             )
         # === 存储阶段计时供 RecallHandler 读取 ===
         retrieval_total_ms = (time.perf_counter() - _t_start) * 1000.0

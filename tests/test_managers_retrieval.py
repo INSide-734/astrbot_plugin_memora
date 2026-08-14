@@ -92,6 +92,13 @@ class TestCacheKey:
         key2 = opt.cache_key("who", 5, "sess", None, memory_types=["RELATIONAL"])
         assert key1 != key2
 
+    def test_cache_key_changes_with_include_mark_write(self) -> None:
+        """显式包含开关必须使用独立缓存键，避免互相污染。"""
+        opt = RetrievalOptimizer(config={})
+        key1 = opt.cache_key("test", 5, "sess", None)
+        key2 = opt.cache_key("test", 5, "sess", None, include_mark_write=True)
+        assert key1 != key2
+
 
 class TestSafeJson:
     """测试 _safe_json 辅助函数。"""

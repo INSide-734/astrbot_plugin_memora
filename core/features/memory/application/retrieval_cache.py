@@ -103,6 +103,7 @@ class RetrievalCacheMixin:
         emotion_context: list[str] | None = None,
         recall_strategy: Any | None = None,
         reference_time: Any | None = None,
+        include_mark_write: bool = False,
     ) -> tuple[Any, ...]:
         return (
             self._cache_generation,
@@ -122,6 +123,7 @@ class RetrievalCacheMixin:
             round(float(self._config.get("document_route_weight", 0.65)), 4),
             round(float(self._config.get("graph_route_weight", 0.35)), 4),
             int(self._config.get("graph_expansion_hops", 1)),
+            bool(include_mark_write),
         )
 
     def get_cached(self, cache_key: tuple[Any, ...]) -> list[HybridResult] | None:
@@ -176,6 +178,7 @@ class RetrievalCacheMixin:
         emotion_context: list[str] | None = None,
         recall_strategy: Any | None = None,
         reference_time: Any | None = None,
+        include_mark_write: bool = False,
     ) -> tuple[Any, ...]:
         return (
             cls._normalize_query(query),
@@ -190,6 +193,7 @@ class RetrievalCacheMixin:
             cls._normalize_sequence(emotion_context),
             cls._strategy_cache_key(recall_strategy),
             reference_time_key(reference_time),
+            bool(include_mark_write),
         )
 
     def get_session_cached(
@@ -206,6 +210,7 @@ class RetrievalCacheMixin:
         emotion_context: list[str] | None = None,
         recall_strategy: Any | None = None,
         reference_time: Any | None = None,
+        include_mark_write: bool = False,
     ) -> list[HybridResult] | None:
         """按完整检索语义键控的请求级缓存。"""
         if not self._session_cache_enabled or self._session_cache_ttl <= 0:
@@ -223,6 +228,7 @@ class RetrievalCacheMixin:
             emotion_context=emotion_context,
             recall_strategy=recall_strategy,
             reference_time=reference_time,
+            include_mark_write=include_mark_write,
         )
         cached = self._session_cache.get(key)
         if cached is None:
@@ -248,6 +254,7 @@ class RetrievalCacheMixin:
         emotion_context: list[str] | None = None,
         recall_strategy: Any | None = None,
         reference_time: Any | None = None,
+        include_mark_write: bool = False,
     ) -> None:
         """将检索结果写入请求级会话缓存。"""
         if not self._session_cache_enabled or self._session_cache_ttl <= 0:
@@ -265,6 +272,7 @@ class RetrievalCacheMixin:
             emotion_context=emotion_context,
             recall_strategy=recall_strategy,
             reference_time=reference_time,
+            include_mark_write=include_mark_write,
         )
         self._session_cache[key] = (time.time(), copy.deepcopy(results))
 

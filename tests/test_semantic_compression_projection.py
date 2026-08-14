@@ -185,6 +185,31 @@ async def test_semantic_compression_never_mixes_confidential_subjects() -> None:
 
 
 @pytest.mark.asyncio
+async def test_semantic_compression_excludes_mark_write_sources() -> None:
+    """mark_write 低置信来源不得进入语义摘要候选分组。"""
+
+    class _MarkWriteSourceStore(_SourceStore):
+        async def load_mark_write_ids(self) -> frozenset[int]:
+            return frozenset({17})
+
+    store = _MarkWriteSourceStore([_source(17), _source(18), _source(19)])
+    applier = _ProposalApplier()
+    compressor = SemanticCompressor(
+        source_store=store,
+        proposal_applier=applier.apply,
+        age_days=60,
+        similarity_threshold=0.8,
+    )
+
+    result = await compressor.compress_old_memories(now=NOW)
+
+    assert result["candidate_groups"] == 1
+    assert applier.calls
+    for _proposal, sources in applier.calls:
+        assert 17 not in [source.memory_id for source in sources]
+
+
+@pytest.mark.asyncio
 async def test_semantic_compression_filters_recent_and_low_overlap_sources() -> None:
     """年龄门和配置化 Jaccard 阈值都应参与生产候选筛选。"""
 

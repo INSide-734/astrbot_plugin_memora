@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ...shared.recall_strategy import RecallStrategy
 from ...shared.adapter_capabilities import (
     AdapterCapability,
     AdapterCapabilityContract,
@@ -19,9 +18,11 @@ from ...shared.adapter_capabilities import (
     ScoreSemantics,
     declared_adapter_contract,
 )
+from ...shared.recall_strategy import RecallStrategy
 from ...shared.temporal import normalize_datetime
 from ..evolution.application import ProjectionBudget, ProjectionScope
 from ..evolution.domain import ExpansionBudget, ScopeContext
+from ..quality.application.gate_disposition_filter import filter_mark_write
 from .dual_route_fusion import (
     build_score_breakdown,
     compute_strategy_weights,
@@ -125,6 +126,7 @@ class DualRouteRetriever:
         query_plan: QueryPlan | None = None,
         timing_sink: dict[str, float | int | bool] | None = None,
         deadline_monotonic: float | None = None,
+        include_mark_write: bool = False,
     ) -> list[HybridResult]:
         """同时运行两条检索路由，并合并候选记忆。
 
@@ -150,6 +152,7 @@ class DualRouteRetriever:
                 timing_sink=timing_sink,
                 deadline_monotonic=deadline_monotonic,
                 use_graph_route=use_graph_route,
+                include_mark_write=include_mark_write,
             )
 
         # 向后兼容：单查询路径
@@ -329,7 +332,10 @@ class DualRouteRetriever:
         }
 
         _t_privacy_start = time.perf_counter()
-        visible = self._filter_by_privacy(merged, chat_type)[:k]
+        visible = filter_mark_write(
+            self._filter_by_privacy(merged, chat_type),
+            include_mark_write=include_mark_write,
+        )[:k]
         privacy_ms = (time.perf_counter() - _t_privacy_start) * 1000.0
         self.last_search_timing["privacy_ms"] = privacy_ms
         if timing_sink is not None:
@@ -353,6 +359,7 @@ class DualRouteRetriever:
         timing_sink: dict[str, float | int | bool] | None,
         deadline_monotonic: float | None,
         use_graph_route: bool,
+        include_mark_write: bool = False,
     ) -> list[HybridResult]:
         """多查询计划路径：按计划拆分预算，逐查询检索并跨查询 RRF 融合。"""
         reference_time = normalize_datetime(reference_time) or datetime.now(
@@ -570,13 +577,15 @@ class DualRouteRetriever:
             "relation_ms": relation_ms,
             "projection_ms": projection_ms,
             "profile_lookup_ms": profile_lookup_ms,
-            "derived_expansion_ms": relation_ms + projection_ms,
             "rerank_ms": rerank_ms,
             "query_count": len(active_queries),
         }
 
         _t_privacy_start = time.perf_counter()
-        visible = self._filter_by_privacy(fused, chat_type)[:k]
+        visible = filter_mark_write(
+            self._filter_by_privacy(fused, chat_type),
+            include_mark_write=include_mark_write,
+        )[:k]
         privacy_ms = (time.perf_counter() - _t_privacy_start) * 1000.0
         self.last_search_timing["privacy_ms"] = privacy_ms
         if timing_sink is not None:
