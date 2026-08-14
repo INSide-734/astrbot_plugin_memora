@@ -625,3 +625,99 @@ def test_profile_scoring_configuration_applies() -> None:
     )
 
     assert "grounding_claim_unsupported" in result.reason_codes
+
+
+def test_revalidate_skips_damaged_evidence_items() -> None:
+    """复核时单条畸形证据被跳过，剩余有效证据继续验证。"""
+
+    validator = MemoryGroundingValidator()
+    source = "我养了两只猫"
+    message = _message(0, source)
+    good = {
+        "message_fingerprint": validator.message_fingerprint(message),
+        "start": 0,
+        "end": len(source),
+    }
+    result = validator.revalidate_stored_evidence(
+        _candidate("用户养了两只猫"),
+        [message],
+        ["not-a-dict", good],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is True
+    assert "grounding_source_evidence_invalid" not in result.reason_codes
+
+
+def test_revalidate_all_malformed_evidence_invalid() -> None:
+    """全部证据畸形时整体返回证据无效。"""
+
+    messages = [_message(0, "我养了两只猫")]
+    result = MemoryGroundingValidator().revalidate_stored_evidence(
+        _candidate("用户养了两只猫"),
+        messages,
+        ["junk", 42, None],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is False
+    assert "grounding_source_evidence_invalid" in result.reason_codes
+
+
+def test_revalidate_all_unmatched_evidence_changed() -> None:
+    """证据存在但零条可匹配时整体拒绝并报来源变更。"""
+
+    messages = [_message(0, "我养了两只猫")]
+    result = MemoryGroundingValidator().revalidate_stored_evidence(
+        _candidate("用户养了两只猫"),
+        messages,
+        [
+            {"message_fingerprint": "deadbeef", "start": 0, "end": 4},
+            {"message_fingerprint": "", "start": 0, "end": 2},
+        ],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is False
+    assert "grounding_source_changed" in result.reason_codes
+
+
+def test_custom_whitelist_casefold_matches_uppercase_source() -> None:
+    """白名单配置对英文大小写不敏感。"""
+
+    profile = GateProfile(name="p", word_lists={"negation_whitelist": ["no problem"]})  # type: ignore[arg-type]
+    source = "NO PROBLEM"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户同意",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_negation_conflict" not in result.reason_codes
+
+
+def test_replace_markers_casefold_recognizes_uppercase() -> None:
+    """replace 标记集大小写不敏感：NEVER 能识别 never go。"""
+
+    profile = GateProfile(
+        name="p",
+        word_lists={"negation_markers": {"mode": "replace", "items": ["NEVER"]}},  # type: ignore[arg-type]
+    )
+    source = "never go"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户要去",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_negation_conflict" in result.reason_codes

@@ -236,7 +236,7 @@ class MemoryGroundingValidator:
         self,
         candidate: dict[str, Any],
         messages: list[Message],
-        evidence: list[dict[str, Any]],
+        evidence: list[Any],
         *,
         is_group_chat: bool,
         profile: GateProfile | None = None,
@@ -249,10 +249,13 @@ class MemoryGroundingValidator:
             )
         if not evidence:
             return self._rejected("grounding_source_evidence_missing")
+        examined = evidence[: profile.references.max_references]
         refs: list[dict[str, Any]] = []
-        for item in evidence[: profile.references.max_references]:
+        well_formed = 0
+        for item in examined:
             if not isinstance(item, dict):
-                return self._rejected("grounding_source_evidence_invalid")
+                continue  # 坏证据过滤化：单条畸形不再毁整条复核
+            well_formed += 1
             fingerprint = str(item.get("message_fingerprint") or "")
             matched_index = next(
                 (
@@ -263,7 +266,7 @@ class MemoryGroundingValidator:
                 None,
             )
             if matched_index is None:
-                return self._rejected("grounding_source_changed")
+                continue  # 单项无法匹配时跳过，零条可复用才整体拒绝
             refs.append(
                 {
                     "message_index": matched_index,
@@ -271,6 +274,10 @@ class MemoryGroundingValidator:
                     "end": item.get("end"),
                 }
             )
+        if not refs:
+            if well_formed == 0:
+                return self._rejected("grounding_source_evidence_invalid")
+            return self._rejected("grounding_source_changed")
         replay = dict(candidate)
         replay["source_refs"] = refs
         return self.validate(
@@ -453,20 +460,27 @@ class MemoryGroundingValidator:
     ) -> str | None:
         """阻止候选与紧邻来源片段出现相反否定极性（白名单短语先剔除）。"""
 
-        whitelist = set(BUILTIN_NEGATION_WHITELIST) | set(
-            profile.word_lists.negation_whitelist
-        )
-        claim_clean, source_clean = claim_text, source_text
+        whitelist = {
+            phrase.casefold()
+            for phrase in (
+                *BUILTIN_NEGATION_WHITELIST,
+                *profile.word_lists.negation_whitelist,
+            )
+        }
+        claim_clean = claim_text.casefold()
+        source_clean = source_text.casefold()
         for phrase in sorted(whitelist, key=len, reverse=True):
             claim_clean = claim_clean.replace(phrase, "")
             source_clean = source_clean.replace(phrase, "")
         marker_cfg = profile.word_lists.negation_markers
         if marker_cfg.mode == "replace":
-            markers = tuple(marker_cfg.items)
+            markers = tuple(item.casefold() for item in marker_cfg.items)
         else:
-            markers = tuple(BUILTIN_NEGATION_MARKERS) + tuple(marker_cfg.items)
-        claim_negative = any(marker in claim_clean.casefold() for marker in markers)
-        source_negative = any(marker in source_clean.casefold() for marker in markers)
+            markers = tuple(BUILTIN_NEGATION_MARKERS) + tuple(
+                item.casefold() for item in marker_cfg.items
+            )
+        claim_negative = any(marker in claim_clean for marker in markers)
+        source_negative = any(marker in source_clean for marker in markers)
         if claim_negative != source_negative:
             return "grounding_negation_conflict"
         return None
