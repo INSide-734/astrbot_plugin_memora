@@ -2,32 +2,32 @@
 
 from typing import Any
 
+from ...quality.domain.gate_config import BUILTIN_GENERIC_TERMS
+
 
 class QualityValidator:
     """总结质量校验 + 数据规范化"""
 
     @staticmethod
-    def validate_summary_quality(structured_data: dict[str, Any]) -> str:
+    def validate_summary_quality(
+        structured_data: dict[str, Any],
+        *,
+        min_summary_chars: int = 10,
+        generic_terms: tuple[str, ...] = BUILTIN_GENERIC_TERMS,
+    ) -> str:
+        """判定总结质量；最小长度与泛化词表可由调用方覆盖。"""
+
         summary = structured_data.get("summary", "")
         key_facts = structured_data.get("key_facts", [])
         importance = structured_data.get("importance", 0.5)
 
-        if not summary or len(summary.strip()) < 10:
+        if not summary or len(summary.strip()) < min_summary_chars:
             return "low"
         if not key_facts:
             return "low"
         if not isinstance(importance, (int, float)) or not (0.0 <= importance <= 1.0):
             return "low"
 
-        generic_terms = [
-            "某用户",
-            "有人",
-            "某人",
-            "用户说",
-            "对方说",
-            "群成员",
-            "某群成员",
-        ]
         if any(term in summary for term in generic_terms):
             return "low"
 

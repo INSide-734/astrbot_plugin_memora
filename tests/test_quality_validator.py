@@ -48,6 +48,43 @@ class TestValidateSummaryQuality:
         }
         assert validator.validate_summary_quality(data) == "low"
 
+    def test_generic_term_user_shuo_no_longer_low(self) -> None:
+        """收紧后「用户说」不再是低质泛化词。"""
+
+        data = {
+            "summary": "用户说周末想一起去爬山",
+            "key_facts": ["用户计划周末去爬山"],
+            "importance": 0.6,
+        }
+        assert QualityValidator.validate_summary_quality(data) == "normal"
+
+    def test_placeholder_terms_still_low(self) -> None:
+        """占位泛化词（某用户）仍判低质。"""
+
+        data = {
+            "summary": "某用户提到周末想去爬山",
+            "key_facts": ["有人计划周末去爬山"],
+            "importance": 0.6,
+        }
+        assert QualityValidator.validate_summary_quality(data) == "low"
+
+    def test_custom_min_chars_and_terms(self) -> None:
+        """自定义最小长度与泛化词表同时生效。"""
+
+        data = {"summary": "好", "key_facts": ["x"], "importance": 0.5}
+        assert (
+            QualityValidator.validate_summary_quality(data, min_summary_chars=1)
+            == "normal"
+        )
+        assert (
+            QualityValidator.validate_summary_quality(
+                data,
+                min_summary_chars=1,
+                generic_terms=("好",),
+            )
+            == "low"
+        )
+
 
 class TestNormalizeParsedData:
     @pytest.fixture
