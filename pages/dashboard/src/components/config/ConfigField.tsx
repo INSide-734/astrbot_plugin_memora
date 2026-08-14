@@ -17,11 +17,14 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field";
+import { useI18n } from "@/hooks/useI18n";
 import { cn } from "@/lib/utils";
+import { validatePromptTemplate } from "./promptTemplateValidation";
 import type {
   ConfigProviderOptions,
   ConfigSchemaNode,
   ConfigValue,
+  PromptDefaults,
 } from "@/types/config";
 
 export interface ConfigFieldProps {
@@ -34,6 +37,7 @@ export interface ConfigFieldProps {
   fieldErrors?: Record<string, string>;
   defaultProviderLabel?: string;
   targetPath?: string | null;
+  promptDefaults?: PromptDefaults | null;
 }
 
 interface SelectOption {
@@ -108,9 +112,22 @@ export function ConfigField({
   fieldErrors = {},
   defaultProviderLabel = "Use AstrBot default",
   targetPath,
+  promptDefaults = null,
 }: ConfigFieldProps) {
+  const { t } = useI18n();
   if (node.invisible) return null;
 
+  const promptTemplateIssue =
+    path === "prompt_templates.group_chat_template" ||
+    path === "prompt_templates.private_chat_template"
+      ? validatePromptTemplate(typeof value === "string" ? value : "")
+      : null;
+  const promptPlaceholder =
+    path === "prompt_templates.group_chat_template"
+      ? promptDefaults?.group_chat
+      : path === "prompt_templates.private_chat_template"
+        ? promptDefaults?.private_chat
+        : undefined;
   const id = pathId(path);
   const label = displayLabel(path, node.description);
   const highlighted = targetPath === path;
@@ -141,8 +158,12 @@ export function ConfigField({
               {path}
             </code>
           </div>
-          {node.hint ? (
-            <p className="text-sm text-muted-foreground">{node.hint}</p>
+          {path === "prompt_templates" || node.hint ? (
+            <p className="text-sm text-muted-foreground">
+              {path === "prompt_templates"
+                ? t("promptTemplates.help.section")
+                : node.hint}
+            </p>
           ) : null}
         </div>
         <FieldGroup>
@@ -247,6 +268,7 @@ export function ConfigField({
       <Textarea
         {...commonControlProps}
         value={typeof value === "string" ? value : ""}
+        placeholder={promptPlaceholder || undefined}
         onChange={(event) => onChange(path, event.currentTarget.value)}
       />
     );
@@ -300,7 +322,12 @@ export function ConfigField({
             {path}
           </code>
         </div>
-        {node.hint ? (
+        {path === "prompt_templates.group_chat_template" ||
+        path === "prompt_templates.private_chat_template" ? (
+          <FieldDescription id={`${id}-hint`}>
+            {t("promptTemplates.help.templateHint")}
+          </FieldDescription>
+        ) : node.hint ? (
           <FieldDescription id={`${id}-hint`}>{node.hint}</FieldDescription>
         ) : null}
       </FieldContent>
@@ -311,6 +338,24 @@ export function ConfigField({
           className={node.type === "bool" ? "basis-full" : undefined}
         >
           {error}
+        </FieldError>
+      ) : null}
+      {promptTemplateIssue?.code === "missing_conversation" ? (
+        <FieldError id={`${id}-template-error`}>
+          {t("promptTemplates.error.missingConversation")}
+        </FieldError>
+      ) : null}
+      {promptTemplateIssue?.code === "unknown_placeholders" ? (
+        <FieldError id={`${id}-template-error`}>
+          {t(
+            "promptTemplates.error.unknownPlaceholders",
+            promptTemplateIssue.placeholders.join(", "),
+          )}
+        </FieldError>
+      ) : null}
+      {promptTemplateIssue?.code === "unclosed_brace" ? (
+        <FieldError id={`${id}-template-error`}>
+          {t("promptTemplates.error.unclosedBrace")}
         </FieldError>
       ) : null}
     </Field>

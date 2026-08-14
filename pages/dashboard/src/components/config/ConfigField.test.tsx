@@ -11,6 +11,7 @@ import type {
   ConfigProviderOptions,
   ConfigSchemaNode,
   ConfigValue,
+  PromptDefaults,
 } from "@/types/config";
 
 import { ConfigField } from "./ConfigField";
@@ -32,6 +33,7 @@ interface RenderFieldOptions {
   fieldErrors?: Record<string, string>;
   defaultProviderLabel?: string;
   targetPath?: string | null;
+  promptDefaults?: PromptDefaults | null;
 }
 
 function renderField({
@@ -43,6 +45,7 @@ function renderField({
   fieldErrors,
   defaultProviderLabel,
   targetPath,
+  promptDefaults = null,
 }: RenderFieldOptions) {
   render(
     <ConfigField
@@ -55,6 +58,7 @@ function renderField({
       fieldErrors={fieldErrors}
       defaultProviderLabel={defaultProviderLabel}
       targetPath={targetPath}
+      promptDefaults={promptDefaults}
     />
   );
   return onChange;
@@ -364,5 +368,52 @@ describe("ConfigField", () => {
     const field = input.closest("[data-slot='field']");
     expect(field?.hasAttribute("data-disabled")).toBe(true);
     expect(input).toHaveProperty("disabled", true);
+  });
+  it("renders prompt_templates textarea placeholder from prompt defaults", () => {
+    const promptDefaults: PromptDefaults = {
+      gate_judge: "gate",
+      group_chat: "群聊默认模板",
+      private_chat: "私聊默认模板",
+    };
+    renderField({
+      path: "prompt_templates.group_chat_template",
+      node: { type: "text" },
+      value: "",
+      promptDefaults,
+    });
+
+    expect(
+      screen.getByRole("textbox", { name: "group_chat_template" }),
+    ).toHaveProperty("placeholder", "群聊默认模板");
+  });
+
+  it("reports a missing {conversation} placeholder in a prompt template", () => {
+    renderField({
+      path: "prompt_templates.private_chat_template",
+      node: { type: "text" },
+      value: "无占位符",
+    });
+
+    expect(screen.getByText("模板必须包含 {conversation} 占位符")).toBeTruthy();
+  });
+
+  it("reports unknown placeholders in a prompt template", () => {
+    renderField({
+      path: "prompt_templates.group_chat_template",
+      node: { type: "text" },
+      value: "{conversation} {secret}",
+    });
+
+    expect(screen.getByText("模板包含未知占位符：secret")).toBeTruthy();
+  });
+
+  it("renders the prompt_templates section help from i18n", () => {
+    renderField({
+      path: "prompt_templates",
+      node: { type: "object", items: {} },
+      value: {},
+    });
+
+    expect(screen.getByText(/自定义模板优先于内置文件模板/)).toBeTruthy();
   });
 });

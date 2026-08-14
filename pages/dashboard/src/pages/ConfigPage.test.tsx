@@ -131,6 +131,7 @@ function state(
     config,
     revision,
     instance_id: instanceId,
+    prompt_defaults: { gate_judge: "", group_chat: "", private_chat: "" },
   });
 }
 

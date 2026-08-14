@@ -651,6 +651,7 @@ export function ConfigPage({
                           fieldErrors={sync.fieldErrors}
                           defaultProviderLabel={t("config.defaultProvider")}
                           targetPath={highlightedPath}
+                          promptDefaults={sync.promptDefaults}
                         />
                       </div>
                       {index < sections.length - 1 ? <Separator /> : null}
