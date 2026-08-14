@@ -19,7 +19,10 @@ from ....platform.security.guardrails import (
 )
 from ....shared.contracts.conversation import Message
 from ....shared.cost_control import CostControl
-from ....shared.extra_llm_budget import budgeted_extra_llm_call
+from ....shared.extra_llm_budget import (
+    budgeted_extra_llm_call,
+    current_extra_llm_budget,
+)
 from ...identity.application.enricher import build_memory_identity_context
 from ...memory.domain.memory_atom import MemoryAtom
 from ...quality.application.gate_runtime import default_gate_snapshot
@@ -44,6 +47,14 @@ if TYPE_CHECKING:
     from ....shared.contracts import PromptProtectionPort
 
 
+_GROUNDING_JUDGE_PROMPT = (
+    "判断候选记忆是否完全由给定来源支持。只输出 JSON："
+    '{{"supported": true}} 或 {{"supported": false}}。\n'
+    "候选声明：{claim_text}\n"
+    "来源片段：{source_text}"
+)
+
+
 class MemoryProcessor:
     """
     记忆处理器
@@ -59,7 +70,9 @@ class MemoryProcessor:
         config: dict[str, Any] | None = None,
         cost_control: CostControl | None = None,
         gate_runtime: Any | None = None,
-        grounding_judge: Callable[[dict[str, Any]], Awaitable[bool | Mapping[str, Any]]]
+        grounding_judge: Callable[
+            [dict[str, Any], str], Awaitable[bool | Mapping[str, Any]]
+        ]
         | None = None,
         topic_embed_fn: Callable[[list[str]], Awaitable[list[list[float]]]]
         | None = None,
@@ -394,7 +407,7 @@ class MemoryProcessor:
                         profile=profile,
                     )
                     if grounding.requires_judge:
-                        grounding = await self._resolve_grounding_with_judge(
+                        grounding = await self.resolve_grounding_judge(
                             grounding,
                             is_group_chat=is_group_chat,
                             profile=profile,
@@ -509,28 +522,53 @@ class MemoryProcessor:
             )
             raise
 
-    async def _resolve_grounding_with_judge(
+    async def resolve_grounding_judge(
         self,
         grounding: GroundingResult,
         *,
         is_group_chat: bool,
         profile: GateProfile,
     ) -> GroundingResult:
-        """用请求预算保护可选 Judge，并把普通失败降级为隔离。"""
+        """按 profile 开关解析 Judge；成本许可未放行时由开关旁路，仍受额度约束。"""
 
+        if not profile.judge.enabled and not self.cost_control.allow(
+            "memory_grounding_judge"
+        ):
+            return grounding.with_unavailable_judge()
         payload = {
             "claim_text": grounding.claim_text,
             "source_text": grounding.source_text,
             "is_group_chat": bool(is_group_chat),
         }
         try:
-            async with budgeted_extra_llm_call(
-                self.cost_control,
-                "memory_grounding_judge",
-            ) as allowed:
-                if not allowed:
+            if self.cost_control.allow("memory_grounding_judge"):
+                async with budgeted_extra_llm_call(
+                    self.cost_control,
+                    "memory_grounding_judge",
+                ) as allowed:
+                    if not allowed:
+                        return grounding.with_unavailable_judge()
+                    judged = await self._grounding_judge(
+                        payload, profile.judge.prompt_template
+                    )
+            else:
+                # 开关显式开启：绕过功能许可检查，直接走请求级预算。
+                budget = current_extra_llm_budget()
+                if budget is None:
                     return grounding.with_unavailable_judge()
-                judged = await self._grounding_judge(payload)
+                reservation = await budget.reserve("memory_grounding_judge")
+                if reservation is None:
+                    return grounding.with_unavailable_judge()
+                try:
+                    judged = await self._grounding_judge(
+                        payload, profile.judge.prompt_template
+                    )
+                except BaseException:
+                    # 失败或取消都必须释放预留；取消按控制流向上传播。
+                    await budget.release(reservation)
+                    raise
+                else:
+                    await budget.commit(reservation)
             if isinstance(judged, Mapping):
                 supported = judged.get("supported") is True
             else:
@@ -548,15 +586,21 @@ class MemoryProcessor:
     async def _call_grounding_judge(
         self,
         payload: dict[str, Any],
+        template: str = "",
     ) -> Mapping[str, Any]:
         """只向 Provider 发送当前候选声明和已引用片段。"""
 
-        prompt = (
-            "判断候选记忆是否完全由给定来源支持。只输出 JSON："
-            '{"supported": true} 或 {"supported": false}。\n'
-            f"候选声明：{str(payload.get('claim_text') or '')[:1200]}\n"
-            f"来源片段：{str(payload.get('source_text') or '')[:2400]}"
-        )
+        if template:
+            # 占位符合法性由配置校验保证，这里直接渲染。
+            prompt = template.format(
+                claim_text=payload["claim_text"],
+                source_text=payload["source_text"],
+            )
+        else:
+            prompt = _GROUNDING_JUDGE_PROMPT.format(
+                claim_text=str(payload.get("claim_text") or "")[:1200],
+                source_text=str(payload.get("source_text") or "")[:2400],
+            )
         response_text = await self.llm_client.call_llm_with_retry(
             prompt=prompt,
             system_prompt="只做来源忠实性判断，不补充来源之外的事实。",

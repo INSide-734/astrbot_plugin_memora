@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.recall.processors.memory_grounding import GroundingResult
 from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.shared.contracts.conversation import Message
 from core.shared.cost_control import CostControl
@@ -891,3 +892,108 @@ class TestGateIntegration:
         await proc.process_conversation(messages)
 
         assert runtime.snapshot_calls == 1
+
+
+class TestGroundingJudgeResolution:
+    @pytest.fixture
+    def make_judge_processor(self) -> Callable[..., MemoryProcessor]:
+        def _make(
+            judge: AsyncMock,
+            *,
+            cost_control: CostControl | None = None,
+        ) -> MemoryProcessor:
+            ctx = MagicMock()
+            ctx.get_using_provider.return_value = None
+            ctx.persona_manager = None
+            ctx.get_registered_llm_tools.return_value = []
+            return MemoryProcessor(
+                context=ctx,
+                llm_provider=MagicMock(),
+                config={},
+                cost_control=cost_control,
+                grounding_judge=judge,
+            )
+
+        return _make
+
+    @staticmethod
+    def _needs_judge() -> GroundingResult:
+        """构造需要 Judge 复核的确定性结论。"""
+
+        return GroundingResult(
+            allowed=False,
+            status="needs_judge",
+            reason_codes=("grounding_needs_judge",),
+            evidence=[],
+            source_text="来源片段",
+            claim_text="候选声明",
+            requires_judge=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_judge_enabled_bypasses_feature_allow_but_respects_budget(
+        self, make_judge_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """开关开启而成本许可未放行时，Judge 仍经请求预算旁路执行。"""
+        from core.features.quality.domain.gate_config import GateProfile
+
+        profile = GateProfile(name="p", judge={"enabled": True})
+        judge = AsyncMock(return_value=True)
+        # balanced 模式默认不放行 memory_grounding_judge
+        proc = make_judge_processor(judge, cost_control=CostControl())
+
+        with extra_llm_budget_scope(ExtraLlmBudget(1)):
+            result = await proc.resolve_grounding_judge(
+                self._needs_judge(),
+                is_group_chat=False,
+                profile=profile,
+            )
+
+        assert result.allowed is True
+        assert result.reason_codes == ("grounding_judge_supported",)
+        judge.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_judge_enabled_but_no_budget_quarantines(
+        self, make_judge_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """开关开启但请求预算额度为零时，仍 fail-closed 隔离。"""
+        from core.features.quality.domain.gate_config import GateProfile
+
+        profile = GateProfile(name="p", judge={"enabled": True})
+        judge = AsyncMock(return_value=True)
+        proc = make_judge_processor(judge, cost_control=CostControl())
+
+        with extra_llm_budget_scope(ExtraLlmBudget(0)):
+            result = await proc.resolve_grounding_judge(
+                self._needs_judge(),
+                is_group_chat=False,
+                profile=profile,
+            )
+
+        assert result.allowed is False
+        assert result.reason_codes == ("grounding_judge_unavailable",)
+        judge.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_custom_template_renders_placeholders(self) -> None:
+        """自定义模板渲染 {claim_text} 与 {source_text} 后发送给 Provider。"""
+        ctx = MagicMock()
+        ctx.get_using_provider.return_value = None
+        provider = MagicMock()
+        response = AsyncMock()
+        response.completion_text = '{"supported": true}'
+        provider.text_chat = AsyncMock(return_value=response)
+        proc = MemoryProcessor(context=ctx, llm_provider=provider, config={})
+
+        payload = {"claim_text": "用户有三台手机", "source_text": "我只有一台手机"}
+        template = "判断：{claim_text} vs {source_text}"
+
+        parsed = await proc._call_grounding_judge(payload, template)
+
+        assert parsed["supported"] is True
+        prompt = provider.text_chat.await_args.kwargs["prompt"]
+        assert "用户有三台手机" in prompt
+        assert "我只有一台手机" in prompt
+        assert "{claim_text}" not in prompt
+        assert "{source_text}" not in prompt
