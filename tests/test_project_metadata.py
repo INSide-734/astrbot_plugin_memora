@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
 import tomllib
 from pathlib import Path
@@ -23,11 +24,36 @@ def _load_metadata() -> dict[str, str]:
 
 
 def test_plugin_version_sources_are_aligned() -> None:
-    metadata = _load_metadata()
-    assert metadata["version"] == PLUGIN_VERSION
+    """版本号应在插件、Python、Dashboard、锁文件和 README 中保持一致。"""
 
-    package_json = _read_text("pages/dashboard/package.json")
-    assert f'"version": "{PLUGIN_VERSION}"' in package_json
+    metadata = _load_metadata()
+    assert PLUGIN_VERSION == metadata["version"]
+
+    project = tomllib.loads(_read_text("pyproject.toml"))
+    assert project["project"]["version"] == PLUGIN_VERSION
+
+    uv_lock = tomllib.loads(_read_text("uv.lock"))
+    local_packages = [
+        package
+        for package in uv_lock["package"]
+        if package["name"] == "astrbot-plugin-memora"
+    ]
+    assert [package["version"] for package in local_packages] == [PLUGIN_VERSION]
+
+    package_json = json.loads(_read_text("pages/dashboard/package.json"))
+    package_lock = json.loads(_read_text("pages/dashboard/package-lock.json"))
+    assert package_json["version"] == PLUGIN_VERSION
+    assert package_lock["version"] == PLUGIN_VERSION
+    assert package_lock["packages"][""]["version"] == PLUGIN_VERSION
+
+    badge_pattern = re.compile(
+        r"^\[!\[Version\]\(https://img\.shields\.io/badge/version-"
+        r"(?P<version>[^-]+)-orange\.svg\)\]\(metadata\.yaml\)$",
+        re.MULTILINE,
+    )
+    for readme in ("README.md", "README_EN.md", "README_RU.md"):
+        badges = badge_pattern.findall(_read_text(readme))
+        assert badges == [PLUGIN_VERSION]
 
 
 def test_development_environment_pins_astrbot_4_27_2() -> None:

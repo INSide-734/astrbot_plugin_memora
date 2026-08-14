@@ -8,7 +8,7 @@
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12+-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](metadata.yaml)
+[![Version](https://img.shields.io/badge/version-1.2.0-orange.svg)](metadata.yaml)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A5%204.24.2-purple.svg)](https://github.com/Soulter/AstrBot)
 
 </div>
