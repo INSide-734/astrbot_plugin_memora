@@ -532,6 +532,42 @@ async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
 
 
 @pytest.mark.asyncio
+async def test_apply_accepts_gate_composite_paths_with_schema() -> None:
+    """门禁 bindings/profiles 无法以 schema 标量叶表达，但必须可保存且由 Pydantic 兜底。"""
+    from core.platform.config import ConfigManager, ConfigValidationError
+
+    manager = ConfigManager({}, resource_locator=PluginResourceLocator(ROOT))
+    _, revision = manager.get_config_snapshot()
+
+    result = await manager.apply_config_changes(
+        {
+            "quality.gate.bindings": [
+                {"profile": "private", "chat_type": "private"},
+                {"profile": "group", "chat_type": "group"},
+            ],
+            "quality.gate.profiles": [
+                {"name": "private"},
+                {"name": "group"},
+            ],
+        },
+        expected_revision=revision,
+    )
+
+    snapshot, _ = manager.get_config_snapshot()
+    assert result.changed_paths == (
+        "quality.gate.bindings",
+        "quality.gate.profiles",
+    )
+    assert snapshot["quality"]["gate"]["bindings"][0]["profile"] == "private"
+
+    with pytest.raises(ConfigValidationError):
+        await manager.apply_config_changes(
+            {"quality.gate.profiles": [{"name": ""}]},
+            expected_revision=result.revision,
+        )
+
+
+@pytest.mark.asyncio
 async def test_apply_prefers_valid_injected_schema() -> None:
     from core.platform.config import ConfigManager, ConfigValidationError
 

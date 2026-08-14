@@ -35,6 +35,14 @@ _INJECTION_DELIVERY_METHODS = {
 }
 
 
+_COMPOSITE_SCHEMA_PATHS = frozenset(
+    {
+        "quality.gate.bindings",
+        "quality.gate.profiles",
+    }
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ConfigApplyResult:
     """成功应用配置后的稳定结果。"""
@@ -547,6 +555,7 @@ class ConfigManager:
             elif (
                 self._schema_leaf_paths is not None
                 and raw_path not in self._schema_leaf_paths
+                and raw_path not in _COMPOSITE_SCHEMA_PATHS
             ):
                 field_errors[raw_path] = "配置路径不在 AstrBot schema 中"
             elif (
