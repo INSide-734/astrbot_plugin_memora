@@ -71,3 +71,5 @@ openspec/
 
 # 本地数据目录
 data/
+# Added by code-review-graph
+.code-review-graph/
