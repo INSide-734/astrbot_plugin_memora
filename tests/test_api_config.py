@@ -272,6 +272,43 @@ class TestConfigSchemaApi:
 
 class TestConfigStateApi:
     @pytest.mark.asyncio
+    async def test_state_exposes_prompt_defaults_from_files(self) -> None:
+        manager = MagicMock()
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"debug": False}, "rev-1")
+        )
+        api, plugin = _make_api(config_manager=manager)
+        plugin.prompt_dir = Path(__file__).parent.parent / "core" / "prompts"
+
+        result = await api.get_config_state()
+
+        defaults = result["data"]["prompt_defaults"]
+        assert set(defaults) == {"gate_judge", "group_chat", "private_chat"}
+        assert "候选声明" in defaults["gate_judge"]
+        assert "对话历史" in defaults["group_chat"]
+        assert "对话历史" in defaults["private_chat"]
+
+    @pytest.mark.asyncio
+    async def test_state_prompt_defaults_missing_files_do_not_fail_endpoint(
+        self,
+    ) -> None:
+        manager = MagicMock()
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"debug": False}, "rev-1")
+        )
+        api, plugin = _make_api(config_manager=manager)
+        plugin.prompt_dir = Path("/nonexistent/prompts")
+
+        result = await api.get_config_state()
+
+        assert result["status"] == "ok"
+        assert result["data"]["prompt_defaults"] == {
+            "gate_judge": "",
+            "group_chat": "",
+            "private_chat": "",
+        }
+
+    @pytest.mark.asyncio
     async def test_uses_astrbot_web_request_when_context_has_no_request(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -307,6 +344,11 @@ class TestConfigStateApi:
                 "revision": "rev-1",
                 "instance_id": "instance-123",
                 "changed": False,
+                "prompt_defaults": {
+                    "gate_judge": "",
+                    "group_chat": "",
+                    "private_chat": "",
+                },
             },
         }
 
@@ -369,6 +411,11 @@ class TestConfigStateApi:
                 "revision": "rev-1",
                 "instance_id": "instance-123",
                 "changed": False,
+                "prompt_defaults": {
+                    "gate_judge": "",
+                    "group_chat": "",
+                    "private_chat": "",
+                },
             },
         }
         plugin._ensure_plugin_ready.assert_not_awaited()
@@ -394,6 +441,11 @@ class TestConfigStateApi:
                 "instance_id": "instance-123",
                 "changed": True,
                 "config": config,
+                "prompt_defaults": {
+                    "gate_judge": "",
+                    "group_chat": "",
+                    "private_chat": "",
+                },
             },
         }
 

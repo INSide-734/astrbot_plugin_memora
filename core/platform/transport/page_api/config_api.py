@@ -13,6 +13,7 @@ from ....features.observability.application.runtime import set_debug_mode
 from ....features.observability.infrastructure.debug_reporter import report_debug_event
 from ....features.quality.application.gate_runtime import build_gate_snapshot
 from ....features.quality.domain.gate_config import GateConfig
+from ....features.recall.processors.prompt_builder import load_prompt_file
 from ...config import classify_config_effects, gate_hot_reload_required
 from ...config.manager import (
     ConfigConflictError,
@@ -184,7 +185,27 @@ class ConfigApiMixin:
         }
         if changed:
             data["config"] = config
+        data["prompt_defaults"] = self._prompt_defaults()
         return ok_response(data)
+
+    def _prompt_defaults(self) -> dict[str, str]:
+        """读取核心提示词文件的默认内容；失败降级为空串。"""
+        prompt_dir = getattr(self.plugin, "prompt_dir", None)
+        if prompt_dir is None:
+            logger.warning("[ConfigApi] prompt_dir 不可用，prompt_defaults 返回空串")
+            return {"gate_judge": "", "group_chat": "", "private_chat": ""}
+        defaults: dict[str, str] = {}
+        for key, filename in (
+            ("gate_judge", "grounding_judge_prompt.txt"),
+            ("group_chat", "group_chat_prompt.txt"),
+            ("private_chat", "private_chat_prompt.txt"),
+        ):
+            try:
+                defaults[key] = load_prompt_file(filename, prompt_dir)
+            except Exception:
+                logger.warning("[ConfigApi] 默认提示词文件读取失败: %s", filename)
+                defaults[key] = ""
+        return defaults
 
     async def apply_config(self) -> dict[str, Any]:
         """校验并持久化受修订保护的更新，然后安排插件重载。"""

@@ -83,6 +83,8 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             Path(__file__).resolve().parent,
             package_reader=build_package_resource_reader(__package__),
         )
+        # 核心提示词文件目录（core/prompts），供运行时与页面接口共用读取。
+        self.prompt_dir = self.resource_locator.plugin_root / "core" / "prompts"
         self.config_manager = ConfigManager(
             self.astrbot_config,
             resource_locator=self.resource_locator,
