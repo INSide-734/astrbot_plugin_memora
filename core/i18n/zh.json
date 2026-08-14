@@ -104,7 +104,8 @@
     "quarantined_only": "记忆总结已处理，但未写入长期记忆。\n隔离候选: {quarantined_count} 条\n这些候选未进入长期记忆，可在 Memora 管理页面的复核队列中检查。\n已更新总结进度至第 {count} 条消息",
     "partial_quarantine": "记忆总结已处理。\n已写入长期记忆: {canonical_count} 条\n隔离候选: {quarantined_count} 条（未进入长期记忆，可在 Memora 管理页面的复核队列中检查）\n重要性: {importance:.2f}\n主题: {topics}\n已更新总结进度至第 {count} 条消息",
     "discard_note": "已丢弃 {discard_count} 条未通过门禁的候选（不写入、不入复核队列）。",
-    "mark_write_note": "已以低置信标记写入 {mark_write_count} 条（默认不参与召回与演化，可在检索中显式包含）。"
+    "mark_write_note": "已以低置信标记写入 {mark_write_count} 条（默认不参与召回与演化，可在检索中显式包含）。",
+    "mark_write_only": "记忆总结已处理。\n已以低置信标记写入长期记忆: {mark_write_count} 条（默认不参与召回与演化，可在检索中显式包含）\n已更新总结进度至第 {count} 条消息"
   },
   "reset": {
     "action_name": "重置记忆上下文",

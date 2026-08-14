@@ -72,6 +72,7 @@
     "quarantined_only": "Memory summarization was processed, but nothing was written to long-term memory.\nQuarantined candidates: {quarantined_count}\nThese candidates did not enter long-term memory. Review them in the Memora management page review queue.\nUpdated summarization progress to message {count}",
     "partial_quarantine": "Memory summarization was processed.\nWritten to long-term memory: {canonical_count}\nQuarantined candidates: {quarantined_count} (not written to long-term memory; review them in the Memora management page review queue)\nImportance: {importance:.2f}\nTopics: {topics}\nUpdated summarization progress to message {count}",
     "discard_note": "Discarded {discard_count} candidate(s) rejected by the gate.",
+    "mark_write_only": "Memory summarization was processed.\nWrote {mark_write_count} candidate(s) with low-confidence marker (excluded from recall/evolution by default; explicitly include them in retrieval).\nUpdated summarization progress to message {count}",
     "mark_write_note": "Wrote {mark_write_count} candidate(s) with low-confidence marker (excluded from recall/evolution by default)."
   },
   "reset": {

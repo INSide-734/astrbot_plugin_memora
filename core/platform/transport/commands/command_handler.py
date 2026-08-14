@@ -389,6 +389,12 @@ class CommandHandler(
                     quarantined_count=quarantined_count,
                     count=actual_count,
                 )
+            elif canonical_count == 0 and mark_write_count:
+                feedback = t(
+                    "summarize.mark_write_only",
+                    mark_write_count=mark_write_count,
+                    count=actual_count,
+                )
             elif quarantined_count:
                 feedback = t(
                     "summarize.partial_quarantine",

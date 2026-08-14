@@ -308,3 +308,31 @@ async def test_summarize_reports_discard_and_mark_write_counts() -> None:
             "pending_summary": None,
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_mark_write_only_reports_write_without_zero_canonical_claim() -> None:
+    """只有低置信写入时不得宣称“写入 0 条长期记忆”。"""
+    handler, event, conversation_manager, engine = _build_summary_case(
+        candidates=[
+            _candidate("低置信候选", importance=0.5, topics=["低置信主题"]),
+        ],
+        gate_actions=["mark_write"],
+        actual_count=10,
+        last_summarized_index=8,
+    )
+
+    results = await _run_summary(handler, event)
+
+    feedback = results[-1]
+    assert "写入 0 条长期记忆" not in feedback
+    assert "低置信标记写入长期记忆: 1 条" in feedback
+    assert "第 10 条消息" in feedback
+    engine.add_memory.assert_awaited_once()
+    conversation_manager.update_session_metadata_fields.assert_awaited_once_with(
+        "session-feedback",
+        {
+            "last_summarized_index": 10,
+            "pending_summary": None,
+        },
+    )
