@@ -7,6 +7,23 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-08-15
+
+Memora 1.2.1 更新 Dashboard 与 GitHub Actions 工具链依赖，修复其间接依赖中的安全问题。
+
+### 改进
+
+- Dashboard 升级 `@base-ui/react`、Vite、PostCSS、Playwright、shadcn、React Vite 插件与 Node 类型定义；保留 React 18 与 Tailwind CSS 3 运行时，未将未完成的大版本迁移纳入本版。
+- GitHub Actions 升级 checkout、Node 设置、uv 设置、GitHub Pages 部署与 Pages artifact 上传动作。
+
+### 安全
+
+- 升级 PostCSS 间接依赖 `nanoid`，修复其自定义字母表参数为零时可能无限循环的问题。
+
+### 升级说明
+
+- 从 `1.2.0` 升级无需迁移配置、canonical memory、索引或数据库。
+
 ## [1.2.0] — 2026-08-15
 
 Memora 1.2.0 完成后端 package-by-feature 架构切换，引入可热重载的记忆写入门禁与 mark_write 隔离语义，并收紧再巩固、备份、发布打包和 Windows 开发链路的正确性边界。
