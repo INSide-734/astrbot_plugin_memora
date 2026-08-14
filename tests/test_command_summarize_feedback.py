@@ -277,3 +277,34 @@ async def test_canonical_write_failure_keeps_pending_after_quarantine() -> None:
         call("session-feedback", "last_summarized_index", 18)
         not in conversation_manager.update_session_metadata.await_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_summarize_reports_discard_and_mark_write_counts() -> None:
+    """门禁 discard 与 mark_write 计数必须进入反馈，隔离仍单独计数。"""
+    handler, event, conversation_manager, engine = _build_summary_case(
+        candidates=[
+            _candidate("丢弃候选", importance=0.3, topics=["丢弃主题"]),
+            _candidate("低置信候选", importance=0.5, topics=["低置信主题"]),
+            _candidate("隔离候选", importance=0.2, topics=["隔离主题"]),
+        ],
+        gate_actions=["discard", "mark_write", "quarantined"],
+        actual_count=10,
+        last_summarized_index=8,
+    )
+
+    results = await _run_summary(handler, event)
+
+    feedback = results[-1]
+    assert "已丢弃 1 条" in feedback
+    assert "低置信标记写入 1 条" in feedback
+    assert "隔离候选: 1 条" in feedback
+    assert "第 10 条消息" in feedback
+    engine.add_memory.assert_awaited_once()
+    conversation_manager.update_session_metadata_fields.assert_awaited_once_with(
+        "session-feedback",
+        {
+            "last_summarized_index": 10,
+            "pending_summary": None,
+        },
+    )

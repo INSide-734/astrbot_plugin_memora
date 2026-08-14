@@ -119,16 +119,17 @@ class CommandHandler(
     async def handle_summarize(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
-        """立即总结当前会话，并分别反馈 canonical 写入与隔离结果。
+        """立即总结当前会话，并分别反馈 canonical、隔离、丢弃与低置信标记结果。
 
         参数:
             event: 提供当前会话来源、身份上下文和命令结果构造能力的事件。
 
         生成:
-            总结开始、成功、隔离或失败阶段的 AstrBot 消息结果。
+            总结开始、成功、隔离、丢弃计数或失败阶段的 AstrBot 消息结果。
 
         副作用:
-            通过质量门写入 canonical 记忆；全部候选安全处理后推进会话总结进度，
+            通过质量门写入 canonical 记忆；discard 候选直接丢弃，mark_write
+            候选携带低置信标记写入；全部候选安全处理后推进会话总结进度，
             真实写入失败时保留 ``pending_summary``，并始终释放已取得的窗口锁。
         """
         blocked_message = self._maintenance_write_guard_message()
@@ -208,12 +209,17 @@ class CommandHandler(
 
             persona_id = await get_persona_id(self.context, event)
 
-            # 判断是否群聊
+            # 判断是否群聊，并解析门禁 profile 绑定所需的群组标识
             is_group_chat = bool(
                 history_messages[0].group_id if history_messages else False
             )
             if not is_group_chat and "GroupMessage" in session_id:
                 is_group_chat = True
+            group_id: str | None = None
+            if history_messages:
+                first_group_id = getattr(history_messages[0], "group_id", None)
+                if first_group_id:
+                    group_id = str(first_group_id)
 
             if not self._memory_processor:
                 yield event.plain_result(
@@ -231,6 +237,8 @@ class CommandHandler(
             canonical_count = 0
             canonical_importance_total = 0.0
             quarantined_count = 0
+            discard_count = 0
+            mark_write_count = 0
             completed_idempotency_keys: set[str] = set()
             for memory_index, mem in enumerate(memories):
                 metadata = mem.setdefault("metadata", {})
@@ -251,6 +259,7 @@ class CommandHandler(
                     "triggered_by": "manual",
                 }
                 try:
+                    disposition = "canonical"
                     if self._memory_quality_gate is not None:
                         gate_result = await self._memory_quality_gate.route_candidate(
                             mem,
@@ -258,11 +267,24 @@ class CommandHandler(
                             persona_id=persona_id,
                             source_window=metadata["source_window"],
                             is_group_chat=is_group_chat,
+                            group_id=group_id,
+                            chat_type=("group" if is_group_chat else "private"),
                         )
                         if gate_result.action == "quarantined":
                             quarantined_count += 1
                             completed_idempotency_keys.add(idempotency_key)
                             continue
+                        if gate_result.action == "discard":
+                            discard_count += 1
+                            completed_idempotency_keys.add(idempotency_key)
+                            continue
+                        if gate_result.action == "mark_write":
+                            disposition = "mark_write"
+                            mem["atoms"] = (
+                                gate_result.atoms
+                                if gate_result.atoms is not None
+                                else mem.get("atoms", [])
+                            )
                     await self.memory_engine.add_memory(
                         content=mem["content"],
                         session_id=session_id,
@@ -271,17 +293,22 @@ class CommandHandler(
                         metadata=metadata,
                         atoms=mem.get("atoms", []),
                     )
-                    canonical_count += 1
+                    if disposition == "mark_write":
+                        mark_write_count += 1
+                    else:
+                        canonical_count += 1
+                        canonical_importance_total += mem.get("importance", 0)
+                        all_topics.extend(metadata.get("topics", []))
                     completed_idempotency_keys.add(idempotency_key)
-                    canonical_importance_total += mem.get("importance", 0)
-                    all_topics.extend(metadata.get("topics", []))
                 except Exception as write_err:
                     logger.error(
                         f"[{session_id}] 手动总结记忆写入失败: {write_err}",
                         exc_info=True,
                     )
 
-            processed_count = canonical_count + quarantined_count
+            processed_count = (
+                canonical_count + quarantined_count + discard_count + mark_write_count
+            )
             if processed_count < len(memories):
                 pending_persisted = (
                     await self.conversation_manager.update_session_metadata(
@@ -378,6 +405,14 @@ class CommandHandler(
                     importance=round(avg_importance, 2),
                     topics=", ".join(all_topics) or t("common.none"),
                     count=actual_count,
+                )
+            if discard_count:
+                feedback += "\n" + t(
+                    "summarize.discard_note", discard_count=discard_count
+                )
+            if mark_write_count:
+                feedback += "\n" + t(
+                    "summarize.mark_write_note", mark_write_count=mark_write_count
                 )
             yield event.plain_result(feedback)
 
