@@ -383,9 +383,10 @@ class CommandHandler(
             avg_importance = (
                 canonical_importance_total / canonical_count if canonical_count else 0.0
             )
-            if canonical_count == 0 and quarantined_count:
+            if canonical_count == 0 and quarantined_count and mark_write_count:
                 feedback = t(
-                    "summarize.quarantined_only",
+                    "summarize.mark_write_and_quarantine",
+                    mark_write_count=mark_write_count,
                     quarantined_count=quarantined_count,
                     count=actual_count,
                 )
@@ -393,6 +394,12 @@ class CommandHandler(
                 feedback = t(
                     "summarize.mark_write_only",
                     mark_write_count=mark_write_count,
+                    count=actual_count,
+                )
+            elif canonical_count == 0 and quarantined_count:
+                feedback = t(
+                    "summarize.quarantined_only",
+                    quarantined_count=quarantined_count,
                     count=actual_count,
                 )
             elif quarantined_count:
@@ -416,7 +423,7 @@ class CommandHandler(
                 feedback += "\n" + t(
                     "summarize.discard_note", discard_count=discard_count
                 )
-            if mark_write_count:
+            if mark_write_count and canonical_count:
                 feedback += "\n" + t(
                     "summarize.mark_write_note", mark_write_count=mark_write_count
                 )

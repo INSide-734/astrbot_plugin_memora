@@ -297,9 +297,11 @@ async def test_summarize_reports_discard_and_mark_write_counts() -> None:
 
     feedback = results[-1]
     assert "已丢弃 1 条" in feedback
-    assert "低置信标记写入 1 条" in feedback
+    assert "低置信标记写入长期记忆: 1 条" in feedback
     assert "隔离候选: 1 条" in feedback
     assert "第 10 条消息" in feedback
+    assert "写入 0 条长期记忆" not in feedback
+    assert "未写入长期记忆" not in feedback
     engine.add_memory.assert_awaited_once()
     conversation_manager.update_session_metadata_fields.assert_awaited_once_with(
         "session-feedback",
