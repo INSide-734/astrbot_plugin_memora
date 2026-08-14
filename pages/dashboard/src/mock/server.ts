@@ -12,7 +12,7 @@ import type {
   InjectionSummaryWindow,
 } from "@/types/injection";
 
-import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS } from "./data";
+import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS, MOCK_GATE_CONFIG } from "./data";
 import { createMockConfigServer } from "./configServer";
 import {
   handleEvaluationDatasetImport,
@@ -1716,6 +1716,52 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   return ok({});
 }
 
+// ---- 门禁 dry-run ----
+
+/**
+ * 按绑定上下文解析 profile：绑定按序首个匹配生效（字段缺省视为不约束），
+ * 无命中回退 default_profile；与后端 resolve_profile 语义一致。
+ */
+function resolveGateProfileByContext(data: Record<string, unknown>): string {
+  const chatType = typeof data.chat_type === "string" && data.chat_type
+    ? data.chat_type
+    : "private";
+  const groupId = typeof data.group_id === "string" && data.group_id
+    ? data.group_id
+    : null;
+  const personaId = typeof data.persona_id === "string" && data.persona_id
+    ? data.persona_id
+    : null;
+  const binding = MOCK_GATE_CONFIG.bindings.find((candidate) => {
+    if (candidate.chat_type && candidate.chat_type !== chatType) return false;
+    if (candidate.group_id && candidate.group_id !== groupId) return false;
+    if (candidate.persona_id && candidate.persona_id !== personaId) return false;
+    return true;
+  });
+  return binding?.profile ?? MOCK_GATE_CONFIG.default_profile;
+}
+
+/**
+ * gate/dry-run：固定确定性响应，不复制规则引擎，只服务 smoke 与测试。
+ * profile 回显 body.profile 或按绑定上下文解析；未知 profile 返回错误。
+ */
+function handleGateDryRun(data: Record<string, unknown>): ApiResponse {
+  const explicit = typeof data.profile === "string" ? data.profile.trim() : "";
+  const profileName = explicit || resolveGateProfileByContext(data);
+  const profile = MOCK_GATE_CONFIG.profiles.find(
+    (candidate) => candidate.name === profileName,
+  );
+  if (!profile) {
+    return err("profile 不存在", "gate_profile_not_found");
+  }
+  return ok({
+    profile: profile.name,
+    quality: "normal",
+    matched_rules: [],
+    disposition: "quarantine",
+  });
+}
+
 export async function handleApiPost(path: string, body: unknown = {}): Promise<ApiResponse> {
   body = structuredClone(body);
   await delay();
@@ -1727,8 +1773,7 @@ export async function handleApiPost(path: string, body: unknown = {}): Promise<A
   const updateResponse = handleUpdatePost(p, data);
   if (updateResponse) return updateResponse;
   const reconsolidationResponse = handleReconsolidationPost(p, data);
-  if (reconsolidationResponse) return reconsolidationResponse;
-
+  if (p === "gate/dry-run") return handleGateDryRun(data);
   if (p === "recall/test") return handleRecallTest(data);
   if (p === "recall/trace") return ok(createSafeRecallTraceResponse(RECALL_TRACE_SAMPLE, data));
   if (p === "memory/update") return handleMemoryUpdate(data);

@@ -980,3 +980,46 @@ describe("existing mutable editors accept full-form and legacy update requests",
     expect(okData(await get("notes/detail", { note_id: id })).note).toMatchObject({ title: "legacy note", content: "full content", tags: ["one", "two"] });
   });
 });
+
+describe("gate dry-run mock", () => {
+  it("returns a deterministic result with an explicit profile", async () => {
+    const data = okData(await post("page/gate/dry-run", {
+      profile: "private",
+      content: "今天和 Alice 讨论了新版本发布",
+    }));
+    expect(data).toEqual({
+      profile: "private",
+      quality: "normal",
+      matched_rules: [],
+      disposition: "quarantine",
+    });
+  });
+
+  it("resolves the profile from binding chat_type when profile is omitted", async () => {
+    const data = okData(await post("gate/dry-run", {
+      chat_type: "group",
+      group_id: "g-42",
+      content: "群聊内容",
+    }));
+    expect(data).toMatchObject({ profile: "group" });
+  });
+
+  it("falls back to default_profile for an unmatched binding context", async () => {
+    const data = okData(await post("gate/dry-run", {
+      chat_type: "unknown",
+      content: "正文",
+    }));
+    expect(data).toMatchObject({ profile: "private" });
+  });
+
+  it("rejects an unknown profile with gate_profile_not_found", async () => {
+    const response = await post("gate/dry-run", {
+      profile: "missing-profile",
+      content: "正文",
+    });
+    expect(response).toMatchObject({
+      status: "error",
+      code: "gate_profile_not_found",
+    });
+  });
+});
