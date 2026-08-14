@@ -47,6 +47,7 @@ EVENTS = frozenset(
         "instrumented_call",
         "gate_config_applied",
         "debug_event_rejected",
+        "debug_file_sink_disabled",
     }
 )
 
@@ -137,10 +138,17 @@ _NUMERIC_FIELDS = frozenset(
 _ENUM_FIELDS = {
     "status": frozenset(
         {
+            "started",
+            "running",
             "completed",
             "failed",
             "ok",
             "degraded",
+            "skipped",
+            "cancelled",
+            "ready",
+            "waiting",
+            "disabled",
         }
     ),
     "outcome": frozenset(
@@ -284,6 +292,7 @@ _VALUE_FIELDS = {
             "PROTECTION_FAILED",
             "PROTECTION_SCOPE_FAILED",
             "agent_tools_unavailable",
+            "assistant_response_persisted",
             "backup_restore_error",
             "batch_extraction_failed",
             "batches_prepared",

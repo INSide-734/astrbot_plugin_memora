@@ -1480,6 +1480,8 @@ class TestInjectionDecisionLifecycle:
         memory_processor = MagicMock()
         quarantine_store = MagicMock()
         quality_gate = MagicMock()
+        gate_runtime = MagicMock()
+        conversation_manager = MagicMock()
         initializer._component_factory.build_all = AsyncMock(
             return_value={
                 "db": MagicMock(),
@@ -1488,8 +1490,8 @@ class TestInjectionDecisionLifecycle:
                 "memory_processor": memory_processor,
                 "memory_quarantine_store": quarantine_store,
                 "memory_quality_gate": quality_gate,
-                "gate_runtime": MagicMock(),
-                "conversation_manager": MagicMock(),
+                "gate_runtime": gate_runtime,
+                "conversation_manager": conversation_manager,
                 "identity_runtime": types.SimpleNamespace(close=AsyncMock()),
                 "index_validator": MagicMock(),
                 "decay_scheduler": None,
@@ -1509,6 +1511,9 @@ class TestInjectionDecisionLifecycle:
 
         assert initializer.injection_decision_store is store
         assert initializer.injection_decision_recorder is recorder
+        # 回归防护：发布段必须同时保留 conversation_manager 与 gate_runtime。
+        assert initializer.conversation_manager is conversation_manager
+        assert initializer.gate_runtime is gate_runtime
         readiness_capabilities = {
             call.kwargs["capability"]
             for call in report.call_args_list

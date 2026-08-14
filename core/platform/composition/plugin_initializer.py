@@ -286,6 +286,7 @@ class PluginInitializer(InitializerReadinessMixin):
             self.memory_processor = components["memory_processor"]
             self.memory_quarantine_store = components["memory_quarantine_store"]
             self.memory_quality_gate = components["memory_quality_gate"]
+            self.conversation_manager = components["conversation_manager"]
             self.gate_runtime = components["gate_runtime"]
             self.identity_runtime = components["identity_runtime"]
             self.index_validator = components["index_validator"]

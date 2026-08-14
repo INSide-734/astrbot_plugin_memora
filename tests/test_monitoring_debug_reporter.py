@@ -327,6 +327,31 @@ def test_exception_event_contains_only_safe_location_fields(
     assert sentinel not in caplog.text
 
 
+def test_allowlist_keeps_pre_existing_values(tmp_path: Path) -> None:
+    """回归防护：新增门禁观测不得挤掉既有事件/状态/原因码。"""
+    from core.features.observability.infrastructure.debug_reporter import (
+        _ENUM_FIELDS,
+        _VALUE_FIELDS,
+        EVENTS,
+    )
+
+    assert "gate_config_applied" in EVENTS
+    assert "debug_file_sink_disabled" in EVENTS
+    status = _ENUM_FIELDS["status"]
+    for value in (
+        "started",
+        "running",
+        "skipped",
+        "cancelled",
+        "ready",
+        "waiting",
+        "disabled",
+        "ok",
+    ):
+        assert value in status
+    assert "assistant_response_persisted" in _VALUE_FIELDS["reason_code"]
+
+
 def test_file_rotation_keeps_current_file_and_two_backups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
