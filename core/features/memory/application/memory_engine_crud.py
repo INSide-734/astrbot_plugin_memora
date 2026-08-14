@@ -10,11 +10,14 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ....shared.number_utils import clamp_float
 from ....shared.recall_strategy import RecallStrategy
 from ....shared.temporal import canonical_visible_at, normalize_datetime
-from ....shared.number_utils import clamp_float
 from ...observability.application.memory_write_timing import (
     measure_memory_write_stage,
+)
+from ...quality.application.gate_disposition_filter import (
+    filter_mark_write,
 )
 from ...retrieval.query_rewriter import resolve_reference_time
 from ...retrieval.rrf_fusion import HybridResult
@@ -244,6 +247,7 @@ class MemoryEngineCRUDMixin(
         query_plan: Any | None = None,
         timing_sink: RetrievalTimingSink | None = None,
         deadline_monotonic: float | None = None,
+        include_mark_write: bool = False,
     ) -> list[HybridResult]:
         """执行受 scope、privacy、参考时间与可选软截止时间约束的召回。"""
 
@@ -261,7 +265,7 @@ class MemoryEngineCRUDMixin(
             active_debug_trace.clear()
             self._last_debug_trace = active_debug_trace
         if not query or not query.strip():
-            return []
+            return filter_mark_write([], include_mark_write=include_mark_write)
 
         # 阶段计时：追踪每次检索的各阶段耗时
         _t_start = time.perf_counter()
@@ -302,7 +306,9 @@ class MemoryEngineCRUDMixin(
             }
             if timing_sink is not None:
                 timing_sink.update(self._last_search_timing)
-            return cached_results
+            return filter_mark_write(
+                cached_results, include_mark_write=include_mark_write
+            )
 
         # 请求级会话缓存：消除 Bridge→RecallHandler 同一请求的重复搜索
         session_cached = None
@@ -341,7 +347,7 @@ class MemoryEngineCRUDMixin(
             }
             if timing_sink is not None:
                 timing_sink.update(self._last_search_timing)
-            return truncated
+            return filter_mark_write(truncated, include_mark_write=include_mark_write)
         if session_id and ":" in session_id:
             self._create_tracked_task(
                 self._maintenance.migrate_session_if_needed(session_id)
@@ -488,7 +494,7 @@ class MemoryEngineCRUDMixin(
         self._last_search_timing.update(route_timing)
         if timing_sink is not None:
             timing_sink.update(self._last_search_timing)
-        return results
+        return filter_mark_write(results, include_mark_write=include_mark_write)
 
     async def get_memory(self, memory_id: int) -> dict[str, Any] | None:
         """按 canonical 整数 ID 读取记忆详情。"""
