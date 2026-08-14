@@ -1017,6 +1017,72 @@ async function waitForRootText(page, expected, route) {
   }
   assertText(await page.locator("#root").innerText(), values, route);
 }
+/**
+ * 等待当前路由的页面帧完成切换并呈现目标文本。
+ *
+ * 根节点同时包含侧栏导航文本，不能用它证明目标页面已经挂载；这里把
+ * 文本、加载态、尺寸与祖先透明度约束在同一个可见页面帧内。
+ */
+async function waitForPageText(page, expected, route) {
+  const values = Array.isArray(expected) ? expected : [expected];
+  try {
+    await page.waitForFunction(
+      ({ items, loadingText }) => {
+        const root = document.querySelector("#root");
+        if (!root) return false;
+        return [...root.querySelectorAll('[data-slot="page-frame"]')].some((frame) => {
+          const text = frame.innerText ?? "";
+          if (
+            !items.every((item) => text.includes(item))
+            || loadingText.some((item) => text.includes(item))
+          ) return false;
+          const box = frame.getBoundingClientRect();
+          if (box.width <= 0 || box.height <= 0) return false;
+          let element = frame;
+          while (element && element !== root) {
+            const style = getComputedStyle(element);
+            if (
+              style.display === "none"
+              || style.visibility === "hidden"
+              || Number.parseFloat(style.opacity) < 0.99
+            ) return false;
+            element = element.parentElement;
+          }
+          return true;
+        });
+      },
+      { items: values, loadingText: ROUTE_LOADING_TEXT },
+      { timeout: 5_000 },
+    );
+  } catch (error) {
+    const frames = await page.locator('[data-slot="page-frame"]').evaluateAll((elements) =>
+      elements.map((frame) => {
+        const ancestors = [];
+        let element = frame;
+        while (element && element.id !== "root") {
+          const style = getComputedStyle(element);
+          ancestors.push({
+            element: element.tagName.toLowerCase(),
+            slot: element.getAttribute("data-slot"),
+            display: style.display,
+            visibility: style.visibility,
+            opacity: style.opacity,
+          });
+          element = element.parentElement;
+        }
+        return {
+          text: frame.innerText,
+          box: frame.getBoundingClientRect().toJSON(),
+          ancestors,
+        };
+      }),
+    );
+    throw new Error(
+      `Dashboard route ${route} did not render a stable page frame: ${JSON.stringify(frames)}`,
+      { cause: error },
+    );
+  }
+}
 
 async function switchDashboardLanguage(page, language, expectedDocumentLang) {
   const languageOrder = ["zh", "en", "ru"];
@@ -1762,7 +1828,7 @@ async function navigateSidebar(page, label, expectedHash, expectedText) {
     expectedHash,
     { timeout: 5_000 }
   );
-  await waitForRootText(page, expectedText, expectedHash);
+  await waitForPageText(page, expectedText, expectedHash);
 }
 
 async function clickSidebarNav(page, label, expectedHash, expectedText, screenshotPath) {

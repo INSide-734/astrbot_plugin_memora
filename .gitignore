@@ -64,7 +64,8 @@ storage/**/*.sqlite*
 .codegraph/
 .agents/
 .worktrees/
-.codex/
+.codex/*
+!.codex/lsp-client.json
 openspec/
 .uv-cache/
 .tmp*/
