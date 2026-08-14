@@ -25,7 +25,7 @@ Memora 的所有重要变更都记录在此文件中。
 - 修复 `/memora summarize` 把隔离候选误报为长期记忆写入成功、将候选数量误作消息进度，以及混合结果把隔离候选计入重要性的问题。
 - 修复 Dashboard 活跃会话从 canonical 记忆 metadata 推导，导致对话已采集但长期记忆为空时错误显示 0 的问题。
 - 修复 `scripts/package_plugin.py` 源码包收集依赖手写排除清单，导致 `.uv-cache/`、`.idea/`、`.pytest_memora_data/` 等被 `.gitignore` 排除的本地文件与目录被打入源码包的问题；收集改为以 `git ls-files --exclude-standard` 的跟踪与忽略语义为准。
-- 修复 Windows 缺少 `os.fchmod` 且不支持目录描述符持久化时，反馈 HMAC 安装密钥首次创建会中断插件完整初始化的问题；POSIX 平台仍严格执行 `0600` 文件权限校验。
+- 修复 Windows 缺少 `os.fchmod`、不支持目录描述符持久化、CRT 文本模式转换随机二进制密钥中的 CRLF/`0x1A`，以及反馈备份完整性检查未及时关闭 SQLite 句柄时，HMAC 安装密钥首次创建、备份校验或备份目录发布会失败的问题；Windows 现使用二进制模式读取并显式释放校验连接，POSIX 平台仍严格执行 `0600` 文件权限校验。
 
 ## [1.1.0] — 2026-07-31
 

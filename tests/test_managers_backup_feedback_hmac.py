@@ -15,6 +15,54 @@ import pytest
 from core.features.backup.application.manager import _BACKUP_INFO_FILE, BackupManager
 from core.features.backup.infrastructure import integrity as backup_integrity
 
+_WINDOWS_TEXT_SENSITIVE_KEY = b"A" * 8 + b"\r\n" + b"B" * 22
+
+
+class _WindowsBinaryReadOsProxy:
+    """模拟 Windows 文本/二进制文件描述符读取差异。"""
+
+    name = "nt"
+    O_BINARY = 0x8000
+
+    def __init__(self) -> None:
+        """记录以二进制模式打开的文件描述符。"""
+
+        self._binary_descriptors: set[int] = set()
+
+    def __getattr__(self, name: str):
+        """转发通用 os API，并隐藏 Windows 不提供的 POSIX 能力。"""
+
+        if name == "O_NOFOLLOW":
+            raise AttributeError(name)
+        return getattr(os, name)
+
+    def open(self, path, flags: int) -> int:
+        """打开文件并记录调用方是否要求 O_BINARY。"""
+
+        binary = bool(flags & self.O_BINARY)
+        native_binary_flag = getattr(os, "O_BINARY", 0)
+        file_descriptor = os.open(
+            path,
+            flags if native_binary_flag else flags & ~self.O_BINARY,
+        )
+        if binary:
+            self._binary_descriptors.add(file_descriptor)
+        return file_descriptor
+
+    def read(self, file_descriptor: int, size: int) -> bytes:
+        """二进制模式原样读取，否则模拟 Windows CRLF 文本转换。"""
+
+        value = os.read(file_descriptor, size)
+        if file_descriptor in self._binary_descriptors:
+            return value
+        return value.replace(b"\r\n", b"\n")
+
+    def close(self, file_descriptor: int) -> None:
+        """关闭文件描述符并清理二进制模式记录。"""
+
+        self._binary_descriptors.discard(file_descriptor)
+        os.close(file_descriptor)
+
 
 def _write_marker_database(path: Path, label: str) -> None:
     """写入用于区分 source 与 live 的最小 SQLite 数据库。"""
@@ -84,6 +132,47 @@ def _write_legacy_feedback_database(data_dir: Path) -> Path:
     return db_path
 
 
+def test_feedback_hmac_validation_uses_binary_mode_on_windows(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows 下包含 CRLF 的合法密钥不得因文本转换被误判损坏。"""
+
+    _write_feedback_hmac_pair(tmp_path, key=_WINDOWS_TEXT_SENSITIVE_KEY)
+    monkeypatch.setattr(backup_integrity, "os", _WindowsBinaryReadOsProxy())
+
+    backup_integrity.validate_feedback_hmac_pair(
+        tmp_path,
+        error_scope="backup",
+        require_pair=True,
+    )
+
+
+def test_feedback_validation_releases_database_handle(tmp_path: Path) -> None:
+    """完整性校验返回后应立即释放数据库，允许 Windows 原子替换。"""
+
+    db_path, _ = _write_feedback_hmac_pair(tmp_path)
+    backup_integrity.validate_feedback_hmac_pair(
+        tmp_path,
+        error_scope="backup",
+        require_pair=True,
+    )
+
+    replacement = tmp_path / "feedback-replacement.db"
+    db_path.replace(replacement)
+    assert replacement.is_file()
+
+
+def test_legacy_feedback_inspection_releases_database_handle(tmp_path: Path) -> None:
+    """旧库判定返回后应立即释放数据库，允许 Windows 删除。"""
+
+    db_path = _write_legacy_feedback_database(tmp_path)
+    backup_integrity.prepare_feedback_backup(tmp_path)
+
+    db_path.unlink()
+    assert not db_path.exists()
+
+
 class TestFeedbackHmacBackupRestore:
     """验证反馈数据库与 HMAC key 始终作为单个恢复单元。"""
 
@@ -110,10 +199,12 @@ class TestFeedbackHmacBackupRestore:
         key_metadata = manifest["files"][key_path.name]
         assert key_metadata["role"] == "operational"
         assert key_metadata["kind"] == "secret"
-        assert key_metadata["mode"] == 0o600
+        if os.name != "nt":
+            assert key_metadata["mode"] == 0o600
         snapshot_key = backup_dir / key_path.name
         assert snapshot_key.read_bytes() == key_path.read_bytes()
-        assert stat.S_IMODE(snapshot_key.stat().st_mode) == 0o600
+        if os.name != "nt":
+            assert stat.S_IMODE(snapshot_key.stat().st_mode) == 0o600
 
     @pytest.mark.asyncio
     async def test_restore_feedback_pair_preserves_key_mode_and_fingerprint(
@@ -133,7 +224,8 @@ class TestFeedbackHmacBackupRestore:
 
         assert applied["restore_status"] == "validating"
         assert (tmp_path / source_key.name).read_bytes() == b"s" * 32
-        assert stat.S_IMODE((tmp_path / source_key.name).stat().st_mode) == 0o600
+        if os.name != "nt":
+            assert stat.S_IMODE((tmp_path / source_key.name).stat().st_mode) == 0o600
         with sqlite3.connect(tmp_path / source_db.name) as connection:
             assert connection.execute(
                 "SELECT metadata_value FROM feedback_store_metadata WHERE metadata_key = ?",
@@ -154,6 +246,7 @@ class TestFeedbackHmacBackupRestore:
         with pytest.raises(RuntimeError, match="backup_feedback_hmac_pair_missing"):
             await manager.create_backup()
 
+    @pytest.mark.skipif(os.name == "nt", reason="Windows 不提供 POSIX 文件权限位")
     @pytest.mark.asyncio
     async def test_backup_rejects_feedback_hmac_key_with_wrong_mode(
         self, tmp_path: Path

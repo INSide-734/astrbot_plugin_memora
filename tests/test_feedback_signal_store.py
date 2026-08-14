@@ -21,11 +21,19 @@ from core.features.learning.domain.models import (
 )
 from core.features.learning.infrastructure import FeedbackSignalStore
 
+_WINDOWS_TEXT_SENSITIVE_KEY = b"A" * 8 + b"\r\n" + b"B" * 22
+
 
 class _WindowsOsProxy:
-    """模拟 Windows 缺失 fchmod 且无法打开目录的 os 能力。"""
+    """模拟 Windows 文件 API、二进制标志与文本模式转换。"""
 
     name = "nt"
+    O_BINARY = 0x8000
+
+    def __init__(self) -> None:
+        """记录以二进制模式打开的文件描述符。"""
+
+        self._binary_descriptors: set[int] = set()
 
     def __getattr__(self, name: str):
         """转发通用 os API，并隐藏 Windows 不提供的 POSIX 能力。"""
@@ -34,12 +42,40 @@ class _WindowsOsProxy:
             raise AttributeError(name)
         return getattr(os, name)
 
+    def urandom(self, size: int) -> bytes:
+        """返回包含 CRLF 的确定性 32 字节密钥以覆盖文本转换风险。"""
+
+        assert size == len(_WINDOWS_TEXT_SENSITIVE_KEY)
+        return _WINDOWS_TEXT_SENSITIVE_KEY
+
     def open(self, path, flags: int) -> int:
-        """模拟 Windows 不支持以文件描述符打开目录。"""
+        """模拟 Windows 不支持目录句柄，并记录 O_BINARY。"""
 
         if Path(path).is_dir():
             raise OSError("directory handles are unavailable")
-        return os.open(path, flags)
+        binary = bool(flags & self.O_BINARY)
+        native_binary_flag = getattr(os, "O_BINARY", 0)
+        file_descriptor = os.open(
+            path,
+            flags if native_binary_flag else flags & ~self.O_BINARY,
+        )
+        if binary:
+            self._binary_descriptors.add(file_descriptor)
+        return file_descriptor
+
+    def read(self, file_descriptor: int, size: int) -> bytes:
+        """二进制模式原样读取，否则模拟 Windows CRLF 文本转换。"""
+
+        value = os.read(file_descriptor, size)
+        if file_descriptor in self._binary_descriptors:
+            return value
+        return value.replace(b"\r\n", b"\n")
+
+    def close(self, file_descriptor: int) -> None:
+        """关闭文件描述符并清理二进制模式记录。"""
+
+        self._binary_descriptors.discard(file_descriptor)
+        os.close(file_descriptor)
 
 
 def _event(
@@ -117,14 +153,14 @@ def test_opaque_token_is_keyed_stable_across_restart_and_install_isolated(
     assert key_material not in first_path.read_bytes()
 
 
-def test_store_initializes_when_fchmod_is_unavailable(
+def test_store_initializes_with_windows_file_api_semantics(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Windows 能力下仍应创建密钥并保持 token 跨重启稳定。"""
+    """Windows 文本敏感密钥仍应保持 32 字节并跨重启稳定。"""
 
     monkeypatch.setattr(feedback_store_module, "os", _WindowsOsProxy())
-    path = tmp_path / "no-fchmod.db"
+    path = tmp_path / "windows-key.db"
     store = FeedbackSignalStore(path)
     store.initialize()
     token = store.opaque_token("decision", "forget:7")

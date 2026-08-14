@@ -7,6 +7,7 @@ import os
 import secrets
 import sqlite3
 import stat
+from contextlib import closing
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
@@ -113,7 +114,7 @@ def validate_feedback_hmac_pair(
 
     key = _read_feedback_hmac_key(key_path, error_scope)
     try:
-        with sqlite3.connect(str(db_path)) as connection:
+        with closing(sqlite3.connect(str(db_path))) as connection:
             row = connection.execute(
                 """
                 SELECT metadata_value FROM feedback_store_metadata
@@ -148,7 +149,7 @@ def _feedback_db_is_legacy(db_path: Path) -> bool:
     if db_path.is_symlink() or not db_path.is_file():
         return False
     try:
-        with sqlite3.connect(str(db_path)) as connection:
+        with closing(sqlite3.connect(str(db_path))) as connection:
             row = connection.execute(
                 """
                 SELECT 1 FROM sqlite_master
@@ -202,18 +203,18 @@ def _path_present(path: Path) -> bool:
 
 
 def _read_feedback_hmac_key(path: Path, error_scope: str) -> bytes:
-    """读取并校验 sidecar key 的类型、权限与长度。"""
+    """以二进制模式读取 sidecar key，并校验类型、权限与长度。"""
 
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         file_descriptor = os.open(path, flags)
     except OSError as exc:
         raise _feedback_error(error_scope, "key_invalid") from exc
     try:
         metadata = os.fstat(file_descriptor)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or stat.S_IMODE(metadata.st_mode) != _FEEDBACK_HMAC_KEY_MODE
+        if not stat.S_ISREG(metadata.st_mode) or (
+            os.name != "nt"
+            and stat.S_IMODE(metadata.st_mode) != _FEEDBACK_HMAC_KEY_MODE
         ):
             raise _feedback_error(error_scope, "key_invalid")
         key = os.read(file_descriptor, _FEEDBACK_HMAC_KEY_BYTES + 1)
@@ -339,7 +340,7 @@ def validate_quarantine_references(data_dir: Path) -> None:
     quarantine_path = data_dir / "memory_quarantine.sqlite3"
     if not canonical_path.is_file() or not quarantine_path.is_file():
         return
-    with sqlite3.connect(str(canonical_path)) as canonical_db:
+    with closing(sqlite3.connect(str(canonical_path))) as canonical_db:
         canonical_tables = {
             str(row[0])
             for row in canonical_db.execute(
@@ -354,7 +355,7 @@ def validate_quarantine_references(data_dir: Path) -> None:
             }
         except (TypeError, ValueError) as exc:
             raise BackupOperationError("restore_canonical_reference_invalid") from exc
-    with sqlite3.connect(str(quarantine_path)) as quarantine_db:
+    with closing(sqlite3.connect(str(quarantine_path))) as quarantine_db:
         quarantine_tables = {
             str(row[0])
             for row in quarantine_db.execute(

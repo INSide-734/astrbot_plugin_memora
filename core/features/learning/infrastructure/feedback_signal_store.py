@@ -541,7 +541,7 @@ def _set_private_file_mode(file_descriptor: int, path: str) -> None:
 def _read_token_key(path: Path) -> bytes | None:
     """读取普通密钥文件；POSIX 严格校验 0600，并校验密钥长度。"""
 
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         file_descriptor = os.open(path, flags)
     except FileNotFoundError:
