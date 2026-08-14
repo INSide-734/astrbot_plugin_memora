@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.api.quality_api import QualityApiMixin
+from core.platform.transport.page_api.quality_api import QualityApiMixin
 
 
 def _make_mock_request(**args):
@@ -111,7 +111,7 @@ class TestQualityStats:
         s2 = _make_quality_score("a2", 0.65)
         stub = _make_stub_scorer(score_history=[s1, s2])
         mock_req = _make_mock_request()
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_stats()
         assert result["status"] == "ok"
         assert result["data"]["total_scored"] == 2
@@ -121,7 +121,7 @@ class TestQualityStats:
     async def test_returns_stats_without_scores(self) -> None:
         stub = _make_stub_scorer(score_history=[])
         mock_req = _make_mock_request()
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_stats()
         assert result["status"] == "ok"
         assert result["data"]["total_scored"] == 0
@@ -132,7 +132,7 @@ class TestQualityStats:
         stub = _make_stub_scorer(score_history=[])
         stub.plugin._quality_scorer.get_stats = MagicMock(return_value="bad-stats")
         mock_req = _make_mock_request()
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_stats()
         assert result["status"] == "ok"
         assert result["data"] == {}
@@ -145,7 +145,7 @@ class TestQualityStats:
 
         stub = Stub()
         mock_req = _make_mock_request()
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_stats()
         assert result["status"] == "error"
 
@@ -161,7 +161,7 @@ class TestQualityRecent:
         scores = [_make_quality_score(f"a{i}", 0.5 + i * 0.01) for i in range(25)]
         stub = _make_stub_scorer(score_history=scores)
         mock_req = _make_mock_request(limit="20")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_recent()
         assert result["status"] == "ok"
         assert len(result["data"]["scores"]) == 20
@@ -172,7 +172,7 @@ class TestQualityRecent:
         scores = [_make_quality_score(f"a{i}", 0.5) for i in range(50)]
         stub = _make_stub_scorer(score_history=scores)
         mock_req = _make_mock_request(limit="5")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_recent()
         assert result["status"] == "ok"
         assert len(result["data"]["scores"]) == 5
@@ -182,7 +182,7 @@ class TestQualityRecent:
         scores = [_make_quality_score(f"a{i}", 0.5 + i * 0.01) for i in range(5)]
         stub = _make_stub_scorer(score_history=scores)
         mock_req = _make_mock_request(limit="-1")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_recent()
         assert result["status"] == "ok"
         assert len(result["data"]["scores"]) == 5
@@ -201,7 +201,7 @@ class TestQualityRecent:
         ]
         stub = _make_stub_scorer(score_history=scores)
         mock_req = _make_mock_request(limit="10")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_recent()
         assert result["status"] == "ok"
         assert result["data"]["total_scores"] == 3
@@ -220,7 +220,7 @@ class TestQualityRecent:
 
         stub.plugin._quality_scorer._score_history = BrokenHistory()
         mock_req = _make_mock_request(limit="10")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_recent()
         assert result["status"] == "ok"
         assert result["data"]["scores"] == []
@@ -241,7 +241,7 @@ class TestQualityAlerts:
         ]
         stub = _make_stub_scorer(alert_history=alerts)
         mock_req = _make_mock_request()
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_alerts()
         assert result["status"] == "ok"
         assert len(result["data"]["alerts"]) == 2
@@ -256,7 +256,7 @@ class TestQualityAlerts:
         ]
         stub = _make_stub_scorer(alert_history=alerts)
         mock_req = _make_mock_request(level="critical")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_alerts()
         assert result["status"] == "ok"
         assert result["data"]["filtered_count"] == 1
@@ -266,7 +266,7 @@ class TestQualityAlerts:
     async def test_rejects_invalid_level(self) -> None:
         stub = _make_stub_scorer(alert_history=[])
         mock_req = _make_mock_request(level="invalid")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_alerts()
         assert result["status"] == "error"
         assert "invalid level" in result["message"].lower()
@@ -279,7 +279,7 @@ class TestQualityAlerts:
         ]
         stub = _make_stub_scorer(alert_history=alerts)
         mock_req = _make_mock_request(limit="-1")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_alerts()
         assert result["status"] == "ok"
         assert len(result["data"]["alerts"]) == 2
@@ -298,7 +298,7 @@ class TestQualityAlerts:
         ]
         stub = _make_stub_scorer(alert_history=alerts)
         mock_req = _make_mock_request()
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_alerts()
         assert result["status"] == "ok"
         assert result["data"]["total_alerts"] == 3
@@ -321,7 +321,7 @@ class TestQualityAlerts:
         ]
         stub = _make_stub_scorer(alert_history=alerts)
         mock_req = _make_mock_request(level="critical")
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_alerts()
         assert result["status"] == "ok"
         assert result["data"]["total_alerts"] == 3
@@ -341,7 +341,7 @@ class TestQualityReset:
         a = _make_quality_alert()
         stub = _make_stub_scorer(score_history=[s], alert_history=[a])
         mock_req = _make_mock_request()
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.reset_quality()
         assert result["status"] == "ok"
         assert "reset" in result["data"]["message"].lower()
@@ -365,7 +365,7 @@ class TestQualityReset:
         scorer._pause_reason = "bad state"
 
         mock_req = _make_mock_request()
-        with patch("core.api.quality_api.request", mock_req):
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.reset_quality()
 
         assert result["status"] == "ok"

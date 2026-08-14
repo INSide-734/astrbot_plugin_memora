@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 import pytest
 
-from core.models.derived_metadata import (
+from core.features.evaluation.domain.derived_metadata import (
     DERIVED_METADATA_REASON_CODES,
     DerivedMetadataBudget,
     DerivedMetadataProposal,

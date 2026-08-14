@@ -10,8 +10,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.learning_api import LearningApiMixin, _candidate_view
-from core.api.learning_config_adapter import LearningConfigAdapter
+from core.features.learning.infrastructure.learning_config_adapter import (
+    LearningConfigAdapter,
+)
+from core.platform.transport.page_api.learning_api import (
+    LearningApiMixin,
+    _candidate_view,
+)
 
 _CANDIDATE_ID = "J6LuM5hGZz4h8Jx8KmsFjB9Q"
 _OPERATION_ID = "Q7VvN6iHak2Nz1cX4d8PmL0R"
@@ -169,7 +174,9 @@ class TestLearningActionValidation:
         )
         raw_request = _request(_valid_payload())
 
-        with patch("core.api.learning_api.request", raw_request):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request", raw_request
+        ):
             result = await api.learning_action()
 
         assert result is blocked
@@ -209,7 +216,9 @@ class TestLearningActionValidation:
 
         api, manager, _ = _make_api()
 
-        with patch("core.api.learning_api.request", _request(payload)):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request", _request(payload)
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 400
@@ -235,7 +244,9 @@ class TestLearningActionValidation:
             b'"expected_revision":"config-revision-1","confirm":true}'
         )
 
-        with patch("core.api.learning_api.request", _RawRequest(raw)):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request", _RawRequest(raw)
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 400
@@ -250,7 +261,9 @@ class TestLearningActionValidation:
         api, manager, _ = _make_api()
         raw_request = _RawRequest(b"{}", content_length=16_385)
 
-        with patch("core.api.learning_api.request", raw_request):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request", raw_request
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 400
@@ -270,7 +283,7 @@ class TestLearningActionValidation:
         )
         api._get_web_request = MagicMock(return_value=raw_request)
 
-        with patch("core.api.learning_api.request", object()):
+        with patch("core.platform.transport.page_api.learning_api.request", object()):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 200
@@ -303,7 +316,10 @@ class TestLearningActionResults:
 
         api, manager, config_manager = _make_api()
 
-        with patch("core.api.learning_api.request", _request(_valid_payload())):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request",
+            _request(_valid_payload()),
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 200
@@ -354,7 +370,10 @@ class TestLearningActionResults:
 
         api, manager, _ = _make_api(reload_scheduled=False)
 
-        with patch("core.api.learning_api.request", _request(_valid_payload())):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request",
+            _request(_valid_payload()),
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 200
@@ -392,7 +411,10 @@ class TestLearningActionResults:
             }
         )
 
-        with patch("core.api.learning_api.request", _request(_valid_payload())):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request",
+            _request(_valid_payload()),
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 200
@@ -411,7 +433,10 @@ class TestLearningActionResults:
         manager.publish_candidate.side_effect = asyncio.CancelledError
 
         with (
-            patch("core.api.learning_api.request", _request(_valid_payload())),
+            patch(
+                "core.platform.transport.page_api.learning_api.request",
+                _request(_valid_payload()),
+            ),
             pytest.raises(asyncio.CancelledError),
         ):
             await api.learning_action()
@@ -425,7 +450,7 @@ class TestLearningActionResults:
         api, manager, _ = _make_api()
 
         with patch(
-            "core.api.learning_api.request",
+            "core.platform.transport.page_api.learning_api.request",
             _request(_valid_payload(action="rollback")),
         ):
             response, status_code = _split_response(await api.learning_action())
@@ -454,7 +479,7 @@ class TestLearningActionResults:
         )
 
         with patch(
-            "core.api.learning_api.request",
+            "core.platform.transport.page_api.learning_api.request",
             _request(_valid_payload(action="rollback")),
         ):
             response, status_code = _split_response(await api.learning_action())
@@ -478,7 +503,10 @@ class TestLearningActionResults:
 
         api, _, _ = _make_api(reload_scheduled=False)
 
-        with patch("core.api.learning_api.request", _request(_valid_payload())):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request",
+            _request(_valid_payload()),
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 200
@@ -502,7 +530,10 @@ class TestLearningActionResults:
             }
         )
 
-        with patch("core.api.learning_api.request", _request(_valid_payload())):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request",
+            _request(_valid_payload()),
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 404
@@ -540,7 +571,10 @@ class TestLearningActionResults:
             publish_result={"published": False, "reason_code": reason_code}
         )
 
-        with patch("core.api.learning_api.request", _request(_valid_payload())):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request",
+            _request(_valid_payload()),
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == expected_status
@@ -566,7 +600,10 @@ class TestLearningActionResults:
             }
         )
 
-        with patch("core.api.learning_api.request", _request(_valid_payload())):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request",
+            _request(_valid_payload()),
+        ):
             response, status_code = _split_response(await api.learning_action())
 
         assert status_code == 503

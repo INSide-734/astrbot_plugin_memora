@@ -6,11 +6,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from core.base.entity_editing import compute_entity_revision
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.memory_evolution import MemorySourceRef
-from core.models.user_profile import UserPreferences
-from core.storage.profile_store import ProfileStore
+from core.features.profiles.domain.models import UserPreferences
+from core.features.profiles.infrastructure.profile_store import ProfileStore
+from core.shared.contracts import MemorySourceRef
+from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
+from core.shared.entity_editing import compute_entity_revision
 
 _DERIVED_PREFERENCES = UserPreferences(
     reply_style="formal",

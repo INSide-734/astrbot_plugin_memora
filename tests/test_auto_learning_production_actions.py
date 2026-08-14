@@ -5,35 +5,38 @@ from __future__ import annotations
 import asyncio
 import re
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
-from core.api.learning_config_adapter import (
-    LearningConfigApplyResult,
-    LearningConfigSnapshot,
-)
-from core.evaluation.feedback_learning_evidence import (
-    LatencyEvidence,
-    QualityMetricEvidence,
-    build_learning_evidence,
-)
-from core.evaluation.feedback_learning_evidence_contract import (
-    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
-)
-from core.managers.auto_learning import (
+from core.features.learning.application.auto_learning import (
     AutoLearningManager,
     AutoLearningStatePersistenceError,
 )
-from core.managers.auto_learning_actions import (
+from core.features.learning.domain.auto_learning_actions import (
     CandidateBinding,
+    GlobalLearningCandidate,
     aggregation_revision_for,
     reduce_global_candidate,
     stable_revision,
     weight_snapshot_hash,
 )
-from core.models.feedback_signal import FeedbackSignalAggregate
+from core.features.learning.domain.feedback_learning_evidence import (
+    LatencyEvidence,
+    QualityMetricEvidence,
+    build_learning_evidence,
+)
+from core.features.learning.domain.feedback_learning_evidence_contract import (
+    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
+)
+from core.features.learning.domain.models import (
+    FeedbackSignalAggregate,
+    FeedbackSignalPolicy,
+)
+from core.features.learning.infrastructure.learning_config_adapter import (
+    LearningConfigApplyResult,
+    LearningConfigSnapshot,
+)
 
 UTC = timezone.utc
 
@@ -108,7 +111,7 @@ def _artifact_for(
     )
 
 
-def _candidate_signature(candidate: object) -> tuple[object, ...]:
+def _candidate_signature(candidate: GlobalLearningCandidate) -> tuple[object, ...]:
     """忽略随机 ID 和创建时间，返回确定性候选字段。"""
 
     return (
@@ -319,11 +322,7 @@ class _FeedbackManager:
         """保存当前聚合和固定基线策略。"""
 
         self.aggregates = aggregates
-        self.policy = SimpleNamespace(
-            baseline_document_weight=0.7,
-            baseline_graph_weight=0.3,
-            policy_version=3,
-        )
+        self.policy = FeedbackSignalPolicy(policy_version=3)
 
     def rebuild(self, *, reference_time: datetime) -> list[FeedbackSignalAggregate]:
         """返回隔离副本；reference time 仅用于匹配生产协议。"""

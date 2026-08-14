@@ -10,20 +10,11 @@ from typing import Any
 
 import pytest
 
-from core.evaluation.feedback_learning_evidence import (
-    EvidenceEvaluatorConfig,
-    validate_learning_evidence,
-)
-from core.evaluation.feedback_learning_evidence_contract import (
-    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
-)
-from core.evaluation.feedback_learning_evidence_store import (
-    FeedbackLearningEvidenceInbox,
-)
-from core.evaluation.feedback_learning_pipeline import (
+from core.features.evaluation.application import EvaluationCase
+from core.features.evaluation.application.feedback_learning_pipeline import (
     run_feedback_ranking_evaluation_and_publish_evidence,
 )
-from core.evaluation.feedback_ranking_ablation import (
+from core.features.evaluation.application.feedback_ranking_ablation import (
     FeedbackRankingConfigSnapshot,
     FeedbackRankingEvidenceRequest,
     FeedbackRankingPairedSample,
@@ -31,8 +22,20 @@ from core.evaluation.feedback_ranking_ablation import (
     feedback_ranking_case_hash,
     run_feedback_ranking_ablation,
 )
-from core.evaluation.retrieval_quality import EvaluationCase
-from core.models.feedback_signal import FeedbackSignalAggregate, FeedbackSignalPolicy
+from core.features.learning.domain.feedback_learning_evidence import (
+    EvidenceEvaluatorConfig,
+    validate_learning_evidence,
+)
+from core.features.learning.domain.feedback_learning_evidence_contract import (
+    REQUIRED_EVIDENCE_REGRESSION_CHECKS,
+)
+from core.features.learning.domain.models import (
+    FeedbackSignalAggregate,
+    FeedbackSignalPolicy,
+)
+from core.features.learning.infrastructure.feedback_learning_evidence_store import (
+    FeedbackLearningEvidenceInbox,
+)
 
 
 def _aggregate(status: str = "candidate") -> FeedbackSignalAggregate:

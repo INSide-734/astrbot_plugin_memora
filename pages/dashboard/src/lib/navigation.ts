@@ -11,6 +11,7 @@ import {
   ScrollText,
   Search,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   StickyNote,
   UserRound,
@@ -94,6 +95,7 @@ export const DASHBOARD_NAVIGATION = [
     items: [
       { id: "system", labelKey: "nav.system", icon: BarChart3 },
       { id: "config", labelKey: "nav.config", icon: Settings },
+      { id: "gate", labelKey: "nav.gate", icon: ShieldCheck },
     ],
   },
 ] as const satisfies readonly DashboardNavigationGroup[];

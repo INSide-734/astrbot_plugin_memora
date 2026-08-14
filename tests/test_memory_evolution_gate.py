@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 
-from core.managers.memory_evolution_gate import MemoryEvolutionGate
-from core.models.memory_evolution import EvolutionSignal
+from core.features.evolution.application import MemoryEvolutionGate
+from core.features.evolution.domain import EvolutionSignal
 
 
 def signal(

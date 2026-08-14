@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core.evaluation.dataset_repository import (
+from core.features.evaluation.infrastructure.dataset_repository import (
     EvaluationDatasetRepository,
     EvaluationDatasetValidationError,
 )

@@ -8,7 +8,48 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.processors.prompt_builder import PromptBuilder
+from core.features.recall.processors.prompt_builder import (
+    PromptBuilder,
+    load_prompt_file,
+    render_extraction_prompt,
+)
+
+
+def test_load_prompt_file_roundtrip(tmp_path: Path) -> None:
+    (tmp_path / "p.txt").write_text("内容", encoding="utf-8")
+    assert load_prompt_file("p.txt", tmp_path) == "内容"
+
+
+def test_render_extraction_prompt_placeholders() -> None:
+    out = render_extraction_prompt(
+        "类型:{chat_type}\n对话:{conversation}\n日期:{current_date}\n"
+        "连续:{continuity_topics}\n兴趣:{interests}\n情绪:{emotion_tags}\n"
+        "强度:{emotional_intensity}",
+        conversation="C",
+        current_date="D",
+        chat_type="群聊",
+        interests="猫、狗",
+        emotional_intensity="0.8",
+    )
+    assert "类型:群聊" in out and "对话:C" in out and "日期:D" in out
+    assert (
+        "兴趣:猫、狗" in out and "强度:0.8" in out and "连续:" in out and "情绪:" in out
+    )
+
+
+def test_render_extraction_prompt_default_file_template_braces_safe() -> None:
+    """默认文件模板含 JSON 示例花括号，渲染必须不抛异常且替换占位符。"""
+
+    prompt_dir = Path(__file__).parent.parent / "core" / "prompts"
+    template = load_prompt_file("private_chat_prompt.txt", prompt_dir)
+    out = render_extraction_prompt(
+        template,
+        conversation="对话内容",
+        current_date="2026-08-14 12:00",
+        chat_type="私聊",
+    )
+    assert "{conversation}" not in out and "{current_date}" not in out
+    assert "对话内容" in out
 
 
 class TestPromptBuilder:

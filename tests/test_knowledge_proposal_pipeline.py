@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
-from core.managers.knowledge_manager import KnowledgeManager
-from core.managers.knowledge_proposal_pipeline import KnowledgeProposalPipeline
-from core.managers.memory_engine import MemoryEngine
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
-from core.models.memory_evolution import MemorySourceRef
+from core.features.knowledge.application import (
+    KnowledgeManager,
+    KnowledgeProposalPipeline,
+)
+from core.features.knowledge.domain import KnowledgeEntry, KnowledgeType
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.shared.contracts import MemorySourceRef
+from core.shared.cost_control import CostControl
+from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
+from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 
 def _source(
@@ -74,7 +77,7 @@ def _pipeline(
     *,
     memory: dict | None = None,
     source: MemorySourceRef | None = None,
-    sources: list[MemorySourceRef] | None = None,
+    sources: list[list[MemorySourceRef]] | None = None,
     extractor: MagicMock | None = None,
     manager: MagicMock | None = None,
     cost_control: CostControl | None = None,
@@ -158,7 +161,7 @@ async def test_knowledge_proposal_rejects_malformed_extraction() -> None:
             content="正文",
             category=KnowledgeType.FACT,
             confidence=0.9,
-            tags=["合法", 123],
+            tags=cast(list[str], ["合法", 123]),
         )
     )
     pipeline, _extractor, manager, _source_store = _pipeline(extractor=extractor)
@@ -217,8 +220,9 @@ async def test_canonical_add_schedules_knowledge_proposal_without_rollback() -> 
     """canonical 成功后应触发知识 proposal，派生失败不能回滚主写。"""
 
     engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
-    engine.hybrid_retriever = MagicMock()
-    engine.hybrid_retriever.add_memory = AsyncMock(return_value=123)
+    hybrid_retriever = MagicMock()
+    hybrid_retriever.add_memory = AsyncMock(return_value=123)
+    setattr(engine, "hybrid_retriever", hybrid_retriever)
     engine.graph_memory_manager = None
     engine.atom_store = None
     engine._write_journal.start_op = AsyncMock(return_value=1)
@@ -229,7 +233,7 @@ async def test_canonical_add_schedules_knowledge_proposal_without_rollback() -> 
     engine._retrieval.extract_triggers = AsyncMock()
     pipeline = MagicMock()
     pipeline.apply_for_memory = AsyncMock(side_effect=RuntimeError("derived failed"))
-    engine.knowledge_proposal_pipeline = pipeline
+    setattr(engine, "knowledge_proposal_pipeline", pipeline)
     tasks: list[asyncio.Task] = []
 
     def create_task(coroutine) -> None:
@@ -237,7 +241,7 @@ async def test_canonical_add_schedules_knowledge_proposal_without_rollback() -> 
 
         tasks.append(asyncio.create_task(coroutine))
 
-    engine._create_tracked_task = create_task
+    setattr(engine, "_create_tracked_task", create_task)
     doc_id = await engine.add_memory("部署顺序需要保持稳定")
     await asyncio.gather(*tasks)
 

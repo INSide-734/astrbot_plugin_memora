@@ -8,7 +8,7 @@
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12+-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](metadata.yaml)
+[![Version](https://img.shields.io/badge/version-1.2.0-orange.svg)](metadata.yaml)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A5%204.24.2-purple.svg)](https://github.com/Soulter/AstrBot)
 
 </div>
@@ -142,26 +142,23 @@ User Message → EventHandler → MessageContentExtractor → ConversationManage
 
 ### Module Overview
 
-| Module | Files | Responsibility |
-|--------|-------|----------------|
-| `core/base/` | 5 | Configuration, constants, exception definitions |
-| `core/initializer/` | 6 | Plugin initialization orchestration, Provider loading, DB setup |
-| `core/managers/` | 40+ | Core business logic: memory engine, conversation, decay, backup |
-| `core/processors/` | 20 | LLM-driven memory extraction, classification, formatting |
-| `core/retrieval/` | 22 | Multi-path retrieval: BM25, vector, hybrid, graph, reranking |
-| `core/storage/` | 16 | SQLite persistence: atoms, conversations, graphs, notes, knowledge |
-| `core/api/` | 15 | REST API endpoints: CRUD, batch, stats, backup |
-| `core/validators/` | 5 | Index consistency verification and rebuild |
-| `core/schedulers/` | 2 | Memory decay and backup scheduling |
-| `core/models/` | 8 | Data model definitions |
-| `core/tools/` | 5 | AstrBot LLM Agent tool integration |
-| `core/commands/` | 3 | User commands: query and maintenance |
-| `core/handlers/` | 3 | Recall and reflection event handlers |
-| `core/cleaners/` | 2 | Injection cleaning |
-| `core/dedup/` | 2 | Message deduplication |
-| `core/extractors/` | 2 | Message content extraction |
-| `pages/dashboard/` | — | React web admin panel (10 pages) |
-| `tests/` | 19 | pytest test suite |
+| Module | Responsibility |
+|--------|----------------|
+| `core/platform/config/` | Configuration models, validation, revisions, and runtime effects |
+| `core/platform/composition/` | Provider loading, database setup, component wiring, and lifecycle |
+| `core/platform/transport/` | Page API, commands, Agent tools, and realtime transport |
+| `core/platform/security/` | Prompt protection and structured-output guardrails |
+| `core/shared/` | Shared ports, DTOs, SQL constants, and pure utilities |
+| `core/features/memory/` | MemoryEngine, canonical persistence, graph storage, and validators |
+| `core/features/conversation/` | Sessions, messages, and conversation management |
+| `core/features/recall/` | Recall orchestration and memory processing |
+| `core/features/retrieval/` | BM25, vector, graph, fusion, and reranking |
+| `core/features/injection/` | Injection routing, execution, formatting, and decision recording |
+| `core/features/reflection/` | Reflection windows, candidate extraction, and canonical writes |
+| `core/features/evaluation/` | Offline retrieval evaluation and ablation |
+| `core/features/cognition/` | Affection, expression, jargon, and social relationships |
+| `pages/dashboard/` | React web administration panel |
+| `tests/` | pytest behavioral, contract, integration, and evaluation suites |
 
 ## Quick Start
 
@@ -213,7 +210,7 @@ Run `uv sync --locked --dev`, then `uv run --locked python scripts/check_all.py`
 | `/memora status` | Show plugin readiness and core component status |
 | `/memora health` | Show the runtime health score, affected domains, and fixed troubleshooting suggestions |
 | `/memora diagnostics` | Show the live Provider, recall, task, index, and write diagnostics snapshot |
-| `/memora search <query> [k]` | Search memories, with `k=5` by default |
+| `/memora search <query> [k] [true|false]` | Search memories, with `k=5` by default; trailing `true` includes low-confidence mark_write memories |
 | `/memora trace <query> [k]` | Trace recall stages and scores for the current session without echoing memory bodies in chat |
 | `/memora forget <doc_id>` | Delete a specific memory |
 | `/memora rebuild-index` | Rebuild vector/BM25 indexes |
@@ -362,7 +359,7 @@ astrbot_plugin_memora/
 │
 ├── core/                      # Core source code
 │   ├── base/                  # Config, constants, exceptions
-│   ├── initializer/           # Plugin initialization orchestration
+│   ├── platform/composition/  # Plugin initialization and runtime lifecycle
 │   ├── managers/              # Core business logic (40+ files)
 │   ├── processors/            # LLM memory extraction (20 files)
 │   ├── retrieval/             # Multi-path retrieval (22 files)

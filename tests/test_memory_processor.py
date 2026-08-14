@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
-from core.models.conversation_models import Message
-from core.processors.memory_processor import MemoryProcessor
+from core.features.recall.processors.memory_grounding import GroundingResult
+from core.features.recall.processors.memory_processor import MemoryProcessor
+from core.shared.contracts.conversation import Message
+from core.shared.cost_control import CostControl
+from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
+
+_ProcessorFactory = Callable[..., MemoryProcessor]
 
 
 def _quality_control() -> CostControl:
@@ -139,7 +144,7 @@ class TestBuildMemoryFromStructuredData:
 
 class TestProcessConversation:
     @pytest.fixture
-    def make_processor(self) -> callable:
+    def make_processor(self) -> _ProcessorFactory:
         def _make(
             llm_response: str = "", config: dict | None = None
         ) -> MemoryProcessor:
@@ -191,7 +196,7 @@ class TestProcessConversation:
         ]
 
     def test_process_basic_private_chat(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -204,7 +209,7 @@ class TestProcessConversation:
         assert "importance" in results[0]
 
     def test_process_group_chat(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -220,7 +225,7 @@ class TestProcessConversation:
 
     def test_trusted_message_identity_overrides_llm_participants(
         self,
-        make_processor: callable,
+        make_processor: _ProcessorFactory,
     ) -> None:
         """可信 Message 身份应确定参与者顺序、标签和当前名称快照。"""
 
@@ -307,15 +312,15 @@ class TestProcessConversation:
             "10002": "成员乙",
         }
         assert metadata["subject_ids"] == ["10001"]
-        prompt = processor.llm_client.call_llm_with_retry_result.await_args.kwargs[
-            "prompt"
-        ]
+        llm_call = processor.llm_client.call_llm_with_retry_result.await_args
+        assert llm_call is not None
+        prompt = llm_call.kwargs["prompt"]
         assert "新昵称（QQ:10001）" in prompt
         assert "禁止猜测、改写或交换稳定标识" in prompt
 
     def test_untrusted_message_metadata_keeps_legacy_participants(
         self,
-        make_processor: callable,
+        make_processor: _ProcessorFactory,
     ) -> None:
         """缺少可信标志时不得接受伪造 canonical 字段，旧参与者语义保持不变。"""
 
@@ -358,7 +363,7 @@ class TestProcessConversation:
             asyncio.run(proc.process_conversation([]))
 
     def test_process_with_serial_position_hint(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -374,7 +379,7 @@ class TestProcessConversation:
         assert results[0]["importance"] >= 0.5
 
     def test_process_with_interest_profile(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -392,7 +397,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_emotion_tags(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -406,7 +411,7 @@ class TestProcessConversation:
         assert "emotion_tags" in results[0]["metadata"]
 
     def test_process_with_causal_relations(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -420,7 +425,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_memories_array(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -446,7 +451,7 @@ class TestProcessConversation:
             asyncio.run(proc.process_conversation(sample_messages))
 
     def test_process_memories_with_string_entry_skipped(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -461,7 +466,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_memories_empty_summary_and_facts_skipped(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -476,7 +481,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_emotional_intensity_boost(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -492,7 +497,7 @@ class TestProcessConversation:
         assert results[0]["importance"] >= 0.5
 
     def test_process_with_persona_id(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -503,7 +508,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_continuity_context(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -517,7 +522,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_with_serial_position_first_and_last(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -532,7 +537,7 @@ class TestProcessConversation:
         assert results[0]["importance"] >= 0.5
 
     def test_process_serpent_metadata_serial_position(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -553,7 +558,7 @@ class TestProcessConversation:
         assert "emotion_tags" in results[0]["metadata"]
 
     def test_process_low_quality_still_returns(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -565,7 +570,7 @@ class TestProcessConversation:
         assert len(results) >= 1
 
     def test_process_guardrails_valid_memory_extraction(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -582,7 +587,7 @@ class TestProcessConversation:
         assert results[0]["importance"] == 0.8
 
     def test_process_guardrails_accepts_configured_summary_contract(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         """Prompt 约定的 summary 输出应通过护栏并完整进入存储 metadata。"""
 
@@ -606,7 +611,7 @@ class TestProcessConversation:
         assert results[0]["metadata"].get("guardrail_fallback") is not True
 
     def test_process_guardrails_empty_memories_falls_back_to_legacy_parser(
-        self, make_processor: callable, sample_messages: list[Message]
+        self, make_processor: _ProcessorFactory, sample_messages: list[Message]
     ) -> None:
         import asyncio
 
@@ -738,3 +743,298 @@ class TestGeneratePersonaInterpretations:
             )
         # Error should be handled, should not raise
         assert "secondary" not in result
+
+
+class _CountingGateRuntime:
+    """记录 snapshot() 调用次数的假门禁运行时。"""
+
+    def __init__(self, snapshot: Any) -> None:
+        self._snapshot = snapshot
+        self.snapshot_calls = 0
+
+    def snapshot(self) -> Any:
+        """返回固定快照并累计调用次数。"""
+
+        self.snapshot_calls += 1
+        return self._snapshot
+
+
+class TestGateIntegration:
+    @pytest.fixture
+    def make_gated_processor(self) -> Callable[..., MemoryProcessor]:
+        def _make(
+            runtime: _CountingGateRuntime,
+            llm_response: str,
+            *,
+            cost_control: CostControl | None = None,
+        ) -> MemoryProcessor:
+            ctx = MagicMock()
+            ctx.get_using_provider.return_value = None
+            ctx.persona_manager = None
+            ctx.get_registered_llm_tools.return_value = []
+            provider = MagicMock()
+            response = AsyncMock()
+            response.completion_text = llm_response
+            provider.text_chat = AsyncMock(return_value=response)
+            return MemoryProcessor(
+                context=ctx,
+                llm_provider=provider,
+                config={},
+                cost_control=cost_control,
+                gate_runtime=runtime,
+            )
+
+        return _make
+
+    @pytest.mark.asyncio
+    async def test_profile_checks_toggle_disables_numeric_check(
+        self, make_gated_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """profile 关闭数字检查后，来源不含的数字不再触发冲突原因码。"""
+        from core.features.quality.application.gate_runtime import build_gate_snapshot
+        from core.features.quality.domain.gate_config import (
+            GateChecks,
+            GateConfig,
+            GateProfile,
+        )
+
+        config = GateConfig(
+            profiles=(
+                GateProfile(name="private", checks=GateChecks(numeric_check=False)),
+                GateProfile(name="group", checks=GateChecks(numeric_check=False)),
+            )
+        )
+        runtime = _CountingGateRuntime(build_gate_snapshot(config))
+        llm_response = (
+            '{"memories":[{"content":"用户有三台手机",'
+            '"key_facts":["用户有三台手机"],"topics":["手机"],'
+            '"importance":0.7,"sentiment":"neutral",'
+            '"source_refs":[{"message_index":0,"start":0,"end":7}]}],'
+            '"confidence":0.8,"extraction_quality":"high"}'
+        )
+        proc = make_gated_processor(runtime, llm_response)
+        messages = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="我喜欢喝咖啡。",
+                sender_id="user1",
+                sender_name="Alice",
+                timestamp=time.time(),
+            )
+        ]
+
+        results = await proc.process_conversation(messages)
+
+        assert results
+        assert (
+            "grounding_numeric_conflict"
+            not in results[0]["metadata"]["grounding_reason_codes"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_gate_disabled_skips_grounding(
+        self, make_gated_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """主开关关闭时跳过 grounding 与质量判定，候选全部放行。"""
+        from core.features.quality.application.gate_runtime import build_gate_snapshot
+        from core.features.quality.domain.gate_config import GateConfig
+
+        runtime = _CountingGateRuntime(build_gate_snapshot(GateConfig(enabled=False)))
+        llm_response = (
+            '{"summary":"某用户做了某事","topics":["测试"],'
+            '"key_facts":["某用户做了某事"],"sentiment":"positive","importance":0.7}'
+        )
+        proc = make_gated_processor(runtime, llm_response)
+        messages = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="你好",
+                sender_id="user1",
+                sender_name="Alice",
+                timestamp=time.time(),
+            )
+        ]
+
+        results = await proc.process_conversation(messages)
+
+        assert results
+        for result in results:
+            assert result["metadata"]["quality_gate_action"] == "allow"
+            assert result["metadata"]["grounding_reason_codes"] == []
+            assert result["metadata"]["grounding_status"] == "grounded"
+
+    @pytest.mark.asyncio
+    async def test_window_uses_single_snapshot(
+        self, make_gated_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """一次窗口只取一次快照，保证窗口内配置一致。"""
+        from core.features.quality.application.gate_runtime import build_gate_snapshot
+        from core.features.quality.domain.gate_config import GateConfig
+
+        runtime = _CountingGateRuntime(build_gate_snapshot(GateConfig()))
+        llm_response = (
+            '{"summary":"测试摘要","topics":["测试"],'
+            '"key_facts":["事实1"],"sentiment":"positive","importance":0.7}'
+        )
+        proc = make_gated_processor(runtime, llm_response)
+        messages = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="你好，我喜欢喝咖啡",
+                sender_id="user1",
+                sender_name="Alice",
+                timestamp=time.time(),
+            )
+        ]
+
+        await proc.process_conversation(messages)
+
+        assert runtime.snapshot_calls == 1
+
+
+class TestGroundingJudgeResolution:
+    @pytest.fixture
+    def make_judge_processor(self) -> Callable[..., MemoryProcessor]:
+        def _make(
+            judge: AsyncMock,
+            *,
+            cost_control: CostControl | None = None,
+        ) -> MemoryProcessor:
+            ctx = MagicMock()
+            ctx.get_using_provider.return_value = None
+            ctx.persona_manager = None
+            ctx.get_registered_llm_tools.return_value = []
+            return MemoryProcessor(
+                context=ctx,
+                llm_provider=MagicMock(),
+                config={},
+                cost_control=cost_control,
+                grounding_judge=judge,
+            )
+
+        return _make
+
+    @staticmethod
+    def _needs_judge() -> GroundingResult:
+        """构造需要 Judge 复核的确定性结论。"""
+
+        return GroundingResult(
+            allowed=False,
+            status="needs_judge",
+            reason_codes=("grounding_needs_judge",),
+            evidence=[],
+            source_text="来源片段",
+            claim_text="候选声明",
+            requires_judge=True,
+        )
+
+    @pytest.mark.asyncio
+    async def test_judge_enabled_bypasses_feature_allow_but_respects_budget(
+        self, make_judge_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """开关开启而成本许可未放行时，Judge 仍经请求预算旁路执行。"""
+        from core.features.quality.domain.gate_config import GateJudge, GateProfile
+
+        profile = GateProfile(name="p", judge=GateJudge(enabled=True))
+        judge = AsyncMock(return_value=True)
+        # balanced 模式默认不放行 memory_grounding_judge
+        proc = make_judge_processor(judge, cost_control=CostControl())
+
+        with extra_llm_budget_scope(ExtraLlmBudget(1)):
+            result = await proc.resolve_grounding_judge(
+                self._needs_judge(),
+                is_group_chat=False,
+                profile=profile,
+            )
+
+        assert result.allowed is True
+        assert result.reason_codes == ("grounding_judge_supported",)
+        judge.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_judge_enabled_but_no_budget_quarantines(
+        self, make_judge_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """开关开启但请求预算额度为零时，仍 fail-closed 隔离。"""
+        from core.features.quality.domain.gate_config import GateJudge, GateProfile
+
+        profile = GateProfile(name="p", judge=GateJudge(enabled=True))
+        judge = AsyncMock(return_value=True)
+        proc = make_judge_processor(judge, cost_control=CostControl())
+
+        with extra_llm_budget_scope(ExtraLlmBudget(0)):
+            result = await proc.resolve_grounding_judge(
+                self._needs_judge(),
+                is_group_chat=False,
+                profile=profile,
+            )
+
+        assert result.allowed is False
+        assert result.reason_codes == ("grounding_judge_unavailable",)
+        judge.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_custom_template_renders_placeholders(self) -> None:
+        """自定义模板渲染 {claim_text} 与 {source_text} 后发送给 Provider。"""
+        ctx = MagicMock()
+        ctx.get_using_provider.return_value = None
+        provider = MagicMock()
+        response = AsyncMock()
+        response.completion_text = '{"supported": true}'
+        provider.text_chat = AsyncMock(return_value=response)
+        proc = MemoryProcessor(context=ctx, llm_provider=provider, config={})
+
+        payload = {"claim_text": "用户有三台手机", "source_text": "我只有一台手机"}
+        template = "判断：{claim_text} vs {source_text}"
+
+        parsed = await proc._call_grounding_judge(payload, template)
+
+        assert parsed["supported"] is True
+        prompt = provider.text_chat.await_args.kwargs["prompt"]
+        assert "用户有三台手机" in prompt
+        assert "我只有一台手机" in prompt
+        assert "{claim_text}" not in prompt
+        assert "{source_text}" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_judge_template_renders_extended_placeholders(self) -> None:
+        """自定义模板渲染 {chat_type}/{topics}/{importance} 后发送给 Provider。"""
+        from core.features.quality.domain.gate_config import GateJudge, GateProfile
+
+        ctx = MagicMock()
+        ctx.get_using_provider.return_value = None
+        provider = MagicMock()
+        response = AsyncMock()
+        response.completion_text = '{"supported": true}'
+        provider.text_chat = AsyncMock(return_value=response)
+        proc = MemoryProcessor(context=ctx, llm_provider=provider, config={})
+        profile = GateProfile(
+            name="p",
+            judge=GateJudge(
+                enabled=True,
+                prompt_template=(
+                    "{chat_type} 判断：{claim_text} vs {source_text}，"
+                    "主题 {topics}，重要性 {importance}"
+                ),
+            ),
+        )
+
+        with extra_llm_budget_scope(ExtraLlmBudget(1)):
+            result = await proc.resolve_grounding_judge(
+                self._needs_judge(),
+                is_group_chat=True,
+                profile=profile,
+                topics=("猫",),
+                importance=0.9,
+            )
+
+        assert result.allowed is True
+        prompt = provider.text_chat.await_args.kwargs["prompt"]
+        assert "群聊" in prompt and "猫" in prompt and "0.9" in prompt
+        assert "候选声明" in prompt and "来源片段" in prompt

@@ -6,20 +6,22 @@ import aiosqlite
 import pytest
 import pytest_asyncio
 
-from core.managers.memory_evolution_gate import MemoryEvolutionGate
-from core.managers.memory_evolution_manager import (
+from core.features.evolution.application import (
     EvolutionLeaseLost,
     EvolutionProposalRejected,
+    MemoryEvolutionGate,
     MemoryEvolutionManager,
 )
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     EvolutionProposal,
     JobState,
     MemoryProjectionProposal,
     MemoryRelationProposal,
-    MemorySourceRef,
+    ProjectionType,
+    RelationType,
 )
-from core.storage.memory_evolution_store import MemoryEvolutionStore
+from core.features.evolution.infrastructure import MemoryEvolutionStore
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 
@@ -104,7 +106,9 @@ async def test_disabled_mode_does_not_enqueue(manager):
 async def test_schedule_and_low_impact_relation_become_active(manager):
     manager.consolidator.propose.return_value = EvolutionProposal(
         relations=(
-            MemoryRelationProposal("M1", "M2", "same_episode", 0.8, None, None, None),
+            MemoryRelationProposal(
+                "M1", "M2", RelationType.SAME_EPISODE, 0.8, None, None, None
+            ),
         )
     )
     await seed_documents(manager.store, source(17), source(18))
@@ -114,7 +118,7 @@ async def test_schedule_and_low_impact_relation_become_active(manager):
     await manager.store.reject_job(
         scheduled.job_id, scheduled.worker_token, "test_cleanup"
     )
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     await manager.store.enqueue_job(
         JobSpec("private:user-a", "bucket", (17, 18), "manual", datetime.now(UTC))
@@ -156,11 +160,13 @@ async def test_rebuild_replays_every_source_even_when_pending_cap_is_full(manage
 async def test_unknown_alias_is_rejected(manager):
     manager.consolidator.propose.return_value = EvolutionProposal(
         relations=(
-            MemoryRelationProposal("M99", "M1", "related", 0.8, None, None, None),
+            MemoryRelationProposal(
+                "M99", "M1", RelationType.RELATED, 0.8, None, None, None
+            ),
         )
     )
     await seed_documents(manager.store, source(17))
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     job = await manager.store.enqueue_job(
         JobSpec("private:user-a", "bucket", (17,), "unknown-alias", datetime.now(UTC))
@@ -177,7 +183,7 @@ async def test_non_structured_proposal_is_rejected_without_canonical_mutation(ma
         "canonical_updates": [{"memory_id": 17, "content": "覆盖正文"}]
     }
     await seed_documents(manager.store, source(17))
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     job = await manager.store.enqueue_job(
         JobSpec("private:user-a", "bucket", (17,), "proposal-schema", datetime.now(UTC))
@@ -197,8 +203,12 @@ async def test_oversized_proposal_is_rejected_instead_of_truncated(manager):
     manager.candidate_limit = 1
     proposal = EvolutionProposal(
         relations=(
-            MemoryRelationProposal("M1", "M2", "related", 0.8, None, None, None),
-            MemoryRelationProposal("M1", "M3", "related", 0.8, None, None, None),
+            MemoryRelationProposal(
+                "M1", "M2", RelationType.RELATED, 0.8, None, None, None
+            ),
+            MemoryRelationProposal(
+                "M1", "M3", RelationType.RELATED, 0.8, None, None, None
+            ),
         )
     )
 
@@ -210,7 +220,7 @@ async def test_oversized_proposal_is_rejected_instead_of_truncated(manager):
 async def test_cancelled_proposal_propagates_and_restores_pending(manager):
     manager.consolidator.propose.side_effect = asyncio.CancelledError()
     await seed_documents(manager.store, source(17))
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     await manager.store.enqueue_job(
         JobSpec("private:user-a", "bucket", (17,), "cancelled", datetime.now(UTC))
@@ -235,7 +245,13 @@ async def test_high_impact_is_candidate_and_privacy_uses_strictest_source(manage
     proposal = EvolutionProposal(
         relations=(
             MemoryRelationProposal(
-                "M1", "M2", "preference_change", 0.9, None, None, None
+                "M1",
+                "M2",
+                RelationType.PREFERENCE_CHANGE,
+                0.9,
+                None,
+                None,
+                None,
             ),
         )
     )
@@ -254,7 +270,9 @@ async def test_high_impact_cannot_become_active_when_review_flag_is_disabled(man
     manager.require_review_for_high_impact = False
     proposal = EvolutionProposal(
         relations=(
-            MemoryRelationProposal("M1", "M2", "contradicts", 0.99, None, None, None),
+            MemoryRelationProposal(
+                "M1", "M2", RelationType.CONTRADICTS, 0.99, None, None, None
+            ),
         )
     )
 
@@ -267,7 +285,9 @@ async def test_high_impact_cannot_become_active_when_review_flag_is_disabled(man
 async def test_scope_mismatch_is_rejected(manager):
     proposal = EvolutionProposal(
         relations=(
-            MemoryRelationProposal("M1", "M2", "related", 0.8, None, None, None),
+            MemoryRelationProposal(
+                "M1", "M2", RelationType.RELATED, 0.8, None, None, None
+            ),
         )
     )
     with pytest.raises(EvolutionProposalRejected, match="scope_mismatch"):
@@ -281,7 +301,9 @@ async def test_scope_mismatch_is_rejected(manager):
 async def test_low_confidence_low_impact_relation_stays_candidate(manager):
     proposal = EvolutionProposal(
         relations=(
-            MemoryRelationProposal("M1", "M2", "same_episode", 0.1, None, None, None),
+            MemoryRelationProposal(
+                "M1", "M2", RelationType.SAME_EPISODE, 0.1, None, None, None
+            ),
         )
     )
     plan = manager._proposal_to_plan(proposal, [source(17), source(18)])
@@ -292,9 +314,15 @@ async def test_low_confidence_low_impact_relation_stays_candidate(manager):
 async def test_three_node_cycle_is_rejected(manager):
     proposal = EvolutionProposal(
         relations=(
-            MemoryRelationProposal("M1", "M2", "causes", 0.9, None, None, None),
-            MemoryRelationProposal("M2", "M3", "causes", 0.9, None, None, None),
-            MemoryRelationProposal("M3", "M1", "causes", 0.9, None, None, None),
+            MemoryRelationProposal(
+                "M1", "M2", RelationType.CAUSES, 0.9, None, None, None
+            ),
+            MemoryRelationProposal(
+                "M2", "M3", RelationType.CAUSES, 0.9, None, None, None
+            ),
+            MemoryRelationProposal(
+                "M3", "M1", RelationType.CAUSES, 0.9, None, None, None
+            ),
         )
     )
     with pytest.raises(EvolutionProposalRejected, match="duplicate_or_cycle"):
@@ -306,7 +334,7 @@ async def test_conflict_projection_requires_both_conflict_sides(manager):
     proposal = EvolutionProposal(
         projections=(
             MemoryProjectionProposal(
-                "conflict_set",
+                ProjectionType.CONFLICT_SET,
                 ("M1", "M2"),
                 None,
                 "两条证据存在冲突。",
@@ -322,7 +350,7 @@ async def test_conflict_projection_requires_both_conflict_sides(manager):
 
 @pytest.mark.asyncio
 async def test_source_revision_change_is_rejected_before_apply(manager):
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     manager.consolidator.propose.return_value = EvolutionProposal()
     manager.store.load_sources = AsyncMock(
@@ -342,7 +370,7 @@ async def test_source_revision_change_is_rejected_before_apply(manager):
 async def test_job_revision_stale_before_claim_is_invalidated(manager):
     """入队后 canonical revision 改变时不得按新正文执行旧 job。"""
 
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     await seed_documents(manager.store, source(17, revision="r-17-new"))
     job = await manager.store.enqueue_job(
@@ -365,7 +393,7 @@ async def test_job_revision_stale_before_claim_is_invalidated(manager):
 
 @pytest.mark.asyncio
 async def test_processing_renews_lease(manager):
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     manager.lease_seconds = 1
     await seed_documents(manager.store, source(17))
@@ -397,7 +425,7 @@ async def test_processing_renews_lease(manager):
 async def test_lost_lease_before_apply_does_not_write_derived_plan(manager):
     """最终 ownership 检查失败时不得写 relation/projection 或完成 job。"""
 
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     await seed_documents(manager.store, source(17))
     manager.consolidator.propose.return_value = EvolutionProposal()
@@ -422,12 +450,12 @@ async def test_lost_lease_before_apply_does_not_write_derived_plan(manager):
 async def test_retryable_provider_failure_enters_retry_wait(manager, monkeypatch):
     """临时 Provider 错误按指数退避进入 retry_wait。"""
 
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     manager.max_attempts = 2
     manager.retry_base_delay_seconds = 2
     monkeypatch.setattr(
-        "core.managers.memory_evolution_manager.random.uniform",
+        "core.features.evolution.application.memory_evolution_manager.random.uniform",
         lambda _start, _end: 0.0,
     )
     await seed_documents(manager.store, source(17))
@@ -450,7 +478,7 @@ async def test_retryable_provider_failure_enters_retry_wait(manager, monkeypatch
 async def test_non_retryable_proposal_error_goes_directly_to_dead(manager):
     """确定性的 proposal 解析错误不应浪费 provider 重试预算。"""
 
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     manager.max_attempts = 5
     await seed_documents(manager.store, source(17))
@@ -474,7 +502,7 @@ async def test_non_retryable_proposal_error_goes_directly_to_dead(manager):
 async def test_store_source_race_invalidates_job_instead_of_retrying(manager):
     """最终派生事务发现 source revision 竞态时直接失效旧 job。"""
 
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     await seed_documents(manager.store, source(17))
     manager.consolidator.propose.return_value = EvolutionProposal()
@@ -499,7 +527,7 @@ async def test_store_source_race_invalidates_job_instead_of_retrying(manager):
 async def test_start_recovers_expired_lease_before_worker_loop(manager):
     """启动 worker 前必须先恢复过期 processing job。"""
 
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     old_now = datetime.now(UTC) - timedelta(minutes=5)
     job = await manager.store.enqueue_job(
@@ -539,13 +567,15 @@ async def test_provider_failure_retries_then_reaches_dead(tmp_path):
         consolidator,
         {**limits(), "max_attempts": 1},
     )
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     job = await store.enqueue_job(
         JobSpec("private:user-a", "bucket", (17,), "dead", datetime.now(UTC))
     )
     await manager.run_once()
-    assert (await store.get_job(job.job_id)).state.value == "dead"
+    stored = await store.get_job(job.job_id)
+    assert stored is not None
+    assert stored.state.value == "dead"
     await manager.stop()
     await store.close()
 
@@ -653,7 +683,7 @@ async def test_stop_propagates_caller_cancellation(manager):
 async def test_direct_process_claim_cancel_restores_pending(manager):
     manager.consolidator.propose.side_effect = asyncio.CancelledError()
     await seed_documents(manager.store, source(17))
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     await manager.store.enqueue_job(
         JobSpec(
@@ -671,7 +701,7 @@ async def test_direct_process_claim_cancel_restores_pending(manager):
 async def test_cancel_restore_failure_does_not_replace_cancelled_error(manager):
     """恢复 pending 失败只能记录原因，原始取消必须继续传播。"""
 
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     manager.consolidator.propose.side_effect = asyncio.CancelledError()
     await seed_documents(manager.store, source(17))
@@ -701,7 +731,7 @@ async def test_projection_sources_pass_scope_validation(manager):
     manager.consolidator.propose.return_value = EvolutionProposal(
         projections=(
             MemoryProjectionProposal(
-                "episode_summary",
+                ProjectionType.EPISODE_SUMMARY,
                 ("M1", "M2"),
                 None,
                 "两条证据属于同一事件。",
@@ -712,7 +742,7 @@ async def test_projection_sources_pass_scope_validation(manager):
         )
     )
     await seed_documents(manager.store, source(17), source(18))
-    from core.models.memory_evolution import JobSpec
+    from core.features.evolution.domain import JobSpec
 
     await manager.store.enqueue_job(
         JobSpec("private:user-a", "bucket", (17, 18), "projection", datetime.now(UTC))

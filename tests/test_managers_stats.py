@@ -10,9 +10,13 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.managers import stats_operations
-from core.managers.maintenance_operations import MaintenanceOperations
-from core.validators.index_validator import IndexValidator
+import core.features.memory.application.stats_operations as stats_operations
+from core.features.memory.application.maintenance_operations import (
+    MaintenanceOperations,
+)
+from core.features.memory.infrastructure.validators.index_validator import (
+    IndexValidator,
+)
 
 # ---------------------------------------------------------------------------
 # get_session_memories tests

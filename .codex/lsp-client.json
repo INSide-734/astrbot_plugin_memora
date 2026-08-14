@@ -1,0 +1,15 @@
+{
+  "lsp": {
+    "pyright-uv": {
+      "command": [
+        "uv",
+        "run",
+        "--locked",
+        "python",
+        "scripts/run_pyright_langserver.py",
+        "--stdio"
+      ],
+      "extensions": [".py", ".pyi"]
+    }
+  }
+}

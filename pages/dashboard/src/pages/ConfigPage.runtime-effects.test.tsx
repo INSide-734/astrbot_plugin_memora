@@ -34,6 +34,7 @@ function syncResult(
     status: "synced",
     error: null,
     runtimeEffects,
+    promptDefaults: null,
     changeField: vi.fn(),
     refresh: vi.fn(),
     apply: vi.fn(),

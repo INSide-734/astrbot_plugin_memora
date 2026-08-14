@@ -120,7 +120,7 @@
     "notice_exec": "AstrBot 对话历史已更新，记忆注入片段已清理。"
   },
   "help": {
-    "text": "Memora 使用指南\n\n核心指令:\n/memora status              查看系统状态\n/memora search <关键词> [数量]  搜索记忆(默认5条)\n/memora forget <ID>          删除指定记忆\n/memora rebuild-index       重建索引（修复索引不一致）\n/memora rebuild-graph       重建图记忆索引（回填旧记忆）\n/memora webui               查看 WebUI 管理界面入口\n/memora summarize           立即触发当前会话的记忆总结\n/memora reset               重置当前会话记忆上下文\n/memora cleanup [preview|exec] 清理历史消息中的记忆片段(默认preview预演)\n/memora help                显示此帮助\n\n使用建议:\n• 日常查询使用 search 指令\n• 复杂管理请在 AstrBot 仪表盘中进入 插件 -> Memora -> Pages -> dashboard\n• 记忆会自动保存对话内容\n• 使用 forget 删除敏感信息\n• 索引不一致时执行 rebuild-index\n• 启用图记忆后建议执行 rebuild-graph 回填旧数据\n• 更新插件后建议执行 cleanup 清理旧数据\n\ncleanup 命令示例:\n  /memora cleanup          # 预演模式,仅显示统计\n  /memora cleanup preview  # 同上\n  /memora cleanup exec     # 执行实际清理\n\n更多信息: https://github.com/INSide-734/astrbot_plugin_memora"
+    "text": "Memora 使用指南\n\n核心指令:\n/memora status              查看系统状态\n/memora search <关键词> [数量] [true|false]  搜索记忆(默认5条，末尾 true 包含低置信记忆)\n/memora forget <ID>          删除指定记忆\n/memora rebuild-index       重建索引（修复索引不一致）\n/memora rebuild-graph       重建图记忆索引（回填旧记忆）\n/memora webui               查看 WebUI 管理界面入口\n/memora summarize           立即触发当前会话的记忆总结\n/memora reset               重置当前会话记忆上下文\n/memora cleanup [preview|exec] 清理历史消息中的记忆片段(默认preview预演)\n/memora help                显示此帮助\n\n使用建议:\n• 日常查询使用 search 指令\n• 复杂管理请在 AstrBot 仪表盘中进入 插件 -> Memora -> Pages -> dashboard\n• 记忆会自动保存对话内容\n• 使用 forget 删除敏感信息\n• 索引不一致时执行 rebuild-index\n• 启用图记忆后建议执行 rebuild-graph 回填旧数据\n• 更新插件后建议执行 cleanup 清理旧数据\n\ncleanup 命令示例:\n  /memora cleanup          # 预演模式,仅显示统计\n  /memora cleanup preview  # 同上\n  /memora cleanup exec     # 执行实际清理\n\n更多信息: https://github.com/INSide-734/astrbot_plugin_memora"
   },
   "init": {
     "ready": "插件已就绪。可使用 /memora help 查看可用命令。",
@@ -164,6 +164,7 @@
       "recall": "召回测试",
       "system": "系统概览",
       "config": "配置",
+      "gate": "门禁",
       "profiles": "用户画像",
       "knowledge": "知识库",
       "notes": "笔记",
@@ -177,6 +178,208 @@
       "jargon": "黑话发现",
       "affection": "好感度",
       "social": "社交关系"
+    },
+    "gate": {
+      "title": "记忆写入门禁",
+      "subtitle": "配置检查开关、阈值、词表、处置策略、Judge 与自定义规则，保存后即时生效，无需重启。",
+      "wip": "建设中",
+      "enabledLabel": "门禁总开关",
+      "profileSelect": "当前 Profile",
+      "save": "保存配置",
+      "saving": "正在保存…",
+      "appliedToast": "已保存并即时生效，无需重启",
+      "loading": "正在加载门禁配置",
+      "loadErrorTitle": "无法加载门禁配置",
+      "loadErrorDescription": "请检查后端配置接口后重试",
+      "retry": "重试",
+      "invalidSaveHint": "当前配置存在校验错误，无法保存",
+      "profile": {
+        "title": "Profile 与绑定",
+        "defaultLabel": "默认 Profile",
+        "defaultHint": "无绑定命中时使用",
+        "add": "新增 Profile",
+        "duplicate": "复制",
+        "rename": "重命名",
+        "delete": "删除",
+        "nameLabel": "Profile 名",
+        "nameHint": "1-32 位小写字母、数字、- 或 _，且唯一",
+        "duplicateName": "{0} 副本",
+        "deleteBlocked": "该 Profile 是默认 Profile 或被绑定规则引用，无法删除",
+        "bindingTitle": "绑定规则（按序首个匹配生效）",
+        "bindingAdd": "添加绑定",
+        "bindingProfile": "Profile",
+        "bindingChatType": "会话类型",
+        "bindingGroupId": "群 ID（可选）",
+        "bindingPersonaId": "人格 ID（可选）",
+        "bindingUp": "上移绑定",
+        "bindingDown": "下移绑定",
+        "bindingRemove": "移除绑定",
+        "any": "任意"
+      },
+      "checks": {
+        "title": "检查开关",
+        "numeric": "数字冲突检查",
+        "negation": "否定极性检查",
+        "groupSubject": "群聊主体检查",
+        "groupSubjectHint": "仅群聊评估时生效",
+        "qualityLow": "低质判定"
+      },
+      "thresholds": {
+        "title": "阈值与算法参数",
+        "minDeterministic": "确定性通过分",
+        "minJudge": "Judge 支持分",
+        "minInference": "推理分",
+        "crossError": "Judge 支持分必须不大于确定性通过分"
+      },
+      "scoring": {
+        "group": "算法参数",
+        "tokenWeight": "词元分权重",
+        "sequenceEnabled": "SequenceMatcher 序列分",
+        "sequenceWeight": "序列分权重",
+        "maxReferences": "最大引用数",
+        "minSummaryChars": "摘要最少字符数"
+      },
+      "wordlists": {
+        "title": "词表",
+        "whitelist": "否定白名单（与内置并集）",
+        "markers": "否定标记集",
+        "markersHint": "内置标记：不/没/无/未/否/never/not/no；replace 模式完全由本列表掌控",
+        "generic": "低质泛化词",
+        "synonyms": "同义替换对",
+        "modeLabel": "模式",
+        "modeAppend": "追加",
+        "modeReplace": "替换",
+        "source": "原文",
+        "target": "替换为",
+        "add": "添加",
+        "remove": "移除",
+        "itemLimitHint": "已达上限 {0} 条",
+        "itemLengthHint": "每项不超过 {0} 字符"
+      },
+      "disposition": {
+        "title": "处置策略",
+        "default": "默认处置",
+        "quarantine": "隔离（人工复核）",
+        "discard": "丢弃",
+        "markWrite": "标记写入",
+        "overridesTitle": "按原因码处置（≤20 条）",
+        "reasonCode": "原因码",
+        "overrideAdd": "添加映射",
+        "overrideRemove": "移除映射"
+      },
+      "judge": {
+        "title": "Judge",
+        "enabled": "启用 Judge 复核",
+        "costHint": "开启后每次复核消耗 LLM 额度",
+        "template": "Prompt 模板（空 = 内置）",
+        "templateHint": "占位符：{claim_text}、{source_text}（必含）、{chat_type}、{topics}、{importance}；≤2000 字符。空 = 使用文件默认模板",
+        "placeholderError": "模板必须包含 {claim_text} 与 {source_text}",
+        "unknownPlaceholderError": "模板包含未知占位符：{0}"
+      },
+      "rules": {
+        "title": "规则",
+        "add": "新建规则",
+        "edit": "编辑规则",
+        "delete": "删除规则",
+        "up": "上移规则",
+        "down": "下移规则",
+        "enabled": "启用",
+        "id": "规则 ID",
+        "description": "描述",
+        "descriptionHint": "≤200 字",
+        "action": "动作",
+        "condition": "命中条件",
+        "empty": "暂无规则",
+        "newTitle": "新建规则",
+        "editTitle": "编辑规则",
+        "save": "保存规则",
+        "cancel": "取消",
+        "idError": "ID 必须为 1-64 位小写字母、数字、- 或 _",
+        "idDuplicateError": "规则 ID 已存在",
+        "conditionGroup": "条件分组",
+        "conditionMatchAll": "满足全部（AND）",
+        "conditionMatchAny": "满足任一（OR）",
+        "conditionNegate": "取反（NOT）",
+        "conditionAddGroup": "添加分组",
+        "conditionAddLeaf": "添加条件",
+        "conditionRemove": "移除条件",
+        "field": {
+          "content": "正文",
+          "summary": "摘要",
+          "key_facts": "关键事实",
+          "topics": "主题",
+          "participants": "参与者",
+          "importance": "重要性"
+        },
+        "op": "运算符",
+        "opRegex": "正则匹配",
+        "opContains": "包含任一",
+        "opExists": "非空",
+        "opLength": "长度比较",
+        "opNumeric": "数值比较",
+        "pattern": "正则",
+        "patternHint": "≤500 字符，保存时后端再次校验",
+        "values": "值（每行一个）",
+        "value": "数值",
+        "cmp": "比较",
+        "cmpGt": "大于",
+        "cmpGte": "大于等于",
+        "cmpLt": "小于",
+        "cmpLte": "小于等于",
+        "cmpEq": "等于",
+        "regexError": "正则无效：{0}",
+        "depthError": "AND/OR 分组最多嵌套 2 层",
+        "leafRequired": "请完善条件字段与取值",
+        "actionForce": "强制处置",
+        "actionImportanceDelta": "重要性增减",
+        "actionSetImportance": "设置重要性",
+        "actionAddTopics": "追加主题",
+        "actionSetPrivacy": "覆盖隐私级别",
+        "actionDropAtoms": "跳过原子分类",
+        "actionValue": "值",
+        "actionDelta": "增减量（-1 ~ 1）",
+        "actionValues": "主题（每行一个，≤5 项）",
+        "forceAllow": "放行",
+        "privacyPublic": "公开",
+        "privacyConfidential": "机密",
+        "warningAllow": "allow 仅跳过 grounding 失败与低质判定，不绕过 guardrails 与硬校验",
+        "warningSetPrivacy": "仅覆盖候选 privacy_level 字段，不绕过 scope/role 校验",
+        "warningDropAtoms": "跳过 classify_atoms；文档/FTS/图条目照常写",
+        "fieldLabel": "字段"
+      },
+      "dryrun": {
+        "title": "Dry-run 测试",
+        "hint": "不调 LLM、不写库，仅验证 profile 解析、命中规则与最终处置",
+        "profile": "Profile（显式）",
+        "contextLabel": "或按绑定上下文解析",
+        "chatType": "会话类型",
+        "groupId": "群 ID",
+        "personaId": "人格 ID",
+        "content": "正文",
+        "summary": "摘要",
+        "keyFacts": "关键事实（每行一个）",
+        "run": "运行 dry-run",
+        "running": "正在运行…",
+        "resultProfile": "解析 Profile",
+        "resultQuality": "质量判定",
+        "resultRules": "命中规则",
+        "resultDisposition": "最终处置",
+        "error": "dry-run 失败：{0}",
+        "quality": {
+          "low": "低",
+          "normal": "正常"
+        },
+        "none": "无"
+      },
+      "help": {
+        "checks": "开关拦截项：数字冲突（真实数值矛盾）、否定极性（声明与来源语义相反）、群聊主体（候选主体不属于对话成员）、低质判定（泛化词/摘要过短）。关闭后对应检查不再产生隔离原因码。",
+        "thresholds": "区间语义：支持分 = max(词元分 × 权重, 序列分 × 权重)；≥ 确定性通过分直接通过，落入 [Judge 支持分, 确定性通过分) 走 Judge 复核，低于 Judge 支持分隔离。Judge 支持分必须不大于确定性通过分。",
+        "wordlists": "append 模式与内置词表取并集；replace 模式完全由本列表掌控。同义替换对用于归一化同义表述后再做冲突判定。",
+        "disposition": "三处置与优先级：quarantine 隔离待人工复核；discard 不写库直接丢弃；mark_write 写入但默认不召回。生效优先级：规则 force_disposition > 按原因码映射（多原因码取最保守）> 默认处置。",
+        "judge": "Judge 用于 [0.08, 0.42) 区间候选的 LLM 来源复核：开启或成本许可放行时按请求级额度执行，额度不足 fail-closed 隔离。模板占位符：{claim_text}、{source_text}（必含）、{chat_type}、{topics}、{importance}；claim/source 渲染前按 1200/2400 字符截断。",
+        "rules": "六类动作边界：force_disposition 强制处置（allow 仅跳过忠实性与质量判定，不绕过硬校验）；importance_delta 累加后 clamp；set_importance 覆盖全部 delta；add_topics 去重追加（≤5）；set_privacy 只改隐私级别；drop_atoms 跳过原子分类但照常写文档/FTS/图。",
+        "dryrun": "dry-run 复用生产 evaluate：不调 LLM、不写库、不读消息窗口。可显式给 Profile 或按绑定上下文解析；仅回显解析 Profile、确定性检查、命中规则与最终处置，不回显绑定身份。"
+      }
     },
     "injection": {
       "title": "注入策略",
@@ -1712,6 +1915,17 @@
     },
     "tags": {
       "remove": "移除标签"
+    },
+    "promptTemplates": {
+      "help": {
+        "section": "自定义模板优先于内置文件模板（core/prompts/）；留空 = 使用文件默认，文件缺失时回退硬编码最小提示词。",
+        "templateHint": "可用占位符：{conversation}（必含）、{current_date}、{chat_type}、{continuity_topics}、{interests}、{emotion_tags}、{emotional_intensity}；未知占位符保存时拒绝。"
+      },
+      "error": {
+        "missingConversation": "模板必须包含 {conversation} 占位符",
+        "unknownPlaceholders": "模板包含未知占位符：{0}",
+        "unclosedBrace": "模板包含未闭合或多余的 {} 花括号"
+      }
     }
   }
 }

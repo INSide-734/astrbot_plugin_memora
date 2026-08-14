@@ -4,7 +4,11 @@ import re
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from core.page_api import PAGE_API_ALIAS_PREFIXES, PAGE_API_PREFIX, PluginPageApi
+from core.platform.transport.page_api.page_api import (
+    PAGE_API_ALIAS_PREFIXES,
+    PAGE_API_PREFIX,
+    PluginPageApi,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DASHBOARD_SRC = REPO_ROOT / "pages" / "dashboard" / "src"
@@ -327,3 +331,25 @@ def test_learning_action_is_one_post_handler_under_every_page_prefix() -> None:
     assert action_metadata["auth"] == "admin"
     assert action_metadata["risk"] == "write"
     assert action_metadata["write_guard"] is True
+
+
+def test_gate_dry_run_contract_is_post_only_under_every_page_prefix() -> None:
+    """门禁 dry-run 为只读预览，仍仅注册 POST；响应契约不含身份回显。"""
+    plugin = MagicMock()
+    api = PluginPageApi(plugin)
+    api.register_routes()
+
+    registered = {
+        (call.args[0], tuple(call.args[2]))
+        for call in plugin.context.register_web_api.call_args_list
+    }
+    for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
+        path = f"{prefix}/gate/dry-run"
+        assert (path, ("POST",)) in registered
+        assert (path, ("GET",)) not in registered
+
+    metadata = {item["path"]: item for item in api.get_route_metadata()}
+    dry_run_metadata = metadata[f"{PAGE_API_PREFIX}/gate/dry-run"]
+    assert dry_run_metadata["handler_name"] == "dry_run_gate"
+    assert dry_run_metadata["auth"] == "admin"
+    assert dry_run_metadata["risk"] == "write"

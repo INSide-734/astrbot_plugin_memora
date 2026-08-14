@@ -6,8 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.identity import IdentityTrust, NameFieldState, ResolvedIdentity
-from core.managers.event_adapter import EventAdapterMixin
+from core.features.conversation.application.event_adapter import EventAdapterMixin
+from core.features.identity.domain.models import (
+    IdentityTrust,
+    NameFieldState,
+    ResolvedIdentity,
+)
 
 
 def _trusted_group_identity() -> ResolvedIdentity:
@@ -47,7 +51,7 @@ class _TestAdapter(EventAdapterMixin):
 
         self.store = store or MagicMock()
         self._session_id_captured = None
-        self._call_kwargs = None
+        self._call_kwargs: dict[str, object] | None = None
 
     async def add_message(
         self,
@@ -77,6 +81,13 @@ class _TestAdapter(EventAdapterMixin):
         msg = MagicMock()
         msg.id = 42
         return msg
+
+
+def _captured_kwargs(adapter: _TestAdapter) -> dict[str, object]:
+    """返回已捕获的调用参数，并明确测试前置条件。"""
+
+    assert adapter._call_kwargs is not None
+    return adapter._call_kwargs
 
 
 # ---------------------------------------------------------------------------
@@ -115,7 +126,7 @@ class TestAddMessageFromEvent:
         event.get_platform_name.return_value = "qq"
 
         await adapter.add_message_from_event(event, "user", "test")
-        assert adapter._call_kwargs["session_id"] == "group-abc-123"
+        assert _captured_kwargs(adapter)["session_id"] == "group-abc-123"
 
     @pytest.mark.asyncio
     async def test_falls_back_to_session_id_for_sender(self) -> None:
@@ -138,7 +149,7 @@ class TestAddMessageFromEvent:
         event.message_obj.raw_message = MagicMock()
 
         await adapter.add_message_from_event(event, "user", "test")
-        call_kwargs = adapter._call_kwargs
+        call_kwargs = _captured_kwargs(adapter)
         assert call_kwargs["sender_id"] == "session-fallback"
 
     @pytest.mark.asyncio
@@ -155,7 +166,7 @@ class TestAddMessageFromEvent:
         event.get_platform_name.return_value = "qq"
 
         await adapter.add_message_from_event(event, "user", "group message")
-        call_kwargs = adapter._call_kwargs
+        call_kwargs = _captured_kwargs(adapter)
         assert call_kwargs["group_id"] == "group-456"
 
     @pytest.mark.asyncio
@@ -175,7 +186,7 @@ class TestAddMessageFromEvent:
         event.message_obj.self_id = "bot-999"
 
         await adapter.add_message_from_event(event, "assistant", "bot reply")
-        call_kwargs = adapter._call_kwargs
+        call_kwargs = _captured_kwargs(adapter)
         assert call_kwargs["sender_id"] == "bot-999"
 
     @pytest.mark.asyncio
@@ -193,7 +204,7 @@ class TestAddMessageFromEvent:
         event.get_self_id.return_value = "bot-999"
 
         await adapter.add_message_from_event(event, "assistant", "private reply")
-        call_kwargs = adapter._call_kwargs
+        call_kwargs = _captured_kwargs(adapter)
         assert call_kwargs["is_bot_message"] is True
         assert call_kwargs["group_id"] is None
         assert call_kwargs["sender_id"] == "bot-999"
@@ -215,10 +226,11 @@ class TestAddMessageFromEvent:
 
         await adapter.add_message_from_event(event, "user", "正文", identity=identity)
 
-        assert adapter._call_kwargs["sender_id"] == "10001"
-        assert adapter._call_kwargs["sender_name"] == "新群名片"
-        assert adapter._call_kwargs["group_id"] == "20001"
-        assert adapter._call_kwargs["metadata"] == {
+        call_kwargs = _captured_kwargs(adapter)
+        assert call_kwargs["sender_id"] == "10001"
+        assert call_kwargs["sender_name"] == "新群名片"
+        assert call_kwargs["group_id"] == "20001"
+        assert call_kwargs["metadata"] == {
             "identity_trusted": True,
             "identity_protocol": "onebot11",
             "identity_namespace": "qq",
@@ -244,8 +256,9 @@ class TestAddMessageFromEvent:
             identity=_trusted_group_identity(),
         )
 
-        assert adapter._call_kwargs["sender_id"] == "bot-999"
-        assert adapter._call_kwargs["group_id"] == "20001"
+        call_kwargs = _captured_kwargs(adapter)
+        assert call_kwargs["sender_id"] == "bot-999"
+        assert call_kwargs["group_id"] == "20001"
 
     @pytest.mark.asyncio
     async def test_invalid_identity_skips_user_message_write(self) -> None:
@@ -289,7 +302,7 @@ class TestAddMessageFromEvent:
         del event.get_platform_name
 
         await adapter.add_message_from_event(event, "user", "test")
-        call_kwargs = adapter._call_kwargs
+        call_kwargs = _captured_kwargs(adapter)
         assert call_kwargs["platform"] == "unknown"
 
     @pytest.mark.asyncio
@@ -303,7 +316,7 @@ class TestAddMessageFromEvent:
         event.get_message_type.return_value = "PRIVATE_MESSAGE"
 
         await adapter.add_message_from_event(event, "user", "test")
-        call_kwargs = adapter._call_kwargs
+        call_kwargs = _captured_kwargs(adapter)
         assert call_kwargs["sender_id"] == "attr-sender-123"
 
     @pytest.mark.asyncio
@@ -318,7 +331,7 @@ class TestAddMessageFromEvent:
         event.get_message_type.return_value = "PRIVATE_MESSAGE"
 
         await adapter.add_message_from_event(event, "user", "test")
-        call_kwargs = adapter._call_kwargs
+        call_kwargs = _captured_kwargs(adapter)
         assert call_kwargs["sender_name"] == "AttrName"
 
     @pytest.mark.asyncio
@@ -333,5 +346,5 @@ class TestAddMessageFromEvent:
         event.get_message_type.return_value = "PRIVATE_MESSAGE"
 
         await adapter.add_message_from_event(event, "user", "test")
-        call_kwargs = adapter._call_kwargs
+        call_kwargs = _captured_kwargs(adapter)
         assert call_kwargs["platform"] == "dotnet"

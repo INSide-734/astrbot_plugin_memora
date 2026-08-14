@@ -33,7 +33,7 @@ class TestVectorRetriever:
 
     @pytest.fixture
     def retriever(self, faiss_db: MagicMock) -> Any:
-        from core.retrieval.vector_retriever import VectorRetriever
+        from core.features.retrieval.vector_retriever import VectorRetriever
 
         return VectorRetriever(faiss_db=faiss_db)
 

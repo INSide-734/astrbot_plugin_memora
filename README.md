@@ -8,7 +8,7 @@
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](metadata.yaml)
+[![Version](https://img.shields.io/badge/version-1.2.0-orange.svg)](metadata.yaml)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A5%204.24.2-purple.svg)](https://github.com/Soulter/AstrBot)
 
 </div>
@@ -35,7 +35,7 @@ Memora 是 AstrBot 的长期记忆插件，为对话提供记忆提取、混合�
 - 可选记忆再巩固只在召回时生成 pending 候选，人工确认后按来源 revision CAS 应用并可回滚，默认关闭、不自动改写 canonical。
 - 可选自主学习从统一可信反馈生成 shadow 参数候选并等待人工 CAS 发布，默认关闭、不自动修改生产检索权重。
 - 提供 Dashboard、管理命令、Agent 工具与 Page API。
-- 手动总结会分别报告已写入的长期记忆与进入复核队列的隔离候选，不把隔离结果伪装成 canonical 写入成功。
+- 手动总结会分别报告四类处置计数：写入长期记忆、进入复核队列的隔离候选、门禁丢弃与 mark_write 标记写入，不把隔离、丢弃或标记结果伪装成 canonical 写入成功。
 - 提供诊断、评测、备份恢复、索引重建和校验后的在线更新。
 
 ## 环境要求

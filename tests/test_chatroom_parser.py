@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.processors.chatroom_parser import ChatroomContextParser
+from core.features.recall.processors.chatroom_parser import ChatroomContextParser
 
 
 class TestChatroomParser:

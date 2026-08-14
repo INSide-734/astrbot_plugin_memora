@@ -10,7 +10,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-from astrbot.core.message.components import (
+from astrbot.api.message_components import (
     At,
     AtAll,
     Face,
@@ -23,22 +23,22 @@ from astrbot.core.message.components import (
     Video,
 )
 
-from core.extractors.message_content_extractor import MessageContentExtractor
+from core.features.conversation.application.message_content_extractor import (
+    MessageContentExtractor,
+)
 
 # ---------------------------------------------------------------------------
-# extract_message_content tests
+# extract_message_content 测试
 # ---------------------------------------------------------------------------
 
 
 class TestExtractMessageContent:
-    # -- Plain text --
+    # -- 纯文本 --
 
     @pytest.mark.asyncio
     async def test_plain_text_only(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Plain
-        comp.text = "Hello world"
+        comp = Plain(text="Hello world")
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -47,12 +47,8 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_multiple_plain_texts_joined_with_space(self) -> None:
         event = MagicMock()
-        c1 = MagicMock()
-        c1.__class__ = Plain
-        c1.text = "Hello"
-        c2 = MagicMock()
-        c2.__class__ = Plain
-        c2.text = "world"
+        c1 = Plain(text="Hello")
+        c2 = Plain(text="world")
         event.get_messages.return_value = [c1, c2]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -61,9 +57,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_plain_text_with_trailing_whitespace(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Plain
-        comp.text = "  trimmed  "
+        comp = Plain(text="  trimmed  ")
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -72,27 +66,20 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_empty_plain_text_skipped(self) -> None:
         event = MagicMock()
-        c1 = MagicMock()
-        c1.__class__ = Plain
-        c1.text = ""
-        c2 = MagicMock()
-        c2.__class__ = Plain
-        c2.text = "valid"
-        c3 = MagicMock()
-        c3.__class__ = Plain
-        c3.text = "   "
+        c1 = Plain(text="")
+        c2 = Plain(text="valid")
+        c3 = Plain(text="   ")
         event.get_messages.return_value = [c1, c2, c3]
 
         result = await MessageContentExtractor.extract_message_content(event)
         assert result == "valid"
 
-    # -- Image --
+    # -- 图片 --
 
     @pytest.mark.asyncio
     async def test_image_without_caption(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Image
+        comp = Image(file=None)
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -101,8 +88,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_image_with_caption_from_request(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Image
+        comp = Image(file=None)
         event.get_messages.return_value = [comp]
 
         req = MagicMock()
@@ -116,10 +102,8 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_multiple_images_multiple_captions(self) -> None:
         event = MagicMock()
-        c1 = MagicMock()
-        c1.__class__ = Image
-        c2 = MagicMock()
-        c2.__class__ = Image
+        c1 = Image(file=None)
+        c2 = Image(file=None)
         event.get_messages.return_value = [c1, c2]
 
         req = MagicMock()
@@ -135,8 +119,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_image_with_empty_caption_text(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Image
+        comp = Image(file=None)
         event.get_messages.return_value = [comp]
 
         req = MagicMock()
@@ -150,8 +133,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_image_caption_only_whitespace(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Image
+        comp = Image(file=None)
         event.get_messages.return_value = [comp]
 
         req = MagicMock()
@@ -165,11 +147,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_more_images_than_captions(self) -> None:
         event = MagicMock()
-        comps = []
-        for _ in range(3):
-            c = MagicMock()
-            c.__class__ = Image
-            comps.append(c)
+        comps = [Image(file=None) for _ in range(3)]
         event.get_messages.return_value = comps
 
         req = MagicMock()
@@ -180,13 +158,12 @@ class TestExtractMessageContent:
         result = await MessageContentExtractor.extract_message_content(event, req)
         assert result == "[图片: Only one] [图片] [图片]"
 
-    # -- Other component types --
+    # -- 其他组件类型 --
 
     @pytest.mark.asyncio
     async def test_record_component(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Record
+        comp = Record(file=None)
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -195,8 +172,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_video_component(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Video
+        comp = Video(file="video")
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -205,8 +181,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_file_component(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = File
+        comp = File(name="report.pdf")
         comp.name = "report.pdf"
         event.get_messages.return_value = [comp]
 
@@ -216,8 +191,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_file_component_unknown_name(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = File
+        comp = File(name="")
         comp.name = None
         event.get_messages.return_value = [comp]
 
@@ -227,9 +201,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_face_component(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Face
-        comp.id = 178
+        comp = Face(id=178)
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -238,9 +210,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_at_user(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = At
-        comp.qq = "123456"
+        comp = At(qq="123456")
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -249,8 +219,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_at_all(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = AtAll
+        comp = AtAll()
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -259,8 +228,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_forward_component(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Forward
+        comp = Forward(id="forward")
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -269,9 +237,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_reply_with_message_str(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Reply
-        comp.message_str = "I agree with your point"
+        comp = Reply(id="reply", message_str="I agree with your point")
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -281,9 +247,7 @@ class TestExtractMessageContent:
     async def test_reply_with_long_message_str_truncated(self) -> None:
         event = MagicMock()
         long_text = "A" * 50
-        comp = MagicMock()
-        comp.__class__ = Reply
-        comp.message_str = long_text
+        comp = Reply(id="reply", message_str=long_text)
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -292,9 +256,7 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_reply_without_message_str(self) -> None:
         event = MagicMock()
-        comp = MagicMock()
-        comp.__class__ = Reply
-        comp.message_str = None
+        comp = Reply(id="reply", message_str=None)
         event.get_messages.return_value = [comp]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -304,7 +266,7 @@ class TestExtractMessageContent:
     async def test_unknown_component_skipped(self) -> None:
         event = MagicMock()
 
-        # A real type that doesn't match any component isinstance check
+        # 使用不会命中任何组件 isinstance 检查的真实类型。
         class WeirdComponent:
             pass
 
@@ -345,14 +307,9 @@ class TestExtractMessageContent:
     @pytest.mark.asyncio
     async def test_mixed_components(self) -> None:
         event = MagicMock()
-        p1 = MagicMock()
-        p1.__class__ = Plain
-        p1.text = "Look at this"
-        img = MagicMock()
-        img.__class__ = Image
-        p2 = MagicMock()
-        p2.__class__ = Plain
-        p2.text = "and my cat"
+        p1 = Plain(text="Look at this")
+        img = Image(file=None)
+        p2 = Plain(text="and my cat")
         event.get_messages.return_value = [p1, img, p2]
 
         result = await MessageContentExtractor.extract_message_content(event)
@@ -368,7 +325,7 @@ class TestExtractMessageContent:
 
 
 # ---------------------------------------------------------------------------
-# get_event_message_str tests
+# get_event_message_str 测试
 # ---------------------------------------------------------------------------
 
 

@@ -9,7 +9,7 @@ import pytest
 
 
 def _make_graph_kw_result(doc_id: int, score: float, content: str = "") -> Any:
-    from core.retrieval.graph_keyword_retriever import GraphKeywordResult
+    from core.features.retrieval.graph_keyword_retriever import GraphKeywordResult
 
     return GraphKeywordResult(
         doc_id=doc_id,
@@ -20,7 +20,7 @@ def _make_graph_kw_result(doc_id: int, score: float, content: str = "") -> Any:
 
 
 def _make_graph_vec_result(doc_id: int, score: float, content: str = "") -> Any:
-    from core.retrieval.graph_vector_retriever import GraphVectorResult
+    from core.features.retrieval.graph_vector_retriever import GraphVectorResult
 
     return GraphVectorResult(
         doc_id=doc_id,
@@ -33,13 +33,13 @@ def _make_graph_vec_result(doc_id: int, score: float, content: str = "") -> Any:
 class TestGraphRetriever:
     @pytest.fixture
     def rrf_fusion(self) -> Any:
-        from core.retrieval.rrf_fusion import RRFFusion
+        from core.features.retrieval.rrf_fusion import RRFFusion
 
         return RRFFusion(k=60)
 
     @pytest.fixture
     def retriever(self, rrf_fusion: Any) -> Any:
-        from core.retrieval.graph_retriever import GraphRetriever
+        from core.features.retrieval.graph_retriever import GraphRetriever
 
         keyword = AsyncMock()
         keyword.search = AsyncMock(return_value=[])

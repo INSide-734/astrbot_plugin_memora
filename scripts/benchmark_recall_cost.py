@@ -56,20 +56,26 @@ from scripts.recall_total_path_benchmark import (  # noqa: E402
 if not _HANDLER_WORKER_MODE:
     from astrbot.api.provider import ProviderRequest
 
-    from core.injection.executor import InjectionExecutionContext, InjectionExecutor
-    from core.injection.models import (
+    from core.features.injection.application.executor import (
+        InjectionExecutionContext,
+        InjectionExecutor,
+    )
+    from core.features.injection.application.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_budget import (
+        InjectionBudget,
+        select_memories_with_budget,
+    )
+    from core.features.injection.application.presets import PRESETS
+    from core.features.injection.application.router import (
+        InjectionRoutingConfig,
+        InjectionStrategyRouter,
+    )
+    from core.features.injection.domain.models import (
         DeliveryMode,
         InjectionOutcome,
         PresetName,
         RequestSignals,
         RoutingMode,
-    )
-    from core.injection.presets import PRESETS
-    from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
-    from core.utils.injection_adapter import InjectionAdapter
-    from core.utils.injection_budget import (
-        InjectionBudget,
-        select_memories_with_budget,
     )
 
 

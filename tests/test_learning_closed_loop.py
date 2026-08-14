@@ -10,15 +10,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.auto_learning import AutoLearningManager
-from core.managers.feedback_signal_manager import FeedbackSignalManager
-from core.models.feedback_signal import (
+from core.features.learning import (
+    AutoLearningManager,
     FeedbackAdapterKind,
+    FeedbackIngestResult,
     FeedbackOutcome,
+    FeedbackSignalManager,
     FeedbackSignalPolicy,
+    FeedbackSignalStore,
     build_trusted_feedback_event,
+    record_explicit_correction,
+    revoke_explicit_correction,
 )
-from core.storage.feedback_signal_store import FeedbackSignalStore
 
 UTC = timezone.utc
 
@@ -45,7 +48,7 @@ def _seed_event(
     reference_time: datetime,
     persona: str | None = None,
     outcome: FeedbackOutcome = FeedbackOutcome.NEGATIVE,
-) -> object:
+) -> FeedbackIngestResult:
     """直接写入一条已注册适配器的可信事件。"""
 
     event = build_trusted_feedback_event(
@@ -187,8 +190,6 @@ async def test_persona_windows_reduce_to_single_global_candidate(
 async def test_explicit_correction_pseudonymizes_identifiers(tmp_path: Path) -> None:
     """显式反馈存储不得出现 canonical、复核或原始会话标识。"""
 
-    from core.managers.feedback_signal_manager import record_explicit_correction
-
     feedback = await _make_feedback_manager(tmp_path)
     reference_time = datetime.now(UTC)
     result = record_explicit_correction(
@@ -213,11 +214,6 @@ async def test_explicit_correction_pseudonymizes_identifiers(tmp_path: Path) -> 
 @pytest.mark.asyncio
 async def test_explicit_feedback_can_be_revoked_and_rebuilt(tmp_path: Path) -> None:
     """可信入口必须能按同一匿名决策撤销反馈并重建派生聚合。"""
-
-    from core.managers.feedback_signal_manager import (
-        record_explicit_correction,
-        revoke_explicit_correction,
-    )
 
     feedback = await _make_feedback_manager(tmp_path)
     reference_time = datetime.now(UTC)
@@ -248,8 +244,6 @@ async def test_expired_feedback_is_pruned_before_global_rate_limit(
     tmp_path: Path,
 ) -> None:
     """过期事件必须释放全局容量，避免反馈管线永久进入限流状态。"""
-
-    from core.managers.feedback_signal_manager import record_explicit_correction
 
     policy = FeedbackSignalPolicy(
         max_event_age_seconds=60,
@@ -315,7 +309,7 @@ async def test_state_file_values_are_constrained_before_summary(tmp_path: Path) 
 def test_auto_learning_no_longer_exposes_online_feedback_collector() -> None:
     """旧 FeedbackCollector/ParamOptimizer 在线更新入口必须移除。"""
 
-    from core.managers import auto_learning
+    import core.features.learning as auto_learning
 
     assert not hasattr(auto_learning, "FeedbackCollector")
     assert not hasattr(auto_learning, "ParamOptimizer")
@@ -324,7 +318,7 @@ def test_auto_learning_no_longer_exposes_online_feedback_collector() -> None:
 def test_learning_summary_exposes_candidates_without_mutation() -> None:
     """指标摘要应暴露候选与反馈摘要，且不触发任何写入。"""
 
-    from core.api.metrics_api import MetricsApiMixin
+    from core.platform.transport.page_api.metrics_api import MetricsApiMixin
 
     auto = MagicMock()
     auto.safe_summary.return_value = {
@@ -343,7 +337,7 @@ def test_learning_summary_exposes_candidates_without_mutation() -> None:
             feedback_signal_manager=feedback,
         )
     )
-    api = SimpleNamespace(plugin=SimpleNamespace(initializer=initializer))
+    api = MagicMock(plugin=SimpleNamespace(initializer=initializer))
 
     summary = MetricsApiMixin._build_learning_summary(api)
 
@@ -356,7 +350,7 @@ def test_learning_summary_exposes_candidates_without_mutation() -> None:
 def test_learning_summary_isolates_feedback_store_failure() -> None:
     """反馈隔离 Store 读取失败时仍应返回安全的学习摘要。"""
 
-    from core.api.metrics_api import MetricsApiMixin
+    from core.platform.transport.page_api.metrics_api import MetricsApiMixin
 
     auto = MagicMock()
     auto.safe_summary.return_value = {
@@ -369,7 +363,7 @@ def test_learning_summary_isolates_feedback_store_failure() -> None:
     }
     feedback = MagicMock()
     feedback.safe_summary.side_effect = RuntimeError("隔离 Store 不可用")
-    api = SimpleNamespace(
+    api = MagicMock(
         plugin=SimpleNamespace(
             initializer=SimpleNamespace(
                 memory_engine=SimpleNamespace(
@@ -389,7 +383,7 @@ def test_learning_summary_isolates_feedback_store_failure() -> None:
 def test_review_feedback_records_trusted_event() -> None:
     """管理员复核动作应写入统一反馈管线，正负结果映射正确。"""
 
-    from core.api.review_api import ReviewApiMixin
+    from core.platform.transport.page_api.review_api import ReviewApiMixin
 
     manager = MagicMock()
     manager.policy = FeedbackSignalPolicy()
@@ -398,8 +392,9 @@ def test_review_feedback_records_trusted_event() -> None:
     )
     engine = SimpleNamespace(feedback_signal_manager=manager)
 
-    ReviewApiMixin._record_review_feedback(None, engine, "review-1", "approve")
-    ReviewApiMixin._record_review_feedback(None, engine, "review-2", "reject")
+    api = MagicMock()
+    ReviewApiMixin._record_review_feedback(api, engine, "review-1", "approve")
+    ReviewApiMixin._record_review_feedback(api, engine, "review-2", "reject")
 
     assert manager.ingest_event.call_count == 2
     approve_event = manager.ingest_event.call_args_list[0].args[0]
@@ -414,7 +409,7 @@ def test_review_feedback_records_trusted_event() -> None:
 async def test_forget_feedback_records_trusted_event() -> None:
     """显式忘记命令应写入可信负向反馈；无管理器时安全跳过。"""
 
-    from core.commands.query_commands import QueryCommandMixin
+    from core.platform.transport.commands.query_commands import QueryCommandMixin
 
     manager = MagicMock()
     manager.policy = FeedbackSignalPolicy()
@@ -422,8 +417,8 @@ async def test_forget_feedback_records_trusted_event() -> None:
         f"{namespace}:{'a' * 64}"
     )
     engine = SimpleNamespace(feedback_signal_manager=manager)
-    handler = SimpleNamespace(memory_engine=engine)
-    event = SimpleNamespace(unified_msg_origin="private:u")
+    handler = MagicMock(memory_engine=engine)
+    event = MagicMock(unified_msg_origin="private:u")
 
     await QueryCommandMixin._record_forget_correction(handler, 7, event)
     manager.ingest_event.assert_called_once()
@@ -432,7 +427,7 @@ async def test_forget_feedback_records_trusted_event() -> None:
     assert event_recorded.scope_domain.startswith("scope:")
     assert "private:u" not in repr(event_recorded)
 
-    empty_handler = SimpleNamespace(
+    empty_handler = MagicMock(
         memory_engine=SimpleNamespace(feedback_signal_manager=None)
     )
     await QueryCommandMixin._record_forget_correction(empty_handler, 7, event)

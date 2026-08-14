@@ -11,10 +11,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiosqlite
 import pytest
 
-from core.diagnostics.health_scorer import HealthScorer
-from core.managers.anomaly_detector import AnomalyDetector
-from core.managers.memory_engine import MemoryEngine
-from core.schedulers.decay_scheduler import DecayScheduler
+from core.features.decay.application import DecayScheduler
+from core.features.diagnostics.application.health_scorer import HealthScorer
+from core.features.memory.application.anomaly_detector import AnomalyDetector
+from core.features.memory.application.memory_engine import MemoryEngine
 
 
 def _day_ts(days_ago: int = 0) -> int:
@@ -68,7 +68,9 @@ async def test_real_engine_builds_anomaly_detector_from_runtime_config(
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
@@ -93,7 +95,9 @@ async def test_disabled_anomaly_never_feeds_or_writes_state(tmp_path: Path) -> N
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
         assert engine.anomaly_detector is None
@@ -139,7 +143,9 @@ async def test_daily_feed_is_idempotent_and_emits_sanitized_event(
     assert engine.count_canonical_created_on.await_count == first_calls
     assert len(detector._window) == 14
 
-    from core.diagnostics.event_store import DiagnosticEventStore
+    from core.features.diagnostics.infrastructure.event_store import (
+        DiagnosticEventStore,
+    )
 
     store = DiagnosticEventStore(tmp_path / "diagnostics_events.db")
     await store.initialize()
@@ -177,7 +183,9 @@ async def test_sqlite_count_aggregates_canonical_created_at(tmp_path: Path) -> N
         await connection.commit()
         host = SimpleNamespace(db_connection=connection)
 
-        from core.managers.stats_operations import StatsOperationsMixin
+        from core.features.memory.application.stats_operations import (
+            StatsOperationsMixin,
+        )
 
         count_today = await StatsOperationsMixin.count_canonical_created_on(
             host, _day_ts(0)
@@ -337,8 +345,8 @@ def test_diagnostics_snapshot_includes_anomaly_summary() -> None:
         memory_engine=SimpleNamespace(anomaly_detector=detector)
     )
 
-    from core.api.diagnostics_api import DiagnosticsApiMixin
-    from core.api.metrics_api import MetricsApiMixin
+    from core.platform.transport.page_api.diagnostics_api import DiagnosticsApiMixin
+    from core.platform.transport.page_api.metrics_api import MetricsApiMixin
 
     class _DiagnosticsStub(DiagnosticsApiMixin, MetricsApiMixin):
         """组合诊断与指标快照构造器的测试替身。"""

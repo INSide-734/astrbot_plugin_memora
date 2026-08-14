@@ -6,10 +6,10 @@ from datetime import datetime
 
 import pytest
 
-from core.models.memory_atom import AtomType
-from core.processors import atom_classifier
-from core.processors.atom_classifier import classify_atoms
-from core.security.guardrails import MemoryAtomSchema
+from core.features.memory.domain.memory_atom import AtomType
+from core.features.recall.processors import atom_classifier
+from core.features.recall.processors.atom_classifier import classify_atoms
+from core.platform.security.guardrails import MemoryAtomSchema
 
 
 def _classify(text: str):
@@ -75,6 +75,8 @@ def test_iso_and_full_chinese_dates_are_parsed(
     iso_atom = _classify("计划在 2026-02-03 参加发布会")
     chinese_atom = _classify("计划在2026年2月4日参加复盘会")
 
+    assert iso_atom.event_time is not None
+    assert chinese_atom.event_time is not None
     assert (
         datetime.fromtimestamp(iso_atom.event_time).date().isoformat() == "2026-02-03"
     )

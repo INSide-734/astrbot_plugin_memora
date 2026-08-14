@@ -251,35 +251,66 @@ def _is_source_excluded(
     return False
 
 
+def _list_source_files(repo_root: Path) -> list[Path]:
+    """列出 Git 认定为源码的仓库相对文件路径。
+
+    返回已跟踪文件与未被忽略的未跟踪文件的并集；.gitignore、
+    .git/info/exclude 与全局排除规则全部交由 git ls-files
+    --exclude-standard 解释，避免手写模式匹配偏离真实 Git 行为。
+    """
+    try:
+        completed = subprocess.run(
+            [
+                "git",
+                "-c",
+                "core.quotepath=false",
+                "ls-files",
+                "-z",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+            ],
+            cwd=repo_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        listing = os.fsdecode(completed.stdout)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PackageError(
+            f"无法通过 Git 收集源码包文件，{repo_root} 必须是可用的 Git 仓库"
+        ) from exc
+    paths: list[Path] = []
+    for entry in listing.split("\0"):
+        if not entry:
+            continue
+        posix_path = PurePosixPath(entry)
+        if posix_path.is_absolute() or ".." in posix_path.parts:
+            raise PackageError("Git 列出的源码路径不安全")
+        paths.append(Path(*posix_path.parts))
+    return paths
+
+
 def copy_worktree_source(
     repo_root: Path,
     staging_root: Path,
     package_name: str,
     output_dir: Path,
 ) -> None:
-    """收集当前工作树中的源码，同时排除本地环境和生成物。"""
+    """收集当前工作树中 Git 认定的源码文件，并排除本地环境与生成物。
 
+    文件清单来自 Git 索引与未忽略的未跟踪文件；随后再应用
+    打包级结构排除（如 .vitepress、data/storage 与输出目录）。
+    """
     repo_root = repo_root.resolve()
     output_dir = output_dir.resolve()
-    for current, directories, filenames in os.walk(
-        repo_root, topdown=True, followlinks=False
-    ):
-        current_path = Path(current)
-        current_relative = current_path.relative_to(repo_root)
-        kept_directories: list[str] = []
-        for directory in sorted(directories):
-            relative = current_relative / directory
-            if not _is_source_excluded(relative, output_dir, repo_root):
-                kept_directories.append(directory)
-        directories[:] = kept_directories
-        for filename in sorted(filenames):
-            source = current_path / filename
-            relative = current_relative / filename
-            if _is_source_excluded(relative, output_dir, repo_root):
-                continue
-            if source.is_symlink() or not source.is_file():
-                continue
-            _copy_file(source, staging_root, package_name, relative)
+    for relative in sorted(_list_source_files(repo_root)):
+        if _is_source_excluded(relative, output_dir, repo_root):
+            continue
+        source = repo_root / relative
+        if source.is_symlink() or not source.is_file():
+            continue
+        _copy_file(source, staging_root, package_name, relative)
 
 
 def _safe_tar_relative(name: str) -> Path:

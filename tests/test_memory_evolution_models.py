@@ -1,19 +1,20 @@
 from datetime import datetime, timezone
+from typing import cast
 
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedState,
     GateDecision,
     JobSpec,
     JobState,
     MemoryRelationProposal,
-    MemorySourceRef,
     ProjectionSourceView,
     ProjectionType,
     RelationType,
     RelationView,
 )
+from core.shared.contracts import MemorySourceRef
 
 
 def test_relation_and_projection_allowlists_are_stable() -> None:
@@ -107,4 +108,12 @@ def test_local_constraints_cover_gate_job_source_and_projection_roles() -> None:
 
 def test_views_reject_unknown_types_and_reversed_intervals() -> None:
     with pytest.raises(ValueError, match="relation_type"):
-        RelationView("r1", 17, 18, "unknown", 0.5, "scope", "shared")
+        RelationView(
+            "r1",
+            17,
+            18,
+            cast(RelationType, "unknown"),
+            0.5,
+            "scope",
+            "shared",
+        )

@@ -6,8 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.initializer.db_setup import DatabaseSetup
-from core.initializer.derived_rebuild_coordinator import DerivedRebuildCoordinator
+from core.platform.composition import DatabaseSetup, DerivedRebuildCoordinator
 
 
 def _build_components(*, evolution_mode: str = "active"):

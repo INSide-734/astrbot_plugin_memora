@@ -10,7 +10,9 @@ from typing import Any
 import aiosqlite
 import pytest
 
-from core.storage.reconsolidation_store import ReconsolidationStore
+from core.features.reconsolidation.infrastructure.reconsolidation_store import (
+    ReconsolidationStore,
+)
 
 
 def _candidate_payload() -> dict[str, Any]:

@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from core.models.conversation_models import Message
-from core.processors.conversation_formatter import ConversationFormatter
+from core.features.recall.processors.conversation_formatter import ConversationFormatter
+from core.shared.contracts.conversation import Message
 
 
 class TestConversationFormatter:

@@ -4,13 +4,13 @@
 
 ## 职责
 
-这里承载 16 个 Hash 路由页面及其 Vitest/React Testing Library 测试。页面负责组合数据 hooks、`PageFrame`、共享表格/编辑组件和 i18n 文案；API 访问必须经过 `src/lib/bridge.ts`，不得在页面中直接拼接宿主前缀或复制 fetch 封装。
+这里承载 17 个 Hash 路由页面及其 Vitest/React Testing Library 测试。页面负责组合数据 hooks、`PageFrame`、共享表格/编辑组件和 i18n 文案；API 访问必须经过 `src/lib/bridge.ts`，不得在页面中直接拼接宿主前缀或复制 fetch 封装。
 
 ## 页面分组与入口
 
 - workspace：`GraphPage.tsx`。
 - standard：`PreviewPage`、`TimelinePage`、`RecallPage`、`NotesPage`、`IntelligencePage`、`LearningPage`、`AffectionPage`、`SystemPage`。
-- dense：`MemoryPage`、`InjectionStrategyPage`、`KnowledgePage`、`ProfilesPage`、`JargonPage`、`ConfigPage`、`SocialPage`。
+- dense：`MemoryPage`、`InjectionStrategyPage`、`KnowledgePage`、`ProfilesPage`、`JargonPage`、`ConfigPage`、`SocialPage`、`GatePage`。
 - `App.tsx` 集中维护懒加载映射、未知 hash 回退到 graph、history index、脏表单导航保护和唯一 realtime stream。
 
 新增页面时同步 `App.tsx` 导航分组、`src/lib/navigation.ts`、三语言 key、页面测试和 browser smoke 路径；不要为同一页面创建第二套路由或备用布局。

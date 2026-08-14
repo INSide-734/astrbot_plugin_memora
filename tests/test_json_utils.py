@@ -1,8 +1,8 @@
-"""core/utils/json_utils.py 测试 — safe_parse_llm_json + 辅助函数。"""
+"""core/shared/json_utils.py 宽容 JSON 解析测试。"""
 
 from __future__ import annotations
 
-from core.utils.json_utils import (
+from core.shared.json_utils import (
     _convert_single_quotes,
     clean_control_characters,
     clean_markdown_blocks,

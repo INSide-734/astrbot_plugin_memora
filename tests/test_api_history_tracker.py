@@ -6,7 +6,7 @@ import json
 import time
 from typing import Any
 
-from core.api.history_tracker import HistoryTracker
+from core.platform.transport.page_api.history_tracker import HistoryTracker
 
 
 class TestHistoryTrackerAppend:

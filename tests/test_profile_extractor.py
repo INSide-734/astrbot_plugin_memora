@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.models.user_profile import TagCategory
-from core.processors.profile_extractor import ProfileExtractor
+from core.features.profiles.domain.models import TagCategory
+from core.features.profiles.infrastructure.profile_extractor import ProfileExtractor
 
 
 class TestParseResponse:
@@ -98,6 +98,8 @@ class TestBuildTags:
         assert tags == []
 
     def test_build_tags_none(self) -> None:
+        """空标签载荷应按抽取器的容错契约返回空列表。"""
+
         tags = ProfileExtractor._build_tags(None)
         assert tags == []
 

@@ -8,7 +8,10 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager
+from core.features.memory.infrastructure.schema_manager import (
+    CURRENT_DB_VERSION,
+    SchemaManager,
+)
 
 
 def _create_legacy_database(db_path: Path, *, version: int = 7) -> None:

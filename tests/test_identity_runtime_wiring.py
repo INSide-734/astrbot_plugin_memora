@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.identity import IdentityTrust, ResolvedIdentity
+from core.features.identity.domain.models import IdentityTrust, ResolvedIdentity
 
 
 def trusted_identity() -> ResolvedIdentity:
@@ -93,7 +94,7 @@ def recall_case() -> SimpleNamespace:
 
     from astrbot.api.platform import MessageType
 
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     config = MagicMock()
     config.filtering_settings = {
@@ -138,7 +139,7 @@ def recall_case() -> SimpleNamespace:
     handler._build_cognitive_context = AsyncMock(return_value="")
     event = MagicMock()
     event.unified_msg_origin = "aiocqhttp:private:10001"
-    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
     event.get_sender_id.return_value = "legacy-name"
     request = SimpleNamespace(
         prompt="问题",
@@ -162,17 +163,22 @@ def recall_case() -> SimpleNamespace:
 async def test_runtime_persists_only_trusted_and_unblocked() -> None:
     """可信且未写保护时同步名称，写保护或不可信时只返回解析结果。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     resolver = MagicMock()
     resolver.resolve.return_value = trusted_identity()
     synchronizer = MagicMock()
     synchronizer.synchronize = AsyncMock()
     runtime = ProtocolIdentityRuntime(resolver, synchronizer=synchronizer)
-    event = SimpleNamespace(unified_msg_origin="aiocqhttp:private:10001")
+    event = MagicMock()
+    event.unified_msg_origin = "aiocqhttp:private:10001"
 
     assert runtime.resolve(event) == resolver.resolve.return_value
     resolver.resolve.assert_called_once_with(event)
+    event.set_extra.assert_called_once_with(
+        "memora.resolved_identity",
+        resolver.resolve.return_value,
+    )
 
     resolved = await runtime.prepare(event, writes_blocked=False)
     assert resolved.trust_status is IdentityTrust.TRUSTED
@@ -194,7 +200,7 @@ async def test_runtime_persists_only_trusted_and_unblocked() -> None:
 async def test_runtime_degrades_storage_errors_but_propagates_cancellation() -> None:
     """身份目录普通失败不阻断聊天，取消信号必须继续传播。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     resolver = MagicMock()
     resolver.resolve.return_value = trusted_identity()
@@ -210,12 +216,27 @@ async def test_runtime_degrades_storage_errors_but_propagates_cancellation() -> 
         await runtime.prepare(event)
 
 
+def test_runtime_keeps_identity_when_event_extra_publication_fails() -> None:
+    """事件 extras 不可写时保留解析结果，避免破坏聊天主链。"""
+
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
+
+    resolver = MagicMock()
+    identity = trusted_identity()
+    resolver.resolve.return_value = identity
+    runtime = ProtocolIdentityRuntime(resolver)
+    event = MagicMock()
+    event.set_extra.side_effect = RuntimeError("private")
+
+    assert runtime.resolve(event) is identity
+
+
 @pytest.mark.asyncio
 async def test_event_handler_defers_and_deduplicates_identity_sync() -> None:
     """请求与响应共享事件时目录同步只调度一次且不阻塞召回。"""
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     started = asyncio.Event()
     release = asyncio.Event()
@@ -236,6 +257,7 @@ async def test_event_handler_defers_and_deduplicates_identity_sync() -> None:
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=runtime,
     )
     handler._recall_handler.handle_memory_recall = AsyncMock()
     handler._reflection_handler.handle_memory_reflection = AsyncMock()
@@ -257,7 +279,7 @@ def test_event_handler_retries_identity_sync_after_scheduling_failure() -> None:
     """目录任务创建失败时清除事件标记，使后续钩子能够重试。"""
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     runtime = ProtocolIdentityRuntime()
     identity = trusted_identity()
@@ -270,12 +292,13 @@ def test_event_handler_retries_identity_sync_after_scheduling_failure() -> None:
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=runtime,
     )
     handler._create_maintenance_task = MagicMock(side_effect=RuntimeError("boom"))
     event = SimpleNamespace()
 
-    assert handler._resolve_identity(event, writes_blocked=False) is identity
-    assert handler._resolve_identity(event, writes_blocked=False) is identity
+    assert handler._resolve_identity(cast(Any, event), writes_blocked=False) is identity
+    assert handler._resolve_identity(cast(Any, event), writes_blocked=False) is identity
 
     assert handler._create_maintenance_task.call_count == 2
     assert getattr(event, handler._IDENTITY_SYNC_MARKER_ATTR) is False
@@ -285,7 +308,7 @@ def test_event_handler_retries_identity_sync_after_scheduling_failure() -> None:
 async def test_runtime_exposes_read_only_current_identity_lookup() -> None:
     """身份运行时通过只读边界返回当前目录记录，并在无 Store 时安全降级。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     store = MagicMock()
     stored = SimpleNamespace(
@@ -308,7 +331,7 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
     from astrbot.api.platform import MessageType
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     config = MagicMock()
     config.get.return_value = True
@@ -332,6 +355,7 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=runtime,
         relation_manager=relation,
     )
     handler._extractor.extract_message_content = AsyncMock(return_value="正文")
@@ -345,16 +369,12 @@ async def test_event_handler_uses_trusted_canonical_id_for_group_capture() -> No
     await handler.handle_all_group_messages(event)
 
     runtime.resolve.assert_called_once_with(event)
-    assert (
-        handler._dedup.build_dedup_key.await_args.kwargs["sender_id_override"]
-        == "10001"
-    )
-    assert (
-        conversation.add_message_from_event.await_args.kwargs[
-            "identity"
-        ].canonical_user_id
-        == "10001"
-    )
+    dedup_args = handler._dedup.build_dedup_key.await_args
+    conversation_args = conversation.add_message_from_event.await_args
+    assert dedup_args is not None
+    assert conversation_args is not None
+    assert dedup_args.kwargs["sender_id_override"] == "10001"
+    assert conversation_args.kwargs["identity"].canonical_user_id == "10001"
     assert relation.apply_delta.await_args.kwargs["from_user"] == "10001"
 
 
@@ -437,7 +457,7 @@ async def test_conflict_group_capture_skips_user_message_and_cognitive_state() -
     from astrbot.api.platform import MessageType
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     config = MagicMock()
     config.get.return_value = True
@@ -455,6 +475,7 @@ async def test_conflict_group_capture_skips_user_message_and_cognitive_state() -
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
+        identity_runtime=runtime,
         relation_manager=relation,
     )
     handler._extractor.extract_message_content = AsyncMock(return_value="正文")
@@ -477,7 +498,9 @@ async def test_reflection_passes_identity_and_uses_canonical_affection_user(
 ) -> None:
     """助手写入保留身份作用域，用户级好感度只使用可信 canonical QQ。"""
 
-    from core.handlers.reflection_handler import ReflectionHandler
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
 
     config = MagicMock()
     config.get.side_effect = lambda _key, default=None: default
@@ -490,7 +513,7 @@ async def test_reflection_passes_identity_and_uses_canonical_affection_user(
     affection = MagicMock()
     affection.process_interaction = AsyncMock()
     monkeypatch.setattr(
-        "core.handlers.reflection_handler.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         AsyncMock(return_value="persona-1"),
     )
     handler = ReflectionHandler(
@@ -513,7 +536,11 @@ async def test_reflection_passes_identity_and_uses_canonical_affection_user(
     )
     identity = trusted_identity()
 
-    await handler.handle_memory_reflection(event, response, identity=identity)
+    await handler.handle_memory_reflection(
+        event,
+        cast(Any, response),
+        identity=identity,
+    )
 
     assert conversation.add_message_from_event.await_args.kwargs["identity"] is identity
     assert affection.process_interaction.await_args.kwargs["user_id"] == "10001"
@@ -525,15 +552,15 @@ async def test_factory_identity_store_failure_returns_resolver_only_runtime(
 ) -> None:
     """身份表初始化普通失败时工厂继续启动并返回解析器降级运行时。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
-    from core.initializer.component_factory import ComponentFactory
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
+    from core.platform.composition.component_factory import ComponentFactory
 
     factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
     store = MagicMock()
     store.initialize = AsyncMock(side_effect=RuntimeError("private"))
     store.close = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ProtocolIdentityStore",
+        "core.platform.composition.component_factory.ProtocolIdentityStore",
         MagicMock(return_value=store),
     )
 
@@ -553,16 +580,16 @@ async def test_identity_store_partial_initialization_remains_closable(
 ) -> None:
     """连接成功但建表准备失败时，Store 仍能释放部分初始化连接。"""
 
-    from core.storage.protocol_identity_store import ProtocolIdentityStore
+    from core.features.identity import ProtocolIdentityStore
 
     connection = MagicMock()
     connection.close = AsyncMock()
     monkeypatch.setattr(
-        "core.storage.protocol_identity_store.aiosqlite.connect",
+        "core.features.identity.infrastructure.store.aiosqlite.connect",
         AsyncMock(return_value=connection),
     )
     monkeypatch.setattr(
-        "core.storage.protocol_identity_store.apply_perf_pragmas",
+        "core.features.identity.infrastructure.store.apply_identity_store_pragmas",
         AsyncMock(side_effect=RuntimeError("private")),
     )
     store = ProtocolIdentityStore(str(tmp_path / "memora.db"))
@@ -580,14 +607,14 @@ async def test_factory_identity_runtime_propagates_initialization_cancellation(
 ) -> None:
     """工厂不能把身份 Store 初始化取消误降级为普通解析模式。"""
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
     store = MagicMock()
     store.initialize = AsyncMock(side_effect=asyncio.CancelledError())
     store.close = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ProtocolIdentityStore",
+        "core.platform.composition.component_factory.ProtocolIdentityStore",
         MagicMock(return_value=store),
     )
 
@@ -603,14 +630,14 @@ async def test_factory_identity_runtime_builds_service_and_closes_owned_store(
 ) -> None:
     """正常工厂运行时绑定服务和同步器，并由运行时负责关闭 Store。"""
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
     store = MagicMock()
     store.initialize = AsyncMock()
     store.close = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ProtocolIdentityStore",
+        "core.platform.composition.component_factory.ProtocolIdentityStore",
         MagicMock(return_value=store),
     )
     manager = MagicMock()
@@ -631,15 +658,100 @@ async def test_initializer_closes_identity_runtime_without_event_handler(
 ) -> None:
     """未创建事件处理器时，初始化器关闭链仍释放身份 Store。"""
 
-    from core.identity.runtime import ProtocolIdentityRuntime
-    from core.plugin_initializer import PluginInitializer
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
+    from core.platform.composition.plugin_initializer import PluginInitializer
 
     store = MagicMock()
     store.close = AsyncMock()
     runtime = ProtocolIdentityRuntime(store=store)
     initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
-    initializer.conversation_manager = SimpleNamespace(identity_runtime=runtime)
+    cast(Any, initializer).conversation_manager = SimpleNamespace(identity_runtime=None)
+    initializer.identity_runtime = runtime
 
     await initializer.close_extension_components()
 
     store.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "cancel_initialization", [False, True], ids=["error", "cancel"]
+)
+@pytest.mark.asyncio
+async def test_initializer_closes_published_identity_runtime_after_init_failure(
+    tmp_path,
+    cancel_initialization: bool,
+) -> None:
+    """运行时发布后的初始化失败或取消都必须释放身份 Store。"""
+
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
+    from core.platform.composition.plugin_initializer import PluginInitializer
+    from core.shared.errors import InitializationError
+
+    store = MagicMock()
+    store.close = AsyncMock()
+    runtime = ProtocolIdentityRuntime(store=store)
+    memory_processor = MagicMock()
+    initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
+    initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
+    initializer._component_factory.build_all = AsyncMock(
+        return_value={
+            "db": MagicMock(),
+            "graph_db": None,
+            "memory_engine": MagicMock(),
+            "memory_processor": memory_processor,
+            "memory_quarantine_store": MagicMock(),
+            "memory_quality_gate": MagicMock(),
+            "gate_runtime": MagicMock(),
+            "conversation_manager": SimpleNamespace(identity_runtime=runtime),
+            "identity_runtime": runtime,
+            "index_validator": MagicMock(),
+            "decay_scheduler": None,
+            "injection_decision_store": None,
+            "injection_decision_recorder": None,
+        }
+    )
+    initializer._create_prompt_protection_service = MagicMock(return_value=None)
+
+    if cancel_initialization:
+        cognitive_started = asyncio.Event()
+
+        async def block_cognitive_initialization() -> None:
+            """等待测试任务取消，模拟发布后的初始化中断。"""
+
+            cognitive_started.set()
+            await asyncio.Future()
+
+        initializer._initialize_cognitive_components = block_cognitive_initialization
+        init_task = asyncio.create_task(initializer._run_full_init())
+        await cognitive_started.wait()
+        init_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await init_task
+    else:
+        initializer._initialize_cognitive_components = AsyncMock(
+            side_effect=RuntimeError("cognitive failed")
+        )
+        with pytest.raises(InitializationError, match="cognitive failed"):
+            await initializer._run_full_init()
+
+    store.close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_init_identity_cleanup_propagates_only_cancellation() -> None:
+    """身份关闭普通错误应降级，取消信号必须继续传播。"""
+
+    from core.platform.composition.identity_lifecycle import (
+        close_identity_runtime_after_failure,
+    )
+
+    runtime = MagicMock()
+    runtime.close = AsyncMock(side_effect=RuntimeError("private"))
+
+    await close_identity_runtime_after_failure(runtime)
+
+    runtime.close.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await close_identity_runtime_after_failure(runtime)
+
+    assert runtime.close.await_count == 2

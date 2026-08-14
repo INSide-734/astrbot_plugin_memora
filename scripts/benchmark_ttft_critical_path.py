@@ -17,18 +17,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from core.evaluation.retrieval_quality import (  # noqa: E402
+from core.features.evaluation.application import (  # noqa: E402
     ndcg_at_k,
     recall_at_k,
     reciprocal_rank,
 )
-from core.retrieval.embedding_singleflight import (  # noqa: E402
+from core.features.retrieval.embedding_singleflight import (  # noqa: E402
     InFlightEmbeddingProviderProxy,
 )
-from core.retrieval.query_planner import QueryPlanner  # noqa: E402
-from core.retrieval.query_rewriter import QueryIntent  # noqa: E402
-from core.retrieval.route_policy import should_use_graph_route  # noqa: E402
-from core.retrieval.vector_deadline import (  # noqa: E402
+from core.features.retrieval.query_planner import QueryPlanner  # noqa: E402
+from core.features.retrieval.query_rewriter import QueryIntent  # noqa: E402
+from core.features.retrieval.route_policy import should_use_graph_route  # noqa: E402
+from core.features.retrieval.vector_deadline import (  # noqa: E402
     run_local_and_bounded_vector,
 )
 

@@ -1,3 +1,5 @@
+"""验证评测报告存储与评测服务行为。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -10,15 +12,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.evaluation.evaluation_service import EvaluationService
-from core.evaluation.report_store import EvaluationReportStore
-from core.evaluation.retrieval_quality import (
+from core.features.evaluation.application import (
     EvaluationReport,
     EvaluationResult,
+)
+from core.features.evaluation.infrastructure.evaluation_service import EvaluationService
+from core.features.evaluation.infrastructure.report_store import (
+    EvaluationReportStore,
 )
 
 
 def test_evaluation_package_imports_without_astrbot_mocks():
+    """验证评测包在没有 AstrBot Mock 时仍可独立导入。"""
+
     code = """
 import importlib
 import importlib.abc
@@ -36,8 +42,8 @@ class BlockAstrBot(importlib.abc.MetaPathFinder):
 
 sys.meta_path.insert(0, BlockAstrBot())
 
-importlib.import_module("core.evaluation")
-importlib.import_module("core.evaluation.retrieval_quality")
+importlib.import_module("core.features.evaluation")
+importlib.import_module("core.features.evaluation.application.retrieval_quality")
 """
     env = dict(os.environ)
     env["PYTHONPATH"] = os.getcwd()
@@ -55,6 +61,8 @@ importlib.import_module("core.evaluation.retrieval_quality")
 
 @pytest.mark.asyncio
 async def test_report_store_saves_and_loads_report(tmp_path):
+    """验证报告存储仅保留脱敏允许字段。"""
+
     store = EvaluationReportStore(tmp_path / "evaluation_reports.db")
     await store.initialize()
 
@@ -112,6 +120,8 @@ async def test_report_store_saves_and_loads_report(tmp_path):
 
 @pytest.mark.asyncio
 async def test_report_store_saves_native_evaluation_report_with_relevant_sets(tmp_path):
+    """验证原生评测报告及相关集合可安全持久化。"""
+
     store = EvaluationReportStore(tmp_path / "evaluation_reports.db")
     await store.initialize()
 
@@ -165,7 +175,11 @@ async def test_report_store_saves_native_evaluation_report_with_relevant_sets(tm
 
 
 class FakeEngine:
+    """为评测服务提供确定性检索结果。"""
+
     async def search_memories(self, **kwargs):
+        """按查询内容返回确定性检索结果。"""
+
         query = kwargs["query"]
         if "咖啡" in query:
             return [{"doc_id": "mem-coffee", "score": 1.0}]
@@ -188,6 +202,8 @@ def _write_single_case_fixture(root: Path, relevant_doc_ids: list[str]) -> None:
 
 @pytest.mark.asyncio
 async def test_evaluation_service_runs_selected_dataset(tmp_path):
+    """验证服务仅运行指定数据集并持久化脱敏报告。"""
+
     service = EvaluationService(
         engine=FakeEngine(),
         fixture_dir="tests/fixtures/retrieval",
@@ -215,6 +231,8 @@ async def test_evaluation_service_runs_selected_dataset(tmp_path):
 
 @pytest.mark.asyncio
 async def test_evaluation_service_unknown_dataset_selection_runs_no_cases(tmp_path):
+    """验证未知数据集不会执行评测用例。"""
+
     service = EvaluationService(
         engine=FakeEngine(),
         fixture_dir="tests/fixtures/retrieval",
@@ -235,6 +253,8 @@ async def test_evaluation_service_unknown_dataset_selection_runs_no_cases(tmp_pa
 
 
 def test_evaluation_service_lists_fixture_metadata() -> None:
+    """验证服务列出评测夹具元数据。"""
+
     service = EvaluationService(
         engine=FakeEngine(),
         fixture_dir="tests/fixtures/retrieval",
@@ -253,6 +273,8 @@ def test_evaluation_service_lists_fixture_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_evaluation_service_marks_unavailable_ablation_variants_skipped(tmp_path):
+    """验证不可用消融变体被明确标记为跳过。"""
+
     service = EvaluationService(
         engine=FakeEngine(),
         fixture_dir="tests/fixtures/retrieval",
@@ -289,6 +311,8 @@ async def test_evaluation_service_marks_unavailable_ablation_variants_skipped(tm
 
 @pytest.mark.asyncio
 async def test_evaluation_service_ablation_variants_use_real_config_keys(tmp_path):
+    """验证消融变体使用真实配置键且恢复原配置。"""
+
     fixture_dir = tmp_path / "fixtures"
     _write_single_case_fixture(
         fixture_dir,
@@ -337,7 +361,9 @@ async def test_evaluation_service_ablation_variants_use_real_config_keys(tmp_pat
 
 @pytest.mark.asyncio
 async def test_evaluation_service_runs_memory_evolution_variants_a_b_c(tmp_path):
-    from core.evaluation.retrieval_quality import load_fixture_dir
+    """验证记忆演化 A/B/C 变体使用各自有效配置。"""
+
+    from core.features.evaluation.application import load_fixture_dir
 
     cases = load_fixture_dir("tests/fixtures/retrieval")["memory_evolution"]
     relevant_by_query = {
@@ -630,6 +656,8 @@ async def test_evaluation_service_case_payload_uses_safe_allowlist(tmp_path):
 async def test_evaluation_service_requested_unavailable_baseline_errors_without_saving(
     tmp_path,
 ):
+    """验证不可用基线返回错误且不保存报告。"""
+
     service = EvaluationService(
         engine=FakeEngine(),
         fixture_dir="tests/fixtures/retrieval",
@@ -656,6 +684,8 @@ async def test_evaluation_service_requested_unavailable_baseline_errors_without_
 
 @pytest.mark.asyncio
 async def test_evaluation_service_lists_gets_and_compares_saved_reports(tmp_path):
+    """验证服务可列出、读取并比较已保存报告。"""
+
     service = EvaluationService(
         engine=FakeEngine(),
         fixture_dir="tests/fixtures/retrieval",

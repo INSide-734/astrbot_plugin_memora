@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import sys
+import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 
 import yaml
 
-from core.utils.version import PLUGIN_VERSION
+from core.platform.resources.version import PLUGIN_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -22,11 +24,49 @@ def _load_metadata() -> dict[str, str]:
 
 
 def test_plugin_version_sources_are_aligned() -> None:
-    metadata = _load_metadata()
-    assert metadata["version"] == PLUGIN_VERSION
+    """版本号应在插件、Python、Dashboard、锁文件和 README 中保持一致。"""
 
-    package_json = _read_text("pages/dashboard/package.json")
-    assert f'"version": "{PLUGIN_VERSION}"' in package_json
+    metadata = _load_metadata()
+    assert PLUGIN_VERSION == metadata["version"]
+
+    project = tomllib.loads(_read_text("pyproject.toml"))
+    assert project["project"]["version"] == PLUGIN_VERSION
+
+    uv_lock = tomllib.loads(_read_text("uv.lock"))
+    local_packages = [
+        package
+        for package in uv_lock["package"]
+        if package["name"] == "astrbot-plugin-memora"
+    ]
+    assert [package["version"] for package in local_packages] == [PLUGIN_VERSION]
+
+    package_json = json.loads(_read_text("pages/dashboard/package.json"))
+    package_lock = json.loads(_read_text("pages/dashboard/package-lock.json"))
+    assert package_json["version"] == PLUGIN_VERSION
+    assert package_lock["version"] == PLUGIN_VERSION
+    assert package_lock["packages"][""]["version"] == PLUGIN_VERSION
+
+    badge_pattern = re.compile(
+        r"^\[!\[Version\]\(https://img\.shields\.io/badge/version-"
+        r"(?P<version>[^-]+)-orange\.svg\)\]\(metadata\.yaml\)$",
+        re.MULTILINE,
+    )
+    for readme in ("README.md", "README_EN.md", "README_RU.md"):
+        badges = badge_pattern.findall(_read_text(readme))
+        assert badges == [PLUGIN_VERSION]
+
+
+def test_development_environment_pins_astrbot_4_27_2() -> None:
+    """锁定开发宿主版本，同时保持插件安装依赖由 metadata 管理。"""
+
+    project = tomllib.loads(_read_text("pyproject.toml"))
+    assert project["tool"]["uv"]["constraint-dependencies"] == ["astrbot==4.27.2"]
+
+    lock = tomllib.loads(_read_text("uv.lock"))
+    astrbot_packages = [
+        package for package in lock["package"] if package["name"] == "astrbot"
+    ]
+    assert [package["version"] for package in astrbot_packages] == ["4.27.2"]
 
 
 def test_main_register_uses_metadata_author_and_repo() -> None:
@@ -212,7 +252,7 @@ def test_requirements_cover_mandatory_runtime_dependencies() -> None:
 
 
 def test_agent_tool_switches_are_aligned_across_schema_model_and_main() -> None:
-    from core.base.config_validator import AgentToolsConfig
+    from core.platform.config.config_validator import AgentToolsConfig
 
     schema = json.loads(_read_text("_conf_schema.json"))
     main_py = _read_text("main.py")
@@ -244,7 +284,7 @@ def test_agent_tool_switches_are_aligned_across_schema_model_and_main() -> None:
 
 
 def test_security_switches_are_aligned_across_schema_and_model() -> None:
-    from core.base.config_validator import SecurityConfig, get_default_config
+    from core.platform.config.config_validator import SecurityConfig, get_default_config
 
     schema = json.loads(_read_text("_conf_schema.json"))
     security_props = schema["security"]["items"]
@@ -377,7 +417,9 @@ def test_runtime_dependency_imports_are_declared_or_allowlisted() -> None:
                 if isinstance(node, ast.Import):
                     for alias in node.names:
                         imported_roots.add(alias.name.split(".", 1)[0])
-                elif isinstance(node, ast.ImportFrom) and node.module:
+                elif (
+                    isinstance(node, ast.ImportFrom) and node.module and node.level == 0
+                ):
                     imported_roots.add(node.module.split(".", 1)[0])
 
     missing: set[str] = set()

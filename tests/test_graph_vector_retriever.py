@@ -28,7 +28,7 @@ class TestGraphVectorRetriever:
     def retriever(self, faiss_db: MagicMock) -> Any:
         """使用固定 FAISS 替身构造图向量检索器。"""
 
-        from core.retrieval.graph_vector_retriever import GraphVectorRetriever
+        from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
 
         return GraphVectorRetriever(faiss_db=faiss_db)
 

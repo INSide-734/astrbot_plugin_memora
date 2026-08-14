@@ -7,12 +7,13 @@ import os
 import sqlite3
 import tempfile
 import time
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from core.managers.backup_manager import (
+from core.features.backup.application.manager import (
     _BACKUP_INFO_FILE,
     _BACKUP_NAME_RE,
     _VERSION_FILE,
@@ -98,7 +99,7 @@ class TestBackupCreation:
         mgr = BackupManager(data_dir=str(tmp_path))
         result = mgr.backup_if_needed()
         assert result is not None
-        backup_path = Path(result["directory"])
+        backup_path = Path(str(result["directory"]))
         assert backup_path.exists()
         assert backup_path.name.startswith("vunknown_")
         # Verify backup_info.json was written
@@ -117,7 +118,7 @@ class TestBackupCreation:
         mgr = BackupManager(data_dir=str(tmp_path))
         result = mgr.backup_if_needed()
         assert result is not None
-        backup_path = Path(result["directory"])
+        backup_path = Path(str(result["directory"]))
         assert backup_path.name.startswith("v2.3.0_")
         info = json.loads((backup_path / _BACKUP_INFO_FILE).read_text(encoding="utf-8"))
         assert info["previous_version"] == "2.3.0"
@@ -129,7 +130,8 @@ class TestBackupCreation:
         (tmp_path / "some_log.txt").write_text("log", encoding="utf-8")
         mgr = BackupManager(data_dir=str(tmp_path))
         result = mgr.backup_if_needed()
-        backup_path = Path(result["directory"])
+        assert result is not None
+        backup_path = Path(str(result["directory"]))
         # Only matching files should be copied
         copied_files = [
             p.name
@@ -156,7 +158,7 @@ class TestCreateBackup:
         mgr = BackupManager(data_dir=str(tmp_path))
         result = await mgr.create_backup()
         assert result is not None
-        backup_path = Path(result["directory"])
+        backup_path = Path(str(result["directory"]))
         assert "manual_" in backup_path.name
         info = json.loads((backup_path / _BACKUP_INFO_FILE).read_text(encoding="utf-8"))
         assert info["backup_type"] == "manual"
@@ -170,7 +172,7 @@ class TestCreateBackup:
         (tmp_path / "memora.db").write_bytes(_db_bytes("failure"))
         mgr = BackupManager(data_dir=str(tmp_path))
         with patch(
-            "core.managers.backup_manager.snapshot_sqlite",
+            "core.features.backup.application.manager.snapshot_sqlite",
             side_effect=OSError("disk"),
         ):
             with pytest.raises(RuntimeError, match="backup_create_failed"):
@@ -430,7 +432,7 @@ class TestStageRestore:
         (tmp_path / "memora.db").write_bytes(_db_bytes("source"))
         manager = BackupManager(str(tmp_path))
         backup = await manager.create_backup()
-        backup_dir = Path(backup["directory"])
+        backup_dir = Path(str(backup["directory"]))
         (backup_dir / "memora.db").write_bytes(_db_bytes("tampered"))
 
         with pytest.raises(RuntimeError, match="backup_invalid"):
@@ -454,10 +456,9 @@ class TestStageRestore:
         assert restored.execute("SELECT value FROM marker").fetchone() == ("source",)
         restored.close()
         manager.mark_restore_succeeded(str(staged["operation_id"]))
-        assert (
-            manager.get_restore_status(str(staged["operation_id"]))["restore_status"]
-            == "succeeded"
-        )
+        restore_status = manager.get_restore_status(str(staged["operation_id"]))
+        assert restore_status is not None
+        assert restore_status["restore_status"] == "succeeded"
 
     @pytest.mark.asyncio
     async def test_cancel_staged_restore_removes_payload_and_unblocks(
@@ -514,10 +515,12 @@ class TestStageRestore:
     ) -> None:
         """双库备份恢复必须同时还原 canonical 与 quarantine 状态。"""
 
-        from core.review.quarantine_store import MemoryQuarantineStore
+        from core.features.quality.infrastructure.quarantine_store import (
+            MemoryQuarantineStore,
+        )
 
         canonical_path = tmp_path / "memora.db"
-        with sqlite3.connect(canonical_path) as db:
+        with closing(sqlite3.connect(canonical_path)) as db:
             db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT)")
             db.execute("INSERT INTO documents(id, text) VALUES (1, 'source')")
             db.commit()
@@ -534,7 +537,7 @@ class TestStageRestore:
             source_window={"start_index": 0, "end_index": 1},
             is_group_chat=False,
         )
-        with sqlite3.connect(quarantine.db_path) as db:
+        with closing(sqlite3.connect(quarantine.db_path)) as db:
             db.execute(
                 """
                 UPDATE memory_quarantine_candidates
@@ -548,15 +551,17 @@ class TestStageRestore:
         manager = BackupManager(str(tmp_path))
         backup = await manager.create_backup()
         manifest = json.loads(
-            (Path(backup["directory"]) / _BACKUP_INFO_FILE).read_text(encoding="utf-8")
+            (Path(str(backup["directory"])) / _BACKUP_INFO_FILE).read_text(
+                encoding="utf-8"
+            )
         )
         assert "memory_quarantine.sqlite3" in manifest["files"]
 
-        with sqlite3.connect(canonical_path) as db:
+        with closing(sqlite3.connect(canonical_path)) as db:
             db.execute("DELETE FROM documents")
             db.execute("INSERT INTO documents(id, text) VALUES (2, 'live')")
             db.commit()
-        with sqlite3.connect(quarantine.db_path) as db:
+        with closing(sqlite3.connect(quarantine.db_path)) as db:
             db.execute(
                 "UPDATE memory_quarantine_candidates SET canonical_memory_id = 2"
             )
@@ -566,9 +571,9 @@ class TestStageRestore:
         applied = manager.apply_pending_restores()
 
         assert applied["restore_status"] == "validating"
-        with sqlite3.connect(canonical_path) as db:
+        with closing(sqlite3.connect(canonical_path)) as db:
             assert db.execute("SELECT id FROM documents").fetchall() == [(1,)]
-        with sqlite3.connect(quarantine.db_path) as db:
+        with closing(sqlite3.connect(quarantine.db_path)) as db:
             assert db.execute(
                 "SELECT status, canonical_memory_id FROM memory_quarantine_candidates"
             ).fetchone() == ("approved", 1)
@@ -580,15 +585,17 @@ class TestStageRestore:
     ) -> None:
         """旧的单库备份也不得留下 approved 指向不存在 canonical 的状态。"""
 
-        from core.review.quarantine_store import MemoryQuarantineStore
+        from core.features.quality.infrastructure.quarantine_store import (
+            MemoryQuarantineStore,
+        )
 
         canonical_path = tmp_path / "memora.db"
-        with sqlite3.connect(canonical_path) as db:
+        with closing(sqlite3.connect(canonical_path)) as db:
             db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT)")
             db.execute("INSERT INTO documents(id, text) VALUES (1, 'live')")
             db.commit()
         source_path = tmp_path / "source.db"
-        with sqlite3.connect(source_path) as db:
+        with closing(sqlite3.connect(source_path)) as db:
             db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT)")
             db.execute("INSERT INTO documents(id, text) VALUES (2, 'source')")
             db.commit()
@@ -605,7 +612,7 @@ class TestStageRestore:
             source_window={"start_index": 0, "end_index": 1},
             is_group_chat=False,
         )
-        with sqlite3.connect(quarantine.db_path) as db:
+        with closing(sqlite3.connect(quarantine.db_path)) as db:
             db.execute(
                 """
                 UPDATE memory_quarantine_candidates
@@ -626,16 +633,15 @@ class TestStageRestore:
         applied = manager.apply_pending_restores()
 
         assert applied["restore_status"] == "rolled_back"
-        with sqlite3.connect(canonical_path) as db:
+        with closing(sqlite3.connect(canonical_path)) as db:
             assert db.execute("SELECT id FROM documents").fetchall() == [(1,)]
-        with sqlite3.connect(quarantine.db_path) as db:
+        with closing(sqlite3.connect(quarantine.db_path)) as db:
             assert db.execute(
                 "SELECT status, canonical_memory_id FROM memory_quarantine_candidates"
             ).fetchone() == ("approved", 1)
-        assert (
-            manager.get_restore_status(str(staged["operation_id"]))["reason_code"]
-            == "restore_quarantine_reference_missing"
-        )
+        restore_status = manager.get_restore_status(str(staged["operation_id"]))
+        assert restore_status is not None
+        assert restore_status["reason_code"] == "restore_quarantine_reference_missing"
 
 
 # ---------------------------------------------------------------------------

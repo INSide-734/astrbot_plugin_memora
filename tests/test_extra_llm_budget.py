@@ -5,19 +5,31 @@ from __future__ import annotations
 import asyncio
 from dataclasses import asdict
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import ValidationError
 
-from core.base.config_validator import CostControlConfig
-from core.base.cost_control import CostControl, build_cost_control_from_config
-from core.base.extra_llm_budget import (
+from core.platform.config.config_validator import CostControlConfig
+from core.platform.config.cost_control import build_cost_control_from_config
+from core.shared.cost_control import CostControl
+from core.shared.extra_llm_budget import (
     ExtraLlmBudget,
     budgeted_extra_llm_call,
     current_extra_llm_budget,
     extra_llm_budget_scope,
 )
+
+if TYPE_CHECKING:
+    from astrbot.api.event import AstrMessageEvent
+
+    from core.features.conversation.application.conversation_manager import (
+        ConversationManager,
+    )
+    from core.features.memory.application.memory_engine import MemoryEngine
+    from core.features.recall.processors.memory_processor import MemoryProcessor
+    from core.platform.config import ConfigManager
 
 
 class _ConfigStub:
@@ -280,9 +292,11 @@ async def test_passive_recall_and_reflection_share_one_budget(
 ) -> None:
     """查询改写占用额度后，反思 Strategy D 不得再次调用 Provider。"""
 
-    from core.handlers.topic_batch_preparer import TopicBatchPreparer
-    from core.processors.topic_splitter import TwoStageLLMStrategy
-    from core.retrieval.query_rewriter import QueryRewriter
+    from core.features.recall.processors.topic_splitter import TwoStageLLMStrategy
+    from core.features.reflection.application.topic_batch_preparer import (
+        TopicBatchPreparer,
+    )
+    from core.features.retrieval.query_rewriter import QueryRewriter
 
     llm_rewrite = AsyncMock(
         return_value=(
@@ -305,12 +319,15 @@ async def test_passive_recall_and_reflection_share_one_budget(
         llm_client_instance=MagicMock(),
     )
     preparer = TopicBatchPreparer(
-        config_manager=_ConfigStub(
-            {
-                "topic_segmentation.strategy": "d",
-                "topic_segmentation.strategy_d.stage1_max_topics": 5,
-                "topic_segmentation.strategy_d.enable_parallel_stage2": True,
-            }
+        config_manager=cast(
+            "ConfigManager",
+            _ConfigStub(
+                {
+                    "topic_segmentation.strategy": "d",
+                    "topic_segmentation.strategy_d.stage1_max_topics": 5,
+                    "topic_segmentation.strategy_d.enable_parallel_stage2": True,
+                }
+            ),
         ),
         memory_processor=processor,
         cost_control=control,
@@ -332,7 +349,7 @@ async def test_passive_recall_and_reflection_share_one_budget(
 async def test_reflection_extra_batch_uses_single_reservation() -> None:
     """额外反思批次必须单次调用 Provider，并提交一个共享预算槽。"""
 
-    from core.handlers.reflection_llm_budget import (
+    from core.features.reflection.application.llm_budget import (
         fit_batches_to_extra_llm_budget,
         process_reflection_batches,
     )
@@ -362,6 +379,29 @@ async def test_reflection_extra_batch_uses_single_reservation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reflection_batches_pass_group_id_to_processor() -> None:
+    """反思批次必须把群组标识透传给 process_conversation 解析 profile。"""
+
+    from core.features.reflection.application.llm_budget import (
+        process_reflection_batches,
+    )
+
+    process_conversation = AsyncMock(return_value=[{"batch": 0}])
+
+    results = await process_reflection_batches(
+        [["a"]],
+        process_conversation=process_conversation,
+        cost_control=_quality_control(),
+        is_group_chat=True,
+        persona_id="persona-1",
+        group_id="group-9",
+    )
+
+    assert results == [[{"batch": 0}]]
+    assert process_conversation.await_args.kwargs["group_id"] == "group-9"
+
+
+@pytest.mark.asyncio
 async def test_event_handler_reuses_and_clears_turn_budget() -> None:
     """召回与响应必须共享新轮次预算，后台任务继承后事件引用应清理。"""
 
@@ -373,10 +413,10 @@ async def test_event_handler_reuses_and_clears_turn_budget() -> None:
     )
     handler = EventHandler(
         context=MagicMock(),
-        config_manager=_ConfigStub({}),
-        memory_engine=SimpleNamespace(cost_control=control),
-        memory_processor=processor,
-        conversation_manager=SimpleNamespace(),
+        config_manager=cast("ConfigManager", _ConfigStub({})),
+        memory_engine=cast("MemoryEngine", SimpleNamespace(cost_control=control)),
+        memory_processor=cast("MemoryProcessor", processor),
+        conversation_manager=cast("ConversationManager", SimpleNamespace()),
     )
     identity = MagicMock()
     handler._resolve_identity = MagicMock(return_value=identity)
@@ -408,12 +448,13 @@ async def test_event_handler_reuses_and_clears_turn_budget() -> None:
         side_effect=_capture_reflection
     )
     event = SimpleNamespace()
+    typed_event = cast("AstrMessageEvent", event)
 
-    await handler.handle_memory_recall(event, MagicMock())
+    await handler.handle_memory_recall(typed_event, MagicMock())
     first_budget = event._memora_extra_llm_budget
-    await handler.handle_memory_recall(event, MagicMock())
+    await handler.handle_memory_recall(typed_event, MagicMock())
     second_budget = event._memora_extra_llm_budget
-    await handler.handle_memory_reflection(event, MagicMock())
+    await handler.handle_memory_reflection(typed_event, MagicMock())
 
     assert first_budget is not second_budget
     assert observed_contexts == [first_budget, second_budget, second_budget]
@@ -425,7 +466,7 @@ async def test_event_handler_reuses_and_clears_turn_budget() -> None:
 async def test_quality_runtime_constructs_llm_reranker(tmp_db_path: str) -> None:
     """质量档与 LLM 策略必须在真实引擎初始化链中创建 LLM reranker。"""
 
-    from core.managers.memory_engine import MemoryEngine
+    from core.features.memory.application.memory_engine import MemoryEngine
 
     control = _quality_control(max_calls=2)
     engine = MemoryEngine(
@@ -452,9 +493,11 @@ async def test_quality_runtime_constructs_llm_reranker(tmp_db_path: str) -> None
 
     try:
         with (
-            patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_class,
             patch(
-                "core.retrieval.reranker_factory.create_reranker",
+                "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+            ) as bm25_class,
+            patch(
+                "core.features.retrieval.reranker_factory.create_reranker",
                 new=AsyncMock(return_value=expected_reranker),
             ) as create_reranker,
         ):
@@ -463,7 +506,9 @@ async def test_quality_runtime_constructs_llm_reranker(tmp_db_path: str) -> None
 
         assert engine.reranker is expected_reranker
         create_reranker.assert_awaited_once()
-        assert create_reranker.await_args.args[0] == "llm"
-        assert create_reranker.await_args.kwargs["cost_control"] is control
+        reranker_call = create_reranker.await_args
+        assert reranker_call is not None
+        assert reranker_call.args[0] == "llm"
+        assert reranker_call.kwargs["cost_control"] is control
     finally:
         await engine.close()

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.atom_lifecycle_manager import (
+from core.features.memory.application.atom_lifecycle_manager import (
     AtomLifecycleManager,
     dedup_atoms_batch,
 )

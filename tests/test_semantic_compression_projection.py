@@ -6,33 +6,32 @@ import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.initializer.derived_rebuild_coordinator import DerivedRebuildCoordinator
-from core.managers.memory_evolution_manager import (
+from core.features.decay.application import DecayScheduler
+from core.features.evolution.application import (
     EvolutionProposalRejected,
     MemoryEvolutionManager,
+    ProjectionBudget,
+    ProjectionReader,
+    ProjectionScope,
+    SemanticCompressor,
 )
-from core.managers.semantic_compressor import SemanticCompressor
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedState,
     EvolutionProposal,
     MemoryProjectionProposal,
-    MemorySourceRef,
     ProjectionBundle,
     ProjectionSourceView,
     ProjectionType,
     ProjectionView,
 )
-from core.retrieval.projection_reader import (
-    ProjectionBudget,
-    ProjectionReader,
-    ProjectionScope,
-)
-from core.retrieval.rrf_fusion import HybridResult
-from core.schedulers.decay_scheduler import DecayScheduler
+from core.features.retrieval.rrf_fusion import HybridResult
+from core.platform.composition import DerivedRebuildCoordinator
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
@@ -183,6 +182,31 @@ async def test_semantic_compression_never_mixes_confidential_subjects() -> None:
     assert result["candidate_groups"] == 0
     assert result["projections_applied"] == 0
     assert applier.calls == []
+
+
+@pytest.mark.asyncio
+async def test_semantic_compression_excludes_mark_write_sources() -> None:
+    """mark_write 低置信来源不得进入语义摘要候选分组。"""
+
+    class _MarkWriteSourceStore(_SourceStore):
+        async def load_mark_write_ids(self) -> frozenset[int]:
+            return frozenset({17})
+
+    store = _MarkWriteSourceStore([_source(17), _source(18), _source(19)])
+    applier = _ProposalApplier()
+    compressor = SemanticCompressor(
+        source_store=store,
+        proposal_applier=applier.apply,
+        age_days=60,
+        similarity_threshold=0.8,
+    )
+
+    result = await compressor.compress_old_memories(now=NOW)
+
+    assert result["candidate_groups"] == 1
+    assert applier.calls
+    for _proposal, sources in applier.calls:
+        assert 17 not in [source.memory_id for source in sources]
 
 
 @pytest.mark.asyncio
@@ -472,7 +496,7 @@ async def test_daily_scheduler_invokes_semantic_compression() -> None:
     """每日可选维护应真实触发已经装配的语义压缩器。"""
 
     compressor = SimpleNamespace(compress_old_memories=AsyncMock(return_value={}))
-    engine = SimpleNamespace(
+    engine: Any = SimpleNamespace(
         semantic_compressor=compressor,
         profile_manager=None,
         knowledge_manager=None,
@@ -515,7 +539,7 @@ async def test_component_factory_wires_semantic_compression_sentinels(
 
     from astrbot.core.provider.provider import Provider
 
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
 
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: {
@@ -556,13 +580,13 @@ async def test_component_factory_wires_semantic_compression_sentinels(
     engine.note_manager = None
     engine.semantic_compressor = None
     monkeypatch.setattr(
-        "core.initializer.component_factory.MemoryEngine",
+        "core.platform.composition.component_factory.MemoryEngine",
         MagicMock(return_value=engine),
     )
     conversation_store = MagicMock()
     conversation_store.initialize = AsyncMock()
     monkeypatch.setattr(
-        "core.initializer.component_factory.ConversationStore",
+        "core.platform.composition.component_factory.ConversationStore",
         MagicMock(return_value=conversation_store),
     )
     scheduler = MagicMock()
@@ -570,7 +594,7 @@ async def test_component_factory_wires_semantic_compression_sentinels(
     scheduler.stop = AsyncMock()
     scheduler_factory = MagicMock(return_value=scheduler)
     monkeypatch.setattr(
-        "core.initializer.component_factory.DecayScheduler",
+        "core.platform.composition.component_factory.DecayScheduler",
         scheduler_factory,
     )
     faiss_checker = MagicMock()

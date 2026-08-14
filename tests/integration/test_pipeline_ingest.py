@@ -121,7 +121,7 @@ class TestPipelineIngest:
         用 MemorySegment 构造 MemoryAtom，调用 AtomStore.insert()，
         并维护 FAISS 向量索引。
         """
-        from core.models.memory_atom import AtomType, MemoryAtom
+        from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
 
         now = time.time()
         atom = MemoryAtom(
@@ -183,7 +183,9 @@ class TestPipelineIngest:
         llm_output = self._single_topic_llm_output()
 
         # 用 Strategy A 解析
-        from core.processors.topic_splitter import PromptSegmentationStrategy
+        from core.features.recall.processors.topic_splitter import (
+            PromptSegmentationStrategy,
+        )
 
         strat = PromptSegmentationStrategy()
 
@@ -281,7 +283,9 @@ class TestPipelineIngest:
 
         llm_output = self._multi_topic_llm_output()
 
-        from core.processors.topic_splitter import PromptSegmentationStrategy
+        from core.features.recall.processors.topic_splitter import (
+            PromptSegmentationStrategy,
+        )
 
         strat = PromptSegmentationStrategy()
 
@@ -381,7 +385,9 @@ class TestPipelineIngest:
         # 模拟 LLM 返回空 JSON
         empty_output: dict[str, Any] = {}
 
-        from core.processors.topic_splitter import PromptSegmentationStrategy
+        from core.features.recall.processors.topic_splitter import (
+            PromptSegmentationStrategy,
+        )
 
         strat = PromptSegmentationStrategy()
 
@@ -421,7 +427,7 @@ class TestPipelineIngest:
         if atom_store is None:
             pytest.skip("AtomStore 不可用 — atom 子系统可能已禁用")
 
-        from core.models.memory_atom import AtomType, MemoryAtom
+        from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
 
         # 构造一个覆盖所有持久化字段的原子
         # 注意：emotion_tags 不在 DB schema 中，不是持久化字段；通过 metadata 传递

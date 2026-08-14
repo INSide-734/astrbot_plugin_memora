@@ -1,5 +1,4 @@
-"""测试 core/utils/ — data_helpers, injection_adapter, memory_formatter,
-number_utils, stopwords_manager, and __init__ functions."""
+"""shared、platform 与 feature 内纯工具的行为测试。"""
 
 from __future__ import annotations
 
@@ -12,27 +11,31 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.injection.models import DeliveryMode
+from core.features.injection.application.injection_budget import (
+    InjectionBudget,
+    InjectionStats,
+)
+from core.features.injection.application.memory_formatter import (
+    format_memories_for_fake_tool_call,
+    format_memories_for_fake_tool_call_deepseek_v4,
+    format_memories_for_injection,
+)
+from core.features.recall.processors.stopwords_manager import (
+    StopwordsManager,
+    get_stopwords_manager,
+)
 
 # ---------------------------------------------------------------------------
 # data_helpers tests
 # ---------------------------------------------------------------------------
-from core.utils.data_helpers import (
+from core.shared.data_helpers import (
     OperationContext,
     retry_on_failure,
     safe_parse_metadata,
     safe_serialize_metadata,
     validate_timestamp,
 )
-from core.utils.injection_adapter import InjectionAdapter
-from core.utils.injection_budget import InjectionBudget, InjectionStats
-from core.utils.memory_formatter import (
-    format_memories_for_fake_tool_call,
-    format_memories_for_fake_tool_call_deepseek_v4,
-    format_memories_for_injection,
-)
-from core.utils.number_utils import clamp_float, safe_float
-from core.utils.stopwords_manager import StopwordsManager, get_stopwords_manager
+from core.shared.number_utils import clamp_float, safe_float
 
 
 class TestSafeParseMetadata:
@@ -189,7 +192,7 @@ class TestRetryOnFailure:
             return 7
 
         with patch(
-            "core.utils.data_helpers.asyncio.sleep", new_callable=AsyncMock
+            "core.shared.data_helpers.asyncio.sleep", new_callable=AsyncMock
         ) as mock_sleep:
             await retry_on_failure(
                 flaky_func, max_retries=5, backoff_factor=2.0, exceptions=(ValueError,)
@@ -225,80 +228,6 @@ class TestOperationContext:
         ctx = OperationContext("bare_op")
         async with ctx:
             pass
-
-
-# ---------------------------------------------------------------------------
-# injection_adapter 测试
-# ---------------------------------------------------------------------------
-
-
-class TestInjectionAdapter:
-    def test_normal_delivery_is_preserved(self) -> None:
-        mode, reason = InjectionAdapter().resolve(
-            MagicMock(), DeliveryMode.EXTRA_USER_CONTENT
-        )
-        assert mode is DeliveryMode.EXTRA_USER_CONTENT
-        assert reason is None
-
-    @pytest.mark.parametrize("configured", [DeliveryMode.AUTO, "auto"])
-    def test_auto_resolves_to_temporary_extra_user_content(self, configured) -> None:
-        mode, reason = InjectionAdapter().resolve(MagicMock(), configured)
-        assert mode is DeliveryMode.EXTRA_USER_CONTENT
-        assert reason is None
-
-    def test_removed_system_prompt_delivery_is_rejected(self) -> None:
-        with pytest.raises(ValueError):
-            InjectionAdapter().resolve(MagicMock(), "system_prompt")
-
-    def test_fake_tool_call_is_preserved_for_supported_provider(self) -> None:
-        provider = MagicMock()
-        provider.provider_config = {"type": "openai_chat_completion"}
-        provider.get_model.return_value = "gpt-4"
-        mode, reason = InjectionAdapter().resolve(provider, DeliveryMode.FAKE_TOOL_CALL)
-        assert mode is DeliveryMode.FAKE_TOOL_CALL
-        assert reason is None
-
-    def test_fake_tool_call_downgrades_for_gemini_provider_type(self) -> None:
-        provider = MagicMock()
-        provider.provider_config = {"type": "googlegenai_chat_completion"}
-        provider.get_model.return_value = "gemini-2.0-flash"
-        mode, reason = InjectionAdapter().resolve(provider, DeliveryMode.FAKE_TOOL_CALL)
-        assert mode is DeliveryMode.USER_MESSAGE_BEFORE
-        assert reason is not None
-        assert "Gemini" in reason
-
-    def test_fake_tool_call_downgrades_on_gemini_model_match(self) -> None:
-        provider = MagicMock()
-        provider.provider_config = {"type": "custom_provider"}
-        provider.get_model.return_value = "gemini-pro"
-        mode, reason = InjectionAdapter().resolve(provider, DeliveryMode.FAKE_TOOL_CALL)
-        assert mode is DeliveryMode.USER_MESSAGE_BEFORE
-        assert reason is not None
-
-    @pytest.mark.parametrize("provider", [None, MagicMock(spec=[])])
-    def test_unknown_provider_uses_widest_compatible_delivery(self, provider) -> None:
-        mode, reason = InjectionAdapter().resolve(provider, DeliveryMode.FAKE_TOOL_CALL)
-        assert mode is DeliveryMode.EXTRA_USER_CONTENT
-        assert reason is not None
-
-    @pytest.mark.parametrize("provider", [None, MagicMock(spec=[])])
-    def test_unknown_provider_capabilities_are_conservative(self, provider) -> None:
-        provider_type, model_name, tools_supported = InjectionAdapter().capabilities(
-            provider
-        )
-        assert provider_type == ""
-        assert model_name == ""
-        assert tools_supported is False
-
-    def test_capabilities_return_provider_identity_and_known_tool_support(self) -> None:
-        provider = MagicMock()
-        provider.provider_config = {"type": "openai_chat_completion"}
-        provider.get_model.return_value = "gpt-4.1"
-        assert InjectionAdapter().capabilities(provider) == (
-            "openai_chat_completion",
-            "gpt-4.1",
-            True,
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -721,7 +650,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_get_stopwords_builtin_exists(self, tmp_path: Path) -> None:
         """Test get_stopwords when builtin file exists."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         mgr.stopwords = set()
@@ -739,7 +668,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_get_stopwords_fallback(self, tmp_path: Path) -> None:
         """Test get_stopwords falls back to custom dir when builtin missing."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         mgr.stopwords = set()
@@ -755,7 +684,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_get_stopwords_no_dirs(self) -> None:
         """Test get_stopwords returns None when no dirs available."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         mgr.stopwords = set()
@@ -768,7 +697,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_write_fallback_stopwords(self, tmp_path: Path) -> None:
         """Test _write_fallback_stopwords writes a valid file."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         mgr.stopwords = set()
@@ -782,7 +711,7 @@ class TestStopwordsManager:
     @pytest.mark.asyncio
     async def test_write_fallback_skips_existing(self, tmp_path: Path) -> None:
         """Test _write_fallback_stopwords does not overwrite existing."""
-        from core.utils.stopwords_manager import StopwordsManager
+        from core.features.recall.processors.stopwords_manager import StopwordsManager
 
         mgr = StopwordsManager.__new__(StopwordsManager)
         filepath = tmp_path / "existing.txt"
@@ -799,28 +728,28 @@ class TestStopwordsManager:
 
 class TestExtractJsonFromResponse:
     def test_extract_from_markdown_json_block(self) -> None:
-        from core.utils import extract_json_from_response
+        from core.shared.json_utils import extract_json_from_response
 
         text = 'Some text\n```json\n{"key": "value"}\n```\nMore text'
         result = extract_json_from_response(text)
         assert result == '{"key": "value"}'
 
     def test_extract_from_markdown_block_no_lang(self) -> None:
-        from core.utils import extract_json_from_response
+        from core.shared.json_utils import extract_json_from_response
 
         text = '```\n{"key": "value"}\n```'
         result = extract_json_from_response(text)
         assert result == '{"key": "value"}'
 
     def test_extract_no_code_block_returns_trimmed(self) -> None:
-        from core.utils import extract_json_from_response
+        from core.shared.json_utils import extract_json_from_response
 
         text = '  {"key": "value"}  '
         result = extract_json_from_response(text)
         assert result == '{"key": "value"}'
 
     def test_extract_nested_braces(self) -> None:
-        from core.utils import extract_json_from_response
+        from core.shared.json_utils import extract_json_from_response
 
         text = '```json\n{"outer": {"inner": "value"}}\n```'
         result = extract_json_from_response(text)
@@ -828,7 +757,7 @@ class TestExtractJsonFromResponse:
         assert "inner" in result
 
     def test_extract_first_json_only(self) -> None:
-        from core.utils import extract_json_from_response
+        from core.shared.json_utils import extract_json_from_response
 
         text = '```json\n{"first": 1}\n```\n```json\n{"second": 2}\n```'
         result = extract_json_from_response(text)
@@ -838,28 +767,28 @@ class TestExtractJsonFromResponse:
 
 class TestGetNowDatetime:
     def test_returns_datetime_with_tz(self) -> None:
-        from core.utils import get_now_datetime
+        from core.platform.context_helpers import get_now_datetime
 
         result = get_now_datetime("UTC")
         assert isinstance(result, datetime)
         assert result.tzinfo is not None
 
     def test_default_timezone(self) -> None:
-        from core.utils import get_now_datetime
+        from core.platform.context_helpers import get_now_datetime
 
         result = get_now_datetime()
         assert isinstance(result, datetime)
         assert result.tzinfo is not None
 
     def test_invalid_timezone_falls_back(self) -> None:
-        from core.utils import get_now_datetime
+        from core.platform.context_helpers import get_now_datetime
 
         result = get_now_datetime("Invalid/Timezone")
         assert isinstance(result, datetime)
         assert result.tzinfo is not None
 
     def test_with_context_object(self) -> None:
-        from core.utils import get_now_datetime
+        from core.platform.context_helpers import get_now_datetime
 
         mock_ctx = MagicMock()
         mock_ctx.plugin_config = {}
@@ -870,7 +799,7 @@ class TestGetNowDatetime:
 
 class TestGetNowDatetimeFromContext:
     def test_with_plugin_config_dict(self) -> None:
-        from core.utils import get_now_datetime_from_context
+        from core.platform.context_helpers import get_now_datetime_from_context
 
         mock_ctx = MagicMock()
         mock_ctx.plugin_config = {"timezone_settings": {"timezone": "UTC"}}
@@ -879,7 +808,7 @@ class TestGetNowDatetimeFromContext:
         assert result.tzinfo is not None
 
     def test_without_plugin_config(self) -> None:
-        from core.utils import get_now_datetime_from_context
+        from core.platform.context_helpers import get_now_datetime_from_context
 
         mock_ctx = MagicMock(spec=[])
         result = get_now_datetime_from_context(mock_ctx)
@@ -887,15 +816,15 @@ class TestGetNowDatetimeFromContext:
         assert result.tzinfo is not None
 
     def test_with_attribute_error(self) -> None:
-        from core.utils import get_now_datetime_from_context
+        from core.platform.context_helpers import get_now_datetime_from_context
 
-        mock_ctx = object()  # has no plugin_config
+        mock_ctx: Any = object()  # 故意模拟没有 plugin_config 的异常上下文。
         result = get_now_datetime_from_context(mock_ctx)
         assert isinstance(result, datetime)
 
     def test_config_attr_error_triggers_fallback(self) -> None:
         """If timezone_settings is not a dict, .get() raises AttributeError → fallback (lines 152-154)."""
-        from core.utils import get_now_datetime_from_context
+        from core.platform.context_helpers import get_now_datetime_from_context
 
         mock_ctx = MagicMock()
         mock_ctx.plugin_config = {
@@ -913,19 +842,19 @@ class TestGetNowDatetimeFromContext:
 
 class TestDataHelpersEdgeCases:
     def test_safe_parse_metadata_string_with_special_chars(self) -> None:
-        from core.utils.data_helpers import safe_parse_metadata
+        from core.shared.data_helpers import safe_parse_metadata
 
         result = safe_parse_metadata('{"key": "value with \\"quotes\\""}')
         assert isinstance(result, dict)
 
     def test_validate_timestamp_float_edge(self) -> None:
-        from core.utils.data_helpers import validate_timestamp
+        from core.shared.data_helpers import validate_timestamp
 
         assert validate_timestamp(0.0) == 0.0
         assert validate_timestamp(-1.0) == -1.0
 
     def test_validate_timestamp_bool(self) -> None:
-        from core.utils.data_helpers import validate_timestamp
+        from core.shared.data_helpers import validate_timestamp
 
         # bool is a subclass of int in Python, so True == 1 as float
         result = validate_timestamp(True, 42.0)
@@ -933,7 +862,7 @@ class TestDataHelpersEdgeCases:
 
     @pytest.mark.asyncio
     async def test_retry_on_failure_sync_success(self) -> None:
-        from core.utils.data_helpers import retry_on_failure
+        from core.shared.data_helpers import retry_on_failure
 
         def good() -> int:
             return 1
@@ -943,7 +872,7 @@ class TestDataHelpersEdgeCases:
 
     @pytest.mark.asyncio
     async def test_retry_no_exceptions_tuple_uses_default(self) -> None:
-        from core.utils.data_helpers import retry_on_failure
+        from core.shared.data_helpers import retry_on_failure
 
         def fail() -> int:
             raise ValueError("fail")
@@ -953,7 +882,7 @@ class TestDataHelpersEdgeCases:
 
     @pytest.mark.asyncio
     async def test_operation_context_start_time(self) -> None:
-        from core.utils.data_helpers import OperationContext
+        from core.shared.data_helpers import OperationContext
 
         ctx = OperationContext("op")
         assert ctx.start_time is None
@@ -963,7 +892,7 @@ class TestDataHelpersEdgeCases:
 
     @pytest.mark.asyncio
     async def test_operation_context_with_exception(self) -> None:
-        from core.utils.data_helpers import OperationContext
+        from core.shared.data_helpers import OperationContext
 
         ctx = OperationContext("failing_op", session_id="s1")
         try:
@@ -1005,7 +934,7 @@ class TestGetPersonaId:
         """Priority 1: session_service_config has persona_id → return it."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={"persona_id": "session_persona_123"})
         result = await get_persona_id(mock_context, mock_event)
@@ -1018,7 +947,7 @@ class TestGetPersonaId:
         """session_service_config exists but has no persona_id key."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={})
         mock_context.conversation_manager.get_conversation = AsyncMock(
@@ -1034,7 +963,7 @@ class TestGetPersonaId:
         """Priority 2: no session config, conversation has persona_id."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={})
         mock_context.conversation_manager.get_conversation = AsyncMock(
@@ -1050,7 +979,7 @@ class TestGetPersonaId:
         """Priority 2: conversation persona_id is '[%None]' → returns None."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={})
         mock_context.conversation_manager.get_conversation = AsyncMock(
@@ -1066,7 +995,7 @@ class TestGetPersonaId:
         """Conversation exists but persona_id is None/empty → falls to default."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={})
         mock_context.conversation_manager.get_conversation = AsyncMock(
@@ -1085,7 +1014,7 @@ class TestGetPersonaId:
         """Priority 2: get_curr_conversation_id returns None → skip to default."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={})
         mock_context.conversation_manager.get_curr_conversation_id = AsyncMock(
@@ -1104,7 +1033,7 @@ class TestGetPersonaId:
         """get_conversation returns None → skip to default."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={})
         mock_context.conversation_manager.get_conversation = AsyncMock(
@@ -1123,7 +1052,7 @@ class TestGetPersonaId:
         """Priority 3: global default persona is set."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={})
         mock_context.persona_manager.get_default_persona_v3 = AsyncMock(
@@ -1139,7 +1068,7 @@ class TestGetPersonaId:
         """没有 persona found at any level → returns None."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={})
         mock_context.persona_manager.get_default_persona_v3 = AsyncMock(
@@ -1155,7 +1084,7 @@ class TestGetPersonaId:
         """异常 during persona resolution → returns None gracefully."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(side_effect=RuntimeError("provider down"))
         result = await get_persona_id(mock_context, mock_event)
@@ -1168,7 +1097,7 @@ class TestGetPersonaId:
         """session_service_config has persona_id='' (empty string) → falsy, skip."""
         from astrbot.api import sp
 
-        from core.utils import get_persona_id
+        from core.platform.context_helpers import get_persona_id
 
         sp.get_async = AsyncMock(return_value={"persona_id": ""})
         mock_context.conversation_manager.get_conversation = AsyncMock(

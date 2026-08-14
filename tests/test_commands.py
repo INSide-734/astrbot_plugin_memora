@@ -36,6 +36,14 @@ def _qq_official_c2c_event(*, sender_id: str = "OPENID-1") -> MagicMock:
     return event
 
 
+def _identity_runtime():
+    """构造命令测试显式注入的协议身份端口。"""
+
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
+
+    return ProtocolIdentityRuntime()
+
+
 # ============================================================================
 # QueryCommandMixin tests
 # ============================================================================
@@ -45,7 +53,7 @@ class TestMaintenanceWriteGuardDefaults:
     """Tests for default write-guard behavior on standalone mixins."""
 
     def test_query_mixin_defaults_to_no_write_guard(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(QueryCommandMixin):
             pass
@@ -53,7 +61,9 @@ class TestMaintenanceWriteGuardDefaults:
         assert TestMixin()._maintenance_write_guard_message() is None
 
     def test_maintenance_mixin_defaults_to_no_write_guard(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
 
         class TestMixin(MaintenanceCommandMixin):
             pass
@@ -66,7 +76,7 @@ class TestHandleStatus:
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_memory_engine(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(QueryCommandMixin):
             memory_engine = None
@@ -87,7 +97,7 @@ class TestHandleSearch:
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_memory_engine(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(QueryCommandMixin):
             memory_engine = None
@@ -104,7 +114,7 @@ class TestHandleSearch:
 
     @pytest.mark.asyncio
     async def test_returns_error_for_empty_query(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(QueryCommandMixin):
             memory_engine = MagicMock()
@@ -121,7 +131,7 @@ class TestHandleSearch:
 
     @pytest.mark.asyncio
     async def test_returns_error_for_whitespace_only_query(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(QueryCommandMixin):
             memory_engine = MagicMock()
@@ -137,14 +147,40 @@ class TestHandleSearch:
         assert len(results) == 1
 
     @pytest.mark.asyncio
-    async def test_clamps_k_to_range(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+    async def test_missing_identity_port_fails_closed(self) -> None:
+        """命令缺少身份端口时不得使用静态解析器继续检索。"""
+
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         engine = MagicMock()
         engine.search_memories = AsyncMock(return_value=[])
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+
+        event = MagicMock()
+        event.unified_msg_origin = "test-session"
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = "user-001"
+        event.plain_result.return_value = "no results"
+
+        results = []
+        async for result in TestMixin().handle_search(event, "private fact"):
+            results.append(result)
+
+        assert results == ["no results"]
+        engine.search_memories.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_clamps_k_to_range(self) -> None:
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         mixin = TestMixin()
         event = MagicMock()
@@ -162,13 +198,14 @@ class TestHandleSearch:
 
     @pytest.mark.asyncio
     async def test_clamps_k_to_max_100(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         engine = MagicMock()
         engine.search_memories = AsyncMock(return_value=[])
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         mixin = TestMixin()
         event = MagicMock()
@@ -186,13 +223,14 @@ class TestHandleSearch:
     @pytest.mark.asyncio
     async def test_group_search_passes_privacy_scope_to_engine(self) -> None:
         """群聊命令检索必须传递群聊和发送者作用域以过滤机密记忆。"""
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         engine = MagicMock()
         engine.search_memories = AsyncMock(return_value=[])
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         event = MagicMock()
         event.unified_msg_origin = "group:42"
@@ -208,16 +246,47 @@ class TestHandleSearch:
         assert kwargs["user_id"] == "user-001"
 
     @pytest.mark.asyncio
-    async def test_qq_official_search_uses_canonical_user_id(self) -> None:
-        """QQ Official 检索必须带机器人实例命名空间，不能直接使用 OpenID。"""
-
-        from core.commands.query_commands import QueryCommandMixin
+    async def test_search_passes_include_mark_write_flag_to_engine(self) -> None:
+        """命令检索默认排除 mark_write，显式开关向引擎透传 True。"""
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         engine = MagicMock()
         engine.search_memories = AsyncMock(return_value=[])
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
+
+        event = MagicMock()
+        event.unified_msg_origin = "test-session"
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = "user-001"
+        event.plain_result = MagicMock(return_value="no results")
+
+        async for _ in TestMixin().handle_search(event, "private fact"):
+            pass
+
+        assert engine.search_memories.call_args.kwargs["include_mark_write"] is False
+
+        async for _ in TestMixin().handle_search(
+            event, "private fact", include_mark_write=True
+        ):
+            pass
+
+        assert engine.search_memories.call_args.kwargs["include_mark_write"] is True
+
+    @pytest.mark.asyncio
+    async def test_qq_official_search_uses_canonical_user_id(self) -> None:
+        """QQ Official 检索必须带机器人实例命名空间，不能直接使用 OpenID。"""
+
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         event = _qq_official_c2c_event()
 
@@ -231,13 +300,14 @@ class TestHandleSearch:
     async def test_qq_official_identity_conflict_denies_search(self) -> None:
         """包装层 sender 与官方载荷冲突时不得降级到原始 OpenID 检索。"""
 
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         engine = MagicMock()
         engine.search_memories = AsyncMock(return_value=[])
 
         class TestMixin(QueryCommandMixin):
             memory_engine = engine
+            _identity_runtime = _identity_runtime()
 
         event = _qq_official_c2c_event(sender_id="OTHER-OPENID")
 
@@ -252,7 +322,7 @@ class TestHandleSearch:
     async def test_unknown_message_type_fails_closed(self) -> None:
         """无法确认消息类型时不得把请求伪装成私聊检索。"""
 
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         engine = MagicMock()
         engine.search_memories = AsyncMock(return_value=[])
@@ -280,7 +350,7 @@ class TestHandleForget:
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_memory_engine(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(QueryCommandMixin):
             memory_engine = None
@@ -297,7 +367,7 @@ class TestHandleForget:
 
     @pytest.mark.asyncio
     async def test_returns_error_for_negative_doc_id(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(QueryCommandMixin):
             memory_engine = MagicMock()
@@ -318,7 +388,7 @@ class TestHandleWebui:
 
     @pytest.mark.asyncio
     async def test_yields_result(self) -> None:
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         event = MagicMock()
         event.plain_result = MagicMock(return_value="webui guide")
@@ -340,8 +410,10 @@ class TestMaintenanceHandleRebuildIndex:
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_memory_engine(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(MaintenanceCommandMixin, QueryCommandMixin):
             memory_engine = None
@@ -363,8 +435,10 @@ class TestMaintenanceHandleRebuildGraph:
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_memory_engine(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(MaintenanceCommandMixin, QueryCommandMixin):
             memory_engine = None
@@ -385,8 +459,10 @@ class TestMaintenanceHandleReset:
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_conversation_manager(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
-        from core.commands.query_commands import QueryCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
 
         class TestMixin(MaintenanceCommandMixin, QueryCommandMixin):
             conversation_manager = None
@@ -403,7 +479,9 @@ class TestMaintenanceHandleReset:
 
     @pytest.mark.asyncio
     async def test_calls_clear_session_with_valid_session(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
 
         conv = MagicMock()
         conv.clear_session = AsyncMock()
@@ -429,7 +507,9 @@ class TestMaintenanceHandleCleanupErrors:
 
     @pytest.mark.asyncio
     async def test_handles_missing_context(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
 
         class TestMixin(MaintenanceCommandMixin):
             context = None
@@ -448,7 +528,9 @@ class TestMaintenanceHandleCleanupErrors:
 
     @pytest.mark.asyncio
     async def test_handles_missing_conversation_id(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
 
         ctx = MagicMock()
         ctx.conversation_manager = MagicMock()
@@ -474,7 +556,9 @@ class TestMaintenanceHandleCleanupErrors:
 
     @pytest.mark.asyncio
     async def test_handles_no_conversation_history(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
 
         ctx = MagicMock()
         ctx.conversation_manager = MagicMock()
@@ -501,7 +585,9 @@ class TestMaintenanceHandleCleanupErrors:
 
     @pytest.mark.asyncio
     async def test_handles_invalid_json_history(self) -> None:
-        from core.commands.maintenance_commands import MaintenanceCommandMixin
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
 
         ctx = MagicMock()
         ctx.conversation_manager = MagicMock()

@@ -1,8 +1,4 @@
-"""测试 core/models/ — conversation, graph, knowledge, note, recall strategy,
-user profile, and default stopwords models.
-
-Excludes memory_atom.py (already tested in test_memory_atom.py).
-"""
+"""测试 shared 与各 feature 拥有的领域模型。"""
 
 from __future__ import annotations
 
@@ -13,7 +9,7 @@ from typing import Any
 import pytest
 
 # ---------------------------------------------------------------------------
-# 1. core/models/conversation_models.py
+# 1. core/shared/contracts/conversation.py
 # ---------------------------------------------------------------------------
 
 
@@ -21,7 +17,7 @@ class TestMessageModel:
     """测试 Message 数据类。"""
 
     def test_basic_message_creation(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=1,
@@ -40,7 +36,7 @@ class TestMessageModel:
         assert msg.platform is None
 
     def test_message_with_optional_fields(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=2,
@@ -57,7 +53,7 @@ class TestMessageModel:
         assert msg.platform == "qq"
 
     def test_to_dict_roundtrip(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         original = Message(
             id=3,
@@ -75,7 +71,7 @@ class TestMessageModel:
         assert d["content"] == "测试消息"
 
     def test_from_dict_reconstructs_message(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         data: dict[str, Any] = {
             "id": 4,
@@ -95,7 +91,7 @@ class TestMessageModel:
         assert msg.sender_name == "MyBot"
 
     def test_from_dict_minimal_data(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         data: dict[str, Any] = {
             "session_id": "sess-005",
@@ -109,7 +105,7 @@ class TestMessageModel:
         assert msg.sender_name is None
 
     def test_from_dict_metadata_as_json_string(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         data: dict[str, Any] = {
             "session_id": "sess-006",
@@ -123,7 +119,7 @@ class TestMessageModel:
         assert msg.metadata["key"] == "value"
 
     def test_from_dict_metadata_invalid_json_defaults_to_empty(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         data: dict[str, Any] = {
             "session_id": "sess-007",
@@ -137,36 +133,36 @@ class TestMessageModel:
         assert msg.metadata == {}
 
     def test_content_to_text_none(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         assert Message.content_to_text(None) == ""
 
     def test_content_to_text_string(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         assert Message.content_to_text("hello world") == "hello world"
 
     def test_content_to_text_int_float_bool(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         assert Message.content_to_text(42) == "42"
         assert Message.content_to_text(3.14) == "3.14"
         assert Message.content_to_text(True) == "True"
 
     def test_content_to_text_dict_with_text_type(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         result = Message.content_to_text({"type": "text", "text": "你好"})
         assert result == "你好"
 
     def test_content_to_text_dict_with_content_key(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         result = Message.content_to_text({"type": "custom", "content": "some content"})
         assert result == "some content"
 
     def test_content_to_text_dict_with_image_type(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         result = Message.content_to_text(
             {"type": "image", "image_url": "http://example.com/img.png"}
@@ -174,7 +170,7 @@ class TestMessageModel:
         assert result == "[图片消息]"
 
     def test_content_to_text_list_of_parts(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         result = Message.content_to_text(
             [{"type": "text", "text": "Hello"}, {"type": "text", "text": "World"}]
@@ -182,7 +178,7 @@ class TestMessageModel:
         assert result == "Hello World"
 
     def test_format_for_llm_direct_message(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=1,
@@ -196,7 +192,7 @@ class TestMessageModel:
         assert formatted["content"] == "你好"
 
     def test_format_for_llm_group_with_bot(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=5,
@@ -212,7 +208,7 @@ class TestMessageModel:
         assert "[Bot:" in formatted["content"]
 
     def test_format_for_llm_group_with_user_uses_sender_name(self) -> None:
-        from core.models.conversation_models import Message
+        from core.shared.contracts.conversation import Message
 
         msg = Message(
             id=6,
@@ -231,7 +227,7 @@ class TestSessionModel:
     """测试 Session 数据类。"""
 
     def test_basic_session_creation(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -247,7 +243,7 @@ class TestSessionModel:
         assert sess.message_count == 0
 
     def test_add_participant(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -262,7 +258,7 @@ class TestSessionModel:
         assert len(sess.participants) == 1
 
     def test_add_duplicate_participant_is_ignored(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -277,7 +273,7 @@ class TestSessionModel:
         assert len(sess.participants) == 1
 
     def test_update_activity(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         old_time = time.time() - 100
         sess = Session(
@@ -291,7 +287,7 @@ class TestSessionModel:
         assert sess.last_active_at > old_time
 
     def test_increment_message_count(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -308,7 +304,7 @@ class TestSessionModel:
         assert sess.message_count == 2
 
     def test_to_dict_and_from_dict_roundtrip(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         sess = Session(
@@ -330,7 +326,7 @@ class TestSessionModel:
         assert "user_2" in reconstructed.participants
 
     def test_from_dict_participants_as_json_string(self) -> None:
-        from core.models.conversation_models import Session
+        from core.shared.contracts.conversation import Session
 
         now = time.time()
         data: dict[str, Any] = {
@@ -351,7 +347,7 @@ class TestMemoryEventModel:
     """测试 MemoryEvent 数据类。"""
 
     def test_basic_memory_event_creation(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         evt = MemoryEvent(
             memory_content="用户喜欢咖啡",
@@ -363,7 +359,7 @@ class TestMemoryEventModel:
         assert evt.session_id == "sess-001"
 
     def test_is_important_default_threshold(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         important = MemoryEvent(
             memory_content="重要",
@@ -379,7 +375,7 @@ class TestMemoryEventModel:
         assert trivial.is_important() is False
 
     def test_is_important_custom_threshold(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         evt = MemoryEvent(
             memory_content="边界",
@@ -390,7 +386,7 @@ class TestMemoryEventModel:
         assert evt.is_important(threshold=0.51) is False
 
     def test_to_dict_and_from_dict_roundtrip(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         evt = MemoryEvent(
             memory_content="周末计划去西湖",
@@ -406,7 +402,7 @@ class TestMemoryEventModel:
         assert reconstructed.metadata["source"] == "reflection"
 
     def test_from_dict_metadata_as_json_string(self) -> None:
-        from core.models.conversation_models import MemoryEvent
+        from core.shared.contracts.conversation import MemoryEvent
 
         data: dict[str, Any] = {
             "memory_content": "test",
@@ -423,52 +419,52 @@ class TestSerializationHelpers:
     """测试 serialize_to_json 与 deserialize_from_json。"""
 
     def test_serialize_list(self) -> None:
-        from core.models.conversation_models import serialize_to_json
+        from core.shared.contracts.conversation import serialize_to_json
 
         result = serialize_to_json(["a", "b"])
         parsed = json.loads(result)
         assert parsed == ["a", "b"]
 
     def test_serialize_dict(self) -> None:
-        from core.models.conversation_models import serialize_to_json
+        from core.shared.contracts.conversation import serialize_to_json
 
         result = serialize_to_json({"key": "value"})
         parsed = json.loads(result)
         assert parsed == {"key": "value"}
 
     def test_serialize_non_json_type_falls_back_to_str(self) -> None:
-        from core.models.conversation_models import serialize_to_json
+        from core.shared.contracts.conversation import serialize_to_json
 
         result = serialize_to_json(42)
         assert result == "42"
 
     def test_deserialize_valid_json(self) -> None:
-        from core.models.conversation_models import deserialize_from_json
+        from core.shared.contracts.conversation import deserialize_from_json
 
         result = deserialize_from_json('{"a": 1}')
         assert result == {"a": 1}
 
     def test_deserialize_none_returns_default(self) -> None:
-        from core.models.conversation_models import deserialize_from_json
+        from core.shared.contracts.conversation import deserialize_from_json
 
         assert deserialize_from_json(None) == {}
         assert deserialize_from_json(None, []) == []
 
     def test_deserialize_empty_string_returns_default(self) -> None:
-        from core.models.conversation_models import deserialize_from_json
+        from core.shared.contracts.conversation import deserialize_from_json
 
         assert deserialize_from_json("") == {}
         assert deserialize_from_json("", "fallback") == "fallback"
 
     def test_deserialize_invalid_json_returns_default(self) -> None:
-        from core.models.conversation_models import deserialize_from_json
+        from core.shared.contracts.conversation import deserialize_from_json
 
         assert deserialize_from_json("not json{{{") == {}
         assert deserialize_from_json("bad", []) == []
 
 
 # ---------------------------------------------------------------------------
-# 2. core/models/graph_models.py
+# 2. core/features/memory/graph/domain/models.py
 # ---------------------------------------------------------------------------
 
 
@@ -476,7 +472,7 @@ class TestGraphNode:
     """测试 GraphNode 数据类。"""
 
     def test_basic_node_creation(self) -> None:
-        from core.models.graph_models import GraphNode
+        from core.features.memory.graph.domain.models import GraphNode
 
         node = GraphNode(
             node_type="person",
@@ -489,7 +485,7 @@ class TestGraphNode:
         assert node.metadata == {}
 
     def test_node_key_property(self) -> None:
-        from core.models.graph_models import GraphNode
+        from core.features.memory.graph.domain.models import GraphNode
 
         node = GraphNode(
             node_type="entity",
@@ -499,7 +495,7 @@ class TestGraphNode:
         assert node.node_key == "entity:west_lake"
 
     def test_node_with_metadata(self) -> None:
-        from core.models.graph_models import GraphNode
+        from core.features.memory.graph.domain.models import GraphNode
 
         node = GraphNode(
             node_type="topic",
@@ -514,7 +510,7 @@ class TestGraphEdge:
     """测试 GraphEdge 数据类。"""
 
     def test_basic_edge_creation(self) -> None:
-        from core.models.graph_models import GraphEdge
+        from core.features.memory.graph.domain.models import GraphEdge
 
         edge = GraphEdge(
             source_key="person:xiaoming",
@@ -531,7 +527,7 @@ class TestGraphEdge:
         assert edge.status == "active"
 
     def test_edge_key_property(self) -> None:
-        from core.models.graph_models import GraphEdge
+        from core.features.memory.graph.domain.models import GraphEdge
 
         edge = GraphEdge(
             source_key="a",
@@ -542,7 +538,7 @@ class TestGraphEdge:
         assert edge.edge_key == "a|knows|b|42"
 
     def test_semantic_edge_key_ignores_memory_id(self) -> None:
-        from core.models.graph_models import GraphEdge
+        from core.features.memory.graph.domain.models import GraphEdge
 
         edge1 = GraphEdge(
             source_key="a",
@@ -564,7 +560,7 @@ class TestGraphEntry:
     """测试 GraphEntry 数据类。"""
 
     def test_basic_entry_creation(self) -> None:
-        from core.models.graph_models import GraphEntry
+        from core.features.memory.graph.domain.models import GraphEntry
 
         entry = GraphEntry(
             entry_key="ent-001",
@@ -581,7 +577,7 @@ class TestGraphEntry:
         assert entry.content == "小明周末去了西湖"
 
     def test_entry_defaults(self) -> None:
-        from core.models.graph_models import GraphEntry
+        from core.features.memory.graph.domain.models import GraphEntry
 
         entry = GraphEntry(
             entry_key="ent-002",
@@ -600,7 +596,7 @@ class TestExtractedGraph:
     """测试 ExtractedGraph 数据类。"""
 
     def test_empty_extracted_graph(self) -> None:
-        from core.models.graph_models import ExtractedGraph
+        from core.features.memory.graph.domain.models import ExtractedGraph
 
         eg = ExtractedGraph()
         assert eg.nodes == []
@@ -608,7 +604,7 @@ class TestExtractedGraph:
         assert eg.entries == []
 
     def test_extracted_graph_with_data(self) -> None:
-        from core.models.graph_models import (
+        from core.features.memory.graph.domain.models import (
             ExtractedGraph,
             GraphEdge,
             GraphEntry,
@@ -648,7 +644,7 @@ class TestExtractedGraph:
 
 
 # ---------------------------------------------------------------------------
-# 3. core/models/knowledge_models.py
+# 3. core/features/knowledge/domain/models.py
 # ---------------------------------------------------------------------------
 
 
@@ -656,7 +652,7 @@ class TestKnowledgeType:
     """测试 KnowledgeType 枚举。"""
 
     def test_all_members(self) -> None:
-        from core.models.knowledge_models import KnowledgeType
+        from core.features.knowledge import KnowledgeType
 
         values = {m.value for m in KnowledgeType}
         assert "fact" in values
@@ -666,12 +662,12 @@ class TestKnowledgeType:
         assert "procedure" in values
 
     def test_is_string_enum(self) -> None:
-        from core.models.knowledge_models import KnowledgeType
+        from core.features.knowledge import KnowledgeType
 
-        # StrEnum compares equal to its value
+        # StrEnum 可直接与其值比较。
         assert KnowledgeType.FACT == "fact"
         assert KnowledgeType.FACT.value == "fact"
-        # str(StrEnum) returns the fully-qualified name; use .value for the string
+        # 字符串契约使用 .value，避免依赖 StrEnum 的限定名称表示。
         assert KnowledgeType.FACT.value == "fact"
 
 
@@ -679,7 +675,7 @@ class TestKnowledgeEntry:
     """测试 KnowledgeEntry 数据类。"""
 
     def test_default_entry(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry()
         assert entry.title == ""
@@ -691,7 +687,7 @@ class TestKnowledgeEntry:
         assert entry.entry_id == 0
 
     def test_full_entry_creation(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry(
             title="咖啡知识",
@@ -709,7 +705,7 @@ class TestKnowledgeEntry:
         assert entry.access_count == 5
 
     def test_to_dict(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry(
             title="测试标题",
@@ -727,7 +723,7 @@ class TestKnowledgeEntry:
         assert d["tags"] == ["标签1"]
 
     def test_from_dict_complete(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         data: dict[str, Any] = {
             "entry_id": 99,
@@ -750,7 +746,7 @@ class TestKnowledgeEntry:
         assert entry.source_ids == [10, 20]
 
     def test_from_dict_minimal(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
 
         entry = KnowledgeEntry.from_dict({})
         assert entry.title == ""
@@ -761,14 +757,14 @@ class TestKnowledgeEntry:
         assert entry.tags == []
 
     def test_from_dict_with_none_source_ids(self) -> None:
-        from core.models.knowledge_models import KnowledgeEntry
+        from core.features.knowledge import KnowledgeEntry
 
         entry = KnowledgeEntry.from_dict({"source_ids": None})
         assert entry.source_ids == []
 
 
 # ---------------------------------------------------------------------------
-# 4. core/models/note_models.py
+# 4. core/features/notes/domain/models.py
 # ---------------------------------------------------------------------------
 
 
@@ -776,7 +772,7 @@ class TestNoteStatus:
     """测试 NoteStatus 枚举。"""
 
     def test_all_members(self) -> None:
-        from core.models.note_models import NoteStatus
+        from core.features.notes import NoteStatus
 
         values = {m.value for m in NoteStatus}
         assert "active" in values
@@ -784,7 +780,7 @@ class TestNoteStatus:
         assert "deleted" in values
 
     def test_is_string_enum(self) -> None:
-        from core.models.note_models import NoteStatus
+        from core.features.notes import NoteStatus
 
         assert NoteStatus.ACTIVE == "active"
 
@@ -793,7 +789,7 @@ class TestNoteVersion:
     """测试 NoteVersion 数据类。"""
 
     def test_default_version(self) -> None:
-        from core.models.note_models import NoteVersion
+        from core.features.notes import NoteVersion
 
         nv = NoteVersion()
         assert nv.version == 1
@@ -801,7 +797,7 @@ class TestNoteVersion:
         assert nv.created_at > 0
 
     def test_custom_version(self) -> None:
-        from core.models.note_models import NoteVersion
+        from core.features.notes import NoteVersion
 
         nv = NoteVersion(version=3, content="第三次修改的内容")
         assert nv.version == 3
@@ -812,7 +808,7 @@ class TestNote:
     """测试 Note 数据类。"""
 
     def test_default_note(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.features.notes import Note, NoteStatus
 
         note = Note()
         assert note.title == ""
@@ -825,7 +821,7 @@ class TestNote:
         assert note.source_memory_ids == []
 
     def test_full_note_creation(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.features.notes import Note, NoteStatus
 
         note = Note(
             title="西湖游玩计划",
@@ -843,7 +839,7 @@ class TestNote:
         assert note.source_memory_ids == [101, 102]
 
     def test_to_dict(self) -> None:
-        from core.models.note_models import Note
+        from core.features.notes import Note
 
         note = Note(
             title="笔记标题",
@@ -860,7 +856,7 @@ class TestNote:
         assert d["user_id"] == "u1"
 
     def test_from_dict_complete(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.features.notes import Note, NoteStatus
 
         data: dict[str, Any] = {
             "note_id": 7,
@@ -880,7 +876,7 @@ class TestNote:
         assert note.tags == ["a", "b"]
 
     def test_from_dict_minimal(self) -> None:
-        from core.models.note_models import Note, NoteStatus
+        from core.features.notes import Note, NoteStatus
 
         note = Note.from_dict({})
         assert note.title == ""
@@ -889,7 +885,7 @@ class TestNote:
         assert note.tags == []
 
     def test_from_dict_none_lists(self) -> None:
-        from core.models.note_models import Note
+        from core.features.notes import Note
 
         note = Note.from_dict({"tags": None, "source_memory_ids": None})
         assert note.tags == []
@@ -897,7 +893,7 @@ class TestNote:
 
 
 # ---------------------------------------------------------------------------
-# 5. core/models/recall_strategy.py
+# 5. core/shared/recall_strategy.py
 # ---------------------------------------------------------------------------
 
 
@@ -905,7 +901,7 @@ class TestRecallStrategy:
     """测试 RecallStrategy 枚举。"""
 
     def test_all_strategies_exist(self) -> None:
-        from core.models.recall_strategy import RecallStrategy
+        from core.shared.recall_strategy import RecallStrategy
 
         values = {m.value for m in RecallStrategy}
         assert "contextual_similarity" in values
@@ -914,7 +910,7 @@ class TestRecallStrategy:
         assert "relationship_review" in values
 
     def test_is_string_enum(self) -> None:
-        from core.models.recall_strategy import RecallStrategy
+        from core.shared.recall_strategy import RecallStrategy
 
         assert RecallStrategy.CONTEXTUAL_SIMILARITY == "contextual_similarity"
 
@@ -923,7 +919,7 @@ class TestRecallRequest:
     """测试 RecallRequest 冻结数据类。"""
 
     def test_basic_request_creation(self) -> None:
-        from core.models.recall_strategy import RecallRequest, RecallStrategy
+        from core.shared.recall_strategy import RecallRequest, RecallStrategy
 
         req = RecallRequest(
             strategy=RecallStrategy.CONTEXTUAL_SIMILARITY,
@@ -938,7 +934,7 @@ class TestRecallRequest:
         assert req.memory_types is None
 
     def test_request_with_optional_fields(self) -> None:
-        from core.models.recall_strategy import RecallRequest, RecallStrategy
+        from core.shared.recall_strategy import RecallRequest, RecallStrategy
 
         req = RecallRequest(
             strategy=RecallStrategy.TOPIC_ASSOCIATION,
@@ -956,7 +952,7 @@ class TestRecallRequest:
         assert req.memory_types == ["EPISODIC", "FACTUAL"]
 
     def test_request_is_frozen(self) -> None:
-        from core.models.recall_strategy import RecallRequest, RecallStrategy
+        from core.shared.recall_strategy import RecallRequest, RecallStrategy
 
         req = RecallRequest(
             strategy=RecallStrategy.PREFERENCE_QUERY,
@@ -975,7 +971,7 @@ class TestRecallRequest:
         ],
     )
     def test_all_strategies_can_create_request(self, strategy: str) -> None:
-        from core.models.recall_strategy import RecallRequest, RecallStrategy
+        from core.shared.recall_strategy import RecallRequest, RecallStrategy
 
         strat = getattr(RecallStrategy, strategy)
         req = RecallRequest(strategy=strat, query="test")
@@ -983,7 +979,7 @@ class TestRecallRequest:
 
 
 # ---------------------------------------------------------------------------
-# 6. core/models/user_profile.py
+# 6. core/features/profiles/domain/models.py
 # ---------------------------------------------------------------------------
 
 
@@ -991,7 +987,7 @@ class TestTagCategory:
     """测试 TagCategory 枚举。"""
 
     def test_all_categories(self) -> None:
-        from core.models.user_profile import TagCategory
+        from core.features.profiles import TagCategory
 
         values = {m.value for m in TagCategory}
         expected = {
@@ -1006,7 +1002,7 @@ class TestTagCategory:
         assert values == expected
 
     def test_is_string_enum(self) -> None:
-        from core.models.user_profile import TagCategory
+        from core.features.profiles import TagCategory
 
         assert TagCategory.INTEREST == "interest"
 
@@ -1015,7 +1011,7 @@ class TestUserTag:
     """测试 UserTag 数据类。"""
 
     def test_default_tag(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         tag = UserTag()
         assert tag.category == TagCategory.CUSTOM
@@ -1025,7 +1021,7 @@ class TestUserTag:
         assert tag.occurrence_count == 1
 
     def test_custom_tag(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         tag = UserTag(
             category=TagCategory.INTEREST,
@@ -1041,7 +1037,7 @@ class TestUserTag:
         assert tag.occurrence_count == 3
 
     def test_to_dict(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         tag = UserTag(
             category=TagCategory.HABIT,
@@ -1056,7 +1052,7 @@ class TestUserTag:
         assert d["occurrence_count"] == 1
 
     def test_from_dict(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         data: dict[str, Any] = {
             "category": "preference",
@@ -1072,7 +1068,7 @@ class TestUserTag:
         assert tag.occurrence_count == 5
 
     def test_from_dict_defaults(self) -> None:
-        from core.models.user_profile import TagCategory, UserTag
+        from core.features.profiles import TagCategory, UserTag
 
         tag = UserTag.from_dict({})
         assert tag.category == TagCategory.CUSTOM
@@ -1084,7 +1080,7 @@ class TestUserPreferences:
     """测试 UserPreferences 数据类。"""
 
     def test_default_preferences(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences()
         assert prefs.reply_style == "casual"
@@ -1095,7 +1091,7 @@ class TestUserPreferences:
         assert prefs.interaction_frequency == 0.0
 
     def test_custom_preferences(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences(
             reply_style="formal",
@@ -1113,7 +1109,7 @@ class TestUserPreferences:
         assert prefs.interaction_frequency == 3.5
 
     def test_to_dict(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences(
             reply_style="casual",
@@ -1124,7 +1120,7 @@ class TestUserPreferences:
         assert d["preferred_topics"] == ["游戏"]
 
     def test_from_dict_complete(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         data: dict[str, Any] = {
             "reply_style": "technical",
@@ -1139,14 +1135,14 @@ class TestUserPreferences:
         assert prefs.preferred_topics == ["AI"]
 
     def test_from_dict_none_returns_default(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences.from_dict(None)
         assert prefs.reply_style == "casual"
         assert prefs.preferred_topics == []
 
     def test_from_dict_empty_dict(self) -> None:
-        from core.models.user_profile import UserPreferences
+        from core.features.profiles import UserPreferences
 
         prefs = UserPreferences.from_dict({})
         assert prefs.reply_style == "casual"
@@ -1156,7 +1152,7 @@ class TestUserProfile:
     """测试 UserProfile 数据类及其方法。"""
 
     def test_default_profile(self) -> None:
-        from core.models.user_profile import UserProfile
+        from core.features.profiles import UserProfile
 
         profile = UserProfile()
         assert profile.user_id == ""
@@ -1166,7 +1162,7 @@ class TestUserProfile:
         assert profile.total_sessions == 0
 
     def test_profile_with_user_id(self) -> None:
-        from core.models.user_profile import UserProfile
+        from core.features.profiles import UserProfile
 
         profile = UserProfile(
             user_id="u-123",
@@ -1180,7 +1176,7 @@ class TestUserProfile:
         assert profile.total_sessions == 5
 
     def test_upsert_tag_new_tag(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         tag = UserTag(
@@ -1194,7 +1190,7 @@ class TestUserProfile:
         assert profile.tags[0].value == "咖啡"
 
     def test_upsert_tag_existing_updates_confidence(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         tag1 = UserTag(
@@ -1216,7 +1212,7 @@ class TestUserProfile:
         assert profile.tags[0].occurrence_count == 2
 
     def test_upsert_tag_different_category_same_value_adds(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         tag1 = UserTag(category=TagCategory.INTEREST, value="咖啡")
@@ -1227,7 +1223,7 @@ class TestUserProfile:
         assert len(profile.tags) == 2
 
     def test_get_tags_by_category(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         profile.upsert_tag(
@@ -1242,19 +1238,19 @@ class TestUserProfile:
 
         interest_tags = profile.get_tags_by_category(TagCategory.INTEREST)
         assert len(interest_tags) == 2
-        # Should be sorted by confidence descending
+        # 应按置信度降序排列。
         assert interest_tags[0].value == "咖啡"
         assert interest_tags[1].value == "编程"
 
     def test_get_tags_by_category_empty(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile
+        from core.features.profiles import TagCategory, UserProfile
 
         profile = UserProfile(user_id="u-1")
         result = profile.get_tags_by_category(TagCategory.RELATION)
         assert result == []
 
     def test_get_top_tags(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         for i in range(15):
@@ -1270,7 +1266,7 @@ class TestUserProfile:
         assert top[0].confidence > top[4].confidence
 
     def test_get_tag_values(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         profile.upsert_tag(
@@ -1284,13 +1280,13 @@ class TestUserProfile:
         )
 
         values = profile.get_tag_values()
-        # "茶" has confidence 0.2 < 0.3 threshold, should be excluded
+        # “茶”的置信度 0.2 低于 0.3 阈值，应被排除。
         assert "咖啡" in values
         assert "早起" in values
         assert "茶" not in values
 
     def test_get_weight_vector(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         profile.upsert_tag(
@@ -1301,7 +1297,7 @@ class TestUserProfile:
                 occurrence_count=5,
             )
         )
-        # Below 0.2 confidence threshold
+        # 低于 0.2 的置信度阈值。
         profile.upsert_tag(
             UserTag(
                 category=TagCategory.HABIT,
@@ -1318,7 +1314,7 @@ class TestUserProfile:
         assert "早起" not in weights  # below 0.2 threshold
 
     def test_decay_tags_reduces_confidence(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         tag = UserTag(
@@ -1329,13 +1325,13 @@ class TestUserProfile:
         )
         profile.upsert_tag(tag)
 
-        # Decay with reference time = now (not last_seen_at)
+        # 以当前时间而非 last_seen_at 作为衰减参考时间。
         profile.decay_tags(reference_time=time.time())
         assert profile.tags[0].confidence < 0.9
         assert profile.tags[0].confidence > 0.0
 
     def test_decay_tags_no_decay_for_recent_tag(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         now = time.time()
@@ -1348,11 +1344,11 @@ class TestUserProfile:
         profile.upsert_tag(tag)
 
         profile.decay_tags(reference_time=now)
-        # Almost no decay for 1 second
+        # 一秒内几乎不发生衰减。
         assert profile.tags[0].confidence == pytest.approx(0.9, abs=0.001)
 
     def test_remove_stale_tags(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(user_id="u-1")
         profile.upsert_tag(
@@ -1368,7 +1364,7 @@ class TestUserProfile:
         assert profile.tags[0].value == "strong"
 
     def test_to_dict_and_from_dict_roundtrip(self) -> None:
-        from core.models.user_profile import TagCategory, UserProfile, UserTag
+        from core.features.profiles import TagCategory, UserProfile, UserTag
 
         profile = UserProfile(
             user_id="u-roundtrip",
@@ -1393,7 +1389,7 @@ class TestUserProfile:
         assert recon.tags[0].confidence == 0.85
 
     def test_from_dict_minimal(self) -> None:
-        from core.models.user_profile import UserProfile
+        from core.features.profiles import UserProfile
 
         profile = UserProfile.from_dict({})
         assert profile.user_id == ""
@@ -1401,7 +1397,7 @@ class TestUserProfile:
         assert profile.tags == []
 
     def test_from_dict_with_none_tags(self) -> None:
-        from core.models.user_profile import UserProfile
+        from core.features.profiles import UserProfile
 
         data: dict[str, Any] = {"user_id": "u-1", "tags": None}
         profile = UserProfile.from_dict(data)
@@ -1409,7 +1405,7 @@ class TestUserProfile:
 
 
 # ---------------------------------------------------------------------------
-# 7. core/models/default_stopwords.py
+# 7. core/shared/default_stopwords.py
 # ---------------------------------------------------------------------------
 
 
@@ -1417,31 +1413,31 @@ class TestDefaultStopwords:
     """测试 DEFAULT_STOPWORDS 冻结集合。"""
 
     def test_is_frozenset(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         assert isinstance(DEFAULT_STOPWORDS, frozenset)
 
     def test_non_empty(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         assert len(DEFAULT_STOPWORDS) > 100
 
     def test_all_elements_are_strings(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         for word in DEFAULT_STOPWORDS:
             assert isinstance(word, str), f"Expected str, got {type(word)}: {word!r}"
 
     def test_contains_common_chinese_stopwords(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
-        # Some very common Chinese stopwords that should be present
+        # 常见中文停用词应全部存在。
         expected = {"的", "了", "是", "我", "你", "他", "在", "和"}
         found = expected & DEFAULT_STOPWORDS
         assert found == expected, f"Missing common stopwords: {expected - found}"
 
     def test_contains_function_words_from_multiple_categories(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
         pronouns = {"我", "你", "他们"}
         particles = {"的", "了", "吗", "吧"}
@@ -1456,15 +1452,14 @@ class TestDefaultStopwords:
         assert measure_words & DEFAULT_STOPWORDS == measure_words
 
     def test_is_immutable(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
-        # frozensets cannot be modified
+        # frozenset 不允许修改。
         with pytest.raises(AttributeError):
             DEFAULT_STOPWORDS.add("new_word")  # type: ignore[union-attr]
 
     def test_no_duplicates(self) -> None:
-        from core.models.default_stopwords import DEFAULT_STOPWORDS
+        from core.shared.default_stopwords import DEFAULT_STOPWORDS
 
-        # frozenset inherently has no duplicates, but verify size matches
-        # the number of unique strings in the source
+        # frozenset 天然去重，仍需确认其大小等于来源字符串的唯一值数量。
         assert len(DEFAULT_STOPWORDS) == len(set(DEFAULT_STOPWORDS))

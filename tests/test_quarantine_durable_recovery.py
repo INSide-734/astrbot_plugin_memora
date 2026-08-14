@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.processors.memory_grounding import MemoryGroundingValidator
-from core.review.memory_quality_gate import MemoryQualityGate
-from core.review.quarantine_store import MemoryQuarantineStore
+from core.features.quality.application.memory_quality_gate import MemoryQualityGate
+from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
+from core.features.recall.processors.memory_grounding import MemoryGroundingValidator
 
 
 async def _claimed_candidate(store: MemoryQuarantineStore) -> tuple[dict, str]:
@@ -151,7 +151,7 @@ async def test_approve_persists_candidate_correlation_in_canonical_metadata(
 ) -> None:
     """canonical metadata 必须携带可用于崩溃恢复的 quarantine 关联。"""
 
-    from core.models.conversation_models import Message
+    from core.shared.contracts.conversation import Message
 
     store = MemoryQuarantineStore(tmp_path / "memory_quarantine.sqlite3")
     await store.initialize()

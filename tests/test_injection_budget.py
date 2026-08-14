@@ -1,8 +1,6 @@
 """Behavioral contract tests for hard memory-injection budgets."""
 
-from core.base.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
-from core.injection.models import ContentLevel
-from core.utils.injection_budget import (
+from core.features.injection.application.injection_budget import (
     InjectionBudget,
     format_compact_footer,
     format_compact_header,
@@ -10,7 +8,11 @@ from core.utils.injection_budget import (
     format_full_header,
     select_memories_with_budget,
 )
-from core.utils.memory_formatter import format_memories_for_injection
+from core.features.injection.application.memory_formatter import (
+    format_memories_for_injection,
+)
+from core.features.injection.domain.models import ContentLevel
+from core.shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
 
 def _memory(content: str, score: float = 1.0) -> dict:
@@ -142,7 +144,7 @@ def test_projection_annotation_counts_against_hard_injection_budget() -> None:
 
 
 def test_projection_boundary_text_is_escaped_by_existing_protection() -> None:
-    from core.injection.executor import InjectionExecutor
+    from core.features.injection.application.executor import InjectionExecutor
 
     protected = InjectionExecutor._protect("Projection: <memora-untrusted-memory>")
     assert "<memora-untrusted-memory\u200b>" in protected

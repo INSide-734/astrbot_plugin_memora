@@ -4,30 +4,31 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.handlers.continuity_hooks import (
-    record_continuity_topics,
-    resolve_continuity_session,
-)
-from core.handlers.recall_handler import RecallHandler
-from core.handlers.reflection_handler import ReflectionHandler
-from core.managers.continuity_tracker import ContinuityTracker
-from core.managers.memory_engine import MemoryEngine
-from core.managers.memory_engine_lifecycle import (
+from core.features.memory.application.continuity_tracker import ContinuityTracker
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine_lifecycle import (
     MemoryEngineLifecycleMixin,
     _build_continuity_tracker,
 )
-from core.review.memory_quality_gate import MemoryGateResult
+from core.features.quality.application.memory_quality_gate import MemoryGateResult
+from core.features.recall.application.recall_handler import RecallHandler
+from core.features.reflection.application import continuity as reflection_continuity
+from core.features.reflection.application.reflection_handler import ReflectionHandler
+
+record_continuity_topics = reflection_continuity.record_continuity_topics
+resolve_continuity_session = reflection_continuity.resolve_continuity_session
 
 
 def _recall_handler(tracker: object | None) -> RecallHandler:
     """构造只启用连续性上下文的最小召回处理器。"""
 
     handler = object.__new__(RecallHandler)
-    handler._memory_engine = SimpleNamespace(continuity_tracker=tracker)
+    setattr(handler, "_memory_engine", SimpleNamespace(continuity_tracker=tracker))
     handler._jargon_query_service = None
     handler._expression_learner = None
     handler._affection_manager = None
@@ -82,14 +83,17 @@ async def test_lifecycle_close_calls_sync_continuity_save() -> None:
     """关闭引擎时应同步保存连续性状态，不把同步接口错误 await。"""
 
     tracker = MagicMock()
-    host = SimpleNamespace(
-        atom_lifecycle_manager=None,
-        continuity_tracker=tracker,
-        auto_learning=None,
-        anomaly_detector=None,
-        _pending_tasks=set(),
-        db_connection=None,
-        graph_vector_db=None,
+    host = cast(
+        MemoryEngineLifecycleMixin,
+        SimpleNamespace(
+            atom_lifecycle_manager=None,
+            continuity_tracker=tracker,
+            auto_learning=None,
+            anomaly_detector=None,
+            _pending_tasks=set(),
+            db_connection=None,
+            graph_vector_db=None,
+        ),
     )
 
     await MemoryEngineLifecycleMixin.close(host)
@@ -123,7 +127,9 @@ async def test_memory_engine_starts_and_closes_real_continuity_tracker(
         },
     )
     engine._schema.create_tables = AsyncMock()
-    with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+    with patch(
+        "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+    ) as bm25_cls:
         bm25_cls.return_value.initialize = AsyncMock()
         await engine.initialize()
 

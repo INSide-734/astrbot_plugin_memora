@@ -2,23 +2,14 @@
 Memora 核心模块
 提供统一的记忆管理引擎
 
-目录结构:
-- base/: 基础组件（异常、配置、常量）
-- models/: 数据模型
-- managers/: 管理器（会话管理、记忆引擎）
-- processors/: 处理器（记忆处理、文本处理）
-- validators/: 验证器（索引验证）
-- retrieval/: 检索系统
-- utils/: 工具函数
-
-所有公共导出均为懒加载 — 仅在被实际访问时才导入对应子模块。
+目录结构按 ``platform``、``shared`` 与 ``features`` 组织；根包只保留明确的
+稳定类型，并在首次访问时从唯一 owner 延迟加载。
 """
 
 from typing import Any
 
 __all__ = [
     # 基础组件
-    "ConfigManager",
     "ConfigurationError",
     "DatabaseError",
     "InitializationError",
@@ -31,10 +22,6 @@ __all__ = [
     "MemoryEvent",
     "Message",
     "Session",
-    "GraphNode",
-    "GraphEdge",
-    "GraphEntry",
-    "ExtractedGraph",
     # 管理器
     "ConversationManager",
     "GraphMemoryManager",
@@ -60,9 +47,8 @@ def __getattr__(name: str) -> Any:
     if name in _lazy:
         return _lazy[name]
 
-    # ── base ──
+    # 共享异常门面
     if name in (
-        "ConfigManager",
         "ConfigurationError",
         "DatabaseError",
         "InitializationError",
@@ -72,81 +58,62 @@ def __getattr__(name: str) -> Any:
         "RetrievalError",
         "ValidationError",
     ):
-        from .base import (
-            ConfigManager as ConfigManager,
-        )
-        from .base import (
+        from .shared.errors import (
             ConfigurationError as ConfigurationError,
         )
-        from .base import (
+        from .shared.errors import (
             DatabaseError as DatabaseError,
         )
-        from .base import (
+        from .shared.errors import (
             InitializationError as InitializationError,
         )
-        from .base import (
+        from .shared.errors import (
             MemoraException as MemoraException,
         )
-        from .base import (
+        from .shared.errors import (
             MemoryProcessingError as MemoryProcessingError,
         )
-        from .base import (
+        from .shared.errors import (
             ProviderNotReadyError as ProviderNotReadyError,
         )
-        from .base import (
+        from .shared.errors import (
             RetrievalError as RetrievalError,
         )
-        from .base import (
+        from .shared.errors import (
             ValidationError as ValidationError,
         )
 
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
-    # ── models ──
+    # ── conversation domain ──
     if name in (
         "MemoryEvent",
         "Message",
         "Session",
-        "GraphNode",
-        "GraphEdge",
-        "GraphEntry",
-        "ExtractedGraph",
     ):
-        from .models import (
-            ExtractedGraph as ExtractedGraph,
-        )
-        from .models import (
-            GraphEdge as GraphEdge,
-        )
-        from .models import (
-            GraphEntry as GraphEntry,
-        )
-        from .models import (
-            GraphNode as GraphNode,
-        )
-        from .models import (
+        from .shared.contracts.conversation import (
             MemoryEvent as MemoryEvent,
         )
-        from .models import (
+        from .shared.contracts.conversation import (
             Message as Message,
         )
-        from .models import (
+        from .shared.contracts.conversation import (
             Session as Session,
         )
 
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
-    # ── managers ──
+    # ── managers（门面已迁至 features/memory 与 features/conversation）──
     if name in ("ConversationManager", "GraphMemoryManager", "MemoryEngine"):
-        from .managers import (
+        from .features.conversation.application.conversation_manager import (
             ConversationManager as ConversationManager,
         )
-        from .managers import (
+        from .features.memory.application.graph_memory_manager import (
             GraphMemoryManager as GraphMemoryManager,
         )
-        from .managers import (
+        from .features.memory.application.memory_engine import (
             MemoryEngine as MemoryEngine,
         )
 
@@ -162,22 +129,22 @@ def __getattr__(name: str) -> Any:
         "TextProcessor",
         "store_round_with_length_check",
     ):
-        from .processors import (
+        from .features.recall.processors import (
             ChatroomContextParser as ChatroomContextParser,
         )
-        from .processors import (
+        from .features.recall.processors import (
             EntityResolver as EntityResolver,
         )
-        from .processors import (
+        from .features.recall.processors import (
             GraphExtractor as GraphExtractor,
         )
-        from .processors import (
+        from .features.recall.processors import (
             MemoryProcessor as MemoryProcessor,
         )
-        from .processors import (
+        from .features.recall.processors import (
             TextProcessor as TextProcessor,
         )
-        from .processors import (
+        from .features.recall.processors import (
             store_round_with_length_check as store_round_with_length_check,
         )
 
@@ -186,7 +153,9 @@ def __getattr__(name: str) -> Any:
 
     # ── validators ──
     if name == "IndexValidator":
-        from .validators import IndexValidator as IndexValidator
+        from .features.memory.infrastructure.validators import (
+            IndexValidator as IndexValidator,
+        )
 
         _lazy["IndexValidator"] = IndexValidator
         return IndexValidator

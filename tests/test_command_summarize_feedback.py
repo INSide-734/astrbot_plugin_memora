@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from core import i18n_backend
-from core.command_handler import CommandHandler
-from core.review.memory_quality_gate import MemoryGateResult
+from core.features.quality.application.memory_quality_gate import MemoryGateResult
+from core.platform.resources import i18n_backend
+from core.platform.transport.commands.command_handler import CommandHandler
 
 
 @pytest.fixture(autouse=True)
@@ -67,6 +67,7 @@ def _build_summary_case(
     actual_count: int,
     last_summarized_index: int,
     add_side_effect: Exception | None = None,
+    message_group_id: str | None = None,
 ) -> tuple[CommandHandler, MagicMock, MagicMock, MagicMock]:
     """装配不访问真实 Provider 或存储的手动总结场景。
 
@@ -76,6 +77,7 @@ def _build_summary_case(
         actual_count: 会话当前真实消息数。
         last_summarized_index: 执行前的总结进度。
         add_side_effect: canonical 写入时需要注入的异常。
+        message_group_id: 窗口消息携带的群组标识；缺省为私聊消息。
 
     返回:
         命令处理器、事件、会话管理器和记忆引擎替身。
@@ -86,7 +88,10 @@ def _build_summary_case(
         return_value=last_summarized_index
     )
     conversation_manager.get_messages_range = AsyncMock(
-        return_value=[MagicMock(group_id=None), MagicMock(group_id=None)]
+        return_value=[
+            MagicMock(group_id=message_group_id),
+            MagicMock(group_id=message_group_id),
+        ]
     )
     conversation_manager.update_session_metadata = AsyncMock(return_value=True)
     conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
@@ -132,7 +137,10 @@ async def _run_summary(handler: CommandHandler, event: MagicMock) -> list[str]:
     返回:
         命令依次产生的文本结果。
     """
-    with patch("core.utils.get_persona_id", AsyncMock(return_value="persona-1")):
+    with patch(
+        "core.platform.context_helpers.get_persona_id",
+        AsyncMock(return_value="persona-1"),
+    ):
         return [result async for result in handler.handle_summarize(event)]
 
 
@@ -164,6 +172,26 @@ async def test_quarantine_only_reports_no_canonical_write_and_advances() -> None
             "pending_summary": None,
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_summarize_passes_group_id_to_processor() -> None:
+    """手动总结必须把群组标识透传给 process_conversation 解析 profile。"""
+    handler, event, _conversation_manager, engine = _build_summary_case(
+        candidates=[_candidate("群聊事实", importance=0.8, topics=["群聊"])],
+        gate_actions=["allow"],
+        actual_count=8,
+        last_summarized_index=6,
+        message_group_id="group-7",
+    )
+    processor = handler._memory_processor
+    assert processor is not None
+    await _run_summary(handler, event)
+    processor.process_conversation.assert_awaited_once()
+    call = processor.process_conversation.await_args.kwargs
+    assert call["group_id"] == "group-7"
+    assert call["is_group_chat"] is True
+    engine.add_memory.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -273,4 +301,65 @@ async def test_canonical_write_failure_keeps_pending_after_quarantine() -> None:
     assert (
         call("session-feedback", "last_summarized_index", 18)
         not in conversation_manager.update_session_metadata.await_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_summarize_reports_discard_and_mark_write_counts() -> None:
+    """门禁 discard 与 mark_write 计数必须进入反馈，隔离仍单独计数。"""
+    handler, event, conversation_manager, engine = _build_summary_case(
+        candidates=[
+            _candidate("丢弃候选", importance=0.3, topics=["丢弃主题"]),
+            _candidate("低置信候选", importance=0.5, topics=["低置信主题"]),
+            _candidate("隔离候选", importance=0.2, topics=["隔离主题"]),
+        ],
+        gate_actions=["discard", "mark_write", "quarantined"],
+        actual_count=10,
+        last_summarized_index=8,
+    )
+
+    results = await _run_summary(handler, event)
+
+    feedback = results[-1]
+    assert "已丢弃 1 条" in feedback
+    assert "低置信标记写入长期记忆: 1 条" in feedback
+    assert "隔离候选: 1 条" in feedback
+    assert "第 10 条消息" in feedback
+    assert "写入 0 条长期记忆" not in feedback
+    assert "未写入长期记忆" not in feedback
+    engine.add_memory.assert_awaited_once()
+    conversation_manager.update_session_metadata_fields.assert_awaited_once_with(
+        "session-feedback",
+        {
+            "last_summarized_index": 10,
+            "pending_summary": None,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_mark_write_only_reports_write_without_zero_canonical_claim() -> None:
+    """只有低置信写入时不得宣称“写入 0 条长期记忆”。"""
+    handler, event, conversation_manager, engine = _build_summary_case(
+        candidates=[
+            _candidate("低置信候选", importance=0.5, topics=["低置信主题"]),
+        ],
+        gate_actions=["mark_write"],
+        actual_count=10,
+        last_summarized_index=8,
+    )
+
+    results = await _run_summary(handler, event)
+
+    feedback = results[-1]
+    assert "写入 0 条长期记忆" not in feedback
+    assert "低置信标记写入长期记忆: 1 条" in feedback
+    assert "第 10 条消息" in feedback
+    engine.add_memory.assert_awaited_once()
+    conversation_manager.update_session_metadata_fields.assert_awaited_once_with(
+        "session-feedback",
+        {
+            "last_summarized_index": 10,
+            "pending_summary": None,
+        },
     )

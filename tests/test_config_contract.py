@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from core.platform.resources import PluginResourceLocator
 from tests.config_contract_support import BlockingSavingConfig, SavingConfig
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -127,7 +128,7 @@ def _get_path(config: Mapping[str, Any], path: tuple[str, ...]) -> Any:
 
 
 def _model_numeric_bounds() -> dict[str, dict[str, int | float]]:
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     model_schema = MemoraConfig.model_json_schema()
     definitions = model_schema.get("$defs", {})
@@ -186,7 +187,7 @@ def _schema_numeric_bounds(
 
 
 def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
     schema_defaults = list(_iter_schema_defaults(schema))
@@ -216,7 +217,7 @@ def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
 
 def test_debug_defaults_to_disabled_and_matches_schema() -> None:
     """调试开关默认关闭，并与根级 schema 保持一致。"""
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
 
@@ -230,8 +231,28 @@ def test_debug_defaults_to_disabled_and_matches_schema() -> None:
     assert MemoraConfig(debug=True).debug is True
 
 
+def test_quality_gate_schema_leaves_match_pydantic_defaults() -> None:
+    """quality.gate 标量叶必须存在于 schema 且默认值与 Pydantic 一致。"""
+
+    from core.platform.config.config_validator import MemoraConfig
+
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    gate_items = schema["quality"]["items"]["gate"]["items"]
+
+    assert gate_items["enabled"] == {
+        "description": "门禁总开关",
+        "type": "bool",
+        "default": True,
+    }
+    assert gate_items["default_profile"]["default"] == "private"
+
+    config = MemoraConfig()
+    assert config.quality.gate.enabled is True
+    assert config.quality.gate.default_profile == "private"
+
+
 def test_memory_evolution_defaults_to_disabled() -> None:
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     config = MemoraConfig()
 
@@ -242,16 +263,16 @@ def test_memory_evolution_defaults_to_disabled() -> None:
 def test_memory_evolution_rejects_unknown_mode() -> None:
     from pydantic import ValidationError
 
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     with pytest.raises(ValidationError):
-        MemoraConfig(memory_evolution={"mode": "running"})
+        MemoraConfig.model_validate({"memory_evolution": {"mode": "running"}})
 
 
 def test_hybrid_preset_order_is_rejected() -> None:
     from pydantic import ValidationError
 
-    from core.base.config_validator import RecallEngineConfig
+    from core.platform.config.config_validator import RecallEngineConfig
 
     with pytest.raises(ValidationError, match="min <= base <= max"):
         RecallEngineConfig(
@@ -262,7 +283,7 @@ def test_hybrid_preset_order_is_rejected() -> None:
 
 
 def test_runtime_bad_retention_and_row_cap_default_only_those_leaves() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {
@@ -290,7 +311,7 @@ def test_runtime_bad_retention_and_row_cap_default_only_those_leaves() -> None:
 
 
 def test_runtime_invalid_strategy_defaults_to_safe_manual_strategy() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {
@@ -323,7 +344,7 @@ def test_runtime_invalid_strategy_defaults_to_safe_manual_strategy() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_rejects_invalid_hybrid_preset_order() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     manager = ConfigManager({})
     snapshot_before = manager.get_config_snapshot()
@@ -362,7 +383,7 @@ def test_main_does_not_reference_legacy_persisted_config_file() -> None:
 
 
 def test_config_revision_is_stable_across_dict_insertion_order() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     first = ConfigManager(
         {
@@ -387,7 +408,7 @@ def test_config_revision_is_stable_across_dict_insertion_order() -> None:
 
 
 def test_config_snapshots_are_deeply_isolated() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {"topic_segmentation": {"strategy_b": {"similarity_threshold": 0.75}}}
@@ -404,7 +425,7 @@ def test_config_snapshots_are_deeply_isolated() -> None:
 
 
 def test_get_mutable_value_cannot_bypass_config_revision() -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager
 
     manager = ConfigManager(
         {"topic_segmentation": {"strategy_b": {"similarity_threshold": 0.75}}}
@@ -421,7 +442,7 @@ def test_get_mutable_value_cannot_bypass_config_revision() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_rejects_a_stale_revision_with_current_revision() -> None:
-    from core.base.config_manager import ConfigConflictError, ConfigManager
+    from core.platform.config import ConfigConflictError, ConfigManager
 
     manager = ConfigManager({"recall_engine": {"top_k": 5}})
     _, original_revision = manager.get_config_snapshot()
@@ -444,7 +465,7 @@ async def test_apply_rejects_a_stale_revision_with_current_revision() -> None:
 
 @pytest.mark.asyncio
 async def test_apply_rejects_external_source_change_without_overwriting_it() -> None:
-    from core.base.config_manager import ConfigConflictError, ConfigManager
+    from core.platform.config import ConfigConflictError, ConfigManager
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
     manager = ConfigManager(source)
@@ -468,7 +489,7 @@ async def test_apply_rejects_external_source_change_without_overwriting_it() -> 
 
 @pytest.mark.asyncio
 async def test_apply_detects_external_source_change_during_persistence() -> None:
-    from core.base.config_manager import ConfigConflictError, ConfigManager
+    from core.platform.config import ConfigConflictError, ConfigManager
 
     source = BlockingSavingConfig({"recall_engine": {"top_k": 5}})
     manager = ConfigManager(source)
@@ -496,9 +517,9 @@ async def test_apply_detects_external_source_change_during_persistence() -> None
 
 @pytest.mark.asyncio
 async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
-    manager = ConfigManager({})
+    manager = ConfigManager({}, resource_locator=PluginResourceLocator(ROOT))
     _, revision = manager.get_config_snapshot()
 
     with pytest.raises(ConfigValidationError) as exc_info:
@@ -511,10 +532,44 @@ async def test_apply_rejects_unknown_leaf_when_schema_is_available() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_prefers_valid_injected_schema_when_repo_schema_is_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+async def test_apply_accepts_gate_composite_paths_with_schema() -> None:
+    """门禁 bindings/profiles 无法以 schema 标量叶表达，但必须可保存且由 Pydantic 兜底。"""
+    from core.platform.config import ConfigManager, ConfigValidationError
+
+    manager = ConfigManager({}, resource_locator=PluginResourceLocator(ROOT))
+    _, revision = manager.get_config_snapshot()
+
+    result = await manager.apply_config_changes(
+        {
+            "quality.gate.bindings": [
+                {"profile": "private", "chat_type": "private"},
+                {"profile": "group", "chat_type": "group"},
+            ],
+            "quality.gate.profiles": [
+                {"name": "private"},
+                {"name": "group"},
+            ],
+        },
+        expected_revision=revision,
+    )
+
+    snapshot, _ = manager.get_config_snapshot()
+    assert result.changed_paths == (
+        "quality.gate.bindings",
+        "quality.gate.profiles",
+    )
+    assert snapshot["quality"]["gate"]["bindings"][0]["profile"] == "private"
+
+    with pytest.raises(ConfigValidationError):
+        await manager.apply_config_changes(
+            {"quality.gate.profiles": [{"name": ""}]},
+            expected_revision=result.revision,
+        )
+
+
+@pytest.mark.asyncio
+async def test_apply_prefers_valid_injected_schema() -> None:
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
     source.schema = {
@@ -524,10 +579,6 @@ async def test_apply_prefers_valid_injected_schema_when_repo_schema_is_missing(
         }
     }
 
-    def missing_schema(*args: Any, **kwargs: Any) -> str:
-        raise FileNotFoundError("repo schema unavailable")
-
-    monkeypatch.setattr(Path, "read_text", missing_schema)
     manager = ConfigManager(source)
     _, revision = manager.get_config_snapshot()
 
@@ -545,42 +596,14 @@ async def test_apply_prefers_valid_injected_schema_when_repo_schema_is_missing(
 async def test_persistent_source_fails_closed_when_schema_is_missing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 5}})
 
-    def missing_schema(*args: Any, **kwargs: Any) -> str:
-        raise FileNotFoundError("repo schema unavailable")
-
-    monkeypatch.setattr(Path, "read_text", missing_schema)
-    manager = ConfigManager(source)
-    source_before = copy.deepcopy(dict(source))
-    snapshot_before = manager.get_config_snapshot()
-
-    with pytest.raises(ConfigValidationError) as exc_info:
-        await manager.apply_config_changes(
-            {"recall_engine.top_k": 8},
-            expected_revision=snapshot_before[1],
-        )
-
-    assert "*" in exc_info.value.field_errors
-    assert dict(source) == source_before
-    assert source.saved_snapshots == []
-    assert manager.get_config_snapshot() == snapshot_before
-
-
-@pytest.mark.asyncio
-async def test_persistent_source_fails_closed_when_schemas_are_malformed(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
-
-    source = SavingConfig({"recall_engine": {"top_k": 5}})
-    source.schema = {"recall_engine": {"type": "object", "items": "not-an-object"}}
     monkeypatch.setattr(
-        Path,
-        "read_text",
-        lambda *args, **kwargs: "{malformed-json",
+        source.resource_locator,
+        "load_schema",
+        lambda _schema=None: None,
     )
     manager = ConfigManager(source)
     source_before = copy.deepcopy(dict(source))
@@ -599,15 +622,61 @@ async def test_persistent_source_fails_closed_when_schemas_are_malformed(
 
 
 @pytest.mark.asyncio
-async def test_plain_dict_remains_usable_without_schema(
+async def test_persistent_source_falls_back_to_resource_schema_for_malformed_host() -> (
+    None
+):
+    """持久化源的畸形 host Schema 应回退到合法资源 Schema。"""
+
+    from core.platform.config import ConfigManager, ConfigValidationError
+
+    source = SavingConfig({"recall_engine": {"top_k": 5}})
+    source.schema = {"recall_engine": {"type": "object", "items": "bad"}}
+    manager = ConfigManager(source)
+    _, revision = manager.get_config_snapshot()
+
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.not_a_real_setting": True},
+            expected_revision=revision,
+        )
+
+    assert "recall_engine.not_a_real_setting" in exc_info.value.field_errors
+    assert source.saved_snapshots == []
+
+
+@pytest.mark.asyncio
+async def test_persistent_source_fails_closed_when_schemas_are_malformed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from core.base.config_manager import ConfigManager
+    from core.platform.config import ConfigManager, ConfigValidationError
 
-    def missing_schema(*args: Any, **kwargs: Any) -> str:
-        raise FileNotFoundError("repo schema unavailable")
+    source = SavingConfig({"recall_engine": {"top_k": 5}})
+    source.schema = {"recall_engine": {"type": "object", "items": "not-an-object"}}
+    monkeypatch.setattr(
+        source.resource_locator,
+        "load_schema",
+        lambda _schema=None: None,
+    )
+    manager = ConfigManager(source)
+    source_before = copy.deepcopy(dict(source))
+    snapshot_before = manager.get_config_snapshot()
 
-    monkeypatch.setattr(Path, "read_text", missing_schema)
+    with pytest.raises(ConfigValidationError) as exc_info:
+        await manager.apply_config_changes(
+            {"recall_engine.top_k": 8},
+            expected_revision=snapshot_before[1],
+        )
+
+    assert "*" in exc_info.value.field_errors
+    assert dict(source) == source_before
+    assert source.saved_snapshots == []
+    assert manager.get_config_snapshot() == snapshot_before
+
+
+@pytest.mark.asyncio
+async def test_plain_dict_remains_usable_without_schema() -> None:
+    from core.platform.config import ConfigManager
+
     source: dict[str, Any] = {"recall_engine": {"top_k": 5}}
     manager = ConfigManager(source)
 
@@ -620,7 +689,7 @@ async def test_plain_dict_remains_usable_without_schema(
 
 @pytest.mark.asyncio
 async def test_apply_reports_pydantic_errors_by_dotted_field_path() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     manager = ConfigManager({})
     _, revision = manager.get_config_snapshot()
@@ -641,7 +710,7 @@ async def test_apply_enforces_every_schema_options_list(
     default: Any,
     options: tuple[Any, ...],
 ) -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     assert default is not _MISSING
     assert any(
@@ -675,7 +744,7 @@ async def test_apply_enforces_every_schema_options_list(
 
 @pytest.mark.asyncio
 async def test_schema_options_use_exact_json_scalar_equality() -> None:
-    from core.base.config_manager import ConfigManager, ConfigValidationError
+    from core.platform.config import ConfigManager, ConfigValidationError
 
     source = SavingConfig({"recall_engine": {"top_k": 1}})
     source.schema = {
@@ -702,3 +771,38 @@ async def test_schema_options_use_exact_json_scalar_equality() -> None:
     assert "recall_engine.top_k" in exc_info.value.field_errors
     assert manager.get_config_snapshot() == snapshot_before
     assert source.saved_snapshots == []
+
+
+@pytest.mark.parametrize("field", ["group_chat_template", "private_chat_template"])
+@pytest.mark.parametrize("bad", ["无占位符", "{secret}", "{conversation} {{oops"])
+def test_prompt_templates_reject_invalid_placeholders(field: str, bad: str) -> None:
+    """抽取模板必须含 {conversation}、占位符白名单与花括号闭合。"""
+    from pydantic import ValidationError
+
+    from core.platform.config.config_validator import MemoraConfig
+
+    with pytest.raises(ValidationError):
+        MemoraConfig.model_validate({"prompt_templates": {field: bad}})
+
+
+def test_prompt_templates_accept_all_seven_placeholders() -> None:
+    from core.platform.config.config_validator import MemoraConfig
+
+    template = (
+        "{chat_type} 对话:{conversation} 日期:{current_date} "
+        "连续:{continuity_topics} 兴趣:{interests} 情绪:{emotion_tags} "
+        "强度:{emotional_intensity}"
+    )
+    config = MemoraConfig.model_validate(
+        {"prompt_templates": {"group_chat_template": template}}
+    )
+    assert config.prompt_templates.group_chat_template == template
+
+
+def test_prompt_templates_empty_means_file_default() -> None:
+    """空模板放行（= 文件默认）。"""
+    from core.platform.config.config_validator import MemoraConfig
+
+    config = MemoraConfig()
+    assert config.prompt_templates.group_chat_template == ""
+    assert config.prompt_templates.private_chat_template == ""

@@ -1,4 +1,4 @@
-"""测试 core/utils/style_analyzer.py — StyleAnalyzer, StyleProfile, StyleEvolution."""
+"""expression style analyzer 行为测试。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.utils.style_analyzer import (
+from core.features.cognition.expression.style_analyzer import (
     _7_DIMENSIONS,
     StyleAnalyzer,
     StyleEvolution,

@@ -2,9 +2,9 @@
 
 from datetime import datetime, timezone
 
-from core.retrieval.evidence_scorer import RetrievalEvidenceScorer
-from core.retrieval.query_planner import QueryPlan
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.evidence_scorer import RetrievalEvidenceScorer
+from core.features.retrieval.query_planner import QueryPlan
+from core.features.retrieval.rrf_fusion import HybridResult
 
 
 def _result(

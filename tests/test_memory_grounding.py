@@ -9,12 +9,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
-from core.models.conversation_models import Message
-from core.processors.conversation_formatter import ConversationFormatter
-from core.processors.memory_grounding import MemoryGroundingValidator
-from core.processors.memory_processor import MemoryProcessor
+from core.features.quality.domain.gate_config import GateProfile
+from core.features.recall.processors.conversation_formatter import ConversationFormatter
+from core.features.recall.processors.memory_grounding import MemoryGroundingValidator
+from core.features.recall.processors.memory_processor import MemoryProcessor
+from core.shared.contracts.conversation import Message
+from core.shared.cost_control import CostControl
+from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 
 def _message(
@@ -346,7 +347,9 @@ async def test_grounding_judge_only_receives_current_referenced_scope() -> None:
         await processor.process_conversation(messages)
 
     judge.assert_awaited_once()
-    judge_payload = judge.await_args.args[0]
+    judge_call = judge.await_args
+    assert judge_call is not None
+    judge_payload = judge_call.args[0]
     assert "换工作" in judge_payload["source_text"]
     assert "银行卡" not in judge_payload["source_text"]
 
@@ -378,3 +381,343 @@ async def test_grounding_judge_cancellation_propagates() -> None:
             await processor.process_conversation(
                 [_message(0, "我最近在考虑换工作。")],
             )
+
+
+def test_negation_whitelist_avoids_false_positive() -> None:
+    """内置白名单短语剔除后，肯定句不再被误判为否定冲突。"""
+
+    source = "这个方案不错，我很满意，就按这个来吧"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户喜欢这个方案",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+    )
+
+    assert result.allowed is True or result.status == "needs_judge"
+    assert "grounding_negation_conflict" not in result.reason_codes
+
+
+def test_custom_negation_whitelist_extends() -> None:
+    """profile 白名单与内置白名单取并集后剔除。"""
+
+    profile = GateProfile(name="p", word_lists={"negation_whitelist": ["没意见"]})  # type: ignore[arg-type]
+    source = "我没意见"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户同意",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_negation_conflict" not in result.reason_codes
+
+
+def test_negation_markers_replace_mode() -> None:
+    """标记集 replace 模式后，内置「不」不再触发极性判定。"""
+
+    profile = GateProfile(
+        name="p",
+        word_lists={"negation_markers": {"mode": "replace", "items": ["never"]}},  # type: ignore[arg-type]
+    )
+    source = "我不去"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户要去",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_negation_conflict" not in result.reason_codes
+
+
+def test_cjk_number_normalization_avoids_false_positive() -> None:
+    """中文数字归一为阿拉伯数字后，书写形式差异不再误报数字冲突。"""
+
+    source = "我养了两只猫，一只橘猫一只狸花"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户养了2只猫",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+    )
+
+    assert "grounding_numeric_conflict" not in result.reason_codes
+
+
+def test_genuine_number_conflict_still_rejected() -> None:
+    """真实数值冲突（300 vs 500）仍被拦截。"""
+
+    source = "这次预算是300元"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "这次预算是500元",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+    )
+
+    assert "grounding_numeric_conflict" in result.reason_codes
+
+
+def test_single_bad_ref_no_longer_rejects_candidate() -> None:
+    """单条非法引用被跳过，剩余有效引用继续支撑候选。"""
+
+    source = "我养了两只猫"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户养了两只猫",
+            source_refs=[
+                {"message_index": 0, "start": 0, "end": 999},
+                {"message_index": 0, "start": 0, "end": len(source)},
+            ],
+        ),
+        messages,
+        is_group_chat=False,
+    )
+
+    assert "grounding_reference_invalid" not in result.reason_codes
+
+
+def test_all_bad_refs_still_rejected() -> None:
+    """零条有效引用时仍整体拒绝。"""
+
+    messages = [_message(0, "我养了两只猫")]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户养了两只猫",
+            source_refs=[{"message_index": 5, "start": 0, "end": 1}],
+        ),
+        messages,
+        is_group_chat=False,
+    )
+
+    assert "grounding_reference_invalid" in result.reason_codes
+
+
+def test_numeric_check_disabled_skips_numeric_conflict() -> None:
+    """关闭数字检查后，300 vs 500 不再产生数字冲突原因码。"""
+
+    profile = GateProfile(name="p", checks={"numeric_check": False})  # type: ignore[arg-type]
+    source = "这次预算是300元"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "这次预算是500元",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_numeric_conflict" not in result.reason_codes
+
+
+def test_negation_check_disabled_skips_negation_conflict() -> None:
+    """关闭否定检查后，极性冲突不再触发。"""
+
+    profile = GateProfile(name="p", checks={"negation_check": False})  # type: ignore[arg-type]
+    source = "我喜欢香菜"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户不喜欢香菜",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_negation_conflict" not in result.reason_codes
+
+
+def test_group_subject_check_disabled_skips_subject_verdict() -> None:
+    """关闭群聊主体检查后，多用户且未声明主体不再隔离。"""
+
+    profile = GateProfile(name="p", checks={"group_subject_check": False})  # type: ignore[arg-type]
+    first = "我周五有空"
+    second = "我周六有空"
+    messages = [
+        _message(0, first, sender_id="u-1", sender_name="Alice", group_id="g-1"),
+        _message(1, second, sender_id="u-2", sender_name="Bob", group_id="g-1"),
+    ]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "群成员周末有空",
+            source_refs=[
+                {"message_index": 0, "start": 0, "end": len(first)},
+                {"message_index": 1, "start": 0, "end": len(second)},
+            ],
+        ),
+        messages,
+        is_group_chat=True,
+        profile=profile,
+    )
+
+    assert "grounding_subject_ambiguous" not in result.reason_codes
+    assert "grounding_subject_mismatch" not in result.reason_codes
+
+
+def test_custom_synonym_pairs_improve_support_score() -> None:
+    """profile 同义对并入归一化后，词面差异不再压低支持分。"""
+
+    profile = GateProfile(
+        name="p",
+        word_lists={"synonym_pairs": [{"source": "喵星人", "target": "猫"}]},  # type: ignore[arg-type]
+    )
+    source = "我喜欢猫"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户喜欢喵星人",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert result.status == "grounded"
+
+
+def test_profile_scoring_configuration_applies() -> None:
+    """评分权重由 profile 驱动：关闭序列分且 token 权重为 0 时不再放行。"""
+
+    source = "我喜欢猫"
+    messages = [_message(0, source)]
+    candidate = _candidate(
+        "用户喜欢猫",
+        source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+    )
+    baseline = MemoryGroundingValidator().validate(
+        candidate, messages, is_group_chat=False
+    )
+    assert baseline.status == "grounded"
+
+    profile = GateProfile(
+        name="p",
+        scoring={"sequence_enabled": False, "token_weight": 0.0},  # type: ignore[arg-type]
+    )
+    result = MemoryGroundingValidator().validate(
+        candidate,
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_claim_unsupported" in result.reason_codes
+
+
+def test_revalidate_skips_damaged_evidence_items() -> None:
+    """复核时单条畸形证据被跳过，剩余有效证据继续验证。"""
+
+    validator = MemoryGroundingValidator()
+    source = "我养了两只猫"
+    message = _message(0, source)
+    good = {
+        "message_fingerprint": validator.message_fingerprint(message),
+        "start": 0,
+        "end": len(source),
+    }
+    result = validator.revalidate_stored_evidence(
+        _candidate("用户养了两只猫"),
+        [message],
+        ["not-a-dict", good],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is True
+    assert "grounding_source_evidence_invalid" not in result.reason_codes
+
+
+def test_revalidate_all_malformed_evidence_invalid() -> None:
+    """全部证据畸形时整体返回证据无效。"""
+
+    messages = [_message(0, "我养了两只猫")]
+    result = MemoryGroundingValidator().revalidate_stored_evidence(
+        _candidate("用户养了两只猫"),
+        messages,
+        ["junk", 42, None],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is False
+    assert "grounding_source_evidence_invalid" in result.reason_codes
+
+
+def test_revalidate_all_unmatched_evidence_changed() -> None:
+    """证据存在但零条可匹配时整体拒绝并报来源变更。"""
+
+    messages = [_message(0, "我养了两只猫")]
+    result = MemoryGroundingValidator().revalidate_stored_evidence(
+        _candidate("用户养了两只猫"),
+        messages,
+        [
+            {"message_fingerprint": "deadbeef", "start": 0, "end": 4},
+            {"message_fingerprint": "", "start": 0, "end": 2},
+        ],
+        is_group_chat=False,
+    )
+
+    assert result.allowed is False
+    assert "grounding_source_changed" in result.reason_codes
+
+
+def test_custom_whitelist_casefold_matches_uppercase_source() -> None:
+    """白名单配置对英文大小写不敏感。"""
+
+    profile = GateProfile(name="p", word_lists={"negation_whitelist": ["no problem"]})  # type: ignore[arg-type]
+    source = "NO PROBLEM"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户同意",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_negation_conflict" not in result.reason_codes
+
+
+def test_replace_markers_casefold_recognizes_uppercase() -> None:
+    """replace 标记集大小写不敏感：NEVER 能识别 never go。"""
+
+    profile = GateProfile(
+        name="p",
+        word_lists={"negation_markers": {"mode": "replace", "items": ["NEVER"]}},  # type: ignore[arg-type]
+    )
+    source = "never go"
+    messages = [_message(0, source)]
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户要去",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        profile=profile,
+    )
+
+    assert "grounding_negation_conflict" in result.reason_codes

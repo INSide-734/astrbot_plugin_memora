@@ -8,15 +8,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.models.recall_strategy import RecallStrategy
-from core.retrieval.dual_route_fusion import (
+from core.features.retrieval.dual_route_fusion import (
     compute_strategy_weights,
     merge_dual_results,
     route_weights_for_query,
 )
-from core.retrieval.dual_route_retriever import DualRouteRetriever
-from core.retrieval.graph_retriever import GraphResult
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+from core.features.retrieval.graph_retriever import GraphResult
+from core.features.retrieval.rrf_fusion import HybridResult
+from core.shared.recall_strategy import RecallStrategy
 
 
 def _document_result(doc_id: int, score: float) -> HybridResult:
@@ -122,7 +122,9 @@ async def test_retriever_delegate_propagates_loader_cancellation() -> None:
 def test_retriever_public_entry_stays_stable_and_module_is_bounded() -> None:
     """公开检索器入口保持不变，编排模块物理行数不得再次超过上限。"""
 
-    assert DualRouteRetriever.__module__ == "core.retrieval.dual_route_retriever"
+    assert (
+        DualRouteRetriever.__module__ == "core.features.retrieval.dual_route_retriever"
+    )
     source_file = inspect.getsourcefile(DualRouteRetriever)
     assert source_file is not None
     with open(source_file, encoding="utf-8") as source:

@@ -7,11 +7,16 @@ from datetime import datetime, timezone
 import aiosqlite
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.application import (
+    DerivedRelationExpander,
+    ProjectionBudget,
+    ProjectionReader,
+    ProjectionScope,
+)
+from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
     ExpansionBudget,
-    MemorySourceRef,
     ProjectionBundle,
     ProjectionSourceView,
     ProjectionType,
@@ -20,21 +25,16 @@ from core.models.memory_evolution import (
     RelationView,
     ScopeContext,
 )
-from core.models.temporal import (
+from core.features.evolution.infrastructure import MemoryEvolutionStore
+from core.features.retrieval.query_rewriter import QueryIntent, resolve_reference_time
+from core.features.retrieval.rrf_fusion import HybridResult
+from core.shared.contracts import MemorySourceRef
+from core.shared.temporal import (
     canonical_visible_at,
     infer_time_precision,
     parse_datetime,
     visible_at,
 )
-from core.retrieval.derived_relation_expander import DerivedRelationExpander
-from core.retrieval.projection_reader import (
-    ProjectionBudget,
-    ProjectionReader,
-    ProjectionScope,
-)
-from core.retrieval.query_rewriter import QueryIntent, resolve_reference_time
-from core.retrieval.rrf_fusion import HybridResult
-from core.storage.memory_evolution_store import MemoryEvolutionStore
 
 UTC = timezone.utc
 AS_OF = datetime(2026, 3, 1, tzinfo=UTC)
@@ -126,11 +126,13 @@ class _RelationReader:
 @pytest.mark.asyncio
 async def test_projection_uses_reference_time_and_rejects_future_source() -> None:
     bundle = _bundle(source_time=datetime(2026, 6, 1, tzinfo=UTC))
+    source_time = bundle.sources[0].occurred_at
+    assert source_time is not None
     store = _ProjectionStore(
         bundle,
         {
-            17: _source(17, bundle.sources[0].occurred_at),
-            18: _source(18, bundle.sources[0].occurred_at),
+            17: _source(17, source_time),
+            18: _source(18, source_time),
         },
     )
     reader = ProjectionReader(store)
@@ -185,7 +187,7 @@ def test_query_intent_resolves_explicit_iso_reference_time() -> None:
 
 
 def test_cache_key_separates_historical_reference_times() -> None:
-    from core.managers.retrieval_optimizer import RetrievalOptimizer
+    from core.features.memory.application.retrieval_optimizer import RetrievalOptimizer
 
     optimizer = RetrievalOptimizer({})
     old = optimizer.cache_key("q", 5, "s", None, reference_time=AS_OF)

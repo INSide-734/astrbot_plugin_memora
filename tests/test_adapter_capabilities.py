@@ -5,15 +5,34 @@ from __future__ import annotations
 import asyncio
 from dataclasses import FrozenInstanceError
 from math import inf, nan
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+if TYPE_CHECKING:
+    from core.shared.adapter_capabilities import AdapterCapabilityContract
 
-def _contract(*, kind="vector_backend", native=(), caller_enforced=(), score=None):
-    """构建测试使用的最小能力契约。"""
 
-    from core.adapter_capabilities import AdapterCapabilityContract
+def test_reranker_factory_uses_shared_mmr_implementation() -> None:
+    """重排工厂必须直接使用 shared 中的唯一 MMR 实现。"""
+
+    import core.features.retrieval.reranker_factory as reranker_factory
+    from core.shared import mmr as shared_mmr
+
+    assert reranker_factory.MMRReranker is shared_mmr.MMRReranker
+
+
+def _contract(
+    *,
+    kind: Any = "vector_backend",
+    native: tuple[Any, ...] = (),
+    caller_enforced: tuple[Any, ...] = (),
+    score: Any = None,
+) -> AdapterCapabilityContract:
+    """使用待规范化的原始值构建最小能力契约。"""
+
+    from core.shared.adapter_capabilities import AdapterCapabilityContract
 
     return AdapterCapabilityContract(
         kind=kind,
@@ -26,7 +45,7 @@ def _contract(*, kind="vector_backend", native=(), caller_enforced=(), score=Non
 def _hybrid_result(doc_id: int, score: float = 0.9):
     """构造 DualRoute 测试需要的 canonical 候选。"""
 
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     return HybridResult(
         doc_id=doc_id,
@@ -42,7 +61,7 @@ def _hybrid_result(doc_id: int, score: float = 0.9):
 def test_capability_contract_is_immutable_and_uses_three_levels() -> None:
     """能力契约必须不可变，并区分 native/caller-enforced/unsupported。"""
 
-    from core.adapter_capabilities import AdapterCapability, SupportLevel
+    from core.shared.adapter_capabilities import AdapterCapability, SupportLevel
 
     contract = _contract(
         native=(AdapterCapability.SCORING,),
@@ -59,13 +78,18 @@ def test_capability_contract_is_immutable_and_uses_three_levels() -> None:
     assert contract.level(AdapterCapability.FILTERING) is SupportLevel.CALLER_ENFORCED
     assert contract.level(AdapterCapability.DELETE) is SupportLevel.UNSUPPORTED
     with pytest.raises(FrozenInstanceError):
-        contract.kind = "other"
+        setattr(contract, "kind", "other")
 
 
 def test_contract_rejects_overlap_and_invalid_score_range() -> None:
     """同一能力不能同时属于两种等级，score range 必须有限且有序。"""
 
-    from core.adapter_capabilities import AdapterCapability, ScoreSemantics
+    from core.shared.adapter_capabilities import (
+        AdapterCapability,
+        NormalizationScope,
+        ScoreDirection,
+        ScoreSemantics,
+    )
 
     with pytest.raises(ValueError, match="capability_level_overlap"):
         _contract(
@@ -74,25 +98,25 @@ def test_contract_rejects_overlap_and_invalid_score_range() -> None:
         )
     with pytest.raises(ValueError, match="score_range_invalid"):
         ScoreSemantics(
-            direction="higher_is_better",
+            direction=ScoreDirection.HIGHER_IS_BETTER,
             minimum=1.0,
             maximum=0.0,
-            normalization="backend",
+            normalization=NormalizationScope.BACKEND,
         )
     for invalid in (nan, inf):
         with pytest.raises(ValueError, match="score_range_invalid"):
             ScoreSemantics(
-                direction="higher_is_better",
+                direction=ScoreDirection.HIGHER_IS_BETTER,
                 minimum=0.0,
                 maximum=invalid,
-                normalization="backend",
+                normalization=NormalizationScope.BACKEND,
             )
 
 
 def test_unknown_adapter_is_conservative_and_error_is_safe() -> None:
     """未知 adapter 默认关闭能力，错误只包含固定枚举。"""
 
-    from core.adapter_capabilities import (
+    from core.shared.adapter_capabilities import (
         AdapterCapability,
         UnsupportedAdapterCapability,
         adapter_contract,
@@ -113,7 +137,7 @@ def test_unknown_adapter_is_conservative_and_error_is_safe() -> None:
 async def test_llm_adapter_requires_text_chat_and_propagates_cancellation() -> None:
     """LLM adapter 构建时冻结 text_chat，取消信号必须传播。"""
 
-    from core.provider_adapters import LLMProviderAdapter
+    from core.platform.provider.adapters import LLMProviderAdapter
 
     with pytest.raises(RuntimeError, match="adapter_capability_unsupported"):
         LLMProviderAdapter.from_provider(MagicMock(spec=[]))
@@ -133,8 +157,8 @@ async def test_component_factory_rejects_missing_provider_capability_before_io(
 
     from astrbot.core.provider.provider import Provider
 
-    from core.base.exceptions import ProviderNotReadyError
-    from core.initializer.component_factory import ComponentFactory
+    from core.platform.composition.component_factory import ComponentFactory
+    from core.shared.errors import ProviderNotReadyError
 
     config = MagicMock()
     config.get.return_value = False
@@ -165,8 +189,8 @@ async def test_component_factory_rejects_missing_provider_capability_before_io(
 async def test_embedding_adapter_supports_native_batch_and_single_emulation() -> None:
     """Embedding adapter 必须保持 native batch 和逐项模拟的输入顺序。"""
 
-    from core.adapter_capabilities import AdapterCapability, SupportLevel
-    from core.provider_adapters import EmbeddingProviderAdapter
+    from core.platform.provider.adapters import EmbeddingProviderAdapter
+    from core.shared.adapter_capabilities import AdapterCapability, SupportLevel
 
     native = MagicMock(spec=[])
     native.get_embeddings = AsyncMock(return_value=[[1.0, 0.0], [0.0, 1.0]])
@@ -200,7 +224,7 @@ async def test_embedding_batch_internal_type_error_is_not_retried_as_signature()
 ):
     """Provider 内部 TypeError 不得被误判为另一种 batch 签名。"""
 
-    from core.provider_adapters import EmbeddingProviderAdapter
+    from core.platform.provider.adapters import EmbeddingProviderAdapter
 
     provider = MagicMock(spec=[])
     calls = 0
@@ -229,7 +253,7 @@ async def test_embedding_batch_internal_type_error_is_not_retried_as_signature()
 async def test_embedding_adapter_rejects_invalid_result(vectors, reason) -> None:
     """Embedding 数量、统一维度和有限性必须在 adapter 边界验证。"""
 
-    from core.provider_adapters import EmbeddingProviderAdapter
+    from core.platform.provider.adapters import EmbeddingProviderAdapter
 
     provider = MagicMock(spec=[])
     provider.get_embeddings = AsyncMock(return_value=vectors)
@@ -244,7 +268,10 @@ async def test_embedding_retry_wraps_invalid_count_without_leaking_provider_erro
 ):
     """重试边界必须保留安全原因链，并隐藏 Provider 原始错误正文。"""
 
-    from core.validators.embedding_retry import EmbeddingRetryMixin
+    from core.features.memory.infrastructure.validators.embedding_retry import (
+        EmbeddingRetryMixin,
+    )
+    from core.platform.provider.adapters import AdapterResponseError
 
     provider = MagicMock(spec=[])
     provider.get_embeddings = AsyncMock(return_value=[[0.1]])
@@ -257,7 +284,9 @@ async def test_embedding_retry_wraps_invalid_count_without_leaking_provider_erro
             retry_base_delay=0.001,
         )
 
-    assert captured.value.__cause__.reason_code == "embedding_count_mismatch"
+    cause = captured.value.__cause__
+    assert isinstance(cause, AdapterResponseError)
+    assert cause.reason_code == "embedding_count_mismatch"
     assert "provider" not in str(captured.value).casefold()
 
 
@@ -275,7 +304,7 @@ async def test_embedding_adapter_rejects_string_vector_shapes(
 ) -> None:
     """字符串不得被按字符误解释为二维数值向量。"""
 
-    from core.provider_adapters import EmbeddingProviderAdapter
+    from core.platform.provider.adapters import EmbeddingProviderAdapter
 
     provider = MagicMock(spec=[])
     provider.get_embeddings = AsyncMock(return_value=raw_vectors)
@@ -288,7 +317,7 @@ async def test_embedding_adapter_rejects_string_vector_shapes(
 async def test_vector_filter_unsupported_fails_closed() -> None:
     """显式不支持 filter 的向量后端不得收到去掉 filter 的检索。"""
 
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
 
     backend = MagicMock()
     backend.retrieve = AsyncMock(return_value=[])
@@ -303,7 +332,7 @@ async def test_vector_filter_unsupported_fails_closed() -> None:
 async def test_vector_filter_rechecks_backend_results_locally() -> None:
     """固定后端忽略 metadata filter 时也不得返回跨 scope 结果。"""
 
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
 
     wrong_scope = MagicMock()
     wrong_scope.similarity = 0.9
@@ -329,7 +358,7 @@ async def test_vector_filter_rechecks_backend_results_locally() -> None:
 async def test_graph_vector_filter_unsupported_fails_closed() -> None:
     """图向量后端显式不支持 filter 时不得执行底层查询。"""
 
-    from core.retrieval.graph_vector_retriever import GraphVectorRetriever
+    from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
 
     backend = MagicMock()
     backend.adapter_capabilities = _contract(kind="vector_backend")
@@ -349,7 +378,7 @@ async def test_graph_vector_filter_unsupported_fails_closed() -> None:
 async def test_graph_vector_rechecks_scope_and_rejects_non_finite_scores() -> None:
     """图向量返回侧必须复核 scope，并丢弃 NaN/Infinity 分数。"""
 
-    from core.retrieval.graph_vector_retriever import GraphVectorRetriever
+    from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
 
     wrong_scope = MagicMock()
     wrong_scope.similarity = 0.9
@@ -379,8 +408,8 @@ async def test_graph_vector_rechecks_scope_and_rejects_non_finite_scores() -> No
 async def test_vector_mutations_unsupported_do_not_touch_backend() -> None:
     """主/图向量显式不支持 update/delete 时不得读取或写入底层 Store。"""
 
-    from core.retrieval.graph_vector_retriever import GraphVectorRetriever
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
 
     backend = MagicMock()
     backend.adapter_capabilities = _contract(kind="vector_backend")
@@ -400,19 +429,29 @@ async def test_vector_mutations_unsupported_do_not_touch_backend() -> None:
 def test_current_adapter_snapshots_state_real_filter_and_score_semantics() -> None:
     """当前 BM25/Vector/Derived/Store 必须公开实际而非理想化的快照。"""
 
-    from core.adapter_capabilities import AdapterCapability, SupportLevel
-    from core.retrieval.bm25_retriever import BM25Retriever
-    from core.retrieval.derived_relation_expander import DerivedRelationExpander
-    from core.retrieval.projection_reader import ProjectionReader
-    from core.retrieval.vector_retriever import VectorRetriever
-    from core.storage.memory_evolution_store import MemoryEvolutionStore
+    from core.features.evolution.application import (
+        DerivedRelationExpander,
+        ProjectionReader,
+    )
+    from core.features.evolution.infrastructure import MemoryEvolutionStore
+    from core.features.retrieval.bm25_retriever import BM25Retriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
+    from core.shared.adapter_capabilities import (
+        AdapterCapability,
+        ScoreSemantics,
+        SupportLevel,
+    )
 
     assert (
         BM25Retriever.adapter_capabilities.level(AdapterCapability.FILTERING)
         is SupportLevel.CALLER_ENFORCED
     )
-    assert BM25Retriever.adapter_capabilities.score.maximum == 1.0
-    assert VectorRetriever.adapter_capabilities.score.maximum is None
+    bm25_score = BM25Retriever.adapter_capabilities.score
+    vector_score = VectorRetriever.adapter_capabilities.score
+    assert isinstance(bm25_score, ScoreSemantics)
+    assert isinstance(vector_score, ScoreSemantics)
+    assert bm25_score.maximum == 1.0
+    assert vector_score.maximum is None
     assert DerivedRelationExpander.adapter_capabilities.supports(
         AdapterCapability.REFERENCE_TIME
     )
@@ -429,8 +468,8 @@ def test_current_faiss_backend_exposes_vector_access_after_fixed_adapter_setup()
 ):
     """固定 AstrBot FAISS 装配后必须向重排工厂公开向量访问能力。"""
 
-    from core.adapter_capabilities import AdapterCapability, adapter_contract
-    from core.retrieval.vector_retriever import VectorRetriever
+    from core.features.retrieval.vector_retriever import VectorRetriever
+    from core.shared.adapter_capabilities import AdapterCapability, adapter_contract
 
     backend = MagicMock()
     VectorRetriever(backend)
@@ -442,7 +481,7 @@ def test_current_faiss_backend_exposes_vector_access_after_fixed_adapter_setup()
 async def test_dual_route_skips_explicitly_unsupported_derived_reference_time() -> None:
     """Derived adapter 显式不支持 as-of 时应保留 canonical baseline。"""
 
-    from core.retrieval.dual_route_retriever import DualRouteRetriever
+    from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
     direct = _hybrid_result(1)
     document = MagicMock()
@@ -468,8 +507,8 @@ async def test_dual_route_skips_explicitly_unsupported_derived_reference_time() 
 def test_injection_provider_contract_preserves_legacy_tuple_and_safe_summary() -> None:
     """Provider 新 contract 不得破坏旧 tuple 调用方，也不得输出实例身份。"""
 
-    from core.adapter_capabilities import AdapterCapability
-    from core.utils.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_adapter import InjectionAdapter
+    from core.shared.adapter_capabilities import AdapterCapability
 
     provider = MagicMock()
     provider.provider_config = {"type": "openai_chat_completion", "id": "secret-id"}
@@ -490,8 +529,8 @@ def test_injection_provider_contract_preserves_legacy_tuple_and_safe_summary() -
 def test_injection_unknown_provider_does_not_infer_runtime_capabilities() -> None:
     """未知 Provider 不得因 MagicMock 属性或方法存在而获得能力。"""
 
-    from core.adapter_capabilities import AdapterCapability
-    from core.utils.injection_adapter import InjectionAdapter
+    from core.features.injection.application.injection_adapter import InjectionAdapter
+    from core.shared.adapter_capabilities import AdapterCapability
 
     snapshot = InjectionAdapter().describe_capabilities(MagicMock())
 
@@ -504,7 +543,7 @@ def test_injection_unknown_provider_does_not_infer_runtime_capabilities() -> Non
 async def test_reranker_factory_explicitly_degrades_unsupported_dependencies() -> None:
     """缺少 vector-access/同步 LLM 能力时应在工厂阶段降级 MMR。"""
 
-    from core.retrieval.reranker_factory import MMRReranker, create_reranker
+    from core.features.retrieval.reranker_factory import MMRReranker, create_reranker
 
     backend = MagicMock()
     backend.adapter_capabilities = _contract(kind="vector_backend")

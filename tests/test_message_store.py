@@ -4,8 +4,10 @@ import time
 
 import pytest
 
-from core.models.conversation_models import Message
-from core.storage.conversation_store import ConversationStore
+from core.features.conversation.infrastructure.conversation_store import (
+    ConversationStore,
+)
+from core.shared.contracts.conversation import Message
 
 
 class TestMessageStoreRemaining:

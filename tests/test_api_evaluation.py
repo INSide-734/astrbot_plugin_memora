@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.page_api import PAGE_API_PREFIX, PluginPageApi
+from core.platform.transport.page_api.page_api import PAGE_API_PREFIX, PluginPageApi
 
 
 class FakeEngine:
@@ -286,7 +286,9 @@ async def test_evaluation_api_ordinary_failure_uses_stable_safe_error(
             raise RuntimeError("PROVIDER-SECRET-CANARY")
 
     log_spy = MagicMock()
-    monkeypatch.setattr("core.api.evaluation_api.logger", log_spy)
+    monkeypatch.setattr(
+        "core.platform.transport.page_api.evaluation_api.logger", log_spy
+    )
     monkeypatch.setattr(
         api,
         "_build_evaluation_service",

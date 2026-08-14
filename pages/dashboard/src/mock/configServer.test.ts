@@ -10,6 +10,7 @@ import type {
 } from "@/types/config";
 
 import { createMockConfigServer } from "./configServer";
+import { MOCK_PROMPT_DEFAULTS } from "./data";
 import { handleApiGet, handleApiPost } from "./server";
 
 function successData<T>(response: ConfigApiResponse<T>): T {
@@ -46,8 +47,8 @@ describe("createMockConfigServer", () => {
       server.handleGet("config/schema") as ConfigApiResponse<ConfigSchemaData>
     );
 
-    expect(Object.keys(first.schema)).toHaveLength(41);
-    expect(countSchemaLeaves(first.schema)).toBe(227);
+    expect(Object.keys(first.schema)).toHaveLength(42);
+    expect(countSchemaLeaves(first.schema)).toBe(229);
     expect(first.schema).not.toHaveProperty("index_management");
     expect(first.plugin_name).toBe("astrbot_plugin_memora");
     expect(first.provider_options).toEqual({
@@ -99,11 +100,80 @@ describe("createMockConfigServer", () => {
       revision: initial.revision,
       instance_id: initial.instance_id,
       changed: false,
+      prompt_defaults: MOCK_PROMPT_DEFAULTS,
     });
     expect(
       (fullState(server).config.recall_engine as ConfigObject).top_k
     ).toBe(5);
   });
+
+  it("exposes quality.gate scalar leaves and seeds the composite gate config", () => {
+    const server = createMockConfigServer();
+    const schema = successData(
+      server.handleGet("config/schema") as ConfigApiResponse<ConfigSchemaData>
+    );
+    const quality = schema.schema.quality as ConfigSchemaNode & {
+      items: Record<string, ConfigSchemaNode>;
+    };
+    const gate = quality.items.gate as ConfigSchemaNode & {
+      items: Record<string, ConfigSchemaNode>;
+    };
+    expect(gate.items.enabled).toMatchObject({ type: "bool", default: true });
+    expect(gate.items.default_profile).toMatchObject({
+      type: "string",
+      default: "private",
+    });
+
+    const state = fullState(server);
+    const gateConfig = (state.config.quality as ConfigObject)
+      .gate as ConfigObject;
+    expect(gateConfig).toMatchObject({
+      enabled: true,
+      default_profile: "private",
+    });
+    expect(gateConfig.bindings).toHaveLength(2);
+    expect(gateConfig.profiles).toHaveLength(2);
+  });
+
+  it("applies quality.gate composite changes and rejects non-array values", () => {
+    const server = createMockConfigServer();
+    const initial = fullState(server);
+    const gateConfig = (initial.config.quality as ConfigObject)
+      .gate as ConfigObject;
+
+    const applied = successData(
+      server.handlePost("config/apply", {
+        base_revision: initial.revision,
+        changes: {
+          "quality.gate.enabled": false,
+          "quality.gate.profiles": gateConfig.profiles,
+        },
+      }) as ConfigApiResponse<ConfigApplyData>
+    );
+    expect(applied.changed_paths).toEqual([
+      "quality.gate.enabled",
+      "quality.gate.profiles",
+    ]);
+    expect(applied.revision).not.toBe(initial.revision);
+
+    const snapshot = server.controls.snapshot();
+    expect((snapshot.config.quality as ConfigObject).gate).toMatchObject({
+      enabled: false,
+    });
+
+    const invalid = server.handlePost("config/apply", {
+      base_revision: applied.revision,
+      changes: { "quality.gate.bindings": { not: "array" } },
+    }) as ConfigApiResponse<ConfigApplyData>;
+    expect(invalid.status).toBe("error");
+    if (invalid.status === "error") {
+      expect(invalid.code).toBe("validation_failed");
+      expect(invalid.data?.field_errors).toEqual({
+        "quality.gate.bindings": "Expected an array",
+      });
+    }
+  });
+
 
   it("applies valid leaf changes to memory and persisted state with a new revision", () => {
     const server = createMockConfigServer();
@@ -332,6 +402,7 @@ describe("createMockConfigServer", () => {
       revision: applied.revision,
       instance_id: completed.instanceId,
       changed: false,
+      prompt_defaults: MOCK_PROMPT_DEFAULTS,
     });
   });
 
@@ -371,6 +442,7 @@ describe("mock API config routes", () => {
       revision: state.revision,
       instance_id: state.instance_id,
       changed: false,
+      prompt_defaults: MOCK_PROMPT_DEFAULTS,
     });
 
     const applied = await handleApiPost("page/config/apply", {

@@ -45,7 +45,7 @@ class TestAtomRetriever:
 
     @pytest.fixture
     def retriever(self, atom_store: AsyncMock) -> Any:
-        from core.retrieval.atom_retriever import AtomRetriever
+        from core.features.retrieval.atom_retriever import AtomRetriever
 
         return AtomRetriever(atom_store=atom_store)
 

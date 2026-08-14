@@ -6,7 +6,7 @@ from dataclasses import replace
 
 import pytest
 
-from core.evaluation.feedback_learning_evidence import (
+from core.features.learning.domain.feedback_learning_evidence import (
     EvidenceEvaluatorConfig,
     LatencyEvidence,
     QualityMetricEvidence,
@@ -15,7 +15,7 @@ from core.evaluation.feedback_learning_evidence import (
     build_learning_evidence,
     validate_learning_evidence,
 )
-from core.evaluation.feedback_learning_evidence_contract import (
+from core.features.learning.domain.feedback_learning_evidence_contract import (
     REQUIRED_EVIDENCE_REGRESSION_CHECKS,
 )
 

@@ -4,7 +4,9 @@ import json
 
 import pytest
 
-from core.storage.conversation_store import ConversationStore
+from core.features.conversation.infrastructure.conversation_store import (
+    ConversationStore,
+)
 
 
 class TestMessageQueryConnectionNone:

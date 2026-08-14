@@ -22,7 +22,7 @@ from unittest.mock import AsyncMock
 import numpy as np
 import pytest
 
-from core.models.memory_atom import (
+from core.features.memory.domain.memory_atom import (
     AtomStatus,
     AtomType,
     DecayType,
@@ -162,7 +162,9 @@ async def test_expired_memories_cleanup(
     4. 验证未过期记忆不受影响
     5. 验证 FAISS 索引与 SQLite 数据一致
     """
-    from core.managers.atom_lifecycle_manager import AtomLifecycleManager
+    from core.features.memory.application.atom_lifecycle_manager import (
+        AtomLifecycleManager,
+    )
 
     # Arrange — 清除已有数据
     store = integration_atom_store
@@ -421,7 +423,7 @@ async def test_backup_and_restore_roundtrip(
         assert os.path.getsize(backup_db) > 0, "备份文件不应为空"
 
         # Act — 从备份创建新 AtomStore 实例
-        from core.storage.atom_store import AtomStore
+        from core.features.memory.infrastructure.atom_store import AtomStore
 
         restored_store = AtomStore(db_path=backup_db)
         await restored_store.initialize()
@@ -458,8 +460,9 @@ async def test_backup_and_restore_roundtrip(
         )
 
         # 清理 — 关闭 restored store 的连接
-        if hasattr(restored_store, "db_connection") and restored_store.db_connection:
-            await restored_store.db_connection.close()
+        restored_connection = getattr(restored_store, "db_connection", None)
+        if restored_connection:
+            await restored_connection.close()
 
     finally:
         # 清理备份目录
@@ -470,7 +473,7 @@ async def test_backup_and_restore_roundtrip(
 @pytest.mark.integration
 async def test_restore_reload_lifecycle_applies_then_validates(tmp_path: Path) -> None:
     """恢复事务在热重载模式下先应用并校验，再由新实例确认成功。"""
-    from core.managers.backup_manager import BackupManager
+    from core.features.backup.application import BackupManager
 
     db_path = tmp_path / "memora.db"
     connection = sqlite3.connect(db_path)

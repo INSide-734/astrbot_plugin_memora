@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.models.recall_strategy import RecallStrategy
-from core.page_api import PluginPageApi
-from core.retrieval.explainable_recall import capture_explainable_recall
-from core.retrieval.trace_models import RecallTrace, TraceResult, TraceStage
-from core.retrieval.trace_store import RecallTraceStore
+from core.features.retrieval.explainable_recall import capture_explainable_recall
+from core.features.retrieval.trace_models import RecallTrace, TraceResult, TraceStage
+from core.features.retrieval.trace_store import RecallTraceStore
+from core.platform.transport.page_api.page_api import PluginPageApi
+from core.shared.recall_strategy import RecallStrategy
 
 
 def _trace(
@@ -467,11 +467,11 @@ async def test_recall_trace_reports_debug_mode_separately_from_score_trace(
     engine.search_memories = AsyncMock(return_value=[])
     report_debug_event = MagicMock()
     monkeypatch.setattr(
-        "core.api.recall_trace_api.is_debug_reporting_enabled",
+        "core.platform.transport.page_api.recall_trace_api.is_debug_reporting_enabled",
         lambda: True,
     )
     monkeypatch.setattr(
-        "core.api.recall_trace_api.report_debug_event",
+        "core.platform.transport.page_api.recall_trace_api.report_debug_event",
         report_debug_event,
     )
 
@@ -502,8 +502,10 @@ async def test_trace_contains_non_executing_injection_decision(
     monkeypatch,
 ):
     """路由预览应只返回安全标量且不得执行或记录注入。"""
-    from core.injection.executor import InjectionExecutor
-    from core.injection.recorder import InjectionDecisionRecorder
+    from core.features.injection.application.executor import InjectionExecutor
+    from core.features.injection.infrastructure.recorder import (
+        InjectionDecisionRecorder,
+    )
 
     def unexpected_call(*_args, **_kwargs):
         raise AssertionError("preview must not execute or record an injection")

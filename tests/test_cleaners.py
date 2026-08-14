@@ -10,13 +10,13 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.base.constants import (
+from core.features.recall.application.injection_cleaner import InjectionCleaner
+from core.shared.constants import (
     FAKE_TOOL_CALL_ID_PREFIX,
     FAKE_TOOL_CALL_NAME,
     MEMORY_INJECTION_FOOTER,
     MEMORY_INJECTION_HEADER,
 )
-from core.cleaners.injection_cleaner import InjectionCleaner
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -446,15 +446,21 @@ class TestCleanupInjectedMemoriesFromDb:
     ],
 )
 async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -> None:
-    from core.injection.executor import InjectionExecutionContext, InjectionExecutor
-    from core.injection.models import (
+    from core.features.injection.application.executor import (
+        InjectionExecutionContext,
+        InjectionExecutor,
+    )
+    from core.features.injection.application.injection_adapter import InjectionAdapter
+    from core.features.injection.application.router import (
+        InjectionRoutingConfig,
+        InjectionStrategyRouter,
+    )
+    from core.features.injection.domain.models import (
         DeliveryMode,
         PresetName,
         RequestSignals,
         RoutingMode,
     )
-    from core.injection.router import InjectionRoutingConfig, InjectionStrategyRouter
-    from core.utils.injection_adapter import InjectionAdapter
 
     class Part:
         def __init__(self, text):
@@ -463,7 +469,7 @@ async def test_cleaner_round_trips_real_executor_output(monkeypatch, delivery) -
         def mark_as_temp(self):
             return self
 
-    monkeypatch.setattr("core.injection.executor.TextPart", Part)
+    monkeypatch.setattr("core.features.injection.application.executor.TextPart", Part)
     provider = MagicMock()
     provider.provider_config = {"type": "openai_chat_completion"}
     provider.get_model.return_value = "gpt-4.1"
@@ -681,8 +687,10 @@ def test_fake_tool_cleaner_preserves_non_exact_pairs(
 
 @pytest.mark.parametrize("wrapped", [False, True])
 def test_fake_tool_cleaner_removes_real_legacy_json_pair(wrapped) -> None:
-    from core.security.prompt_sanitizer import PromptProtectionService
-    from core.utils.memory_formatter import format_memories_for_fake_tool_call
+    from core.features.injection.application.memory_formatter import (
+        format_memories_for_fake_tool_call,
+    )
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
 
     contexts = format_memories_for_fake_tool_call(
         [

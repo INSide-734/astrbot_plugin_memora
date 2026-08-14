@@ -4,17 +4,18 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.config_validator import validate_config
-from core.initializer.component_factory import ComponentFactory
-from core.managers.atom_lifecycle_manager import AtomLifecycleManager
-from core.managers.memory_engine import MemoryEngine
-from core.models.memory_atom import AtomType, MemoryAtom
-from core.processors.memory_processor import MemoryProcessor
-from core.storage.atom_store import AtomStore
+from core.features.memory.application.atom_lifecycle_manager import AtomLifecycleManager
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
+from core.features.memory.infrastructure.atom_store import AtomStore
+from core.features.recall.processors.memory_processor import MemoryProcessor
+from core.platform.composition.component_factory import ComponentFactory
+from core.platform.config.config_validator import validate_config
 
 
 class _ConfigManager:
@@ -177,10 +178,10 @@ async def test_store_touch_many_updates_one_transaction_boundary(
     after = [await store.get(atom_id) for atom_id in ids]
 
     assert all(item is not None for item in before + after)
-    assert all(
-        later.last_accessed_at > earlier.last_accessed_at
-        for earlier, later in zip(before, after, strict=True)
-    )
+    for earlier, later in zip(before, after, strict=True):
+        assert earlier is not None
+        assert later is not None
+        assert later.last_accessed_at > earlier.last_accessed_at
 
 
 @pytest.mark.asyncio
@@ -219,10 +220,10 @@ async def test_manual_reinforcement_is_scoped_and_revalidates_source() -> None:
     store.reinforce.assert_awaited_once_with(91, new_confidence=0.88)
 
 
-def _make_write_engine(config: dict | None = None) -> MemoryEngine:
+def _make_write_engine(config: dict | None = None) -> Any:
     """构造可运行 add_memory 写入编排的最小 MemoryEngine。"""
 
-    engine = MemoryEngine(
+    engine: Any = MemoryEngine(
         db_path=":memory:",
         faiss_db=object(),
         config={"atom_enabled": True, **(config or {})},
@@ -294,7 +295,9 @@ async def test_add_memory_deduplicates_and_indexes_only_persisted_atoms() -> Non
         atoms=[lower, higher],
     )
 
-    persisted_batch = engine.atom_store.insert_many.await_args.args[0]
+    insert_call = engine.atom_store.insert_many.await_args
+    assert insert_call is not None
+    persisted_batch = insert_call.args[0]
     assert persisted_batch == [higher]
     engine.atom_lifecycle_manager.run_manual_reinforcement.assert_awaited_once()
     graph_atoms = engine.graph_memory_manager.index_memory.await_args.args[3]

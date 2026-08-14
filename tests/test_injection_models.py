@@ -4,13 +4,13 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-import core.injection as injection
-import core.injection.executor as executor_module
-import core.injection.models as model_module
-import core.injection.presets as preset_module
-import core.injection.recorder as recorder_module
-import core.injection.router as router_module
-from core.injection.models import (
+import core.features.injection as injection
+import core.features.injection.application.executor as executor_module
+import core.features.injection.application.presets as preset_module
+import core.features.injection.application.router as router_module
+import core.features.injection.domain.models as model_module
+import core.features.injection.infrastructure.recorder as recorder_module
+from core.features.injection.domain.models import (
     ContentLevel,
     DeliveryMode,
     InjectionDecision,

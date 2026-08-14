@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.jargon.jargon_miner import JargonMiner
-from core.jargon.jargon_store import JargonStore
-from core.jargon.models import JargonCandidate
+from core.features.cognition.jargon.jargon_miner import JargonMiner
+from core.features.cognition.jargon.jargon_store import JargonStore
+from core.features.cognition.jargon.models import JargonCandidate
 
 
 def _make_candidate(frequency: int) -> JargonCandidate:

@@ -8,45 +8,50 @@ from __future__ import annotations
 import asyncio
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
-from .base.config_manager import ConfigManager
-from .base.cost_control import CostControl, build_cost_control_from_config
-from .base.extra_llm_budget import (
+from .event_cognitive import CognitiveComponentsMixin
+from .features.conversation.application.conversation_manager import ConversationManager
+from .features.conversation.application.dedup_manager import DedupManager
+from .features.conversation.application.message_content_extractor import (
+    MessageContentExtractor,
+)
+from .features.identity.domain.models import IdentityTrust, ResolvedIdentity
+from .features.injection.application.injection_adapter import InjectionAdapter
+from .features.memory.application.memory_engine import MemoryEngine
+from .features.observability.application.runtime import monitored
+from .features.observability.infrastructure.debug_reporter import (
+    debug_operation,
+    report_debug_event,
+    report_debug_exception,
+)
+from .features.recall.application.injection_cleaner import InjectionCleaner
+from .features.recall.application.recall_handler import RecallHandler
+from .features.recall.application.recall_observability import RecallTimingContext
+from .features.recall.processors.memory_processor import MemoryProcessor
+from .features.reflection.application.reflection_handler import ReflectionHandler
+from .platform.config.cost_control import build_cost_control_from_config
+from .platform.config.manager import ConfigManager
+from .shared.contracts import IdentityConversationPort
+from .shared.cost_control import CostControl
+from .shared.extra_llm_budget import (
     ExtraLlmBudget,
     ExtraLlmBudgetObservation,
     extra_llm_budget_scope,
 )
-from .cleaners.injection_cleaner import InjectionCleaner
-from .dedup.dedup_manager import DedupManager
-from .extractors.message_content_extractor import MessageContentExtractor
-from .handlers.recall_handler import RecallHandler
-from .handlers.recall_observability import RecallTimingContext
-from .handlers.reflection_handler import ReflectionHandler
-from .identity.models import IdentityTrust, ResolvedIdentity
-from .identity.runtime import ProtocolIdentityRuntime
-from .managers.conversation_manager import ConversationManager
-from .managers.memory_engine import MemoryEngine
-from .monitoring import (
-    debug_operation,
-    monitored,
-    report_debug_event,
-    report_debug_exception,
-)
-from .processors.memory_processor import MemoryProcessor
-from .utils.injection_adapter import InjectionAdapter
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import LLMResponse, ProviderRequest
 
-    from .injection.recorder import InjectionDecisionRecorder
+    from .features.injection.infrastructure.recorder import InjectionDecisionRecorder
+    from .shared.contracts import PromptProtectionPort
 
 
-class EventHandler:
+class EventHandler(CognitiveComponentsMixin):
     """事件处理器 — 协调各子模块处理 AstrBot 事件"""
 
     _IDENTITY_SYNC_MARKER_ATTR = "_memora_identity_sync_scheduled"
@@ -64,15 +69,16 @@ class EventHandler:
         affection_manager: Any | None = None,
         expression_learner: Any | None = None,
         relation_manager: Any | None = None,
-        prompt_protection_service: Any | None = None,
+        prompt_protection_service: PromptProtectionPort | None = None,
         write_guard_cb: Any | None = None,
         perf_tracker: Any | None = None,
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
         memory_evolution_manager: Any | None = None,
         memory_quality_gate: Any | None = None,
+        identity_runtime: IdentityConversationPort | None = None,
     ) -> None:
-        """绑定事件主链依赖，并复用会话管理器持有的协议身份运行时。"""
+        """绑定事件主链依赖，并接收组合根发布的协议身份端口。"""
 
         self.context = context
         self.config_manager = config_manager
@@ -96,11 +102,10 @@ class EventHandler:
             if isinstance(configured_cost_control, CostControl)
             else build_cost_control_from_config(cost_control_section)
         )
-        identity_runtime = getattr(conversation_manager, "identity_runtime", None)
-        self._identity_runtime = (
+        self._identity_runtime: IdentityConversationPort | None = (
             identity_runtime
-            if isinstance(identity_runtime, ProtocolIdentityRuntime)
-            else ProtocolIdentityRuntime()
+            if isinstance(identity_runtime, IdentityConversationPort)
+            else None
         )
 
         self._dedup = DedupManager(max_size=1000, ttl=300)
@@ -112,7 +117,7 @@ class EventHandler:
         self._recall_handler = RecallHandler(
             context=context,
             config_manager=config_manager,
-            memory_engine=memory_engine,
+            memory_engine=cast(Any, memory_engine),
             conversation_manager=conversation_manager,
             injection_adapter=self._injection_adapter,
             enforce_limit_cb=self._enforce_message_limit,
@@ -124,7 +129,11 @@ class EventHandler:
             perf_tracker=perf_tracker,
             injection_recorder=injection_recorder,
             memory_tool_available=memory_tool_available,
-            identity_enricher=self._identity_runtime.enricher,
+            identity_enricher=(
+                self._identity_runtime.enricher
+                if self._identity_runtime is not None
+                else None
+            ),
             query_rewrite_llm_caller=partial(
                 memory_processor.llm_client.call_llm_with_retry,
                 system_prompt="只解析记忆查询意图并返回要求的 JSON。",
@@ -135,7 +144,7 @@ class EventHandler:
         self._reflection_handler = ReflectionHandler(
             context=context,
             config_manager=config_manager,
-            memory_engine=memory_engine,
+            memory_engine=cast(Any, memory_engine),
             memory_processor=memory_processor,
             conversation_manager=conversation_manager,
             enforce_limit_cb=self._enforce_message_limit,
@@ -360,58 +369,6 @@ class EventHandler:
             )
             logger.error("处理群聊全量消息时发生错误", exc_info=True)
 
-    async def _feed_cognitive_components(
-        self,
-        event: AstrMessageEvent,
-        content: str,
-        identity: ResolvedIdentity,
-    ) -> None:
-        """尽力向可选的 v1.0+ 认知模块投喂输入数据。"""
-        group_id = event.unified_msg_origin or "default"
-        sender_id = self._user_id_for_identity(event, identity)
-        if sender_id is None:
-            return
-        try:
-            if self._jargon_filter is not None:
-                self._jargon_filter.update(content, group_id, sender_id)
-        except Exception:
-            logger.debug("[认知模块] 黑话过滤器更新失败", exc_info=True)
-
-        try:
-            if self._expression_learner is not None:
-                self._expression_learner.buffer_message(
-                    group_id=group_id,
-                    sender_id=sender_id,
-                    content=content,
-                )
-                await self._expression_learner.maybe_learn(group_id)
-        except Exception:
-            logger.debug("[认知模块] 表达模式学习器更新失败", exc_info=True)
-
-        try:
-            if self._relation_manager is not None:
-                await self._relation_manager.apply_delta(
-                    from_user=sender_id,
-                    to_user="bot",
-                    group_id=group_id,
-                    delta=0.01,
-                    reason="group_message",
-                )
-        except Exception:
-            logger.debug("[认知模块] 社交关系更新失败", exc_info=True)
-
-        try:
-            if self._jargon_miner is not None:
-                stats = (
-                    self._jargon_filter.get_stats(group_id)
-                    if self._jargon_filter is not None
-                    else None
-                )
-                if stats and stats.candidate_count > 0:
-                    await self._jargon_miner.run_once(group_id, limit=2)
-        except Exception:
-            logger.debug("[认知模块] 黑话挖掘执行失败", exc_info=True)
-
     @monitored
     async def handle_memory_recall(
         self,
@@ -495,7 +452,6 @@ class EventHandler:
                         await asyncio.gather(*pending, return_exceptions=True)
                 finally:
                     self._maintenance_tasks.clear()
-            await self._identity_runtime.close()
             if self._injection_recorder is not None:
                 await self._injection_recorder.close(timeout=5.0)
         except asyncio.CancelledError:
@@ -536,6 +492,25 @@ class EventHandler:
 
     # ---- 内部方法 ----
 
+    @staticmethod
+    def _unavailable_identity() -> ResolvedIdentity:
+        """在未注入身份端口时返回拒绝身份写入的安全降级快照。"""
+
+        return ResolvedIdentity(
+            protocol="",
+            identity_namespace="",
+            stable_user_id=None,
+            canonical_user_id=None,
+            scope_type=None,
+            scope_id=None,
+            global_name=None,
+            scope_name=None,
+            display_name=None,
+            observed_at=0.0,
+            trust_status=IdentityTrust.UNSUPPORTED,
+            name_field_states={},
+        )
+
     def _resolve_identity(
         self,
         event: AstrMessageEvent,
@@ -544,7 +519,10 @@ class EventHandler:
     ) -> ResolvedIdentity:
         """同步解析身份，并把可信名称目录更新交给受管理任务。"""
 
-        identity = self._identity_runtime.resolve(event)
+        runtime = self._identity_runtime
+        if runtime is None:
+            return self._unavailable_identity()
+        identity = runtime.resolve(event)
         self._schedule_identity_sync(
             event,
             identity,
@@ -561,7 +539,12 @@ class EventHandler:
     ) -> None:
         """为同一事件至多调度一次可信身份目录同步。"""
 
-        if writes_blocked or identity.trust_status is not IdentityTrust.TRUSTED:
+        runtime = self._identity_runtime
+        if (
+            runtime is None
+            or writes_blocked
+            or identity.trust_status is not IdentityTrust.TRUSTED
+        ):
             return
         if getattr(event, self._IDENTITY_SYNC_MARKER_ATTR, False) is True:
             return
@@ -571,7 +554,7 @@ class EventHandler:
         except Exception:
             logger.debug("协议身份同步标记写入失败，将继续执行本次同步")
 
-        coroutine = self._identity_runtime.synchronize(
+        coroutine = runtime.synchronize(
             event,
             identity,
             writes_blocked=False,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 
-from core.monitoring.perf_tracker import PerfTracker
+from core.features.observability.application import PerfTracker
 
 
 def _sample(

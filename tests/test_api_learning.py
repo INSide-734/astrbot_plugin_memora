@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.learning_api import LearningApiMixin
+from core.platform.transport.page_api.learning_api import LearningApiMixin
 
 
 def _mock_request(**args):
@@ -127,21 +127,21 @@ class TestLearningValidation:
     @pytest.mark.asyncio
     async def test_get_learning_status_plugin_not_ready(self) -> None:
         req = _mock_request()
-        with patch("core.api.learning_api.request", req):
+        with patch("core.platform.transport.page_api.learning_api.request", req):
             result = await _make_mixin(plugin_ready=False).get_learning_status()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_get_learning_history_rejects_non_numeric_limit(self) -> None:
         req = _mock_request(limit="abc")
-        with patch("core.api.learning_api.request", req):
+        with patch("core.platform.transport.page_api.learning_api.request", req):
             result = await _make_mixin().get_learning_history()
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
     async def test_get_learning_history_requires_auto_learning(self) -> None:
         req = _mock_request()
-        with patch("core.api.learning_api.request", req):
+        with patch("core.platform.transport.page_api.learning_api.request", req):
             result = await _make_mixin(
                 auto_learning_available=False
             ).get_learning_history()
@@ -152,7 +152,7 @@ class TestLearningValidation:
         """候选历史限制必须受固定上限约束。"""
 
         req = _mock_request(limit="101")
-        with patch("core.api.learning_api.request", req):
+        with patch("core.platform.transport.page_api.learning_api.request", req):
             result = await _make_mixin().get_learning_history()
         assert result["status"] == "error"
 
@@ -161,7 +161,7 @@ class TestLearningHappyPath:
     @pytest.mark.asyncio
     async def test_get_learning_status_exposes_candidates_and_baseline(self) -> None:
         req = _mock_request()
-        with patch("core.api.learning_api.request", req):
+        with patch("core.platform.transport.page_api.learning_api.request", req):
             result = await _make_mixin().get_learning_status()
         assert result["status"] == "ok"
         assert result["data"]["candidate_count"] == 1
@@ -254,7 +254,9 @@ class TestLearningHappyPath:
             return_value=({"memory_engine": engine}, None)
         )
 
-        with patch("core.api.learning_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.learning_api.request", _mock_request()
+        ):
             result = await mixin.get_learning_status()
 
         serialized = json.dumps(result, ensure_ascii=False)
@@ -344,7 +346,7 @@ class TestLearningHappyPath:
     @pytest.mark.asyncio
     async def test_get_learning_history_returns_candidate_views(self) -> None:
         req = _mock_request(limit="1")
-        with patch("core.api.learning_api.request", req):
+        with patch("core.platform.transport.page_api.learning_api.request", req):
             result = await _make_mixin().get_learning_history()
         assert result["status"] == "ok"
         assert len(result["data"]["history"]) == 1
@@ -358,7 +360,7 @@ class TestLearningHappyPath:
         mixin._ensure_plugin_ready = AsyncMock(
             return_value=({"memory_engine": MagicMock(auto_learning=auto)}, None)
         )
-        with patch("core.api.learning_api.request", req):
+        with patch("core.platform.transport.page_api.learning_api.request", req):
             result = await mixin.reset_learning()
         assert result["status"] == "ok"
         auto.reset.assert_awaited_once()

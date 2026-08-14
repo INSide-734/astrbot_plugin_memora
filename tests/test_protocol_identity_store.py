@@ -7,7 +7,7 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
-from core.storage.protocol_identity_store import ProtocolIdentityStore
+from core.features.identity import ProtocolIdentityStore
 
 
 @pytest.mark.asyncio

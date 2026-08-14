@@ -9,7 +9,9 @@ import faiss
 import numpy as np
 import pytest
 
-from core.validators.vector_rebuilder import VectorRebuilderMixin
+from core.features.memory.infrastructure.validators.vector_rebuilder import (
+    VectorRebuilderMixin,
+)
 
 # ---------------------------------------------------------------------------
 # Test harness — implements the methods VectorRebuilderMixin depends on

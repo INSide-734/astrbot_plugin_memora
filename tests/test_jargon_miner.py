@@ -18,16 +18,16 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.jargon.jargon_miner import (
+from core.features.cognition.jargon.jargon_miner import (
     INFERENCE_THRESHOLDS,
     JargonMiner,
     _extract_meaning_str,
     _safe_parse_json,
 )
-from core.jargon.jargon_query import JargonQueryService, TTLCache
-from core.jargon.jargon_store import JargonStore
-from core.jargon.models import JargonCandidate, JargonMeaning
-from core.jargon.statistical_filter import JargonStatisticalFilter
+from core.features.cognition.jargon.jargon_query import JargonQueryService, TTLCache
+from core.features.cognition.jargon.jargon_store import JargonStore
+from core.features.cognition.jargon.models import JargonCandidate, JargonMeaning
+from core.features.cognition.jargon.statistical_filter import JargonStatisticalFilter
 
 # ============================================================================
 # 数据模型测试
@@ -505,7 +505,9 @@ class TestJargonMiner:
     @staticmethod
     def _make_mock_stats() -> "JargonStatisticalFilter":
         """Create a JargonStatisticalFilter with pre-populated data."""
-        from core.jargon.statistical_filter import JargonStatisticalFilter
+        from core.features.cognition.jargon.statistical_filter import (
+            JargonStatisticalFilter,
+        )
 
         sf = JargonStatisticalFilter()
         for _ in range(10):

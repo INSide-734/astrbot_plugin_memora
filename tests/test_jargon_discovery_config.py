@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.api.jargon_api import JargonApiMixin
-from core.base.config_validator import JargonConfig, MemoraConfig
+from core.platform.config.config_validator import JargonConfig, MemoraConfig
+from core.platform.transport.page_api.jargon_api import JargonApiMixin
 
 
 def test_jargon_discovery_defaults_to_disabled_in_schema_and_model() -> None:

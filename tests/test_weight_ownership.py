@@ -2,26 +2,18 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.base.config_ownership import resolve_config_ownership
-from core.base.runtime_feature_config import RuntimeFeatureConfigSections
-from core.initializer.engine_runtime_config import ENGINE_RUNTIME_FIELDS
-from core.managers.memory_engine import MemoryEngine
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.platform.composition.engine_runtime_config import ENGINE_RUNTIME_FIELDS
+from core.platform.config import resolve_config_ownership
+from core.platform.config.runtime_feature_config import RuntimeFeatureConfigSections
 
 _ROOT = Path(__file__).resolve().parents[1]
-
-
-def test_weight_learner_module_removed_from_production() -> None:
-    """MAB 权重学习器必须从生产包中移除。"""
-
-    with pytest.raises(ImportError):
-        importlib.import_module("core.managers.weight_learner")
 
 
 def test_weight_learning_absent_from_config_contract() -> None:
@@ -62,7 +54,9 @@ async def test_engine_ignores_legacy_weight_learning_config(tmp_path: Path) -> N
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
         assert not hasattr(engine, "weight_learner")

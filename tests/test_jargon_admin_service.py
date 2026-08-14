@@ -12,19 +12,21 @@ from unittest.mock import AsyncMock
 import aiosqlite
 import pytest
 
-from core.base.entity_editing import (
+from core.features.cognition.jargon.jargon_query import JargonQueryService
+from core.features.cognition.jargon.jargon_store import JargonStore
+from core.features.cognition.jargon.models import JargonMeaning
+from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
-from core.jargon.jargon_query import JargonQueryService
-from core.jargon.jargon_store import JargonStore
-from core.jargon.models import JargonMeaning
 
 
 def _service_class():
-    module = importlib.import_module("core.jargon.jargon_admin_service")
+    module = importlib.import_module(
+        "core.features.cognition.jargon.jargon_admin_service"
+    )
     return module.JargonAdminService
 
 

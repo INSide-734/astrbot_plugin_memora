@@ -155,7 +155,7 @@ async def noop_async(*_args: Any, **_kwargs: Any) -> None:
 
 
 def build_memories() -> list[Any]:
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     rows = (
         (0.95, "用户固定选择燕麦拿铁，并明确要求不要额外添加糖浆。"),
@@ -183,8 +183,8 @@ def build_memories() -> list[Any]:
 
 
 def build_handler(retrieval_delay_ms: float) -> tuple[Any, HandlerBenchmarkProvider]:
-    from core.handlers import recall_handler as recall_module
-    from core.utils.injection_adapter import InjectionAdapter
+    import core.features.recall.application.recall_handler as recall_module
+    from core.features.injection.application.injection_adapter import InjectionAdapter
 
     provider = HandlerBenchmarkProvider()
     constructor_values: dict[str, Any] = {
@@ -233,7 +233,7 @@ def configure_deterministic_handler(handler: Any) -> None:
 
 
 def install_worker_overrides() -> Any:
-    from core.handlers import recall_handler as recall_module
+    import core.features.recall.application.recall_handler as recall_module
 
     recall_module.logger = SilentLogger()
 
@@ -438,9 +438,23 @@ def evaluate_total_path_regression(
     }
 
 
+def _git_source_command(source_root: Path, *arguments: str) -> list[str]:
+    """构造只信任当前显式源目录的跨平台 Git 命令。"""
+
+    resolved = source_root.resolve()
+    return [
+        "git",
+        "-c",
+        f"safe.directory={resolved.as_posix()}",
+        "-C",
+        str(resolved),
+        *arguments,
+    ]
+
+
 def source_checkout_commit(source_root: Path) -> str:
     completed = subprocess.run(
-        ["git", "-C", str(source_root.resolve()), "rev-parse", "HEAD"],
+        _git_source_command(source_root, "rev-parse", "HEAD"),
         check=True,
         capture_output=True,
         text=True,
@@ -455,7 +469,7 @@ def ensure_clean_source_checkout(source_root: Path, source_commit: str) -> None:
     if actual_commit != source_commit:
         raise ValueError("source commit does not match the benchmark source checkout")
     completed = subprocess.run(
-        ["git", "-C", str(source_root.resolve()), "status", "--porcelain"],
+        _git_source_command(source_root, "status", "--porcelain"),
         check=True,
         capture_output=True,
         text=True,

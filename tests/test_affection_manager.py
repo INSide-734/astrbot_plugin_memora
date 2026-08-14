@@ -15,9 +15,9 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.affection.affection_manager import AffectionManager
-from core.affection.affection_store import AffectionStore
-from core.affection.models import (
+from core.features.cognition.affection.affection_manager import AffectionManager
+from core.features.cognition.affection.affection_store import AffectionStore
+from core.features.cognition.affection.models import (
     INTERACTION_RULES,
     AffectionLevel,
     BotMood,
@@ -26,13 +26,13 @@ from core.affection.models import (
     UserAffection,
     classify_by_keywords,
 )
-from core.base.entity_editing import (
+from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
-from core.base.list_sorting import SortQuery
+from core.shared.list_sorting import SortQuery
 
 # ============================================================================
 # 管理员好感度与情绪操作测试
@@ -397,7 +397,7 @@ class TestMoodAdminOperations:
             store_clock = MagicMock()
             store_clock.time.side_effect = (100.0, 101.0)
             monkeypatch.setattr(
-                "core.affection.affection_store.time",
+                "core.features.cognition.affection.affection_store.time",
                 store_clock,
             )
             manager = AffectionManager(store)

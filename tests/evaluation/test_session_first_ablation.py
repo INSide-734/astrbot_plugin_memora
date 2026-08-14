@@ -10,8 +10,8 @@ from typing import Any
 
 import pytest
 
-from core.evaluation.retrieval_quality import EvaluationCase, load_fixture_dir
-from core.evaluation.session_first_ablation import (
+from core.features.evaluation.application import EvaluationCase, load_fixture_dir
+from core.features.evaluation.application.session_first_ablation import (
     SESSION_REASON_CODES,
     SessionFirstPreset,
     load_session_first_cases,

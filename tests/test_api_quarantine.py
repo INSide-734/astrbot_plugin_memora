@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.page_api import PAGE_API_PREFIX, PluginPageApi
-from core.review.memory_quality_gate import QuarantineApprovalPendingError
-from core.review.quarantine_store import MemoryQuarantineStore
+from core.features.quality.application.memory_quality_gate import (
+    QuarantineApprovalPendingError,
+)
+from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
+from core.platform.transport.page_api.page_api import PAGE_API_PREFIX, PluginPageApi
 
 
 def _mock_request(**args):
@@ -95,7 +97,10 @@ async def test_list_and_detail_hide_internal_identity_and_fingerprint(tmp_path) 
     gate = SimpleNamespace(store=store)
     api = _api(gate)
 
-    with patch("core.api.quarantine_api.request", _mock_request(limit="20")):
+    with patch(
+        "core.platform.transport.page_api.quarantine_api.request",
+        _mock_request(limit="20"),
+    ):
         listed = await api.list_quarantine_candidates()
     item = listed["data"]["items"][0]
     assert listed["status"] == "ok"
@@ -106,7 +111,7 @@ async def test_list_and_detail_hide_internal_identity_and_fingerprint(tmp_path) 
     assert "content" not in item
 
     request_mock = _mock_request(candidate_id=candidate["candidate_id"])
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         detail = await api.get_quarantine_candidate_detail()
     detail_item = detail["data"]["item"]
     assert detail_item["content"] == "用户喜欢咖啡。"
@@ -145,7 +150,7 @@ async def test_approve_requires_revision_and_forwards_optional_correction() -> N
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.apply_quarantine_action()
 
     assert response["status"] == "ok"
@@ -174,7 +179,7 @@ async def test_action_returns_stable_revision_conflict_code() -> None:
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.apply_quarantine_action()
 
     assert response["status"] == "error"
@@ -212,7 +217,7 @@ async def test_repair_approve_forwards_token_and_canonical_id() -> None:
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.repair_quarantine_approval()
 
     assert response["status"] == "ok"
@@ -257,7 +262,7 @@ async def test_repair_approve_allows_durable_correlation_without_raw_token() -> 
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.repair_quarantine_approval()
 
     assert response["status"] == "ok"
@@ -288,7 +293,7 @@ async def test_repair_rejects_conflicting_candidate_correlation() -> None:
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.repair_quarantine_approval()
 
     assert response["status"] == "error"
@@ -322,7 +327,9 @@ async def test_repair_rejects_malformed_canonical_id_or_correlation() -> None:
     for payload in payloads:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
-        with patch("core.api.quarantine_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.quarantine_api.request", request_mock
+        ):
             response = await api.repair_quarantine_approval()
         assert response["status"] == "error"
         assert response["code"] in {
@@ -352,7 +359,7 @@ async def test_repair_maps_gate_correlation_failure_to_stable_error() -> None:
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.repair_quarantine_approval()
 
     assert response["status"] == "error"
@@ -379,7 +386,7 @@ async def test_repair_keeps_write_guard_before_durable_call() -> None:
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.repair_quarantine_approval()
 
     assert response is blocked
@@ -413,7 +420,9 @@ async def test_repair_keeps_revision_validation_and_token_type_guard() -> None:
     for payload in payloads:
         request_mock = _mock_request()
         request_mock.get_json = AsyncMock(return_value=payload)
-        with patch("core.api.quarantine_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.quarantine_api.request", request_mock
+        ):
             response = await api.repair_quarantine_approval()
         assert response["status"] == "error"
         assert response["code"] in {
@@ -454,7 +463,7 @@ async def test_repair_block_requires_explicit_canonical_absence_confirmation() -
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.repair_quarantine_approval()
 
     assert response["status"] == "ok"
@@ -484,7 +493,7 @@ async def test_approval_finalize_pending_returns_repair_token() -> None:
         }
     )
 
-    with patch("core.api.quarantine_api.request", request_mock):
+    with patch("core.platform.transport.page_api.quarantine_api.request", request_mock):
         response = await api.apply_quarantine_action()
 
     assert response["status"] == "error"

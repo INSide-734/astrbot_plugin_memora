@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
-from core.identity import (
+from core.features.identity.domain.models import (
     IdentityProtocolAdapter,
     IdentityTrust,
     NameFieldState,
-    ProtocolIdentityResolver,
     ResolvedIdentity,
 )
+from core.features.identity.infrastructure.protocols import ProtocolIdentityResolver
 
 
 def _onebot_event(
@@ -358,11 +359,23 @@ def test_future_adapter_satisfies_protocol_and_uses_shared_resolver() -> None:
 
     assert identity == _resolved_future_identity()
     with pytest.raises(TypeError):
-        identity.name_field_states["global_name"] = NameFieldState.EMPTY
+        cast(dict[str, NameFieldState], identity.name_field_states)["global_name"] = (
+            NameFieldState.EMPTY
+        )
     assert (
         replace(identity, display_name="新名称").canonical_user_id
         == identity.canonical_user_id
     )
+
+
+def test_default_resolver_accepts_additional_protocol_parser() -> None:
+    """新增协议只需追加解析器，无需重建或修改内置 resolver。"""
+
+    identity = ProtocolIdentityResolver.default((_FutureAdapter(),)).resolve(
+        SimpleNamespace(protocol="future")
+    )
+
+    assert identity == _resolved_future_identity()
 
 
 def test_adapter_exception_becomes_untrusted_identity() -> None:

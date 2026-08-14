@@ -5,13 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
 
-from core.managers.memory_engine import MemoryEngine
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
     ProjectionSourceView,
@@ -20,8 +20,9 @@ from core.models.memory_evolution import (
     RelationType,
     RelationView,
 )
-from core.retrieval.vector_retriever import VectorRetriever
-from core.storage.memory_evolution_store import MemoryEvolutionStore
+from core.features.evolution.infrastructure import MemoryEvolutionStore
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.retrieval.vector_retriever import VectorRetriever
 
 UTC = timezone.utc
 
@@ -233,7 +234,7 @@ async def test_engine_rejects_stale_update_and_invalidates_deleted_source():
             }
         ]
     )
-    engine = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
+    engine: Any = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
     engine.hybrid_retriever = MagicMock()
     engine.hybrid_retriever.update_metadata = AsyncMock(return_value=True)
     engine._retrieval = MagicMock()
@@ -260,7 +261,7 @@ async def test_engine_rejects_stale_update_and_invalidates_deleted_source():
 @pytest.mark.asyncio
 async def test_engine_schedules_evolution_only_after_canonical_add_succeeds():
     faiss_db = MagicMock()
-    engine = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
+    engine: Any = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
     engine.hybrid_retriever = MagicMock()
     engine.hybrid_retriever.add_memory = AsyncMock(return_value=17)
     engine.graph_memory_manager = None
@@ -334,8 +335,10 @@ async def test_cleanup_orphaned_derived_preserves_projection_with_other_sources(
 
 @pytest.mark.asyncio
 async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_path):
-    from core.managers.memory_evolution_gate import MemoryEvolutionGate
-    from core.managers.memory_evolution_manager import MemoryEvolutionManager
+    from core.features.evolution.application import (
+        MemoryEvolutionGate,
+        MemoryEvolutionManager,
+    )
 
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
@@ -369,11 +372,68 @@ async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_rebuild_skips_mark_write_sources(tmp_path):
+    """全量重建不得把 mark_write 低置信记忆重新排入演化队列。"""
+    from core.features.evolution.application import (
+        MemoryEvolutionGate,
+        MemoryEvolutionManager,
+    )
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    await _create_documents(store.db_path)
+    async with aiosqlite.connect(store.db_path) as db:
+        await db.execute(
+            "INSERT INTO documents(id,doc_id,text,metadata,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                19,
+                "doc-19",
+                "低置信证据",
+                json.dumps(
+                    {
+                        "scope_key": "private:user-a",
+                        "privacy_level": "shared",
+                        "gate_disposition": "mark_write",
+                    }
+                ),
+                datetime(2026, 7, 21, tzinfo=UTC).isoformat(),
+                "r19",
+            ),
+        )
+        await db.commit()
+    manager = MemoryEvolutionManager(
+        store,
+        MemoryEvolutionGate(
+            {
+                "enabled": True,
+                "mode": "shadow",
+                "trigger_threshold": 0.5,
+                "max_pending_jobs": 20,
+            }
+        ),
+        AsyncMock(),
+        {"enabled": True, "mode": "shadow", "trigger_threshold": 0.5},
+    )
+
+    result = await manager.rebuild_from_canonical()
+
+    assert result["success"] is True
+    assert result["canonical_sources"] == 2
+    assert result["scheduled_jobs"] == 2
+    assert await store.pending_count() == 2
+    await manager.stop()
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_rebuild_failure_returns_degraded_result_without_losing_canonical(
     tmp_path,
 ):
-    from core.managers.memory_evolution_gate import MemoryEvolutionGate
-    from core.managers.memory_evolution_manager import MemoryEvolutionManager
+    from core.features.evolution.application import (
+        MemoryEvolutionGate,
+        MemoryEvolutionManager,
+    )
 
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
@@ -404,7 +464,7 @@ async def test_rebuild_failure_returns_degraded_result_without_losing_canonical(
 
 @pytest.mark.asyncio
 async def test_rebuild_propagates_cancellation():
-    from core.managers.memory_evolution_manager import MemoryEvolutionManager
+    from core.features.evolution.application import MemoryEvolutionManager
 
     store = MagicMock()
     store.invalidate_all_derived = AsyncMock(side_effect=asyncio.CancelledError())

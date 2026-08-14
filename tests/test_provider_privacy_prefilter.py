@@ -9,10 +9,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.base.cost_control import CostControl
-from core.base.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
-from core.retrieval.llm_reranker import LLMReranker
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.llm_reranker import LLMReranker
+from core.features.retrieval.rrf_fusion import HybridResult
+from core.shared.cost_control import CostControl
+from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 
 def _candidate(
@@ -67,7 +67,7 @@ def _dual_retriever(
 ) -> Any:
     """构造只返回给定文档候选的双路检索器。"""
 
-    from core.retrieval.dual_route_retriever import DualRouteRetriever
+    from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 
     document = AsyncMock()
     document.search = AsyncMock(return_value=candidates)
@@ -146,7 +146,7 @@ async def test_group_confidential_candidate_never_reaches_llm_payload() -> None:
 async def test_multi_query_confidential_candidate_never_reaches_llm_payload() -> None:
     """多查询融合路径也必须在 Provider 调用前移除群聊机密正文。"""
 
-    from core.retrieval.query_planner import QueryPlan
+    from core.features.retrieval.query_planner import QueryPlan
 
     client = MagicMock()
     client.complete_sync.return_value = "[2.0, 9.0, 5.0, 3.0]"
@@ -285,7 +285,7 @@ async def test_incomplete_authorization_never_reaches_llm_payload() -> None:
 def test_prefilter_enforces_scope_stable_identity_and_role() -> None:
     """Provider 候选必须同时满足 scope、稳定身份和 role 约束。"""
 
-    from core.retrieval.provider_privacy_prefilter import (
+    from core.features.retrieval.provider_privacy_prefilter import (
         ProviderPrivacyContext,
         ProviderPrivacyPrefilter,
     )
@@ -336,7 +336,7 @@ def test_prefilter_enforces_scope_stable_identity_and_role() -> None:
 def test_prefilter_rejects_missing_or_conflicting_authorization_evidence() -> None:
     """Provider 边界必须拒绝缺失或互相冲突的候选授权证据。"""
 
-    from core.retrieval.provider_privacy_prefilter import (
+    from core.features.retrieval.provider_privacy_prefilter import (
         ProviderPrivacyContext,
         ProviderPrivacyPrefilter,
     )

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from core.managers.auto_learning_state import (
+from core.features.learning.infrastructure.auto_learning_state import (
     STATE_SCHEMA_VERSION,
     AutoLearningStatePersistenceError,
     AutoLearningStateStore,

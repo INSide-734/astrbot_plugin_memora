@@ -1,10 +1,11 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
 import aiosqlite
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
     JobSpec,
@@ -16,7 +17,7 @@ from core.models.memory_evolution import (
     RelationView,
     RetrySpec,
 )
-from core.storage.memory_evolution_store import MemoryEvolutionStore
+from core.features.evolution.infrastructure import MemoryEvolutionStore
 
 UTC = timezone.utc
 
@@ -187,7 +188,9 @@ async def test_idempotent_enqueue_and_expired_lease(tmp_path):
         await store.recover_expired_leases(datetime.now(UTC) + timedelta(seconds=2))
         == 1
     )
-    assert (await store.get_job(first.job_id)).state is JobState.PENDING
+    stored = await store.get_job(first.job_id)
+    assert stored is not None
+    assert stored.state is JobState.PENDING
     await store.close()
 
 
@@ -266,9 +269,11 @@ async def test_relation_identity_includes_source_revisions(tmp_path):
     await store.apply_derived_plan(first)
     await store.apply_derived_plan(second)
     async with aiosqlite.connect(store.db_path) as db:
-        count = (
-            await (await db.execute("SELECT COUNT(*) FROM memory_relations")).fetchone()
-        )[0]
+        row = await (
+            await db.execute("SELECT COUNT(*) FROM memory_relations")
+        ).fetchone()
+        assert row is not None
+        count = row[0]
     assert count == 2
     await store.close()
 
@@ -307,6 +312,7 @@ async def test_projection_primary_role_and_conflict_roles_are_persisted(tmp_path
                 await db.execute("SELECT source_role FROM memory_projection_sources")
             ).fetchall()
         }
+    assert projection is not None
     assert projection["primary_source_memory_id"] == 17
     assert {"primary", "conflict_left", "conflict_right"} == roles
     await store.close()
@@ -327,9 +333,11 @@ async def test_apply_plan_rolls_back_relation_when_projection_is_invalid(tmp_pat
     with pytest.raises(ValueError, match="exactly one primary"):
         await store.apply_derived_plan(invalid)
     async with aiosqlite.connect(store.db_path) as db:
-        relation_count = (
-            await (await db.execute("SELECT COUNT(*) FROM memory_relations")).fetchone()
-        )[0]
+        row = await (
+            await db.execute("SELECT COUNT(*) FROM memory_relations")
+        ).fetchone()
+        assert row is not None
+        relation_count = row[0]
     assert relation_count == 0
     await store.close()
 
@@ -382,7 +390,7 @@ async def test_derived_writes_are_serialized_on_shared_connection(tmp_path):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()
     gate = GateLock()
-    store._write_lock = gate
+    cast(Any, store)._write_lock = gate
     apply_task = asyncio.create_task(store.apply_derived_plan(valid_plan()))
     await gate.first_entered.wait()
     invalidate_task = asyncio.create_task(
@@ -424,7 +432,9 @@ async def test_job_retry_renew_complete_and_reject_transitions(tmp_path):
     retry_claim = await store.claim_job(now, 30, worker_token="worker-2")
     assert retry_claim is not None
     assert await store.complete_job(first.job_id, "worker-2")
-    assert (await store.get_job(first.job_id)).state is JobState.COMPLETED
+    stored_first = await store.get_job(first.job_id)
+    assert stored_first is not None
+    assert stored_first.state is JobState.COMPLETED
 
     second = await store.enqueue_job(job_spec("second"))
     second_claim = await store.claim_job(
@@ -434,7 +444,9 @@ async def test_job_retry_renew_complete_and_reject_transitions(tmp_path):
     )
     assert second_claim is not None
     assert await store.reject_job(second.job_id, "worker-3", "invalid_alias")
-    assert (await store.get_job(second.job_id)).state is JobState.REJECTED
+    stored_second = await store.get_job(second.job_id)
+    assert stored_second is not None
+    assert stored_second.state is JobState.REJECTED
     await store.close()
 
 

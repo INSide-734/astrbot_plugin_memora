@@ -1,8 +1,8 @@
-"""core/utils/diversity_manager.py 测试 — ResponseDiversityManager。"""
+"""expression diversity manager 行为测试。"""
 
 from __future__ import annotations
 
-from core.utils.diversity_manager import (
+from core.features.cognition.expression.diversity_manager import (
     EXPRESSION_VARIATIONS,
     LANGUAGE_STYLES,
     RESPONSE_PATTERNS,

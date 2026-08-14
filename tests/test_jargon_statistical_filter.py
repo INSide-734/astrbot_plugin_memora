@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 from unittest.mock import patch
 
-from core.base.list_sorting import SortQuery
-from core.jargon.models import JargonCandidate, JargonStats
-from core.jargon.statistical_filter import (
+from core.features.cognition.jargon.models import JargonCandidate, JargonStats
+from core.features.cognition.jargon.statistical_filter import (
     JARGON_CANDIDATE_SORT_FIELDS,
     JargonStatisticalFilter,
 )
+from core.shared.list_sorting import SortQuery
 
 
 class TestUpdate:

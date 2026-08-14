@@ -8,14 +8,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     DerivedApplyPlan,
     DerivedState,
     RelationType,
     RelationView,
 )
-from core.page_api import PAGE_API_PREFIX, PluginPageApi
-from core.storage.memory_evolution_store import MemoryEvolutionStore
+from core.features.evolution.infrastructure import MemoryEvolutionStore
+from core.platform.transport.page_api.page_api import PAGE_API_PREFIX, PluginPageApi
 
 
 def _mock_request(*, args: dict[str, str] | None = None, payload=None):
@@ -86,12 +86,12 @@ async def test_list_and_detail_expose_only_review_safe_fields(tmp_path) -> None:
 
     api, store = await _api_with_candidate(tmp_path)
     with patch(
-        "core.api.memory_evolution_review_api.request",
+        "core.platform.transport.page_api.memory_evolution_review_api.request",
         _mock_request(),
     ):
         listed = await api.list_memory_evolution_review_candidates()
     with patch(
-        "core.api.memory_evolution_review_api.request",
+        "core.platform.transport.page_api.memory_evolution_review_api.request",
         _mock_request(args={"candidate_id": "conflict-api"}),
     ):
         detailed = await api.get_memory_evolution_review_candidate()
@@ -129,7 +129,7 @@ async def test_reject_action_uses_candidate_revision_and_returns_safe_result(
         "expected_revision": 1,
     }
     with patch(
-        "core.api.memory_evolution_review_api.request",
+        "core.platform.transport.page_api.memory_evolution_review_api.request",
         _mock_request(payload=payload),
     ):
         response = await api.apply_memory_evolution_review_action()
@@ -162,7 +162,7 @@ async def test_action_rejects_stale_candidate_revision(tmp_path) -> None:
         "expected_revision": 1,
     }
     with patch(
-        "core.api.memory_evolution_review_api.request",
+        "core.platform.transport.page_api.memory_evolution_review_api.request",
         _mock_request(payload=payload),
     ):
         response = await api.apply_memory_evolution_review_action()

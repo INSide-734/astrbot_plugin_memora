@@ -10,17 +10,28 @@ import type {
   ConfigSchemaNode,
   ConfigStateData,
   JsonValue,
+  PromptDefaults,
 } from "@/types/config";
 import { configEffectsForChangedPaths } from "@/lib/configRuntimeEffects";
-
+import { MOCK_GATE_CONFIG, MOCK_PROMPT_DEFAULTS } from "./data";
 const PLUGIN_NAME = "astrbot_plugin_memora";
 const INITIAL_REVISION_SEQUENCE = 1;
 const INITIAL_INSTANCE_SEQUENCE = 1;
 const DANGEROUS_PATH_SEGMENTS = new Set([
-  "__proto__",
-  "prototype",
-  "constructor",
-]);
+   "__proto__",
+   "prototype",
+   "constructor",
+ ]);
+
+/**
+ * quality.gate 复合分支路径：bindings/profiles 为对象数组，schema 只表达
+ * enabled/default_profile 两个标量叶，复合值由后端 Pydantic 兜底校验，
+ * mock 只做结构检查（必须为数组），不复制规则引擎。
+ */
+const GATE_COMPOSITE_PATHS: Record<string, true> = {
+  "quality.gate.bindings": true,
+  "quality.gate.profiles": true,
+};
 
 const DEFAULT_PROVIDER_OPTIONS: ConfigProviderOptions = {
   llm: [
@@ -49,6 +60,7 @@ export interface MockConfigServerOptions {
   autoCompleteReloadMs?: number;
   hotReload?: boolean;
   providerOptions?: ConfigProviderOptions;
+  promptDefaults?: PromptDefaults;
 }
 
 export interface MockConfigServerSnapshot {
@@ -180,6 +192,14 @@ function validateChanges(
 ): Record<string, string> {
   const fieldErrors = Object.create(null) as Record<string, string>;
   for (const path of Object.keys(changes).sort()) {
+    // quality.gate 复合分支（bindings/profiles 数组）由后端 Pydantic 校验，
+    // mock 只检查值是数组，不复制规则引擎语义。
+    if (GATE_COMPOSITE_PATHS[path] === true) {
+      if (!Array.isArray(changes[path])) {
+        fieldErrors[path] = "Expected an array";
+      }
+      continue;
+    }
     const entry = isSafePath(path) ? leaves.get(path) : undefined;
     if (!entry) {
       fieldErrors[path] = "Path is not in the AstrBot schema";
@@ -253,6 +273,9 @@ function configEquals(left: ConfigObject, right: ConfigObject): boolean {
 
 function makeInitialState(): MutableConfigState {
   const config = buildDefaultConfig(CONFIG_SCHEMA);
+  // 门禁复合配置（profiles/bindings/rules）不在 schema 中逐叶表达，
+  // 初始 state 直接并入样例数据，与后端 config 对象结构一致。
+  config.quality = { gate: cloneJson(MOCK_GATE_CONFIG) };
   return {
     config,
     persistedConfig: cloneJson(config),
@@ -272,6 +295,9 @@ export function createMockConfigServer(options: MockConfigServerOptions = {}) {
   const disconnectDuringReload = options.disconnectDuringReload ?? false;
   const providerOptions = cloneJson(
     options.providerOptions ?? DEFAULT_PROVIDER_OPTIONS
+  );
+  const promptDefaults = cloneJson(
+    options.promptDefaults ?? MOCK_PROMPT_DEFAULTS
   );
   let state = makeInitialState();
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
@@ -347,11 +373,13 @@ export function createMockConfigServer(options: MockConfigServerOptions = {}) {
             instance_id: state.instanceId,
             changed: true,
             config: cloneJson(state.config),
+            prompt_defaults: cloneJson(promptDefaults),
           }
         : {
             revision: state.revision,
             instance_id: state.instanceId,
             changed: false,
+            prompt_defaults: cloneJson(promptDefaults),
           }
     );
   };

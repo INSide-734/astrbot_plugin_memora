@@ -26,7 +26,9 @@ class TestGraphKeywordRetriever:
 
     @pytest.fixture
     def retriever(self, graph_store: AsyncMock, text_processor: MagicMock) -> Any:
-        from core.retrieval.graph_keyword_retriever import GraphKeywordRetriever
+        from core.features.retrieval.graph_keyword_retriever import (
+            GraphKeywordRetriever,
+        )
 
         return GraphKeywordRetriever(
             graph_store=graph_store,

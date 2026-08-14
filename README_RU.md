@@ -8,7 +8,7 @@
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12+-green.svg)](https://www.python.org/)
-[![Version](https://img.shields.io/badge/version-1.1.0-orange.svg)](metadata.yaml)
+[![Version](https://img.shields.io/badge/version-1.2.0-orange.svg)](metadata.yaml)
 [![AstrBot](https://img.shields.io/badge/AstrBot-%E2%89%A5%204.24.2-purple.svg)](https://github.com/Soulter/AstrBot)
 
 </div>
@@ -142,26 +142,23 @@ User Message → EventHandler → MessageContentExtractor → ConversationManage
 
 ### Обзор модулей
 
-| Модуль | Файлов | Ответственность |
-|--------|--------|-----------------|
-| `core/base/` | 5 | Конфигурация, константы, исключения |
-| `core/initializer/` | 6 | Оркестрация инициализации, загрузка Provider, настройка БД |
-| `core/managers/` | 40+ | Основная бизнес-логика: движок памяти, разговоры, затухание, бэкап |
-| `core/processors/` | 20 | Извлечение памяти на основе LLM, классификация, форматирование |
-| `core/retrieval/` | 22 | Многопутевой поиск: BM25, векторный, гибридный, графовый, ранжирование |
-| `core/storage/` | 16 | SQLite хранение: атомы, разговоры, графы, заметки, знания |
-| `core/api/` | 15 | Конечные точки REST API: CRUD, пакетные операции, статистика, бэкап |
-| `core/validators/` | 5 | Проверка согласованности индексов и перестроение |
-| `core/schedulers/` | 2 | Планирование затухания памяти и резервного копирования |
-| `core/models/` | 8 | Определения моделей данных |
-| `core/tools/` | 5 | Интеграция инструментов LLM Agent AstrBot |
-| `core/commands/` | 3 | Пользовательские команды: запрос и обслуживание |
-| `core/handlers/` | 3 | Обработчики событий вызова и рефлексии |
-| `core/cleaners/` | 2 | Очистка инъекций |
-| `core/dedup/` | 2 | Дедупликация сообщений |
-| `core/extractors/` | 2 | Извлечение содержимого сообщений |
-| `pages/dashboard/` | — | React веб-панель администратора (10 страниц) |
-| `tests/` | 19 | Набор тестов pytest |
+| Модуль | Ответственность |
+|--------|-----------------|
+| `core/platform/config/` | Модели конфигурации, проверка, ревизии и runtime-эффекты |
+| `core/platform/composition/` | Загрузка Provider, настройка БД, сборка компонентов и жизненный цикл |
+| `core/platform/transport/` | Page API, команды, Agent-инструменты и realtime-транспорт |
+| `core/platform/security/` | Защита Prompt и проверка структурированного вывода |
+| `core/shared/` | Общие порты, DTO, SQL-константы и чистые утилиты |
+| `core/features/memory/` | MemoryEngine, canonical-хранилище, граф и валидаторы |
+| `core/features/conversation/` | Сессии, сообщения и управление разговорами |
+| `core/features/recall/` | Оркестрация вызова и обработка памяти |
+| `core/features/retrieval/` | BM25, векторы, граф, слияние и ранжирование |
+| `core/features/injection/` | Маршрутизация, выполнение, форматирование и запись решений |
+| `core/features/reflection/` | Окна рефлексии, извлечение кандидатов и canonical-запись |
+| `core/features/evaluation/` | Офлайн-оценка поиска и абляции |
+| `core/features/cognition/` | Отношение, стиль выражения, жаргон и социальные связи |
+| `pages/dashboard/` | React-панель администрирования |
+| `tests/` | Поведенческие, контрактные, интеграционные и evaluation-тесты pytest |
 
 ## Быстрый старт
 
@@ -213,7 +210,7 @@ pip install -r requirements.txt
 | `/memora status` | Показать статус готовности плагина и основных компонентов |
 | `/memora health` | Показать оценку состояния, затронутые области и фиксированные рекомендации |
 | `/memora diagnostics` | Показать текущий снимок Provider, поиска, задач, индекса и записи |
-| `/memora search <query> [k]` | Поиск памяти, `k=5` по умолчанию |
+| `/memora search <query> [k] [true|false]` | Поиск памяти, `k=5` по умолчанию; `true` в конце включает низкодоверительные памяти mark_write |
 | `/memora trace <query> [k]` | Трассировать этапы и оценки поиска текущей сессии без вывода содержимого памяти в чат |
 | `/memora forget <doc_id>` | Удалить конкретную запись памяти |
 | `/memora rebuild-index` | Перестроить векторные/BM25 индексы |
@@ -362,7 +359,7 @@ astrbot_plugin_memora/
 │
 ├── core/                      # Исходный код ядра
 │   ├── base/                  # Конфигурация, константы, исключения
-│   ├── initializer/           # Оркестрация инициализации плагина
+│   ├── platform/composition/  # Инициализация и жизненный цикл плагина
 │   ├── managers/              # Основная бизнес-логика (40+ файлов)
 │   ├── processors/            # Извлечение памяти LLM (20 файлов)
 │   ├── retrieval/             # Многопутевой поиск (22 файла)

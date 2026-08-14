@@ -34,6 +34,7 @@ import type {
   ConfigSyncResult,
   ConfigSyncStatus,
   ConfigValue,
+  PromptDefaults,
 } from "@/types/config";
 
 interface SyncState {
@@ -48,6 +49,7 @@ interface SyncState {
   status: ConfigSyncStatus;
   error: ConfigSyncError | null;
   runtimeEffects: ConfigRuntimeEffects | null;
+  promptDefaults: PromptDefaults | null;
 }
 
 const INITIAL_STATE: SyncState = {
@@ -62,6 +64,7 @@ const INITIAL_STATE: SyncState = {
   status: "loading",
   error: null,
   runtimeEffects: null,
+  promptDefaults: null,
 };
 
 export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult {
@@ -111,6 +114,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         status: "synced",
         error: null,
         runtimeEffects: null,
+        promptDefaults: stateData.prompt_defaults,
       });
     } catch (error) {
       if (
@@ -213,6 +217,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           return {
             ...previous,
             instanceId: stateData.instance_id,
+            promptDefaults: stateData.prompt_defaults,
             status: previous.remote
               ? "conflict"
               : localPaths.length > 0
@@ -231,6 +236,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
               ...previous,
               revision: stateData.revision,
               instanceId: stateData.instance_id,
+              promptDefaults: stateData.prompt_defaults,
               remote: null,
               remoteRevisionHint: null,
               status: "dirty",
@@ -244,6 +250,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
               revision: stateData.revision,
               instanceId: stateData.instance_id,
             },
+            promptDefaults: stateData.prompt_defaults,
             status: "conflict",
             error: null,
           };
@@ -257,6 +264,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
           instanceId: stateData.instance_id,
           remote: null,
           remoteRevisionHint: null,
+          promptDefaults: stateData.prompt_defaults,
           status: "synced",
           error: null,
         };
@@ -457,12 +465,14 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
         const response = error.response;
         if (response.code === "config_conflict") {
           let remote: ConfigRemoteSnapshot | null = null;
+          let promptDefaults: PromptDefaults | null = null;
           try {
             const stateResponse = await apiRequest(
               `config/state?revision=${encodeURIComponent(current.revision)}`,
               { retries: 0 }
             );
             const stateData = configSuccessData<ConfigStateData>(stateResponse);
+            promptDefaults = stateData.prompt_defaults;
             if (stateData.changed) {
               remote = {
                 config: cloneConfig(stateData.config),
@@ -479,6 +489,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
             remote,
             remoteRevisionHint:
               response.data?.current_revision ?? remote?.revision ?? null,
+            promptDefaults,
             status: "conflict",
             error: configSyncError(error),
             fieldErrors: {},
@@ -528,6 +539,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
                 instanceId: stateData.instance_id,
                 remote: null,
                 remoteRevisionHint: null,
+                promptDefaults: stateData.prompt_defaults,
                 fieldErrors: {},
                 status: acknowledged.hasPendingChanges ? "dirty" : "synced",
                 error: null,
@@ -544,6 +556,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
               instanceId: stateData.instance_id,
             },
             remoteRevisionHint: stateData.revision,
+            promptDefaults: stateData.prompt_defaults,
             status: "conflict",
             error: configSyncError(error),
           }));
@@ -695,6 +708,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
               instanceId: stateData.instance_id,
               remote: null,
               remoteRevisionHint: null,
+              promptDefaults: stateData.prompt_defaults,
               fieldErrors: {},
               status: acknowledged.hasPendingChanges ? "dirty" : "synced",
               error: null,
@@ -779,6 +793,7 @@ export function useConfigSync(options: ConfigSyncOptions = {}): ConfigSyncResult
     status: state.status,
     error: state.error,
     runtimeEffects: state.runtimeEffects,
+    promptDefaults: state.promptDefaults,
     changeField,
     refresh,
     apply,

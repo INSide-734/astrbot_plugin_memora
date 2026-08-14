@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from core.models.graph_models import GraphEdge, GraphEntry, GraphNode
-from core.storage.graph_store import GraphStore
+from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.infrastructure.graph_store import GraphStore
 
 
 @pytest.mark.asyncio

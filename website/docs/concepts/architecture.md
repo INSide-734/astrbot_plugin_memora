@@ -7,22 +7,46 @@
 ```mermaid
 flowchart TD
     AstrBot["AstrBot 事件与 Provider"] --> Plugin["MemoraPlugin"]
-    Plugin --> Init["PluginInitializer"]
+    Plugin --> Init["PluginInitializer / ComponentFactory"]
     Plugin --> Events["EventHandler"]
     Plugin --> API["PluginPageApi"]
     Init --> Engine["MemoryEngine"]
+    Init --> Identity["ProtocolIdentityRuntime"]
+    Init --> Evolution["Memory Evolution Gate / Worker"]
+    Events --> Identity
+    Identity --> Recall
+    Identity --> Reflect
     Events --> Recall["RecallHandler"]
     Events --> Reflect["ReflectionHandler"]
-    Recall --> Retrieval["BM25 + FAISS + Graph"]
+    Recall --> Retrieval["BM25 + FAISS + Graph + Derived"]
     Recall --> Injection["Router + Executor"]
     Reflect --> Processor["MemoryProcessor"]
     Processor --> Engine
     Engine --> SQLite["SQLite 权威持久化"]
-    Engine --> Evolution["Memory Evolution"]
-    Evolution --> Derived["Relation / Projection"]
+    Engine -->|canonical 提交后调度| Evolution
+    Evolution --> Derived["Relation / Projection 派生解释平面"]
     Derived --> Retrieval
-    API --> Dashboard["Dashboard"]
+    Init --> Rebuild["DerivedRebuildCoordinator"]
+    Rebuild -->|canonical → 索引 → graph → evolution| Derived
+    API --> Dashboard["AstrBot bridge / Dashboard"]
 ```
+
+## 代码组织
+
+后端按 package-by-feature 组织为三层，依赖方向固定为 feature 依赖 shared，由 platform 集中装配：
+
+```text
+core/
+├── platform/     宿主适配与装配：composition、config、security、resources、transport
+├── shared/       无状态 DTO、错误、SQL 与序列化原语、窄端口契约
+└── features/     按领域划分的业务实现：identity、memory、recall、injection、retrieval 等
+```
+
+- `core/platform/composition/` 是唯一组合根：`PluginInitializer` 非阻塞等待 Provider，`ComponentFactory` 按依赖顺序构造数据库、`MemoryEngine`、身份运行时、Prompt 防护与演化组件，并在部分失败时回滚已登记组件。
+- `core/platform/transport/` 聚合 Page API、`/memora` 命令与 Agent 工具的宿主适配；`core/platform/security/` 提供共享 Prompt 防护与输出护栏。
+- `core/shared/` 只放无状态、被多个生产消费者复用的 DTO、契约与纯工具，不依赖 platform 或 feature。
+- `core/features/<feature>/` 各自持有领域模型、存储与处理器；`memory` 拥有 canonical 门面与存储，`recall`/`injection` 执行安全热路径，`evolution` 在 canonical 提交后产出可重建的派生解释平面。
+- `main.py` 只使用初始化器发布的实例创建 `EventHandler`、`CommandHandler` 与 `PluginPageApi`，消息、命令和页面请求共享同一存储与引擎。
 
 ## 写入链
 

@@ -1,10 +1,12 @@
+"""检索质量 application 的夹具、指标、适配器与消融契约。"""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
 
-from core.evaluation.retrieval_quality import (
+from core.features.evaluation.application import (
     AblationReport,
     EvaluationCase,
     RetrievalObservation,
@@ -24,6 +26,8 @@ FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "retrieval"
 
 
 def test_load_jsonl_cases_reads_minimal_retrieval_fixture() -> None:
+    """验证最小 JSONL 评测夹具可被完整解析。"""
+
     cases = load_jsonl_cases(FIXTURE_ROOT / "private_basic.jsonl")
 
     assert len(cases) == 10
@@ -35,6 +39,8 @@ def test_load_jsonl_cases_reads_minimal_retrieval_fixture() -> None:
 
 
 def test_load_fixture_dir_reads_all_required_roadmap_datasets() -> None:
+    """验证标准夹具目录只加载路线图要求的数据集。"""
+
     cases_by_dataset = load_fixture_dir(FIXTURE_ROOT)
 
     assert set(cases_by_dataset) == {
@@ -54,6 +60,8 @@ def test_load_fixture_dir_reads_all_required_roadmap_datasets() -> None:
 
 
 def test_retrieval_fixtures_cover_realistic_routing_metadata() -> None:
+    """验证检索夹具覆盖路由所需的匿名元数据组合。"""
+
     cases_by_dataset = load_fixture_dir(FIXTURE_ROOT)
     all_cases = [case for cases in cases_by_dataset.values() for case in cases]
     case_ids = [case.case_id for case in all_cases]
@@ -171,6 +179,8 @@ def test_memory_evolution_fixture_uses_anonymous_scenarios_and_required_labels()
 
 
 def test_ranking_metrics_handle_relevant_documents_at_different_ranks() -> None:
+    """验证不同相关排名下的 Recall、MRR 与 nDCG。"""
+
     ranked = ["noise-1", "mem-coffee", "mem-trip", "noise-2"]
     relevant = {"mem-coffee", "mem-trip"}
 
@@ -182,6 +192,8 @@ def test_ranking_metrics_handle_relevant_documents_at_different_ranks() -> None:
 
 @pytest.mark.asyncio
 async def test_evaluate_cases_reports_quality_and_latency_metrics() -> None:
+    """验证用例评测汇总质量指标和分来源延迟。"""
+
     cases = [
         EvaluationCase(
             case_id="coffee",
@@ -212,6 +224,8 @@ async def test_evaluate_cases_reports_quality_and_latency_metrics() -> None:
     }
 
     async def fake_retriever(case: EvaluationCase, k: int) -> list[RetrievedDocument]:
+        """返回与查询对应的确定性候选和标注延迟。"""
+
         case.metadata["annotated_latency_ms"] = annotated_latencies[case.query]
         return responses[case.query][:k]
 
@@ -231,6 +245,8 @@ async def test_evaluate_cases_reports_quality_and_latency_metrics() -> None:
 async def test_evaluate_cases_scores_expected_no_hit_when_retriever_returns_nothing() -> (
     None
 ):
+    """验证预期无命中的空结果按正确负例计分。"""
+
     cases = [
         EvaluationCase(
             case_id="noise",
@@ -247,6 +263,8 @@ async def test_evaluate_cases_scores_expected_no_hit_when_retriever_returns_noth
     async def empty_retriever(
         _case: EvaluationCase, _k: int
     ) -> list[RetrievedDocument]:
+        """为正确负例返回空候选。"""
+
         return []
 
     report = await evaluate_cases(cases, empty_retriever, k=3)
@@ -419,6 +437,8 @@ async def test_optional_metric_doc_ids_ignore_empty_values() -> None:
 
 
 def test_compare_reports_returns_ablation_deltas() -> None:
+    """验证消融报告对比返回四项稳定差值。"""
+
     baseline = AblationReport.from_metrics(
         name="baseline",
         recall_at_k=0.60,
@@ -448,11 +468,19 @@ def test_compare_reports_returns_ablation_deltas() -> None:
 async def test_memory_engine_retriever_passes_case_metadata_to_search_memories() -> (
     None
 ):
+    """验证引擎适配器完整传递用例检索上下文。"""
+
     class FakeEngine:
+        """记录检索调用并返回多种文档标识形状。"""
+
         def __init__(self) -> None:
+            """初始化检索调用记录。"""
+
             self.calls: list[dict[str, object]] = []
 
         async def search_memories(self, **kwargs: object) -> list[dict[str, object]]:
+            """记录参数并返回确定性候选。"""
+
             self.calls.append(kwargs)
             return [
                 {"id": "noise"},
@@ -502,6 +530,8 @@ async def test_memory_engine_retriever_passes_case_metadata_to_search_memories()
 
 @pytest.mark.asyncio
 async def test_evaluate_variants_returns_reports_and_baseline_deltas() -> None:
+    """验证多变体评测同时返回报告和基线差值。"""
+
     cases = [
         EvaluationCase(
             case_id="graph",
@@ -512,11 +542,15 @@ async def test_evaluate_variants_returns_reports_and_baseline_deltas() -> None:
     ]
 
     async def baseline(_case: EvaluationCase, _k: int) -> list[RetrievedDocument]:
+        """返回未命中相关项的基线候选。"""
+
         return [RetrievedDocument("noise", 0.9)]
 
     async def graph_expansion(
         _case: EvaluationCase, _k: int
     ) -> list[RetrievedDocument]:
+        """返回命中相关项的图扩展候选。"""
+
         return [RetrievedDocument("mem-graph", 0.95)]
 
     comparison = await evaluate_variants(

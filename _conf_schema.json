@@ -1031,6 +1031,22 @@
             }
         }
     },
+    "quality": {
+        "description": "记忆写入门禁",
+        "hint": "配置记忆写入门禁：检查开关、阈值、词表、处置策略、Judge 与自定义规则。保存后即时生效，无需重启。",
+        "type": "object",
+        "items": {
+            "gate": {
+                "description": "门禁",
+                "hint": "profiles/bindings/词表/规则等复合分支由 Pydantic 兜底校验，不在 schema 中逐叶表达。",
+                "type": "object",
+                "items": {
+                    "enabled": {"description": "门禁总开关", "type": "bool", "default": true},
+                    "default_profile": {"description": "默认 profile", "type": "string", "default": "private"}
+                }
+            }
+        }
+    },
     "memory_evolution": {
         "description": "记忆演化",
         "hint": "控制后台记忆演化、派生关系写入和一跳检索扩展。默认关闭，不影响现有 canonical 记忆链路。",

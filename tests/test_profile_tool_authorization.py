@@ -8,22 +8,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.tools.profile_tools import ProfileLookupTool
+from core.platform.transport.tools.profile_tools import ProfileLookupTool
+from tests.tool_contract_support import call_text_handler
 
 
 def _context(sender_id: str | None) -> MagicMock:
-    """构造只暴露当前发送者身份的 ContextWrapper 替身。"""
+    """构造只暴露当前发送者身份的公开工具事件替身。"""
 
     event = MagicMock()
     if sender_id is None:
         del event.get_sender_id
     else:
         event.get_sender_id.return_value = sender_id
-    inner = MagicMock()
-    inner.event = event
-    wrapper = MagicMock()
-    wrapper.context = inner
-    return wrapper
+    return event
 
 
 @pytest.mark.asyncio
@@ -34,7 +31,11 @@ async def test_explicit_cross_user_lookup_fails_closed() -> None:
     manager.get_profile = AsyncMock()
     tool = ProfileLookupTool(profile_manager=manager)
 
-    result = await tool.call(_context("current-user"), user_id="other-user")
+    result = await call_text_handler(
+        tool,
+        _context("current-user"),
+        user_id="other-user",
+    )
 
     payload = json.loads(result)
     assert payload == {"found": False, "error": "profile_scope_denied"}
@@ -48,10 +49,10 @@ async def test_missing_trusted_sender_does_not_use_model_target() -> None:
     manager = MagicMock()
     manager.get_profile = AsyncMock()
     context = _context(None)
-    context.context.event.unified_msg_origin = "session-is-not-a-user"
+    context.unified_msg_origin = "session-is-not-a-user"
     tool = ProfileLookupTool(profile_manager=manager)
 
-    result = await tool.call(context, user_id="claimed-user")
+    result = await call_text_handler(tool, context, user_id="claimed-user")
 
     payload = json.loads(result)
     assert payload == {"found": False, "error": "trusted_identity_unavailable"}
@@ -79,7 +80,11 @@ async def test_explicit_self_lookup_uses_trusted_sender() -> None:
     manager.get_tag_weights = AsyncMock(return_value={})
     tool = ProfileLookupTool(profile_manager=manager)
 
-    result = await tool.call(_context("current-user"), user_id="current-user")
+    result = await call_text_handler(
+        tool,
+        _context("current-user"),
+        user_id="current-user",
+    )
 
     assert json.loads(result)["found"] is True
     manager.get_profile.assert_awaited_once_with("current-user")
@@ -98,11 +103,11 @@ async def test_authorization_checker_can_allow_explicit_target() -> None:
     )
     context = _context("admin-user")
 
-    result = await tool.call(context, user_id="target-user")
+    result = await call_text_handler(tool, context, user_id="target-user")
 
     assert json.loads(result) == {"user_id": "target-user", "found": False}
     checker.assert_awaited_once_with(
-        context.context.event,
+        context,
         "admin-user",
         "target-user",
     )
@@ -119,4 +124,8 @@ async def test_authorization_cancellation_propagates() -> None:
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await tool.call(_context("admin-user"), user_id="target-user")
+        await call_text_handler(
+            tool,
+            _context("admin-user"),
+            user_id="target-user",
+        )

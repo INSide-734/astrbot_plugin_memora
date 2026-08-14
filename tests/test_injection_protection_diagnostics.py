@@ -9,18 +9,21 @@ from unittest.mock import MagicMock
 import pytest
 from astrbot.api import logger as astrbot_logger
 
-from core.injection import executor as executor_module
-from core.injection.executor import InjectionExecutionContext, InjectionExecutor
-from core.injection.models import (
+from core.features.injection.application import executor as executor_module
+from core.features.injection.application.executor import (
+    InjectionExecutionContext,
+    InjectionExecutor,
+)
+from core.features.injection.application.injection_adapter import InjectionAdapter
+from core.features.injection.application.presets import get_preset
+from core.features.injection.domain.models import (
     DeliveryMode,
     InjectionDecision,
     InjectionOutcome,
     PresetName,
     RoutingMode,
 )
-from core.injection.presets import get_preset
-from core.security import prompt_sanitizer as prompt_sanitizer_module
-from core.utils.injection_adapter import InjectionAdapter
+from core.platform.security import prompt_sanitizer as prompt_sanitizer_module
 
 
 def test_injection_protection_modules_use_astrbot_logger() -> None:

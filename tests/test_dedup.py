@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.dedup.dedup_manager import DedupManager
+from core.features.conversation.application.dedup_manager import DedupManager
 
 
 class TestBuildDedupKey:

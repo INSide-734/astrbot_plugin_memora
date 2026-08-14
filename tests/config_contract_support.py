@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import copy
 import threading
+from pathlib import Path
 from typing import Any
+
+from core.platform.resources import PluginResourceLocator
 
 
 class SavingConfig(dict[str, Any]):
@@ -19,7 +22,11 @@ class SavingConfig(dict[str, Any]):
         """初始化可控保存结果与保存快照。"""
 
         super().__init__(*args, **kwargs)
+        self.resource_locator = PluginResourceLocator(
+            Path(__file__).resolve().parents[1]
+        )
         self.fail_save = fail_save
+        self.schema: Any = None
         self.saved_snapshots: list[dict[str, Any]] = []
         self.save_thread_id: int | None = None
 

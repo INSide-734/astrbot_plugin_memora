@@ -62,6 +62,10 @@ export default withMermaid(
           text: "功能指南",
           items: [
             { text: "Dashboard", link: "/features/dashboard" },
+            {
+              text: "门禁配置",
+              link: "/features/gate-configuration",
+            },
             { text: "Agent 工具", link: "/features/agent-tools" },
             { text: "Page API", link: "/features/page-api" },
           ],
@@ -114,7 +118,18 @@ export default withMermaid(
         {
           text: "开发",
           items: [
+            { text: "开发指南", link: "/development/guide" },
             { text: "环境准备", link: "/development/setup" },
+            {
+              text: "数据流与关键链路",
+              link: "/development/data-flow",
+            },
+            { text: "测试指南", link: "/development/testing" },
+            {
+              text: "Dashboard 前端开发",
+              link: "/development/frontend",
+            },
+            { text: "打包与发布", link: "/development/packaging" },
             { text: "质量门禁", link: "/development/quality-gates" },
           ],
         },

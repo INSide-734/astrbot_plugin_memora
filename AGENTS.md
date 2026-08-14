@@ -48,7 +48,7 @@ flowchart LR
 ```
 
 - `main.py`：插件注册、hooks、生命周期与工具注册。
-- `core/plugin_initializer.py`：Provider 等待、组件构建、失败回滚与关停。
+- `core/platform/composition/plugin_initializer.py`：Provider 等待、组件构建、失败回滚与关停；旧根路径仅保留兼容导出。
 - `core/event_handler.py`：消息捕获、召回、反思与维护任务协调。
 - `core/page_api.py`：Page API mixin 组合与 `/astrbot_plugin_memora/page/*` 路由。
 - `pages/dashboard/src/main.tsx`、`App.tsx`：前端入口与 Hash 导航。
@@ -58,34 +58,25 @@ flowchart LR
 | 模块 | 职责 | 上下文 |
 |---|---|---|
 | `core/` | 后端总览 | [AGENTS.md](./core/AGENTS.md) |
-| `core/base/` | 配置、异常、基础约束 | [AGENTS.md](./core/base/AGENTS.md) |
-| `core/initializer/` | Provider、数据库与组件构造 | [AGENTS.md](./core/initializer/AGENTS.md) |
-| `core/identity/` | 协议稳定身份、名称目录、会话同步与只读召回增强 | [AGENTS.md](./core/identity/AGENTS.md) |
-| `core/handlers/` | 召回与反思编排 | [AGENTS.md](./core/handlers/AGENTS.md) |
-| `core/injection/` | 注入路由、选择、执行与记录 | [AGENTS.md](./core/injection/AGENTS.md) |
-| `core/managers/` | 生命周期与领域管理器 | [AGENTS.md](./core/managers/AGENTS.md) |
-| `core/processors/` | 抽取、分类、格式化与话题处理 | [AGENTS.md](./core/processors/AGENTS.md) |
-| `core/retrieval/` | 多路检索、融合与重排 | [AGENTS.md](./core/retrieval/AGENTS.md) |
-| `core/storage/` | SQLite、FTS、图与决策持久化 | [AGENTS.md](./core/storage/AGENTS.md) |
-| `core/api/` | Page API 与响应契约 | [AGENTS.md](./core/api/AGENTS.md) |
-| `core/security/` | Prompt 保护与输出护栏 | [AGENTS.md](./core/security/AGENTS.md) |
-| `core/review/` | 复核检测、队列与动作历史 | [AGENTS.md](./core/review/AGENTS.md) |
-| `core/models/` | 共享领域模型 | [AGENTS.md](./core/models/AGENTS.md) |
-| `core/tools/` | AstrBot Agent 工具 | [AGENTS.md](./core/tools/AGENTS.md) |
-| `core/commands/` | `/memora` 查询与维护命令 | [AGENTS.md](./core/commands/AGENTS.md) |
-| `core/cleaners/` | 历史注入清理 | [AGENTS.md](./core/cleaners/AGENTS.md) |
-| `core/extractors/` | 消息内容提取 | [AGENTS.md](./core/extractors/AGENTS.md) |
-| `core/dedup/` | 消息去重 | [AGENTS.md](./core/dedup/AGENTS.md) |
-| `core/validators/` | 索引/持久化校验与重建 | [AGENTS.md](./core/validators/AGENTS.md) |
-| `core/schedulers/` | 衰减与回填调度 | [AGENTS.md](./core/schedulers/AGENTS.md) |
-| `core/monitoring/` | 指标、追踪与质量评分 | [AGENTS.md](./core/monitoring/AGENTS.md) |
-| `core/diagnostics/` | 诊断事件与健康评分 | [AGENTS.md](./core/diagnostics/AGENTS.md) |
-| `core/evaluation/` | 离线检索评测 | [AGENTS.md](./core/evaluation/AGENTS.md) |
-| `core/affection/` | 好感度与 Bot 情绪 | [AGENTS.md](./core/affection/AGENTS.md) |
-| `core/expression/` | 表达模式学习 | [AGENTS.md](./core/expression/AGENTS.md) |
-| `core/jargon/` | 黑话挖掘、存储与查询 | [AGENTS.md](./core/jargon/AGENTS.md) |
-| `core/social/` | 社交关系 | [AGENTS.md](./core/social/AGENTS.md) |
-| `core/utils/` | 通用工具与降级实现 | [AGENTS.md](./core/utils/AGENTS.md) |
+| `core/platform/config/` | 配置模型、验证、revision 与运行时影响 | [AGENTS.md](./core/platform/config/AGENTS.md) |
+| `core/platform/composition/` | Provider、数据库与组件构造 | [AGENTS.md](./core/platform/composition/AGENTS.md) |
+| `core/features/identity/` | 协议稳定身份、名称目录与会话同步 | [AGENTS.md](./core/features/identity/AGENTS.md) |
+| `core/features/recall/` | 召回、注入前编排与记忆处理 | [AGENTS.md](./core/features/recall/AGENTS.md) |
+| `core/features/injection/` | 注入路由、选择、执行与记录 | [AGENTS.md](./core/features/injection/AGENTS.md) |
+| `core/features/memory/` | MemoryEngine 门面、canonical 存储与图基础设施 | [AGENTS.md](./core/features/memory/AGENTS.md) |
+| `core/features/retrieval/` | 多路检索、融合与重排 | [AGENTS.md](./core/features/retrieval/AGENTS.md) |
+| `core/features/quality/` | 质量门、复核队列与隔离候选 | [AGENTS.md](./core/features/quality/AGENTS.md) |
+| `core/features/evaluation/` | 离线检索评测 | [AGENTS.md](./core/features/evaluation/AGENTS.md) |
+| `core/features/decay/` | 衰减与维护操作 | [AGENTS.md](./core/features/decay/AGENTS.md) |
+| `core/features/backfill/` | 旧记忆回填调度 | [AGENTS.md](./core/features/backfill/AGENTS.md) |
+| `core/features/observability/` | 指标、追踪与质量评分 | [AGENTS.md](./core/features/observability/AGENTS.md) |
+| `core/features/diagnostics/` | 诊断事件与健康评分 | [AGENTS.md](./core/features/diagnostics/AGENTS.md) |
+| `core/features/cognition/` | 好感度、表达、黑话与社交关系 | [AGENTS.md](./core/features/cognition/AGENTS.md) |
+| `core/platform/security/` | Prompt 保护与输出护栏 | [AGENTS.md](./core/platform/security/AGENTS.md) |
+| `core/platform/transport/page_api/` | Page API 与响应契约 | [AGENTS.md](./core/platform/transport/page_api/AGENTS.md) |
+| `core/platform/transport/commands/` | `/memora` 查询与维护命令 | [AGENTS.md](./core/platform/transport/commands/AGENTS.md) |
+| `core/platform/transport/tools/` | AstrBot Agent 工具 | [AGENTS.md](./core/platform/transport/tools/AGENTS.md) |
+| `core/shared/` | 共享端口、DTO 与纯工具 | [AGENTS.md](./core/shared/AGENTS.md) |
 | `pages/dashboard/` | React 管理面板 | [AGENTS.md](./pages/dashboard/AGENTS.md) |
 | `tests/` | pytest 测试体系 | [AGENTS.md](./tests/AGENTS.md) |
 | `scripts/` | 门禁、smoke 与 benchmark | [AGENTS.md](./scripts/AGENTS.md) |
@@ -94,7 +85,8 @@ flowchart LR
 
 ## 跨模块契约
 
-- 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
+- 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryQualityGate` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
+- 门禁链与 mark_write：写入门禁按绑定顺序首个精确匹配解析 profile（chat_type/group_id/persona_id 字段缺省视为不约束，未命中回落 `default_profile`），处置优先级为规则 `force_disposition` > 原因码 override > profile 默认。`discard` 不落库；`quarantine` 走隔离状态机人工批准后重取证；`mark_write` 写 canonical 但携带 `gate_disposition=mark_write` 标记，默认不参与召回、注入与演化，仅 `/memora search` 末尾位置参数 `true` 或记忆列表 API `include_mark_write=true` 显式包含。门禁快照热重载为原子替换，窗口内评估始终引用同一快照；任何处置路径不得绕过 source revision、scope、privacy 与 role 校验。
 - 身份链：协议事件 → 固定适配器 `ProtocolIdentityResolver` → `ResolvedIdentity` → 身份目录/会话名称同步 → 召回与反思。OneBot 11 只把规范化 QQ 号作为 canonical user ID；QQ 官方按平台实例隔离场景 OpenID，不能伪装成 QQ 号，`union_openid` 不参与主键；名称是可更新辅助数据，匿名、冲突和非法事件不得写用户目录。
 - 稳定身份 metadata 由可信来源消息确定并锚定长期记忆参与者；新记忆携带 canonical → protocol/namespace/stable/label 的内部来源证据，legacy 别名只在原会话作用域且唯一匹配时附着到召回候选副本，不改 canonical memory、分数、排序、ID、revision 或 System Prompt。
 - 演化链：canonical memory 成功写入后 → `MemoryEvolutionGate` → job queue/worker → relation/projection 派生解释平面。canonical SQLite 记录及其整数 ID 始终是唯一权威身份；Projection 只能作为有 source/revision 证据的读时注解，不能形成第二套 canonical memory 或 `doc_id`。
@@ -115,6 +107,12 @@ flowchart LR
 - `asyncio.CancelledError` 必须传播；普通可恢复失败不得破坏聊天主链路。
 - SQL 值参数绑定；动态标识符只允许固定 allowlist。
 - Dashboard 复用 Base UI-backed shadcn、`PageFrame`、语义 token、Lucide 与三语言 key；桌面/移动端均需可访问、可滚动、无重叠和页面级横向溢出。
+
+## LSP 检查
+
+- 每次新增或修改源码文件后，必须对本轮涉及且受已安装语言服务器支持的文件逐一调用 Codex LSP `mcp__lsp__diagnostics`，默认使用 `severity: "error"`；任何后续修复再次改变文件时必须重复检查，直至不再存在本轮引入的 LSP 错误。
+- 若诊断提示语言服务器缺失，先调用 `mcp__lsp__status` 确认状态并安装或配置对应服务；若文件类型不受 LSP 支持或服务不可用，记录原因并执行该文件类型对应的 lint、类型检查或验证命令，不得静默跳过。
+- Python LSP 报告 `reportMissingImports` 或依赖无法解析时，必须先用 `uv run --locked python` 在锁定环境中复现导入，并确认 `.venv` 已由 `uv sync --locked --dev` 同步、`[tool.pyright]` 指向该 `.venv` 与 Python 3.12；不得通过关闭 `reportMissingImports`、添加宽泛 `extraPaths` 或忽略规则掩盖虚拟环境配置错误。
 
 ## Python 环境、Ruff 与提交前门禁
 
@@ -168,7 +166,7 @@ uv run --locked pre-commit run --files path/to/file.py path/to/config.toml
 
 以下命令由 `core/command_endpoints.py` 注册；修改命令名或行为时，必须同步 README、CHANGELOG、测试与本页：
 
-`/memora status`、`/memora health`、`/memora diagnostics`、`/memora search <query>`、`/memora trace <query> [k]`、`/memora forget <id>`、`/memora rebuild-index`、`/memora rebuild-graph`、`/memora webui`、`/memora summarize`、`/memora reset`、`/memora cleanup`、`/memora update [check|download|apply]`、`/memora help`。
+`/memora status`、`/memora health`、`/memora diagnostics`、`/memora search <query> [k] [true|false]`、`/memora trace <query> [k]`、`/memora forget <id>`、`/memora rebuild-index`、`/memora rebuild-graph`、`/memora webui`、`/memora summarize`、`/memora reset`、`/memora cleanup`、`/memora update [check|download|apply]`、`/memora help`。
 
 `/memora summarize` 必须分别反馈 canonical 写入数与 quarantine 数；隔离候选不得伪装成长期记忆写入成功，真实写入失败仍保留 `pending_summary` 且不推进窗口。
 

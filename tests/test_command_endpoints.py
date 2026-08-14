@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.command_endpoints import CommandEndpointsMixin
+from core.platform.transport.commands.command_endpoints import CommandEndpointsMixin
 
 
 async def _yielding_handler(*items):
@@ -129,7 +129,30 @@ class TestEndpointDelegation:
         results = await _collect(plugin.search(event, "python", k=7))
 
         assert results == ["search-start", "search-done"]
-        handler.handle_search.assert_called_once_with(event, "python", 7)
+        handler.handle_search.assert_called_once_with(
+            event, "python", 7, include_mark_write=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_delegates_include_mark_write_flag_to_command_handler(
+        self,
+    ) -> None:
+        plugin = _Plugin()
+        handler = MagicMock()
+        handler.handle_search = MagicMock(
+            return_value=_yielding_handler("search-start", "search-done")
+        )
+        plugin.command_handler = handler
+        event = _event()
+
+        results = await _collect(
+            plugin.search(event, "python", k=7, include_mark_write=True)
+        )
+
+        assert results == ["search-start", "search-done"]
+        handler.handle_search.assert_called_once_with(
+            event, "python", 7, include_mark_write=True
+        )
 
     @pytest.mark.asyncio
     async def test_forget_delegates_doc_id_to_command_handler(self) -> None:
@@ -223,7 +246,12 @@ class TestEndpointDelegation:
 
 def test_diagnostic_endpoints_keep_admin_permission_decorators() -> None:
     source = (
-        Path(__file__).resolve().parents[1] / "core" / "command_endpoints.py"
+        Path(__file__).resolve().parents[1]
+        / "core"
+        / "platform"
+        / "transport"
+        / "commands"
+        / "command_endpoints.py"
     ).read_text(encoding="utf-8")
 
     for command in ("health", "diagnostics", "trace"):
@@ -264,7 +292,9 @@ def test_command_endpoints_are_owned_by_plugin_entrypoint() -> None:
 
 def test_legacy_command_handlers_are_removed_without_touching_others() -> None:
     """只清理旧模块归属的 /memora 命令处理器。"""
-    from core.command_endpoints import _remove_legacy_command_handlers
+    from core.platform.transport.commands.command_endpoints import (
+        _remove_legacy_command_handlers,
+    )
 
     class Handler:
         """用于模拟 AstrBot 注册表条目的最小对象。"""
@@ -289,9 +319,15 @@ def test_legacy_command_handlers_are_removed_without_touching_others() -> None:
             """删除指定的处理器。"""
             self.handlers.remove(handler)
 
-    legacy_group = Handler("core.command_endpoints", "memora")
-    legacy_endpoint = Handler("core.command_endpoints", "rebuild_graph")
-    non_command_handler = Handler("core.command_endpoints", "unrelated")
+    legacy_group = Handler(
+        "core.platform.transport.commands.command_endpoints", "memora"
+    )
+    legacy_endpoint = Handler(
+        "core.platform.transport.commands.command_endpoints", "rebuild_graph"
+    )
+    non_command_handler = Handler(
+        "core.platform.transport.commands.command_endpoints", "unrelated"
+    )
     another_plugin_handler = Handler("other_plugin.commands", "memora")
     registry = Registry(
         [

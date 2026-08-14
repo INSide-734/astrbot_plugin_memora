@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.response_utils import error_response
+from core.platform.transport.page_api.response_utils import error_response
 
 # ── helpers ───────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ def _make_mixin(
     has_exporter: bool = False,
     backup_path: str = "/tmp/backup.zip",
 ):
-    from core.api.maintenance_api import MaintenanceApiMixin
+    from core.platform.transport.page_api.maintenance_api import MaintenanceApiMixin
 
     class Stub:
         rebuild_index = MaintenanceApiMixin.rebuild_index
@@ -239,7 +239,7 @@ class TestMaintenanceHappyPath:
         validator = MagicMock()
         validator.check = AsyncMock(return_value={"ok": True, "issues": {}})
         with patch(
-            "core.api.maintenance_api.PersistenceHealthValidator",
+            "core.platform.transport.page_api.maintenance_api.PersistenceHealthValidator",
             return_value=validator,
         ):
             result = await mixin.get_persistence_health()
@@ -321,7 +321,7 @@ class TestBackupCRUD:
     async def test_list_backups_tolerates_non_list_manager_payload(self) -> None:
         mixin = _make_mixin(has_backup=True)
         with patch(
-            "core.managers.backup_manager.BackupManager.list_backups",
+            "core.features.backup.application.BackupManager.list_backups",
             return_value="bad-backups",
         ):
             result = await mixin.list_backups()
@@ -337,7 +337,7 @@ class TestBackupCRUD:
             {"name": "backup-b", "path": "b.zip"},
         )
         with patch(
-            "core.managers.backup_manager.BackupManager.list_backups",
+            "core.features.backup.application.BackupManager.list_backups",
             return_value=backups,
         ):
             result = await mixin.list_backups()
@@ -584,7 +584,7 @@ class TestRestoreBackup:
 
             req.get_json = AsyncMock(return_value={"name": "test_backup"})
             mixin = _make_mixin(has_backup=True)
-            from core.managers.backup_manager import BackupManager
+            from core.features.backup.application import BackupManager
 
             mixin.plugin._backup_manager = BackupManager(data_dir)
             with patch("quart.request", req):

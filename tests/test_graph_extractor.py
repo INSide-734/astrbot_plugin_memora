@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.models.graph_models import ExtractedGraph
-from core.processors.graph_extractor import (
+from core.features.memory.graph.domain.models import ExtractedGraph
+from core.features.recall.processors.graph_extractor import (
     CAUSAL_CAUSED_BY,
     CAUSAL_PREVENTS,
     CAUSAL_RESULTS_IN,

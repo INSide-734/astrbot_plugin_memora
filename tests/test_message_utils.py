@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.processors.message_utils import (
+from core.features.recall.processors.message_utils import (
     MAX_SINGLE_MESSAGE_LENGTH,
     store_round_with_length_check,
     truncate_message_if_needed,

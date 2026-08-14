@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.managers.range_and_metadata import RangeAndMetadataMixin
+from core.features.conversation.application.range_and_metadata import (
+    RangeAndMetadataMixin,
+)
 
 # ---------------------------------------------------------------------------
 # Concrete test class

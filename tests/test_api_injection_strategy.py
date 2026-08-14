@@ -67,7 +67,9 @@ def _make_api(
     config: dict[str, object] | None = None,
     tools_registered: bool = True,
 ):
-    from core.api.injection_strategy_api import InjectionStrategyApiMixin
+    from core.platform.transport.page_api.injection_strategy_api import (
+        InjectionStrategyApiMixin,
+    )
 
     class _Api(InjectionStrategyApiMixin):
         pass
@@ -85,13 +87,17 @@ def _make_api(
 
 
 def _decision_page(**values: object):
-    from core.storage.injection_decision_store import DecisionPage
+    from core.features.injection.infrastructure.injection_decision_store import (
+        DecisionPage,
+    )
 
     return DecisionPage(**values)
 
 
 def _decision_query(**values: object):
-    from core.storage.injection_decision_store import DecisionQuery
+    from core.features.injection.infrastructure.injection_decision_store import (
+        DecisionQuery,
+    )
 
     return DecisionQuery(**values)
 

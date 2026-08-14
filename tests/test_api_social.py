@@ -10,14 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.social_api import SocialApiMixin
-from core.base.entity_editing import (
+from core.platform.transport.page_api.social_api import SocialApiMixin
+from core.shared.entity_editing import (
     EditConflictError,
     EntityAlreadyExistsError,
     EntityNotFoundError,
     EntityValidationError,
 )
-from core.base.list_sorting import SortQuery
+from core.shared.list_sorting import SortQuery
 
 
 def _mock_request(**args):
@@ -209,7 +209,9 @@ class TestSocialRelations:
     @pytest.mark.asyncio
     async def test_no_manager_returns_stable_component_error(self) -> None:
         stub = _make_stub(has_manager=False)
-        with patch("core.api.social_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.social_api.request", _mock_request()
+        ):
             result = await stub.get_social_relations()
         assert result["status"] == "error"
         assert result["code"] == "component_unavailable"
@@ -223,7 +225,7 @@ class TestSocialRelations:
         )
 
         with patch(
-            "core.api.social_api.request",
+            "core.platform.transport.page_api.social_api.request",
             _mock_request(
                 group_id="group-1",
                 sort_by="frequency",
@@ -253,7 +255,7 @@ class TestSocialRelations:
         stub = _make_stub()
 
         with patch(
-            "core.api.social_api.request",
+            "core.platform.transport.page_api.social_api.request",
             _mock_request(sort_by=sort_by, sort_order=sort_order),
         ):
             result = await stub.get_social_relations()
@@ -272,7 +274,10 @@ class TestSocialRelations:
         ]
         stub = _make_stub(all_relations=relations)
 
-        with patch("core.api.social_api.request", _mock_request(category="emotional")):
+        with patch(
+            "core.platform.transport.page_api.social_api.request",
+            _mock_request(category="emotional"),
+        ):
             result = await stub.get_social_relations()
 
         assert result["status"] == "ok"
@@ -285,7 +290,9 @@ class TestSocialRelations:
         stub = _make_stub(all_relations=relations)
         stub.plugin._relation_manager.revision_for.side_effect = ["rev-1", "rev-2"]
 
-        with patch("core.api.social_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.social_api.request", _mock_request()
+        ):
             result = await stub.get_social_relations()
 
         assert [item["revision"] for item in result["data"]["relations"]] == [
@@ -301,7 +308,9 @@ class TestSocialRelations:
         relations = [_make_relation(relation_type="mystery_bond")]
         stub = _make_stub(all_relations=relations)
 
-        with patch("core.api.social_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.social_api.request", _mock_request()
+        ):
             result = await stub.get_social_relations()
 
         assert result["status"] == "ok"
@@ -320,7 +329,9 @@ class TestSocialRelations:
         ]
         stub = _make_stub(all_relations=relations)
 
-        with patch("core.api.social_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.social_api.request", _mock_request()
+        ):
             result = await stub.get_social_relations()
 
         assert result["status"] == "ok"
@@ -345,7 +356,9 @@ class TestSocialRelations:
             return_value=BrokenRelations()
         )
 
-        with patch("core.api.social_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.social_api.request", _mock_request()
+        ):
             result = await stub.get_social_relations()
 
         assert result["status"] == "ok"
@@ -362,7 +375,9 @@ class TestSocialRelations:
             side_effect=RuntimeError("read-backend-secret-514c")
         )
 
-        with patch("core.api.social_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.social_api.request", _mock_request()
+        ):
             read_result = await read_stub.get_social_relations()
 
         assert read_result["status"] == "error"
@@ -372,7 +387,7 @@ class TestSocialRelations:
         write_stub = _make_write_stub()
         request_mock = _mock_request()
         request_mock.get_json.return_value = _create_payload()
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             write_result = await write_stub.create_social_relation()
 
         assert write_result["status"] == "ok"
@@ -392,7 +407,9 @@ class TestSocialRelations:
         )
 
         with (
-            patch("core.api.social_api.request", _mock_request()),
+            patch(
+                "core.platform.transport.page_api.social_api.request", _mock_request()
+            ),
             pytest.raises(asyncio.CancelledError),
         ):
             await stub.get_social_relations()
@@ -408,8 +425,8 @@ class TestSocialRelationWrites:
         request_mock.get_json.return_value = _create_payload(group_id="  ")
 
         with (
-            patch("core.api.social_api.request", request_mock),
-            patch("core.api.social_api.logger.info") as audit,
+            patch("core.platform.transport.page_api.social_api.request", request_mock),
+            patch("core.platform.transport.page_api.social_api.logger.info") as audit,
         ):
             result = await stub.create_social_relation()
 
@@ -450,7 +467,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _update_payload()
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.update_social_relation()
 
         assert result["code"] == "edit_conflict"
@@ -462,7 +479,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _update_payload(changes={"strength": 0.8})
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.update_social_relation()
 
         assert result["status"] == "ok"
@@ -480,7 +497,7 @@ class TestSocialRelationWrites:
             identity=_identity(from_user=" alice ", group_id=" ")
         )
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.delete_social_relation()
 
         assert result == {
@@ -508,7 +525,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _create_payload()
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.create_social_relation()
 
         assert result["code"] == expected_code
@@ -540,7 +557,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = payload
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await getattr(stub, method_name)()
 
         assert result["code"] == "validation_error"
@@ -575,7 +592,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = payload
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await getattr(stub, method_name)()
 
         assert result["code"] == "validation_error"
@@ -588,7 +605,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = payload
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.create_social_relation()
 
         assert result["code"] == "invalid_request"
@@ -609,7 +626,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = payload
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await getattr(stub, method_name)()
 
         assert result["code"] == "component_unavailable"
@@ -630,7 +647,7 @@ class TestSocialRelationWrites:
         stub._maintenance_write_guard = MagicMock(return_value=guarded)
         request_mock = _mock_request()
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await getattr(stub, method_name)()
 
         assert result is guarded
@@ -646,7 +663,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _create_payload(unknown=secret)
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.create_social_relation()
 
         audits = [
@@ -694,7 +711,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _create_payload(tags=[payload_secret])
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.create_social_relation()
 
         audits = [
@@ -726,7 +743,7 @@ class TestSocialRelationWrites:
         request_mock.get_json.return_value = _create_payload()
 
         with (
-            patch("core.api.social_api.request", request_mock),
+            patch("core.platform.transport.page_api.social_api.request", request_mock),
             pytest.raises(asyncio.CancelledError),
         ):
             await stub.create_social_relation()
@@ -748,8 +765,10 @@ class TestSocialRelationWrites:
         request_mock.get_json.return_value = _create_payload(tags=[secret])
 
         with (
-            patch("core.api.social_api.request", request_mock),
-            patch("core.api.social_api.logger.error") as log_error,
+            patch("core.platform.transport.page_api.social_api.request", request_mock),
+            patch(
+                "core.platform.transport.page_api.social_api.logger.error"
+            ) as log_error,
         ):
             result = await stub.create_social_relation()
 
@@ -797,7 +816,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = payload
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await getattr(stub, method_name)()
 
         assert result["status"] == "ok"
@@ -821,7 +840,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = None
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await getattr(stub, method_name)()
 
         assert result["code"] == "invalid_request"
@@ -877,7 +896,7 @@ class TestSocialRelationWrites:
         request_mock = _mock_request()
         request_mock.get_json.return_value = payload
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await getattr(stub, method_name)()
 
         action = method_name.removesuffix("_social_relation")
@@ -933,7 +952,7 @@ class TestSocialRelationWrites:
             tags=["create-payload-secret-c573"]
         )
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.create_social_relation()
 
         assert result["code"] == "internal_error"
@@ -965,7 +984,7 @@ class TestSocialRelationBatch:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _batch_payload(items=items)
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.batch_social_relations()
 
         assert result["status"] == "ok"
@@ -992,7 +1011,7 @@ class TestSocialRelationBatch:
             action, params={"tags": params_tags}
         )
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.batch_social_relations()
 
         assert result["status"] == "ok"
@@ -1020,7 +1039,7 @@ class TestSocialRelationBatch:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _batch_payload(items=items)
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.batch_social_relations()
 
         assert result["status"] == "ok"
@@ -1047,7 +1066,7 @@ class TestSocialRelationBatch:
         request_mock = _mock_request()
         request_mock.get_json.return_value = _batch_payload()
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.batch_social_relations()
 
         failure = result["data"]["failures"][0]
@@ -1069,7 +1088,7 @@ class TestSocialRelationBatch:
             ]
         )
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.batch_social_relations()
 
         assert result["code"] == "validation_error"
@@ -1088,7 +1107,7 @@ class TestSocialRelationBatch:
             ]
         )
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.batch_social_relations()
 
         assert result["status"] == "ok"
@@ -1148,7 +1167,7 @@ class TestSocialRelationBatch:
             ]
         )
 
-        with patch("core.api.social_api.request", request_mock):
+        with patch("core.platform.transport.page_api.social_api.request", request_mock):
             result = await stub.batch_social_relations()
 
         assert result["status"] == "ok"
@@ -1179,7 +1198,7 @@ class TestSocialRelationBatch:
         request_mock.get_json.return_value = _batch_payload()
 
         with (
-            patch("core.api.social_api.request", request_mock),
+            patch("core.platform.transport.page_api.social_api.request", request_mock),
             pytest.raises(asyncio.CancelledError),
         ):
             await stub.batch_social_relations()

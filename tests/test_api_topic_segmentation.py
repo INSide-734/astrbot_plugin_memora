@@ -8,8 +8,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from astrbot.api import web as astrbot_web
 
-from core.api.config_api import ConfigApiMixin
-from core.api.topic_segmentation_api import TopicSegmentationApiMixin
+from core.platform.transport.page_api.config_api import ConfigApiMixin
+from core.platform.transport.page_api.topic_segmentation_api import (
+    TopicSegmentationApiMixin,
+)
 
 
 def _make_config_manager(*, update_result: bool = True):

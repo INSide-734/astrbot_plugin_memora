@@ -10,10 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
-from core.diagnostics.event_store import DiagnosticEventStore
-from core.page_api import PluginPageApi
-from core.retrieval.explainable_recall import capture_explainable_recall
-from core.retrieval.trace_store import RecallTraceStore
+from core.features.diagnostics.infrastructure.event_store import DiagnosticEventStore
+from core.features.retrieval.explainable_recall import capture_explainable_recall
+from core.features.retrieval.trace_store import RecallTraceStore
+from core.platform.transport.page_api.page_api import PluginPageApi
 
 _SENTINEL = "PRIVATE_SENTINEL_NEVER_EXPOSE"
 _FORBIDDEN_TRACE_KEYS = {
@@ -349,8 +349,8 @@ async def test_recall_sample_page_rejects_query_prompt_content_identity_and_ids(
     None
 ):
     """召回样本页不得包含查询、正文、身份、候选 ID、任意 metadata 或 Provider 凭据。"""
-    from core.monitoring.perf_tracker import PerfTracker
-    from core.monitoring.recall_timing import sanitize_recall_sample
+    from core.features.observability.application import PerfTracker
+    from core.features.observability.domain import sanitize_recall_sample
 
     tracker = PerfTracker(maxlen=3)
     tracker.record(

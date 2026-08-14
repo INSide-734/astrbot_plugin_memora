@@ -1,7 +1,7 @@
 """测试插件初始化与版本检查模块。
 
 覆盖范围：
-- core/plugin_initializer.py — PluginInitializer；
+- core/platform/composition/plugin_initializer.py — PluginInitializer；
 - core/version_check.py — 版本解析与比较。
 """
 
@@ -18,17 +18,23 @@ import pytest
 
 
 def _load_memora_plugin_class():
+    """在隔离包名下加载插件类并安装所需 AstrBot 测试桩。"""
+
     root = Path(__file__).resolve().parents[1]
     package_name = "memora_testpkg"
     package = types.ModuleType(package_name)
     package.__path__ = [str(root)]
     sys.modules[package_name] = package
     star_mod = sys.modules["astrbot.api.star"]
-    star_mod.Star = type(
-        "TestStar",
-        (object,),
-        {"__init__": lambda self, context=None: None},
-    )  # type: ignore[attr-defined]
+    setattr(
+        star_mod,
+        "Star",
+        type(
+            "TestStar",
+            (object,),
+            {"__init__": lambda self, context=None: None},
+        ),
+    )
     temp_data_dir = root / ".pytest_memora_data"
     temp_data_dir.mkdir(exist_ok=True)
     star_mod.StarTools = types.SimpleNamespace(get_data_dir=lambda: temp_data_dir)  # type: ignore[attr-defined]
@@ -53,8 +59,12 @@ def _load_memora_plugin_class():
     event_mod.filter.command_group.side_effect = lambda *args, **kwargs: _CommandGroup()  # type: ignore[attr-defined]
 
     filter_submodule = types.ModuleType("astrbot.api.event.filter")
-    filter_submodule.PermissionType = types.SimpleNamespace(ADMIN="admin")
-    filter_submodule.permission_type = lambda *args, **kwargs: lambda fn: fn
+    setattr(filter_submodule, "PermissionType", types.SimpleNamespace(ADMIN="admin"))
+    setattr(
+        filter_submodule,
+        "permission_type",
+        lambda *args, **kwargs: lambda fn: fn,
+    )
     sys.modules["astrbot.api.event.filter"] = filter_submodule
 
     spec = importlib.util.spec_from_file_location(
@@ -77,42 +87,42 @@ class TestParseVersion:
     """测试 _parse_version()."""
 
     def test_standard_version(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("4.24.2") == (4, 24, 2)
 
     def test_version_with_v_prefix(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("v4.24.2") == (4, 24, 2)
 
     def test_version_with_whitespace(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("  4.24.2  ") == (4, 24, 2)
 
     def test_empty_string_returns_empty_tuple(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("") == ()
 
     def test_nonsense_string_returns_empty_tuple(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("not-a-version") == ()
 
     def test_single_component(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("1") == (1,)
 
     def test_two_component_version(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("2.4") == (2, 4)
 
     def test_multi_digit_components(self) -> None:
-        from core.version_check import _parse_version
+        from core.platform.version_check import _parse_version
 
         assert _parse_version("10.100.1000") == (10, 100, 1000)
 
@@ -121,50 +131,50 @@ class TestVersionLt:
     """测试 _version_lt()."""
 
     def test_lower_version_is_less(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.0.0", "4.24.2") is True
 
     def test_equal_version_is_not_less(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.24.2", "4.24.2") is False
 
     def test_higher_version_is_not_less(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("5.0.0", "4.24.2") is False
 
     def test_invalid_current_returns_false(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("invalid", "4.24.2") is False
 
     def test_invalid_minimum_returns_false(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.24.2", "invalid") is False
 
     def test_different_width_versions(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         # 单独的 "4" 按 (4, 0, 0) 与 (4, 0, 1) 比较。
         assert _version_lt("4", "4.0.1") is True
         assert _version_lt("4.0.1", "4") is False
 
     def test_with_v_prefix(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("v4.0.0", "v4.24.2") is True
 
     def test_minor_version_comparison(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.23.0", "4.24.0") is True
         assert _version_lt("4.25.0", "4.24.0") is False
 
     def test_patch_version_comparison(self) -> None:
-        from core.version_check import _version_lt
+        from core.platform.version_check import _version_lt
 
         assert _version_lt("4.24.0", "4.24.2") is True
         assert _version_lt("4.24.5", "4.24.2") is False
@@ -185,10 +195,10 @@ class TestDetectAstrbotVersion:
             # 重新加载模块以再次执行 _detect_astrbot_version()。
             import importlib
 
-            import core.version_check
+            import core.platform.version_check
 
-            importlib.reload(core.version_check)
-            assert core.version_check._detect_astrbot_version() is None
+            importlib.reload(core.platform.version_check)
+            assert core.platform.version_check._detect_astrbot_version() is None
 
     def test_returns_version_when_package_found(self) -> None:
         """验证 importlib_metadata 找到包时的结果。"""
@@ -201,23 +211,23 @@ class TestDetectAstrbotVersion:
         ):
             import importlib
 
-            import core.version_check
+            import core.platform.version_check
 
-            importlib.reload(core.version_check)
-            assert core.version_check._detect_astrbot_version() == "4.24.2"
+            importlib.reload(core.platform.version_check)
+            assert core.platform.version_check._detect_astrbot_version() == "4.24.2"
 
 
 class TestModuleConstants:
     """测试模块级常量。"""
 
     def test_min_version_is_defined(self) -> None:
-        from core.version_check import _MIN_ASTRBOT_VERSION
+        from core.platform.version_check import _MIN_ASTRBOT_VERSION
 
         assert isinstance(_MIN_ASTRBOT_VERSION, str)
         assert _parse_version_safe(_MIN_ASTRBOT_VERSION) != ()
 
     def test_current_version_is_str_or_none(self) -> None:
-        from core.version_check import _CURRENT_ASTRBOT_VERSION
+        from core.platform.version_check import _CURRENT_ASTRBOT_VERSION
 
         assert _CURRENT_ASTRBOT_VERSION is None or isinstance(
             _CURRENT_ASTRBOT_VERSION, str
@@ -225,13 +235,13 @@ class TestModuleConstants:
 
 
 def _parse_version_safe(v: str) -> tuple:
-    from core.version_check import _parse_version
+    from core.platform.version_check import _parse_version
 
     return _parse_version(v)
 
 
 # ============================================================================
-# core/plugin_initializer.py
+# core/platform/composition/plugin_initializer.py
 # ============================================================================
 
 
@@ -239,7 +249,7 @@ class TestPluginInitializerConstruction:
     """测试 PluginInitializer.__init__ 与属性默认值。"""
 
     def test_initial_state_not_initialized(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -251,7 +261,7 @@ class TestPluginInitializerConstruction:
         assert init.error_message is None
 
     def test_all_components_initially_none(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -272,7 +282,7 @@ class TestPluginInitializerConstruction:
         assert init.backfill_scheduler is None
 
     def test_sub_modules_created_on_init(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -286,7 +296,7 @@ class TestPluginInitializerConstruction:
         assert init._component_factory is not None
 
     def test_ensure_initialized_returns_false_when_not_initialized(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -299,7 +309,7 @@ class TestPluginInitializerConstruction:
         assert result is False
 
     def test_ensure_initialized_returns_false_when_failed(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -314,7 +324,7 @@ class TestPluginInitializerConstruction:
 
     def test_stop_scheduler_with_none_scheduler(self) -> None:
         """衰减调度器为空时，stop_scheduler 应直接返回。"""
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -327,7 +337,7 @@ class TestPluginInitializerConstruction:
         asyncio.run(init.stop_scheduler())
 
     def test_stop_scheduler_with_active_scheduler(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -343,7 +353,7 @@ class TestPluginInitializerConstruction:
         assert init.decay_scheduler is None
 
     def test_stop_background_tasks(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         init = PluginInitializer(
             context=MagicMock(),
@@ -360,7 +370,7 @@ class TestPluginInitializerConstruction:
     @pytest.mark.asyncio
     async def test_initialize_reports_provider_wait_start_and_duration(self) -> None:
         """Provider 等待应输出开始、结果、尝试次数和耗时。"""
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
         initializer._provider_waiter.wait_non_blocking = AsyncMock(
@@ -368,7 +378,9 @@ class TestPluginInitializerConstruction:
         )
         initializer._run_full_init = AsyncMock()
 
-        with patch("core.plugin_initializer.report_debug_event") as report:
+        with patch(
+            "core.platform.composition.plugin_initializer.report_debug_event"
+        ) as report:
             assert await initializer.initialize() is True
 
         provider_events = [
@@ -389,7 +401,7 @@ class TestComponentFactoryConfig:
     """测试 ComponentFactory 引擎配置构建。"""
 
     def test_engine_config_includes_data_dir(self, tmp_path) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         config = MagicMock()
         config.get.side_effect = lambda _key, default=None: default
@@ -460,7 +472,7 @@ class TestMemoraPluginConfig:
                 "_create_tracked_task",
                 side_effect=lambda coro: coro.close(),
             ),
-            patch.object(module, "set_debug_mode") as set_debug_mode,
+            patch.object(module.observability, "set_debug_mode") as set_debug_mode,
         ):
             MemoraPlugin(context, astrbot_config)
 
@@ -787,8 +799,8 @@ class TestMemoraPluginTerminate:
         plugin._backfill_scheduler = None
 
         with (
-            patch.object(module, "report_debug_event") as report,
-            patch.object(module, "report_debug_exception"),
+            patch.object(module.observability, "report_debug_event") as report,
+            patch.object(module.observability, "report_debug_exception"),
         ):
             await plugin.terminate()
 
@@ -844,8 +856,8 @@ class TestMemoraPluginTerminate:
         plugin._backfill_scheduler = None
 
         with (
-            patch.object(module, "report_debug_event") as report,
-            patch.object(module, "report_debug_exception"),
+            patch.object(module.observability, "report_debug_event") as report,
+            patch.object(module.observability, "report_debug_exception"),
         ):
             await plugin.terminate()
 
@@ -1006,7 +1018,7 @@ class TestInjectionDecisionLifecycle:
     ):
         from astrbot.core.provider.provider import Provider
 
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         order: list[str] = []
         db = MagicMock()
@@ -1033,15 +1045,15 @@ class TestInjectionDecisionLifecycle:
 
         scheduler.stop = AsyncMock(side_effect=stop_scheduler)
         monkeypatch.setattr(
-            "core.initializer.component_factory.MemoryEngine",
+            "core.platform.composition.component_factory.MemoryEngine",
             MagicMock(return_value=engine),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.ConversationStore",
+            "core.platform.composition.component_factory.ConversationStore",
             MagicMock(return_value=conversation_store),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.DecayScheduler",
+            "core.platform.composition.component_factory.DecayScheduler",
             MagicMock(return_value=scheduler),
         )
         config = MagicMock()
@@ -1139,7 +1151,7 @@ class TestInjectionDecisionLifecycle:
     async def test_component_factory_builds_started_injection_recorder(
         self, monkeypatch, tmp_path
     ) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         store = MagicMock()
         store.initialize = AsyncMock()
@@ -1150,10 +1162,11 @@ class TestInjectionDecisionLifecycle:
         store_type = MagicMock(return_value=store)
         recorder_type = MagicMock(return_value=recorder)
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionStore", store_type
+            "core.platform.composition.component_factory.InjectionDecisionStore",
+            store_type,
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder",
+            "core.platform.composition.component_factory.InjectionDecisionRecorder",
             recorder_type,
         )
         config = MagicMock()
@@ -1179,7 +1192,7 @@ class TestInjectionDecisionLifecycle:
     async def test_component_factory_closes_partial_injection_components_on_failure(
         self, monkeypatch, tmp_path
     ) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         order: list[str] = []
         store = MagicMock()
@@ -1191,11 +1204,11 @@ class TestInjectionDecisionLifecycle:
             side_effect=lambda **_kwargs: order.append("recorder")
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionStore",
+            "core.platform.composition.component_factory.InjectionDecisionStore",
             MagicMock(return_value=store),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder",
+            "core.platform.composition.component_factory.InjectionDecisionRecorder",
             MagicMock(return_value=recorder),
         )
         config = MagicMock()
@@ -1212,7 +1225,7 @@ class TestInjectionDecisionLifecycle:
     async def test_component_factory_preserves_init_error_when_recorder_close_fails(
         self, monkeypatch, tmp_path
     ) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         store = MagicMock()
         store.initialize = AsyncMock()
@@ -1221,11 +1234,11 @@ class TestInjectionDecisionLifecycle:
         recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
         recorder.close = AsyncMock(side_effect=RuntimeError("close failed"))
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionStore",
+            "core.platform.composition.component_factory.InjectionDecisionStore",
             MagicMock(return_value=store),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder",
+            "core.platform.composition.component_factory.InjectionDecisionRecorder",
             MagicMock(return_value=recorder),
         )
         config = MagicMock()
@@ -1242,7 +1255,7 @@ class TestInjectionDecisionLifecycle:
     async def test_component_factory_closes_store_when_recorder_cleanup_is_cancelled(
         self, monkeypatch, tmp_path
     ) -> None:
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         store = MagicMock()
         store.initialize = AsyncMock()
@@ -1251,11 +1264,11 @@ class TestInjectionDecisionLifecycle:
         recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
         recorder.close = AsyncMock(side_effect=asyncio.CancelledError())
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionStore",
+            "core.platform.composition.component_factory.InjectionDecisionStore",
             MagicMock(return_value=store),
         )
         monkeypatch.setattr(
-            "core.initializer.component_factory.InjectionDecisionRecorder",
+            "core.platform.composition.component_factory.InjectionDecisionRecorder",
             MagicMock(return_value=recorder),
         )
         config = MagicMock()
@@ -1276,7 +1289,7 @@ class TestInjectionDecisionLifecycle:
 
         from astrbot.core.provider.provider import Provider
 
-        from core.initializer.component_factory import ComponentFactory
+        from core.platform.composition.component_factory import ComponentFactory
 
         config = MagicMock()
         config.get.side_effect = lambda key, default=None: {
@@ -1300,13 +1313,13 @@ class TestInjectionDecisionLifecycle:
         engine.initialize = AsyncMock()
         engine.text_processor = None
         monkeypatch.setattr(
-            "core.initializer.component_factory.MemoryEngine",
+            "core.platform.composition.component_factory.MemoryEngine",
             MagicMock(return_value=engine),
         )
         conversation_store = MagicMock()
         conversation_store.initialize = AsyncMock()
         monkeypatch.setattr(
-            "core.initializer.component_factory.ConversationStore",
+            "core.platform.composition.component_factory.ConversationStore",
             MagicMock(return_value=conversation_store),
         )
         faiss_checker = MagicMock()
@@ -1345,7 +1358,7 @@ class TestInjectionDecisionLifecycle:
     async def test_plugin_initializer_retains_and_closes_injection_components_once(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         assert initializer.injection_decision_store is None
@@ -1376,7 +1389,7 @@ class TestInjectionDecisionLifecycle:
     async def test_plugin_initializer_preserves_cancelled_recorder_for_retry(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         close_started = asyncio.Event()
@@ -1411,7 +1424,7 @@ class TestInjectionDecisionLifecycle:
     async def test_plugin_initializer_preserves_first_close_error_and_failed_refs(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         recorder = MagicMock()
@@ -1438,7 +1451,7 @@ class TestInjectionDecisionLifecycle:
     async def test_plugin_initializer_clears_only_successfully_closed_reference(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         recorder = MagicMock()
@@ -1456,7 +1469,7 @@ class TestInjectionDecisionLifecycle:
 
     @pytest.mark.asyncio
     async def test_run_full_init_retains_injection_components(self, tmp_path) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         initializer._faiss_checker.load_vec_db_class = MagicMock(
@@ -1467,6 +1480,8 @@ class TestInjectionDecisionLifecycle:
         memory_processor = MagicMock()
         quarantine_store = MagicMock()
         quality_gate = MagicMock()
+        gate_runtime = MagicMock()
+        conversation_manager = MagicMock()
         initializer._component_factory.build_all = AsyncMock(
             return_value={
                 "db": MagicMock(),
@@ -1475,7 +1490,9 @@ class TestInjectionDecisionLifecycle:
                 "memory_processor": memory_processor,
                 "memory_quarantine_store": quarantine_store,
                 "memory_quality_gate": quality_gate,
-                "conversation_manager": MagicMock(),
+                "gate_runtime": gate_runtime,
+                "conversation_manager": conversation_manager,
+                "identity_runtime": types.SimpleNamespace(close=AsyncMock()),
                 "index_validator": MagicMock(),
                 "decay_scheduler": None,
                 "injection_decision_store": store,
@@ -1487,11 +1504,16 @@ class TestInjectionDecisionLifecycle:
         )
         initializer._initialize_cognitive_components = AsyncMock()
 
-        with patch("core.plugin_initializer.report_debug_event") as report:
+        with patch(
+            "core.platform.composition.plugin_initializer.report_debug_event"
+        ) as report:
             await initializer._run_full_init()
 
         assert initializer.injection_decision_store is store
         assert initializer.injection_decision_recorder is recorder
+        # 回归防护：发布段必须同时保留 conversation_manager 与 gate_runtime。
+        assert initializer.conversation_manager is conversation_manager
+        assert initializer.gate_runtime is gate_runtime
         readiness_capabilities = {
             call.kwargs["capability"]
             for call in report.call_args_list
@@ -1514,8 +1536,8 @@ class TestInjectionDecisionLifecycle:
     async def test_run_full_init_closes_owned_injection_components_on_error(
         self, tmp_path
     ) -> None:
-        from core.base.exceptions import InitializationError
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
+        from core.shared.errors import InitializationError
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         initializer._faiss_checker.load_vec_db_class = MagicMock(
@@ -1536,7 +1558,9 @@ class TestInjectionDecisionLifecycle:
                 "memory_processor": memory_processor,
                 "memory_quarantine_store": quarantine_store,
                 "memory_quality_gate": quality_gate,
+                "gate_runtime": MagicMock(),
                 "conversation_manager": MagicMock(),
+                "identity_runtime": types.SimpleNamespace(close=AsyncMock()),
                 "index_validator": MagicMock(),
                 "decay_scheduler": None,
                 "injection_decision_store": store,
@@ -1562,7 +1586,7 @@ class TestInjectionDecisionLifecycle:
     async def test_run_full_init_preserves_real_cancellation_during_cleanup(
         self, tmp_path
     ) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
         initializer._faiss_checker.load_vec_db_class = MagicMock(
@@ -1583,7 +1607,9 @@ class TestInjectionDecisionLifecycle:
                 "memory_processor": memory_processor,
                 "memory_quarantine_store": quarantine_store,
                 "memory_quality_gate": quality_gate,
+                "gate_runtime": MagicMock(),
                 "conversation_manager": MagicMock(),
+                "identity_runtime": types.SimpleNamespace(close=AsyncMock()),
                 "index_validator": MagicMock(),
                 "decay_scheduler": None,
                 "injection_decision_store": store,
@@ -1686,6 +1712,7 @@ class TestMemoraInjectionLifecycle:
             assert (
                 kwargs["memory_quality_gate"] is plugin.initializer.memory_quality_gate
             )
+            assert kwargs["identity_runtime"] is plugin.initializer.identity_runtime
             return event_handler
 
         with patch.object(module, "EventHandler", side_effect=build_event_handler):
@@ -1751,8 +1778,16 @@ class TestMemoraInjectionLifecycle:
             is plugin.initializer.memory_quality_gate
         )
         assert (
+            event_handler_type.call_args.kwargs["identity_runtime"]
+            is plugin.initializer.identity_runtime
+        )
+        assert (
             command_handler_type.call_args.kwargs["memory_quality_gate"]
             is plugin.initializer.memory_quality_gate
+        )
+        assert (
+            command_handler_type.call_args.kwargs["identity_runtime"]
+            is plugin.initializer.identity_runtime
         )
         memory_tool_type.assert_called_once()
         plugin.context.add_llm_tools.assert_not_called()
@@ -1764,7 +1799,7 @@ class TestMemoryEvolutionLifecycle:
 
     @pytest.mark.asyncio
     async def test_close_stops_manager_before_store(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
         close_order: list[str] = []
@@ -1782,7 +1817,7 @@ class TestMemoryEvolutionLifecycle:
         assert close_order == ["manager", "store"]
 
     def test_readiness_contains_only_evolution_component_booleans(self) -> None:
-        from core.plugin_initializer import PluginInitializer
+        from core.platform.composition.plugin_initializer import PluginInitializer
 
         initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
         snapshot = initializer.get_readiness_snapshot()

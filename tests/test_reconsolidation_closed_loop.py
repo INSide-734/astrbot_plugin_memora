@@ -12,10 +12,14 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import aiosqlite
 import pytest
 
-from core.managers.memory_engine import MemoryEngine
-from core.managers.reconsolidation import ReconsolidationManager
-from core.retrieval.rrf_fusion import HybridResult
-from core.storage.reconsolidation_store import ReconsolidationStore
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.reconsolidation.application.reconsolidation import (
+    ReconsolidationManager,
+)
+from core.features.reconsolidation.infrastructure.reconsolidation_store import (
+    ReconsolidationStore,
+)
+from core.features.retrieval.rrf_fusion import HybridResult
 
 
 class _SimulatedCrash(BaseException):
@@ -665,7 +669,9 @@ async def test_real_engine_wires_reconsolidation_when_enabled(tmp_path: Path) ->
     )
     engine._schema.create_tables = AsyncMock()
     try:
-        with patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_cls:
+        with patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_cls:
             bm25_cls.return_value.initialize = AsyncMock()
             await engine.initialize()
 
@@ -711,7 +717,7 @@ async def test_recall_proposes_candidate_but_never_writes_canonical() -> None:
     handler = object.__new__(type("RecallHandlerStub", (), {}))
     handler._memory_engine = engine
 
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     normalized = RecallHandler._safe_candidates(
         [

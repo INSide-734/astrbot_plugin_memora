@@ -157,6 +157,9 @@ vi.mock("@/pages/IntelligencePage", () => ({
     </div>
   ),
 }));
+vi.mock("@/pages/GatePage", () => ({
+  GatePage: () => <div>Gate Page</div>,
+}));
 vi.mock("@/pages/InjectionStrategyPage", async () => {
   const React = await vi.importActual<typeof import("react")>("react");
 

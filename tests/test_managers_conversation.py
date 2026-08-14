@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.managers.conversation_manager import (
+from core.features.conversation.application.conversation_manager import (
     ConversationManager,
+)
+from core.features.conversation.infrastructure.conversation_manager_factory import (
     create_conversation_manager,
 )
 
@@ -15,7 +17,9 @@ from core.managers.conversation_manager import (
 class TestCreateConversationManager:
     """Factory function tests."""
 
-    @patch("core.managers.conversation_manager.ConversationStore")
+    @patch(
+        "core.features.conversation.infrastructure.conversation_manager_factory.ConversationStore"
+    )
     def test_creates_with_defaults(self, mock_store_cls: MagicMock) -> None:
         mock_store = MagicMock()
         mock_store_cls.return_value = mock_store
@@ -24,7 +28,9 @@ class TestCreateConversationManager:
         assert mgr.context_window_size == 50
         assert mgr.session_ttl == 3600
 
-    @patch("core.managers.conversation_manager.ConversationStore")
+    @patch(
+        "core.features.conversation.infrastructure.conversation_manager_factory.ConversationStore"
+    )
     def test_creates_with_config(self, mock_store_cls: MagicMock) -> None:
         mock_store = MagicMock()
         mock_store_cls.return_value = mock_store
@@ -38,7 +44,9 @@ class TestCreateConversationManager:
         assert mgr.context_window_size == 20
         assert mgr.session_ttl == 1800
 
-    @patch("core.managers.conversation_manager.ConversationStore")
+    @patch(
+        "core.features.conversation.infrastructure.conversation_manager_factory.ConversationStore"
+    )
     def test_creates_with_none_config(self, mock_store_cls: MagicMock) -> None:
         mock_store = MagicMock()
         mock_store_cls.return_value = mock_store

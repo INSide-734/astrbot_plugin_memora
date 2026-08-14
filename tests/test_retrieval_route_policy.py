@@ -7,10 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.retrieval.query_planner import QueryPlan, QueryPlanner
-from core.retrieval.query_rewriter import QueryIntent
-from core.retrieval.retrieval_execution import RouteExecutionCoordinator
-from core.retrieval.route_policy import should_use_graph_route
+from core.features.retrieval.query_planner import QueryPlan, QueryPlanner
+from core.features.retrieval.query_rewriter import QueryIntent
+from core.features.retrieval.retrieval_execution import RouteExecutionCoordinator
+from core.features.retrieval.route_policy import should_use_graph_route
 
 
 def _plan(

@@ -10,9 +10,11 @@ import pytest
 from astrbot.api.platform import MessageType
 
 from core.event_handler import EventHandler
-from core.handlers.reflection_handler import ReflectionHandler
-from core.handlers.reflection_trigger import ReflectionWindowRequest
-from core.identity.models import IdentityTrust, ResolvedIdentity
+from core.features.identity.domain.models import IdentityTrust, ResolvedIdentity
+from core.features.reflection.application.reflection_handler import ReflectionHandler
+from core.features.reflection.application.reflection_trigger import (
+    ReflectionWindowRequest,
+)
 
 
 def _unsupported_group_identity() -> ResolvedIdentity:
@@ -51,12 +53,16 @@ def _group_event() -> MagicMock:
 async def test_group_capture_checks_only_ambient_messages_after_persisting() -> None:
     """环境消息落库后应检查阈值，唤醒 Bot 的消息则等待响应钩子。"""
 
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
+
     config = MagicMock()
     config.get.side_effect = lambda key, default=None: (
         True if key == "session_manager.enable_full_group_capture" else default
     )
     conversation = MagicMock()
-    conversation.identity_runtime = None
+    identity_runtime = ProtocolIdentityRuntime()
+    identity_runtime.resolve = MagicMock(return_value=_unsupported_group_identity())
+    conversation.identity_runtime = identity_runtime
     conversation.add_message_from_event = AsyncMock()
     handler = EventHandler(
         context=MagicMock(),
@@ -64,9 +70,7 @@ async def test_group_capture_checks_only_ambient_messages_after_persisting() -> 
         memory_engine=MagicMock(),
         memory_processor=MagicMock(),
         conversation_manager=conversation,
-    )
-    handler._identity_runtime.resolve = MagicMock(
-        return_value=_unsupported_group_identity()
+        identity_runtime=identity_runtime,
     )
     handler._extractor.extract_message_content = AsyncMock(return_value="普通群消息")
     handler._dedup.build_dedup_key = AsyncMock(return_value=None)
@@ -127,7 +131,7 @@ async def test_ambient_messages_schedule_summary_without_assistant_response() ->
     event = _group_event()
 
     with patch(
-        "core.handlers.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         await handler.maybe_schedule_summary(event)
@@ -215,7 +219,7 @@ async def test_summary_trigger_bounds_each_window_to_trigger_rounds() -> None:
     )
 
     with patch(
-        "core.handlers.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(
@@ -271,9 +275,11 @@ async def test_summary_gate_reports_effective_five_round_threshold() -> None:
     )
 
     with (
-        patch("core.handlers.reflection_trigger.report_debug_event") as report,
         patch(
-            "core.handlers.reflection_trigger.get_persona_id",
+            "core.features.reflection.application.reflection_trigger.report_debug_event"
+        ) as report,
+        patch(
+            "core.features.reflection.application.reflection_handler.get_persona_id",
             new=AsyncMock(return_value="persona-1"),
         ),
     ):
@@ -364,7 +370,7 @@ async def test_summary_backlog_drains_in_bounded_windows() -> None:
     handler._storage_task = AsyncMock(side_effect=store_window)
 
     with patch(
-        "core.handlers.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(
@@ -428,7 +434,7 @@ async def test_pending_retry_keeps_original_bounded_end() -> None:
     )
 
     with patch(
-        "core.handlers.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(

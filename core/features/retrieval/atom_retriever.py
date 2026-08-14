@@ -1,0 +1,144 @@
+"""时间感知的记忆原子检索器。"""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from astrbot.api import logger
+
+from ..memory.domain.memory_atom import MemoryAtom
+from ..memory.infrastructure.atom_store import AtomStore
+
+if TYPE_CHECKING:
+    from ..recall.processors.text_processor import TextProcessor
+
+
+@dataclass(slots=True)
+class AtomRetrievalResult:
+    """带时间衰减评分的单条原子检索结果。"""
+
+    atom_id: int
+    parent_memory_id: int
+    content: str
+    base_score: float  # BM25 or vector similarity
+    temporal_score: float  # decay multiplier
+    final_score: float  # base_score * temporal_score
+    atom_type: str
+    importance: float
+    confidence: float
+    ttl_days: float
+    decay_type: str
+    metadata: dict[str, Any]
+
+
+class AtomRetriever:
+    """带时间感知评分的记忆原子检索。
+
+    原子按 base_score * temporal_score 排序，使语义相关性和时间新鲜度均参与排名。
+    """
+
+    def __init__(
+        self,
+        atom_store: AtomStore,
+        config: dict[str, Any] | None = None,
+        text_processor: TextProcessor | None = None,
+    ):
+        """保存 Atom Store、检索配置与可选查询分词器。"""
+
+        self.atom_store = atom_store
+        self.config = config or {}
+        self.text_processor = text_processor
+
+    async def search(
+        self,
+        query: str,
+        k: int = 10,
+        session_id: str | None = None,
+        persona_id: str | None = None,
+    ) -> list[AtomRetrievalResult]:
+        """通过全文检索搜索原子，按相关性和时间衰减评分。"""
+        search_query = self._prepare_query(query)
+        atoms = await self.atom_store.search_fts(
+            query=search_query,
+            limit=max(k * 2, k),
+            session_id=session_id,
+            persona_id=persona_id,
+        )
+        atoms = await self._filter_current_sources(atoms)
+
+        results: list[AtomRetrievalResult] = []
+        for atom in atoms:
+            base_score = float(atom.metadata.get("bm25_score", 0.5))
+            temporal_score = float(atom.metadata.get("temporal_score", 1.0))
+            final_score = base_score * temporal_score
+            results.append(
+                AtomRetrievalResult(
+                    atom_id=atom.atom_id,
+                    parent_memory_id=atom.parent_memory_id,
+                    content=atom.content,
+                    base_score=round(base_score, 4),
+                    temporal_score=round(temporal_score, 4),
+                    final_score=round(final_score, 4),
+                    atom_type=atom.atom_type.value,
+                    importance=round(atom.importance, 4),
+                    confidence=round(atom.confidence, 4),
+                    ttl_days=round(atom.ttl_days, 2),
+                    decay_type=atom.decay_type.value,
+                    metadata=dict(atom.metadata),
+                )
+            )
+
+        results.sort(key=lambda r: r.final_score, reverse=True)
+        return results[:k]
+
+    def _prepare_query(self, query: str) -> str:
+        """把自然语言查询转换为 FTS 关键词，失败或空结果时回退原文。"""
+
+        if self.text_processor is None:
+            return query
+        try:
+            processed = self.text_processor.preprocess_for_bm25(query).strip()
+        except Exception as exc:
+            logger.warning(
+                "[AtomRetriever] 查询预处理失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return query
+        return processed or query
+
+    async def get_atoms_for_memory(self, parent_memory_id: int) -> list[MemoryAtom]:
+        """返回属于某条父记忆的所有原子。"""
+        return await self.atom_store.get_by_parent(parent_memory_id)
+
+    async def _filter_current_sources(
+        self,
+        atoms: list[MemoryAtom],
+    ) -> list[MemoryAtom]:
+        """重新核对父来源；普通失败按无原子信号降级。"""
+
+        if not hasattr(type(self.atom_store), "filter_current_sources"):
+            return atoms
+        try:
+            return await self.atom_store.filter_current_sources(atoms)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[AtomRetriever] 父来源校验失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return []
+
+    async def touch(self, atom_id: int) -> None:
+        """更新原子的访问时间。"""
+        await self.atom_store.touch(atom_id)
+
+    async def touch_many(self, atom_ids: list[int]) -> None:
+        """批量更新最终参与召回的原子访问时间。"""
+
+        await self.atom_store.touch_many(atom_ids)
+
+
+__all__ = ["AtomRetriever", "AtomRetrievalResult"]

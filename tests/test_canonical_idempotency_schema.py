@@ -13,10 +13,34 @@ from unittest.mock import AsyncMock, patch
 import aiosqlite
 import pytest
 
-from core.managers.schema_manager import CURRENT_DB_VERSION, SchemaManager
-from core.storage.canonical_idempotency import (
-    find_canonical_memory_id_by_idempotency_key,
-)
+
+async def _find_canonical_owner(
+    connection: aiosqlite.Connection,
+    key: str,
+) -> int | None:
+    """按需导入 canonical 查询，避免 Windows spawn 重载完整基础设施包。"""
+
+    from core.features.memory.infrastructure.canonical_idempotency import (
+        find_canonical_memory_id_by_idempotency_key,
+    )
+
+    return await find_canonical_memory_id_by_idempotency_key(connection, key)
+
+
+def _schema_manager(connection: aiosqlite.Connection):
+    """按需构造 SchemaManager，避免 spawn worker 导入 FAISS 等无关依赖。"""
+
+    from core.features.memory.infrastructure.schema_manager import SchemaManager
+
+    return SchemaManager(connection)
+
+
+def _current_db_version() -> int:
+    """按需读取当前 schema 版本，保持 spawn 导入路径轻量。"""
+
+    from core.features.memory.infrastructure.schema_manager import CURRENT_DB_VERSION
+
+    return CURRENT_DB_VERSION
 
 
 def _metadata(key: str, *, revision: str) -> str:
@@ -124,16 +148,14 @@ async def _insert_or_reuse(
                 "2026-01-01T00:00:00+00:00",
             ),
         )
+        assert cursor.lastrowid is not None
         memory_id = int(cursor.lastrowid)
         await cursor.close()
         await connection.commit()
         return memory_id, True
     except sqlite3.IntegrityError:
         await connection.rollback()
-        existing_id = await find_canonical_memory_id_by_idempotency_key(
-            connection,
-            key,
-        )
+        existing_id = await _find_canonical_owner(connection, key)
         assert existing_id is not None
         return existing_id, False
 
@@ -167,6 +189,7 @@ def _multiprocess_insert_worker(
                     "2026-01-01T00:00:00+00:00",
                 ),
             )
+            assert cursor.lastrowid is not None
             memory_id = int(cursor.lastrowid)
             connection.commit()
             result_queue.put((memory_id, True, None))
@@ -235,12 +258,12 @@ async def test_fresh_schema_creates_canonical_idempotency_contract(
     """新库必须创建唯一映射、冲突审计和三类维护 trigger。"""
 
     connection = await aiosqlite.connect(tmp_path / "memora.db")
-    manager = SchemaManager(connection)
+    manager = _schema_manager(connection)
     await manager.create_fresh_schema()
     inspection = await manager.inspect_schema()
     await connection.close()
 
-    assert CURRENT_DB_VERSION == 9
+    assert _current_db_version() == 9
     assert {
         "canonical_idempotency_keys",
         "canonical_idempotency_conflicts",
@@ -261,7 +284,7 @@ async def test_v8_duplicate_keys_migrate_without_deleting_canonical(
     db_path = tmp_path / "memora.db"
     original_rows = _create_v8_database(db_path)
     connection = await aiosqlite.connect(db_path)
-    manager = SchemaManager(connection)
+    manager = _schema_manager(connection)
     inspection = await manager.inspect_schema()
     plan = manager.build_migration_plan(inspection)
     assert plan is not None
@@ -327,7 +350,7 @@ async def test_v8_migration_matches_python_strip_for_unicode_whitespace(
         legacy.close()
 
     connection = await aiosqlite.connect(db_path)
-    manager = SchemaManager(connection)
+    manager = _schema_manager(connection)
     plan = manager.build_migration_plan(await manager.inspect_schema())
     assert plan is not None
     await manager.migrate_existing_schema(plan)
@@ -366,7 +389,7 @@ async def test_independent_connections_atomically_reuse_same_key(
 
     db_path = tmp_path / "memora.db"
     setup_connection = await aiosqlite.connect(db_path)
-    await SchemaManager(setup_connection).create_fresh_schema()
+    await _schema_manager(setup_connection).create_fresh_schema()
     await setup_connection.close()
 
     first = await aiosqlite.connect(db_path)
@@ -410,12 +433,13 @@ async def test_migration_failure_rolls_back_mapping_and_version(
     db_path = tmp_path / "memora.db"
     original_rows = _create_v8_database(db_path)
     connection = await aiosqlite.connect(db_path)
-    manager = SchemaManager(connection)
+    manager = _schema_manager(connection)
     plan = manager.build_migration_plan(await manager.inspect_schema())
     assert plan is not None
 
     with patch(
-        "core.managers.schema_manager.rebuild_canonical_idempotency_mapping",
+        "core.features.memory.infrastructure.schema_manager."
+        "rebuild_canonical_idempotency_mapping",
         new=AsyncMock(side_effect=RuntimeError("injected idempotency rebuild failure")),
     ):
         with pytest.raises(RuntimeError, match="injected idempotency rebuild failure"):
@@ -461,12 +485,13 @@ async def test_migration_cancellation_rolls_back_and_propagates(
     db_path = tmp_path / "memora.db"
     original_rows = _create_v8_database(db_path)
     connection = await aiosqlite.connect(db_path)
-    manager = SchemaManager(connection)
+    manager = _schema_manager(connection)
     plan = manager.build_migration_plan(await manager.inspect_schema())
     assert plan is not None
 
     with patch(
-        "core.managers.schema_manager.rebuild_canonical_idempotency_mapping",
+        "core.features.memory.infrastructure.schema_manager."
+        "rebuild_canonical_idempotency_mapping",
         new=AsyncMock(side_effect=asyncio.CancelledError()),
     ):
         with pytest.raises(asyncio.CancelledError):
@@ -498,17 +523,14 @@ async def test_deleting_migration_owner_promotes_next_preserved_canonical(
     db_path = tmp_path / "memora.db"
     _create_v8_database(db_path)
     connection = await aiosqlite.connect(db_path)
-    manager = SchemaManager(connection)
+    manager = _schema_manager(connection)
     plan = manager.build_migration_plan(await manager.inspect_schema())
     assert plan is not None
     await manager.migrate_existing_schema(plan)
 
     await connection.execute("DELETE FROM documents WHERE id = 1")
     await connection.commit()
-    owner_id = await find_canonical_memory_id_by_idempotency_key(
-        connection,
-        " retry-key ",
-    )
+    owner_id = await _find_canonical_owner(connection, " retry-key ")
     duplicate_row = await (
         await connection.execute("SELECT metadata FROM documents WHERE id = 2")
     ).fetchone()
@@ -524,7 +546,7 @@ async def test_spawn_processes_atomically_reuse_same_key(tmp_path: Path) -> None
 
     db_path = tmp_path / "memora.db"
     connection = await aiosqlite.connect(db_path)
-    await SchemaManager(connection).create_fresh_schema()
+    await _schema_manager(connection).create_fresh_schema()
     await connection.close()
 
     results = await asyncio.to_thread(_run_multiprocess_race, db_path)

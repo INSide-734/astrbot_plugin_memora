@@ -7,18 +7,49 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-08-15
+
+Memora 1.2.0 完成后端 package-by-feature 架构切换，引入可热重载的记忆写入门禁与 mark_write 隔离语义，并收紧再巩固、备份、发布打包和 Windows 开发链路的正确性边界。
+
 ### 破坏性变更
 
 - 删除从未接入生产且与好感度域重复的 `relationship_tracking` 配置（`enabled`、`warmth_decay_per_day`）。Bot 与用户的关系/好感度统一由好感度域权威维护，用户间关系由社交关系域维护；旧配置会被安全忽略，无需迁移数据。
 - 删除无收益证据且从未正确装配的 `weight_learning`（MAB）配置（`enabled`、`epsilon`、`group_by_persona`）与实现；统一反馈与参数候选改由 FeedbackSignal 管线和自主学习 shadow 候选承担。
 - 自主学习改为默认关闭的 shadow 候选模式：删除无消费者的 `learning_rate`、`target_hit_rate_low/high`、`quality_ema_alpha` 配置叶，`enabled` 默认从 `true` 改为 `false`。
+- 后端完成 package-by-feature 单轨切换并删除旧 `core/api`、`core/managers`、`core/processors`、`core/security` 等技术分层兼容路径。命令、Page API 与持久化契约保持不变；直接导入插件内部旧路径的自定义扩展需要改用 `core/features`、`core/platform` 或 `core/shared` 下的新路径。
+
+### 新增
+
+- mark_write 低置信记忆写入 canonical 后默认不参与召回与演化，避免污染注入与派生证据；`/memora search` 末尾位置参数 `true` 与记忆列表 API `include_mark_write=true` 可显式包含。
+- 记忆写入门禁可配置化：新增 `quality.gate` 配置域与 Dashboard 门禁页（profile 与绑定、检查/阈值/词表/处置/Judge/自定义规则/dry-run），支持按绑定上下文解析 profile、规则树与六类动作、三处置路由（quarantine/discard/mark_write）与保存即时生效的热重载。
+- Dashboard 配置状态可读取文件化 Prompt 默认值，并展示抽取模板和 Judge 模板的默认内容、占位符与校验结果。
+
+### 改进
+
+- 后端按领域职责收敛到 `core/features`、宿主与传输能力收敛到 `core/platform`、跨域端口与纯工具收敛到 `core/shared`；所有生产调用方、测试和脚本同步迁移，不保留双轨实现。
+- 插件初始化、Provider 装配、重载与关闭使用明确的组合根和资源定位边界；初始化失败会回滚已发布组件和后台任务，取消信号继续传播。
+- Page API 路由注册、命令端点与 Agent 工具按传输职责拆分，保持既有 AstrBot bridge、路由与响应 envelope 不变。
+- Python 开发环境新增 Pyright 门禁并锁定 AstrBot `4.27.2` 作为开发验证基线；插件运行时最低版本约束仍为 AstrBot `>=4.24.2`。
 
 ### 修复
 
 - 记忆再巩固改为候选闭环：召回只生成 pending 候选，不再自动改写 canonical；人工按来源 revision CAS 应用并可回滚旧正文。
 - 移除从未发布且无生产消费者的 Trait Evolution 隐藏实现与生命周期入口。
-- 修复 `/memora summarize` 把隔离候选误报为长期记忆写入成功、将候选数量误作消息进度，以及混合结果把隔离候选计入重要性的问题。
+- 修复 `/memora summarize` 把 quarantine、discard 或 mark_write 处置误报为普通长期记忆写入、将候选数量误作消息进度，以及混合结果把隔离候选计入重要性的问题；命令现分别报告四类处置计数。
 - 修复 Dashboard 活跃会话从 canonical 记忆 metadata 推导，导致对话已采集但长期记忆为空时错误显示 0 的问题。
+- 修复门禁链路未完整传递 `group_id`、人工批准时 `needs_judge` 未经 Judge 解析，以及 Judge 取消未正确传播的问题。
+- 修复 `scripts/package_plugin.py` 源码包收集依赖手写排除清单，导致 `.uv-cache/`、`.idea/`、`.pytest_memora_data/` 等被 `.gitignore` 排除的本地文件与目录被打入源码包的问题；收集改为以 `git ls-files --exclude-standard` 的跟踪与忽略语义为准。
+- 修复旧版仅含反馈数据库的备份不能通过完整性检查和恢复的问题，同时保持当前多数据库备份的严格校验。
+- 修复指标采样在空样本、非有限值和类型检查导入边界上的异常，避免观测故障影响主链路。
+- 修复 Windows 缺少 `os.fchmod`、不支持目录描述符持久化、CRT 文本模式转换随机二进制密钥中的 CRLF/`0x1A`，以及反馈备份完整性检查未及时关闭 SQLite 句柄时，HMAC 安装密钥首次创建、备份校验或备份目录发布会失败的问题；Windows 现使用二进制模式读取并显式释放校验连接，POSIX 平台仍严格执行 `0600` 文件权限校验。
+- 修复 Windows 开发与回退门禁中的平台假设：多进程测试不再让 spawn worker 导入无关重型包，SQLite 测试和回退证据显式释放文件句柄，Git 探针仅对显式源目录设置命令级 `safe.directory`，manifest 比较改用 Python 标准库，插件 Skill 发现测试不再依赖 AstrBot 私有更新器路径。
+
+### 升级说明
+
+- 从 `1.1.0` 升级不需要迁移 canonical memory、重建索引或修改数据库；删除的旧配置叶会被安全忽略。
+- 此前未显式设置 `auto_learning.enabled`、因而依赖 `1.1.0` 默认启用的部署，升级后将变为关闭；如需继续生成 shadow 候选，请显式设置 `auto_learning.enabled=true`。
+- mark_write 仅影响新门禁处置及显式带有该标记的记忆；默认检索和演化会排除它们，管理员可通过命令或 Page API 显式查看。
+- 直接导入插件内部旧 `core/*` 技术分层路径的自定义扩展必须迁移；普通 AstrBot 安装、管理命令、Dashboard 与 Page API 使用方无需调整。
 
 ## [1.1.0] — 2026-07-31
 

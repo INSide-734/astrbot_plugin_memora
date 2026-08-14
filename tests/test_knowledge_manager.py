@@ -18,13 +18,13 @@ def mock_knowledge_store():
 
 @pytest.fixture
 async def knowledge_mgr(mock_knowledge_store):
-    from core.managers.knowledge_manager import KnowledgeManager
+    from core.features.knowledge import KnowledgeManager
 
     return KnowledgeManager(mock_knowledge_store)
 
 
 class TestCleanupExpired:
-    """cleanup_expired() must paginate through all entries."""
+    """验证 cleanup_expired() 会遍历全部分页。"""
 
     @staticmethod
     def _make_entry(eid: int, expires_at: float) -> MagicMock:
@@ -36,9 +36,9 @@ class TestCleanupExpired:
 
     @pytest.mark.asyncio
     async def test_cleanup_expired_paginates(self, mock_knowledge_store):
-        from core.managers.knowledge_manager import KnowledgeManager
+        from core.features.knowledge import KnowledgeManager
 
-        # Page 1: 3 entries (2 expired), Page 2: 2 entries (1 expired), Page 3: empty
+        # 第一页有三个条目且两个过期，第二页有两个且一个过期，第三页为空。
         now = time.time()
         page1 = [
             self._make_entry(1, now - 100),
@@ -54,12 +54,12 @@ class TestCleanupExpired:
         mgr = KnowledgeManager(mock_knowledge_store)
         removed = await mgr.cleanup_expired()
         assert removed == 3
-        # 3 calls: page1 (limit=100, offset=0) → page2 (100, 100) → page3 (100, 200)
+        # 三次调用依次读取 offset 为 0、100、200 的分页。
         assert mock_knowledge_store.list_entries.call_count == 3
 
     @pytest.mark.asyncio
     async def test_no_expired_entries(self, mock_knowledge_store):
-        from core.managers.knowledge_manager import KnowledgeManager
+        from core.features.knowledge import KnowledgeManager
 
         now = time.time()
         entry = self._make_entry(1, now + 9999)
@@ -73,7 +73,7 @@ class TestCleanupExpired:
 
     @pytest.mark.asyncio
     async def test_empty_store(self, mock_knowledge_store):
-        from core.managers.knowledge_manager import KnowledgeManager
+        from core.features.knowledge import KnowledgeManager
 
         mock_knowledge_store.list_entries.return_value = ([], 0)
         mgr = KnowledgeManager(mock_knowledge_store)
@@ -82,7 +82,7 @@ class TestCleanupExpired:
 
     @pytest.mark.asyncio
     async def test_all_expired(self, mock_knowledge_store):
-        from core.managers.knowledge_manager import KnowledgeManager
+        from core.features.knowledge import KnowledgeManager
 
         now = time.time()
         entries = [self._make_entry(i, now - i * 100) for i in range(50)]
@@ -98,8 +98,7 @@ class TestCleanupExpired:
 class TestKnowledgeManagerCrud:
     @pytest.mark.asyncio
     async def test_update_entry_checks_existence(self, mock_knowledge_store):
-        from core.managers.knowledge_manager import KnowledgeManager
-        from core.models.knowledge_models import KnowledgeEntry
+        from core.features.knowledge import KnowledgeEntry, KnowledgeManager
 
         entry = KnowledgeEntry(title="T", content="C", entry_id=7)
         mock_knowledge_store.get.return_value = entry
@@ -112,8 +111,7 @@ class TestKnowledgeManagerCrud:
 
     @pytest.mark.asyncio
     async def test_update_entry_missing_returns_false(self, mock_knowledge_store):
-        from core.managers.knowledge_manager import KnowledgeManager
-        from core.models.knowledge_models import KnowledgeEntry
+        from core.features.knowledge import KnowledgeEntry, KnowledgeManager
 
         mock_knowledge_store.get.return_value = None
         mgr = KnowledgeManager(mock_knowledge_store)
@@ -123,8 +121,7 @@ class TestKnowledgeManagerCrud:
 
     @pytest.mark.asyncio
     async def test_add_entry_merges_similar_existing_entry(self, mock_knowledge_store):
-        from core.managers.knowledge_manager import KnowledgeManager
-        from core.models.knowledge_models import KnowledgeEntry
+        from core.features.knowledge import KnowledgeEntry, KnowledgeManager
 
         existing = KnowledgeEntry(
             title="Python",

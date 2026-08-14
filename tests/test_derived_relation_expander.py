@@ -4,14 +4,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from core.models.memory_evolution import (
+from core.features.evolution.domain import (
     ExpansionBudget,
-    MemorySourceRef,
     RelationType,
     RelationView,
     ScopeContext,
 )
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.retrieval.rrf_fusion import HybridResult
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 NOW = datetime.now(UTC)
@@ -111,7 +111,7 @@ def private_scope(privacy_level: str = "shared") -> ScopeContext:
 
 @pytest.mark.asyncio
 async def test_expander_is_one_hop_and_preserves_direct_seed() -> None:
-    from core.retrieval.derived_relation_expander import DerivedRelationExpander
+    from core.features.evolution.application import DerivedRelationExpander
 
     reader = FakeDerivedReader(
         relations={
@@ -136,7 +136,7 @@ async def test_expander_is_one_hop_and_preserves_direct_seed() -> None:
 
 @pytest.mark.asyncio
 async def test_expander_enforces_per_seed_global_item_and_character_budgets() -> None:
-    from core.retrieval.derived_relation_expander import DerivedRelationExpander
+    from core.features.evolution.application import DerivedRelationExpander
 
     reader = FakeDerivedReader(
         relations={
@@ -162,7 +162,7 @@ async def test_expander_enforces_per_seed_global_item_and_character_budgets() ->
 
 @pytest.mark.asyncio
 async def test_expander_filters_scope_privacy_revision_and_expired_relations() -> None:
-    from core.retrieval.derived_relation_expander import DerivedRelationExpander
+    from core.features.evolution.application import DerivedRelationExpander
 
     reader = FakeDerivedReader(
         relations={
@@ -193,7 +193,7 @@ async def test_expander_filters_scope_privacy_revision_and_expired_relations() -
 
 @pytest.mark.asyncio
 async def test_expander_deduplicates_and_uses_max_direct_or_derived_score() -> None:
-    from core.retrieval.derived_relation_expander import DerivedRelationExpander
+    from core.features.evolution.application import DerivedRelationExpander
 
     reader = FakeDerivedReader(
         relations={17: [relation(17, 18, confidence=1.0)]},
@@ -213,7 +213,7 @@ async def test_expander_deduplicates_and_uses_max_direct_or_derived_score() -> N
 
 @pytest.mark.asyncio
 async def test_expander_returns_direct_results_when_reader_fails() -> None:
-    from core.retrieval.derived_relation_expander import DerivedRelationExpander
+    from core.features.evolution.application import DerivedRelationExpander
 
     reader = FakeDerivedReader({}, {})
 

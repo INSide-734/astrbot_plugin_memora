@@ -8,10 +8,12 @@ import time
 import aiosqlite
 import pytest
 
-from core.managers.atom_source_binding import bind_atoms_to_canonical_source
-from core.models.memory_atom import AtomType, MemoryAtom
-from core.retrieval.atom_retriever import AtomRetriever
-from core.storage.atom_store import AtomStore
+from core.features.memory.application.atom_source_binding import (
+    bind_atoms_to_canonical_source,
+)
+from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
+from core.features.memory.infrastructure.atom_store import AtomStore
+from core.features.retrieval.atom_retriever import AtomRetriever
 
 
 async def _create_document(

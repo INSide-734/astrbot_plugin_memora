@@ -9,8 +9,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.api.update_api import UpdateApiMixin
-from core.managers.update_manager import DownloadedUpdate, UpdateError, UpdateRelease
+from core.features.updates.application.manager import UpdateManager
+from core.features.updates.domain import DownloadedUpdate, UpdateError, UpdateRelease
+from core.platform.transport.page_api.update_api import UpdateApiMixin
 
 
 def _release() -> UpdateRelease:
@@ -51,8 +52,6 @@ async def test_check_update_returns_release_summary_without_urls(
     tmp_path: Path,
 ) -> None:
     """检查接口应返回发布摘要，但不暴露远端下载 URL。"""
-    from core.managers.update_manager import UpdateManager
-
     manager = UpdateManager(tmp_path, current_version="1.0.0")
     manager.check = AsyncMock(return_value=_release())  # type: ignore[method-assign]
     api = _api()
@@ -71,7 +70,6 @@ async def test_check_update_returns_release_summary_without_urls(
 async def test_check_update_marks_ignored_version_unavailable(tmp_path: Path) -> None:
     """管理员忽略当前版本后，页面不应继续显示更新卡片。"""
     release = _release()
-    from core.managers.update_manager import UpdateManager
 
     manager = UpdateManager(tmp_path, current_version="1.0.0")
     manager.check = AsyncMock(return_value=release)  # type: ignore[method-assign]
@@ -92,11 +90,10 @@ async def test_update_actions_delegate_to_manager(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """忽略和下载接口应调用管理器，并返回稳定的 JSON 摘要。"""
-    from core.api import update_api
+    from core.platform.transport.page_api import update_api
 
     release = _release()
     result_path = Path("updates") / release.runtime_filename
-    from core.managers.update_manager import UpdateManager
 
     manager = UpdateManager(tmp_path)
     manager.ignore_version = lambda version: version  # type: ignore[method-assign]
@@ -132,8 +129,7 @@ async def test_apply_and_status_delegate_to_runtime_installer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """一键更新与状态查询应只返回安装器的安全状态摘要。"""
-    from core.api import update_api
-    from core.managers.update_manager import UpdateManager
+    from core.platform.transport.page_api import update_api
 
     manager = UpdateManager(tmp_path)
     operation = {
@@ -171,8 +167,6 @@ async def test_apply_and_status_delegate_to_runtime_installer(
 @pytest.mark.asyncio
 async def test_apply_update_respects_maintenance_guard(tmp_path: Path) -> None:
     """备份恢复事务存在时不得切换插件 runtime。"""
-    from core.managers.update_manager import UpdateManager
-
     manager = UpdateManager(tmp_path)
     installer = SimpleNamespace(apply_latest=AsyncMock())
     api = _api()
@@ -191,8 +185,6 @@ async def test_apply_update_respects_maintenance_guard(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_download_update_propagates_cancellation() -> None:
     """取消下载请求时必须保留 asyncio.CancelledError 语义。"""
-    from core.managers.update_manager import UpdateManager
-
     manager = UpdateManager("updates")
     manager.download = AsyncMock(side_effect=asyncio.CancelledError)  # type: ignore[method-assign]
     api = _api()
@@ -205,8 +197,6 @@ async def test_download_update_propagates_cancellation() -> None:
 @pytest.mark.asyncio
 async def test_update_write_actions_respect_maintenance_guard(tmp_path: Path) -> None:
     """备份恢复阻塞写入时，不应开始更新包下载。"""
-    from core.managers.update_manager import UpdateManager
-
     manager = UpdateManager(tmp_path)
     manager.download = AsyncMock()  # type: ignore[method-assign]
     api = _api()
@@ -228,8 +218,7 @@ async def test_update_api_returns_stable_error_codes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """管理器失败时接口不应泄漏内部错误文本。"""
-    from core.api import update_api
-    from core.managers.update_manager import UpdateManager
+    from core.platform.transport.page_api import update_api
 
     manager = UpdateManager(tmp_path, current_version="1.0.0")
     manager.check = AsyncMock(side_effect=UpdateError("远端细节"))  # type: ignore[method-assign]

@@ -1,7 +1,7 @@
 """core/api/knowledge_api.py — KnowledgeApiMixin 测试。
 
-Validates request validation, response format, and error handling.
-Uses unittest.mock.patch to mock quart.request imports.
+验证请求校验、响应格式与错误处理，并使用 `unittest.mock.patch`
+替换 `quart.request` 导入。
 """
 
 from __future__ import annotations
@@ -10,14 +10,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.knowledge_api import KnowledgeApiMixin
-from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
+from core.features.knowledge.domain import KnowledgeEntry, KnowledgeType
+from core.platform.transport.page_api.knowledge_api import KnowledgeApiMixin
 
 
 def _make_mock_request(**args):
-    """Create a mock quart.request with args dict and async get_json."""
+    """创建带查询参数和异步 ``get_json`` 的请求替身。"""
     mock = MagicMock()
-    mock.args = args  # plain dict for .get() access
+    mock.args = args  # 使用普通字典提供 get() 查询。
     mock.get_json = AsyncMock(return_value=None)
     return mock
 
@@ -34,7 +34,7 @@ def _make_mixin(
     delete_result: bool = True,
     plugin_ready: bool = True,
 ):
-    """Create a KnowledgeApiMixin stub with mocked MemoryEngine."""
+    """创建注入 MemoryEngine 替身的 KnowledgeApiMixin 测试对象。"""
 
     class Stub:
         list_knowledge = KnowledgeApiMixin.list_knowledge
@@ -77,13 +77,13 @@ def _make_mixin(
 
 
 class TestKnowledgeValidation:
-    """Knowledge API validates required fields."""
+    """验证 Knowledge API 的必填字段约束。"""
 
     @pytest.mark.asyncio
     async def test_create_requires_title_and_content(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"title": "", "content": ""})
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.create_knowledge_entry()
         assert result["status"] == "error"
@@ -92,7 +92,7 @@ class TestKnowledgeValidation:
     async def test_create_rejects_non_object_json_payload(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value=["bad-entry"])
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.create_knowledge_entry()
         assert result["status"] == "error"
@@ -101,7 +101,7 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_get_detail_requires_entry_id(self) -> None:
         mock_req = _make_mock_request(entry_id="0")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.get_knowledge_detail()
         assert result["status"] == "error"
@@ -109,7 +109,7 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_get_detail_rejects_non_numeric_entry_id(self) -> None:
         mock_req = _make_mock_request(entry_id="abc")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.get_knowledge_detail()
         assert result["status"] == "error"
@@ -117,7 +117,7 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_search_requires_query(self) -> None:
         mock_req = _make_mock_request(query="")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.search_knowledge()
         assert result["status"] == "error"
@@ -126,7 +126,7 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_search_rejects_non_numeric_limit(self) -> None:
         mock_req = _make_mock_request(query="topic", limit="abc")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.search_knowledge()
         assert result["status"] == "error"
@@ -135,7 +135,7 @@ class TestKnowledgeValidation:
     async def test_delete_requires_entry_id(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"entry_id": 0})
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.delete_knowledge_entry()
         assert result["status"] == "error"
@@ -144,7 +144,7 @@ class TestKnowledgeValidation:
     async def test_delete_rejects_non_object_json_payload(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value=["bad-entry"])
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.delete_knowledge_entry()
         assert result["status"] == "error"
@@ -154,7 +154,7 @@ class TestKnowledgeValidation:
     async def test_delete_rejects_non_numeric_entry_id(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"entry_id": "abc"})
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.delete_knowledge_entry()
         assert result["status"] == "error"
@@ -163,7 +163,7 @@ class TestKnowledgeValidation:
     async def test_delete_rejects_boolean_entry_id(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"entry_id": True})
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.delete_knowledge_entry()
         assert result["status"] == "error"
@@ -173,7 +173,7 @@ class TestKnowledgeValidation:
     async def test_update_requires_entry_id(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"entry_id": 0, "title": "new"})
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
@@ -182,7 +182,7 @@ class TestKnowledgeValidation:
     async def test_update_rejects_non_object_json_payload(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value=["bad-entry"])
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
@@ -192,7 +192,7 @@ class TestKnowledgeValidation:
     async def test_update_rejects_non_numeric_entry_id(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"entry_id": "abc", "title": "new"})
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
@@ -203,7 +203,7 @@ class TestKnowledgeValidation:
         mock_req.get_json = AsyncMock(
             return_value={"entry_id": True, "field": "title", "value": "new"}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(
                 detail_entry=KnowledgeEntry(
                     title="old",
@@ -223,7 +223,7 @@ class TestKnowledgeValidation:
         mock_req.get_json = AsyncMock(
             return_value={"entry_id": 999, "title": "new", "content": "body"}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=None)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
@@ -250,7 +250,7 @@ class TestKnowledgeValidation:
                 },
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "ok"
@@ -276,7 +276,7 @@ class TestKnowledgeValidation:
         mock_req.get_json = AsyncMock(
             return_value={"entry_id": 2, "changes": {"entry_id": 3}}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
@@ -295,7 +295,7 @@ class TestKnowledgeValidation:
         mock_req.get_json = AsyncMock(
             return_value={"entry_id": 2, "field": "title", "value": "new title"}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "ok"
@@ -322,7 +322,7 @@ class TestKnowledgeValidation:
                 "changes": {"title": "new title", "category": "invalid"},
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
@@ -348,7 +348,7 @@ class TestKnowledgeValidation:
         mock_req.get_json = AsyncMock(
             return_value={"entry_id": 2, "changes": {"confidence": confidence}}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
@@ -370,7 +370,7 @@ class TestKnowledgeValidation:
         mock_req.get_json = AsyncMock(
             return_value={"entry_id": 2, "changes": {"tags": ["valid", 3]}}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
@@ -383,7 +383,7 @@ class TestKnowledgeValidation:
         mock_req.get_json = AsyncMock(
             return_value={"entry_ids": [], "action": "delete"}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.batch_knowledge()
         assert result["status"] == "error"
@@ -392,7 +392,7 @@ class TestKnowledgeValidation:
     async def test_batch_knowledge_rejects_non_object_json_payload(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value=["bad-entry"])
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.batch_knowledge()
         assert result["status"] == "error"
@@ -401,7 +401,7 @@ class TestKnowledgeValidation:
     @pytest.mark.asyncio
     async def test_list_rejects_non_numeric_limit_or_offset(self) -> None:
         mock_req = _make_mock_request(limit="abc", offset="1x")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.list_knowledge()
         assert result["status"] == "error"
@@ -412,7 +412,7 @@ class TestKnowledgeValidation:
         mock_req.get_json = AsyncMock(
             return_value={"entry_ids": [1, 2], "action": "invalid"}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.batch_knowledge()
         assert result["status"] == "error"
@@ -422,7 +422,7 @@ class TestKnowledgeValidation:
     async def test_batch_delete_rejects_non_object_json_payload(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value=["bad-entry"])
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.batch_delete_knowledge()
         assert result["status"] == "error"
@@ -432,7 +432,7 @@ class TestKnowledgeValidation:
     async def test_batch_update_rejects_non_object_json_payload(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value=["bad-entry"])
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin()
             result = await mixin.batch_update_knowledge()
         assert result["status"] == "error"
@@ -440,21 +440,21 @@ class TestKnowledgeValidation:
 
 
 class TestKnowledgeStoreUnavailable:
-    """Knowledge API when store is unavailable."""
+    """验证知识存储不可用时的 API 行为。"""
 
     @pytest.mark.asyncio
     async def test_search_requires_query_when_store_unavailable(self) -> None:
-        """When store is unavailable, empty query still returns error."""
+        """知识存储不可用时，空查询仍应返回校验错误。"""
         mock_req = _make_mock_request(query="")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(store_available=False)
             result = await mixin.search_knowledge()
-        # Empty query triggers validation before store check
+        # 空查询应在检查存储可用性前被拒绝。
         assert result["status"] == "error"
 
 
 class TestKnowledgeHappyPath:
-    """Knowledge API with mocked store."""
+    """验证使用知识存储替身时的 API 成功路径。"""
 
     @pytest.mark.asyncio
     async def test_list_skips_malformed_entry_items(self) -> None:
@@ -477,7 +477,7 @@ class TestKnowledgeHappyPath:
             confidence=0.7,
             tags=["y"],
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(entries_list=[good_1, broken, good_2], entries_total=3)
             result = await mixin.list_knowledge()
         assert result["status"] == "ok"
@@ -505,7 +505,7 @@ class TestKnowledgeHappyPath:
                 return {"memory_engine": engine}, None
 
         mock_req = _make_mock_request(limit="10", offset="0")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             result = await Stub().list_knowledge()
         assert result["status"] == "ok"
         assert result["data"]["entries"] == []
@@ -525,7 +525,7 @@ class TestKnowledgeHappyPath:
             confidence=0.8,
             tags=["x"],
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(search_entries=[good, broken], search_total=2)
             result = await mixin.search_knowledge()
         assert result["status"] == "ok"
@@ -542,7 +542,7 @@ class TestKnowledgeHappyPath:
             confidence=0.8,
             tags=["a"],
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(search_entries=[e], search_total=1)
             result = await mixin.search_knowledge()
         assert result["status"] == "ok"
@@ -559,7 +559,7 @@ class TestKnowledgeHappyPath:
                 "tags": ["tag1"],
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(insert_id=42)
             result = await mixin.create_knowledge_entry()
         assert result["status"] == "ok"
@@ -577,7 +577,7 @@ class TestKnowledgeHappyPath:
                 "tags": ["tag1"],
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(insert_id=42)
             result = await mixin.create_knowledge_entry()
         assert result["status"] == "ok"
@@ -596,7 +596,7 @@ class TestKnowledgeHappyPath:
                 "tags": "tag1, tag2",
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(insert_id=42)
             result = await mixin.create_knowledge_entry()
         assert result["status"] == "ok"
@@ -607,7 +607,7 @@ class TestKnowledgeHappyPath:
     async def test_delete_returns_result(self) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(return_value={"entry_id": 1})
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.delete_knowledge_entry()
         assert result["status"] == "ok"
@@ -619,7 +619,7 @@ class TestKnowledgeHappyPath:
         mock_req.get_json = AsyncMock(
             return_value={"entry_ids": [1, 2, 3], "action": "delete"}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.batch_knowledge()
         assert result["status"] == "ok"
@@ -634,7 +634,7 @@ class TestKnowledgeHappyPath:
         mock_req.get_json = AsyncMock(
             return_value={"entry_ids": [True, 2], "action": "delete"}
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(delete_result=True)
             result = await mixin.batch_knowledge()
         assert result["status"] == "ok"
@@ -654,7 +654,7 @@ class TestKnowledgeHappyPath:
                 "value": "rule",
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(
                 detail_entry=KnowledgeEntry(
                     title="old",
@@ -682,7 +682,7 @@ class TestKnowledgeHappyPath:
                 "value": "not-a-category",
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(
                 detail_entry=KnowledgeEntry(
                     title="old",
@@ -717,7 +717,7 @@ class TestKnowledgeHappyPath:
                 "value": True,
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "ok"
@@ -740,7 +740,7 @@ class TestKnowledgeHappyPath:
                 "tags": "tag1, tag2",
             }
         )
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "ok"
@@ -750,7 +750,7 @@ class TestKnowledgeHappyPath:
     @pytest.mark.asyncio
     async def test_detail_not_found(self) -> None:
         mock_req = _make_mock_request(entry_id="5")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=None)
             result = await mixin.get_knowledge_detail()
         assert result["status"] == "error"
@@ -761,7 +761,7 @@ class TestKnowledgeHappyPath:
         mock_req = _make_mock_request(entry_id="1")
         broken = MagicMock()
         broken.to_dict.side_effect = RuntimeError("broken knowledge entry")
-        with patch("core.api.knowledge_api.request", mock_req):
+        with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=broken)
             result = await mixin.get_knowledge_detail()
         assert result["status"] == "error"
@@ -780,8 +780,8 @@ async def test_detail_backend_failure_is_redacted_and_safely_logged() -> None:
     )
     request_mock = _make_mock_request(entry_id="7")
     with (
-        patch("core.api.knowledge_api.request", request_mock),
-        patch("core.api.knowledge_api.logger.error") as logged,
+        patch("core.platform.transport.page_api.knowledge_api.request", request_mock),
+        patch("core.platform.transport.page_api.knowledge_api.logger.error") as logged,
     ):
         result = await mixin.get_knowledge_detail()
     assert result["code"] == "internal_error"
@@ -803,7 +803,7 @@ async def test_full_form_update_backend_failure_is_redacted() -> None:
     )
     request_mock = _make_mock_request()
     request_mock.get_json = AsyncMock(return_value={"entry_id": 7, "title": "After"})
-    with patch("core.api.knowledge_api.request", request_mock):
+    with patch("core.platform.transport.page_api.knowledge_api.request", request_mock):
         result = await mixin.update_knowledge_entry()
     assert result["code"] == "internal_error"
     assert secret not in repr(result)

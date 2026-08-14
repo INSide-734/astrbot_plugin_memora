@@ -6,27 +6,30 @@ import json
 import time
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
 import pytest
 from astrbot.api.platform import MessageType
 
-from core.base.config_manager import ConfigApplyResult, ConfigManager
-from core.base.config_ownership import (
+from core.features.decay.application.operations import DecayOperationsMixin
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.memory.application.retrieval_optimizer import RetrievalOptimizer
+from core.features.recall.processors.atom_classifier import classify_atoms
+from core.features.recall.processors.memory_processor import MemoryProcessor
+from core.features.retrieval.rrf_fusion import FusedResult, HybridResult
+from core.features.retrieval.score_weighting import ScoreWeighting
+from core.platform.composition.component_factory import ComponentFactory
+from core.platform.config import (
+    ConfigApplyResult,
+    ConfigManager,
     ConfigOwnershipKind,
     resolve_config_ownership,
 )
-from core.base.config_validator import get_default_config, validate_config
-from core.initializer.component_factory import ComponentFactory
-from core.managers.decay_operations import DecayOperationsMixin
-from core.managers.memory_engine import MemoryEngine
-from core.managers.retrieval_optimizer import RetrievalOptimizer
-from core.processors.atom_classifier import classify_atoms
-from core.processors.memory_processor import MemoryProcessor
-from core.retrieval.rrf_fusion import FusedResult, HybridResult
-from core.retrieval.score_weighting import ScoreWeighting
-from core.tools.memory_search_tool import MemorySearchTool
+from core.platform.config.config_validator import get_default_config, validate_config
+from core.platform.transport.tools.memory_search_tool import MemorySearchTool
+from tests.tool_contract_support import call_text_handler
 
 
 def _build_engine_config(values: dict[str, object]) -> dict[str, object]:
@@ -184,8 +187,12 @@ async def test_projected_lifecycle_flags_control_real_engine_components(
     engine._schema.create_tables = AsyncMock()
 
     with (
-        patch("core.managers.memory_engine_lifecycle.BM25Retriever") as bm25_class,
-        patch("core.managers.anomaly_detector.AnomalyDetector") as detector_class,
+        patch(
+            "core.features.memory.application.memory_engine_lifecycle.BM25Retriever"
+        ) as bm25_class,
+        patch(
+            "core.features.memory.application.anomaly_detector.AnomalyDetector"
+        ) as detector_class,
     ):
         bm25_class.return_value.initialize = AsyncMock()
         await engine.initialize()
@@ -253,11 +260,11 @@ def test_factory_projects_retrieval_graph_decay_and_atom_fields() -> None:
 def test_runtime_mapping_is_explicit_unique_and_marks_graph_rebuild() -> None:
     """运行时映射不得重复来源或目标，图边开关必须标记重建。"""
 
-    from core.base.config_runtime_effects import REBUILD_REQUIRED_PATHS
-    from core.initializer.engine_runtime_config import (
+    from core.platform.composition.engine_runtime_config import (
         ENGINE_RUNTIME_FIELDS,
         RuntimeConfigEffect,
     )
+    from core.platform.config import REBUILD_REQUIRED_PATHS
 
     sources = [field.source_path for field in ENGINE_RUNTIME_FIELDS]
     targets = [field.target_key for field in ENGINE_RUNTIME_FIELDS]
@@ -273,10 +280,31 @@ def test_runtime_mapping_is_explicit_unique_and_marks_graph_rebuild() -> None:
     } == REBUILD_REQUIRED_PATHS
 
 
+def test_gate_only_change_requires_no_restart() -> None:
+    from core.platform.config import classify_config_effects, gate_hot_reload_required
+
+    assert classify_config_effects(("quality.gate.enabled",)) == (False, False)
+    assert gate_hot_reload_required(("quality.gate.enabled",)) is True
+
+
+def test_other_change_still_requires_restart() -> None:
+    from core.platform.config import classify_config_effects, gate_hot_reload_required
+
+    assert classify_config_effects(("debug",)) == (True, False)
+    assert gate_hot_reload_required(("debug",)) is False
+
+
+def test_mixed_change_still_requires_restart() -> None:
+    from core.platform.config import classify_config_effects
+
+    restart, rebuild = classify_config_effects(("quality.gate.enabled", "debug"))
+    assert restart is True and rebuild is False
+
+
 def test_runtime_mapping_fallbacks_match_pydantic_defaults() -> None:
     """映射表后备值必须与唯一 Pydantic 默认配置完全一致。"""
 
-    from core.initializer.engine_runtime_config import ENGINE_RUNTIME_FIELDS
+    from core.platform.composition.engine_runtime_config import ENGINE_RUNTIME_FIELDS
 
     defaults = get_default_config()
     mismatches = {
@@ -299,6 +327,19 @@ def test_every_schema_leaf_has_an_explicit_owner_classification() -> None:
 
     assert len(paths) == len(set(paths))
     assert all(item.owner for item in ownership.values())
+    assert (
+        ownership["topic_segmentation.strategy"].owner
+        == "core.features.reflection.application.topic_batch_preparer"
+    )
+    assert ownership["memory_evolution.enabled"].owner == (
+        "core.features.evolution.application.memory_evolution_manager"
+    )
+    assert ownership["episode_clustering.enabled"].owner == (
+        "core.features.evolution.application.episode_clusterer"
+    )
+    assert ownership["semantic_compression.enabled"].owner == (
+        "core.features.evolution.application.semantic_compressor"
+    )
     assert {
         ownership["recall_engine.top_k"].kind,
         ownership["dashboard.allow_runtime_build"].kind,
@@ -409,6 +450,8 @@ def test_recency_bump_can_be_disabled_without_disabling_decay() -> None:
         recency_bump_enabled=False,
     ).apply_weighting([fused], now)[0]
 
+    assert enabled.score_breakdown is not None
+    assert disabled.score_breakdown is not None
     assert enabled.score_breakdown["recency_weight"] == pytest.approx(1.5)
     assert disabled.score_breakdown["recency_weight"] == pytest.approx(1.0)
 
@@ -539,13 +582,14 @@ async def test_type_aware_decay_uses_only_the_public_dotted_key() -> None:
     assert enabled["EPISODIC"] < enabled["FACTUAL"]
 
 
-def _tool_context() -> MagicMock:
-    """构造 MemorySearchTool 所需的最小工具上下文。"""
+def _tool_event() -> MagicMock:
+    """构造 MemorySearchTool 所需的最小消息事件。"""
 
     event = MagicMock(unified_msg_origin="session-1")
-    event.get_message_type.return_value = MessageType.PRIVATE_MESSAGE
+    event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
     event.get_sender_id.return_value = "user-1"
-    return MagicMock(context=SimpleNamespace(event=event))
+    event.get_extra.return_value = SimpleNamespace(trust_status="unsupported")
+    return event
 
 
 @pytest.mark.asyncio
@@ -568,7 +612,13 @@ async def test_memory_search_formatter_mode_can_return_structured_only() -> None
         ),
         memory_engine=engine,
     )
-    disabled_data = json.loads(await disabled_tool.call(_tool_context(), query="拿铁"))
+    disabled_result = await call_text_handler(
+        disabled_tool,
+        _tool_event(),
+        query="拿铁",
+    )
+    assert isinstance(disabled_result, str)
+    disabled_data = json.loads(disabled_result)
     assert disabled_data["results"]
     assert disabled_data["formatted_recall"] == []
 
@@ -579,7 +629,13 @@ async def test_memory_search_formatter_mode_can_return_structured_only() -> None
         ),
         memory_engine=engine,
     )
-    rule_data = json.loads(await rule_tool.call(_tool_context(), query="拿铁"))
+    rule_result = await call_text_handler(
+        rule_tool,
+        _tool_event(),
+        query="拿铁",
+    )
+    assert isinstance(rule_result, str)
+    rule_data = json.loads(rule_result)
     assert rule_data["formatted_recall"]
 
 
@@ -587,10 +643,12 @@ async def test_memory_search_formatter_mode_can_return_structured_only() -> None
 async def test_config_apply_reports_restart_and_graph_rebuild_effects() -> None:
     """配置 API 必须区分重启需求、自动重载与图重建需求。"""
 
-    from core.api.config_api import ConfigApiMixin
+    from core.platform.transport.page_api.config_api import ConfigApiMixin
 
     class _ConfigApi(ConfigApiMixin):
         """暴露配置 API mixin 的最小测试实现。"""
+
+        plugin: Any
 
         def _maintenance_write_guard(self):
             """测试中不阻止配置写入。"""

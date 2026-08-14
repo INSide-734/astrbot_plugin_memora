@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from core.api.affection_api import AffectionApiMixin
-from core.base.entity_editing import EditConflictError
-from core.base.list_sorting import SortQuery
+from core.platform.transport.page_api.affection_api import AffectionApiMixin
+from core.shared.entity_editing import EditConflictError
+from core.shared.list_sorting import SortQuery
 
 
 def _mock_request(**args):
@@ -77,7 +77,9 @@ class TestAffectionStatus:
     @pytest.mark.asyncio
     async def test_no_manager_returns_error(self) -> None:
         stub = _make_stub(has_manager=False, has_store=False)
-        with patch("core.api.affection_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request", _mock_request()
+        ):
             result = await stub.get_affection_status()
         assert result["status"] == "error"
 
@@ -93,7 +95,9 @@ class TestAffectionStatus:
         }
         stub = _make_stub(status=status, groups=["group-1"])
 
-        with patch("core.api.affection_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request", _mock_request()
+        ):
             result = await stub.get_affection_status()
 
         assert result["status"] == "ok"
@@ -123,7 +127,10 @@ class TestAffectionStatus:
         }
         stub = _make_stub(status=status, groups=["g1"])
 
-        with patch("core.api.affection_api.request", _mock_request(group_id="g1")):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _mock_request(group_id="g1"),
+        ):
             result = await stub.get_affection_status()
 
         assert result["data"]["current_mood"] == {
@@ -147,7 +154,9 @@ class TestAffectionStatus:
         }
         stub = _make_stub(status=status, groups=[], mood=_make_mood())
 
-        with patch("core.api.affection_api.request", _mock_request()):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request", _mock_request()
+        ):
             result = await stub.get_affection_status()
 
         assert result["status"] == "ok"
@@ -187,7 +196,10 @@ class TestAffectionEditing:
             "params": {"score": 42},
         }
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await stub.batch_affection_users()
 
         assert result["code"] == "validation_error"
@@ -214,7 +226,10 @@ class TestAffectionEditing:
             "params": {"score": 42},
         }
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await stub.batch_affection_users()
 
         assert result["code"] == "validation_error"
@@ -253,7 +268,10 @@ class TestAffectionEditing:
             ],
         }
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await stub.batch_affection_users()
 
         assert result["data"] == {
@@ -309,7 +327,10 @@ class TestAffectionEditing:
             ],
         }
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await stub.batch_affection_users()
 
         assert result["data"] == {
@@ -357,7 +378,10 @@ class TestAffectionEditing:
             ],
         }
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await stub.batch_affection_users()
 
         assert result["code"] == "validation_error"
@@ -376,7 +400,9 @@ class TestAffectionEditing:
         stub._maintenance_write_guard.return_value = blocked
         request_mock = _request_json({"action": "delete", "items": []})
 
-        with patch("core.api.affection_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request", request_mock
+        ):
             result = await stub.batch_affection_users()
 
         assert result is blocked
@@ -396,8 +422,13 @@ class TestAffectionEditing:
             ],
         }
         with (
-            patch("core.api.affection_api.logger.info") as logged,
-            patch("core.api.affection_api.request", _request_json(payload)),
+            patch(
+                "core.platform.transport.page_api.affection_api.logger.info"
+            ) as logged,
+            patch(
+                "core.platform.transport.page_api.affection_api.request",
+                _request_json(payload),
+            ),
         ):
             result = await stub.batch_affection_users()
 
@@ -419,7 +450,7 @@ class TestAffectionEditing:
         manager.revision_for_affection = MagicMock(return_value="rev-1")
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _mock_request(
                 group_id="g1",
                 limit="10",
@@ -442,7 +473,8 @@ class TestAffectionEditing:
         )
 
         with patch(
-            "core.api.affection_api.request", _mock_request(limit="10", offset="0")
+            "core.platform.transport.page_api.affection_api.request",
+            _mock_request(limit="10", offset="0"),
         ):
             missing = await stub.list_affection_users()
         assert missing["code"] == "validation_error"
@@ -457,7 +489,8 @@ class TestAffectionEditing:
         stub.list_affection_users = AffectionApiMixin.list_affection_users.__get__(stub)
 
         with patch(
-            "core.api.affection_api.request", _mock_request(group_id="g1", **args)
+            "core.platform.transport.page_api.affection_api.request",
+            _mock_request(group_id="g1", **args),
         ):
             result = await stub.list_affection_users()
 
@@ -483,7 +516,7 @@ class TestAffectionEditing:
         )
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _mock_request(
                 group_id="g1",
                 limit="10",
@@ -514,7 +547,7 @@ class TestAffectionEditing:
         manager.revision_for_affection = MagicMock(return_value="rev-current")
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _request_json(
                 {"group_id": "g1", "user_id": "alice", "affection_score": 42}
             ),
@@ -525,7 +558,7 @@ class TestAffectionEditing:
         manager.create_user_affection_manual.assert_awaited_once_with("g1", "alice", 42)
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _request_json(
                 {
                     "identity": {"group_id": "g1", "user_id": "alice"},
@@ -541,7 +574,7 @@ class TestAffectionEditing:
         )
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _request_json(
                 {
                     "identity": {"group_id": "g1", "user_id": "alice"},
@@ -569,7 +602,7 @@ class TestAffectionEditing:
         )
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _request_json(
                 {
                     "group_id": "g1",
@@ -601,7 +634,10 @@ class TestAffectionEditing:
                 "expected_revision": "rev-current",
             }
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await getattr(stub, handler_name)()
 
         assert result["code"] == "validation_error"
@@ -620,7 +656,7 @@ class TestAffectionEditing:
         )
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _request_json(
                 {
                     "group_id": "g1",
@@ -659,7 +695,10 @@ class TestAffectionEditing:
         if handler_name.startswith("update"):
             payload["changes"] = {"affection_score": 11}
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await getattr(stub, handler_name)()
 
         assert result["code"] == "edit_conflict"
@@ -686,7 +725,7 @@ class TestAffectionEditing:
         manager.get_mood_history = AsyncMock(return_value=[mood])
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _request_json(
                 {
                     "group_id": "g1",
@@ -700,13 +739,16 @@ class TestAffectionEditing:
         assert set_result["data"]["duration_hours"] == 2.5
         assert set_result["data"]["start_time"] == 1700000000.0
 
-        with patch("core.api.affection_api.request", _request_json({"group_id": "g1"})):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json({"group_id": "g1"}),
+        ):
             reset_result = await stub.reset_affection_mood()
         assert reset_result["data"]["mood_type"] == "happy"
         manager.reset_mood.assert_awaited_once_with("g1")
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _mock_request(
                 group_id="g1",
                 limit="3",
@@ -723,7 +765,7 @@ class TestAffectionEditing:
         )
 
         with patch(
-            "core.api.affection_api.request",
+            "core.platform.transport.page_api.affection_api.request",
             _request_json(
                 {
                     "group_id": "g1",
@@ -756,7 +798,10 @@ class TestAffectionEditing:
             "duration_hours": duration_hours,
         }
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await stub.set_affection_mood()
 
         assert result["status"] == "ok"
@@ -790,7 +835,10 @@ class TestAffectionEditing:
             "duration_hours": duration_hours,
         }
 
-        with patch("core.api.affection_api.request", _request_json(payload)):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _request_json(payload),
+        ):
             result = await stub.set_affection_mood()
 
         assert result["code"] == "validation_error"
@@ -810,7 +858,9 @@ class TestAffectionEditing:
         request_mock = _request_json(
             {"group_id": "g1", "user_id": "secret-user", "affection_score": 1}
         )
-        with patch("core.api.affection_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request", request_mock
+        ):
             result = await stub.create_affection_user()
         assert result is blocked
         request_mock.get_json.assert_not_awaited()
@@ -823,9 +873,11 @@ class TestAffectionEditing:
             return_value="rev-1"
         )
         with (
-            patch("core.api.affection_api.logger.info") as logged,
             patch(
-                "core.api.affection_api.request",
+                "core.platform.transport.page_api.affection_api.logger.info"
+            ) as logged,
+            patch(
+                "core.platform.transport.page_api.affection_api.request",
                 _request_json(
                     {"group_id": "g1", "user_id": "alice", "affection_score": 1}
                 ),
@@ -840,7 +892,10 @@ class TestAffectionEditing:
     async def test_missing_group_data_returns_error(self) -> None:
         stub = _make_stub(status=None, groups=["group-x"])
 
-        with patch("core.api.affection_api.request", _mock_request(group_id="group-x")):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _mock_request(group_id="group-x"),
+        ):
             result = await stub.get_affection_status()
 
         assert result["status"] == "error"
@@ -862,7 +917,10 @@ class TestAffectionEditing:
         }
         stub = _make_stub(status=status, groups=["group-1"])
 
-        with patch("core.api.affection_api.request", _mock_request(group_id="group-1")):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _mock_request(group_id="group-1"),
+        ):
             result = await stub.get_affection_status()
 
         assert result["status"] == "ok"
@@ -884,7 +942,10 @@ class TestAffectionEditing:
         }
         stub = _make_stub(status=status, groups=["group-1"], mood=None)
 
-        with patch("core.api.affection_api.request", _mock_request(group_id="group-1")):
+        with patch(
+            "core.platform.transport.page_api.affection_api.request",
+            _mock_request(group_id="group-1"),
+        ):
             result = await stub.get_affection_status()
 
         assert result["status"] == "ok"

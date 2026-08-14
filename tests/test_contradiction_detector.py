@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from core.models.memory_evolution import MemorySourceRef
-from core.processors.contradiction_detector import (
+from core.features.evolution.application.contradiction_detector import (
     ContradictionDetector,
     _detect_semantic_contradiction,
     _jaccard,
     _tokenize,
 )
+from core.shared.contracts import MemorySourceRef
 
 UTC = timezone.utc
 NOW = datetime(2026, 8, 1, 8, 0, tzinfo=UTC)

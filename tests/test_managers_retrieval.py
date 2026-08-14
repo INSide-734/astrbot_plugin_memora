@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from core.managers.retrieval_optimizer import RetrievalOptimizer, _safe_json
-from core.retrieval.rrf_fusion import HybridResult
+from core.features.memory.application.retrieval_optimizer import (
+    RetrievalOptimizer,
+    _safe_json,
+)
+from core.features.retrieval.rrf_fusion import HybridResult
 
 
 def _make_hr(
@@ -87,6 +90,13 @@ class TestCacheKey:
         opt = RetrievalOptimizer(config={})
         key1 = opt.cache_key("who", 5, "sess", None, memory_types=["FACTUAL"])
         key2 = opt.cache_key("who", 5, "sess", None, memory_types=["RELATIONAL"])
+        assert key1 != key2
+
+    def test_cache_key_changes_with_include_mark_write(self) -> None:
+        """显式包含开关必须使用独立缓存键，避免互相污染。"""
+        opt = RetrievalOptimizer(config={})
+        key1 = opt.cache_key("test", 5, "sess", None)
+        key2 = opt.cache_key("test", 5, "sess", None, include_mark_write=True)
         assert key1 != key2
 
 

@@ -10,15 +10,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.response_utils import error_response, ok_response
-from core.jargon.jargon_store import JargonStore
-from core.jargon.models import JargonMeaning
-from core.page_api import (
+from core.features.cognition.jargon.jargon_store import JargonStore
+from core.features.cognition.jargon.models import JargonMeaning
+from core.platform.transport.page_api.page_api import (
     PAGE_API_ALIAS_PREFIXES,
     PAGE_API_PREFIX,
     PLUGIN_NAME,
     PluginPageApi,
 )
+from core.platform.transport.page_api.response_utils import error_response, ok_response
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -147,8 +147,13 @@ class TestMemoryFullFormUpdate:
         )
         request_mock.get_json = AsyncMock(return_value=payload)
         with (
-            patch("core.api.memory_write_api.request", request_mock),
-            patch("core.api.memory_write_api.logger.error") as logged,
+            patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.logger.error"
+            ) as logged,
         ):
             result = await api.update_memory()
         assert result["code"] == "internal_error"
@@ -172,7 +177,9 @@ class TestMemoryFullFormUpdate:
             }
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result["status"] == "ok"
@@ -207,7 +214,9 @@ class TestMemoryFullFormUpdate:
             }
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result["status"] == "error"
@@ -229,7 +238,9 @@ class TestMemoryFullFormUpdate:
             }
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result["status"] == "ok"
@@ -255,7 +266,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result["status"] == "error"
@@ -272,7 +285,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"memory_id": 8}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result["status"] == "error"
@@ -292,7 +307,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {field: invalid}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result["status"] == "error"
@@ -310,7 +327,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"status": "active"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result["status"] == "error"
@@ -328,7 +347,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result == {
@@ -347,7 +368,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             result = await api.update_memory()
 
         assert result["code"] == "replacement_failed"
@@ -368,8 +391,13 @@ class TestMemoryFullFormUpdate:
         )
 
         with (
-            patch("core.api.memory_write_api.request", request_mock) as request_patch,
-            patch("core.api.memory_write_api.logger.error") as log_error,
+            patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ) as request_patch,
+            patch(
+                "core.platform.transport.page_api.memory_write_api.logger.error"
+            ) as log_error,
         ):
             result = await api.update_memory()
 
@@ -400,8 +428,13 @@ class TestMemoryFullFormUpdate:
         )
 
         with (
-            patch("core.api.memory_write_api.request", request_mock),
-            patch("core.api.memory_write_api.logger.error") as log_error,
+            patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.logger.error"
+            ) as log_error,
         ):
             result = await api.update_memory()
 
@@ -429,8 +462,13 @@ class TestMemoryFullFormUpdate:
         )
 
         with (
-            patch("core.api.memory_write_api.request", request_mock),
-            patch("core.api.memory_write_api.logger.error") as log_error,
+            patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.logger.error"
+            ) as log_error,
         ):
             result = await api.update_memory()
 
@@ -462,8 +500,13 @@ class TestMemoryFullFormUpdate:
         )
 
         with (
-            patch("core.api.memory_write_api.request", request_mock),
-            patch("core.api.memory_write_api.logger.error") as log_error,
+            patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.logger.error"
+            ) as log_error,
         ):
             result = await api.update_memory()
 
@@ -496,8 +539,13 @@ class TestMemoryFullFormUpdate:
         )
 
         with (
-            patch("core.api.memory_write_api.request", request_mock),
-            patch("core.api.memory_write_api.logger.error") as log_error,
+            patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.logger.error"
+            ) as log_error,
         ):
             result = await api.update_memory()
 
@@ -532,9 +580,13 @@ class TestMemoryFullFormUpdate:
         )
 
         with (
-            patch("core.api.memory_write_api.request", request_mock),
             patch(
-                "core.api.memory_write_api.asyncio.shield", cancel_after_completed_add
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.asyncio.shield",
+                cancel_after_completed_add,
             ),
         ):
             with pytest.raises(asyncio.CancelledError):
@@ -564,9 +616,12 @@ class TestMemoryFullFormUpdate:
         )
 
         with (
-            patch("core.api.memory_write_api.request", request_mock),
             patch(
-                "core.api.memory_write_api.asyncio.shield",
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.asyncio.shield",
                 cancel_after_completed_old_delete,
             ),
         ):
@@ -608,7 +663,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             task = asyncio.create_task(api.update_memory())
             try:
                 await asyncio.wait_for(add_started.wait(), timeout=1)
@@ -653,7 +710,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             task = asyncio.create_task(api.update_memory())
             try:
                 await asyncio.wait_for(old_delete_started.wait(), timeout=1)
@@ -696,7 +755,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             task = asyncio.create_task(api.update_memory())
             try:
                 await asyncio.wait_for(old_delete_started.wait(), timeout=1)
@@ -747,7 +808,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             task = asyncio.create_task(api.update_memory())
             try:
                 await asyncio.wait_for(old_delete_started.wait(), timeout=1)
@@ -793,7 +856,9 @@ class TestMemoryFullFormUpdate:
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with patch("core.api.memory_write_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
             task = asyncio.create_task(api.update_memory())
             try:
                 await asyncio.wait_for(cleanup_started.wait(), timeout=1)
@@ -1342,7 +1407,9 @@ class TestMaintenanceWriteGuard:
         backup_manager.list_pending_restores.side_effect = RuntimeError(secret)
         api = PluginPageApi(SimpleNamespace(_backup_manager=backup_manager))
 
-        with patch("core.page_api.logger.debug") as log_debug:
+        with patch(
+            "core.platform.transport.page_api.page_api.logger.debug"
+        ) as log_debug:
             result = api._maintenance_write_guard()
 
         assert result == {
@@ -1396,7 +1463,9 @@ class TestGetMemoryDetail:
         request_mock.args = {"memory_id": "7"}
         caplog.set_level(logging.ERROR)
 
-        with patch("core.api.memory_read_api.request", request_mock):
+        with patch(
+            "core.platform.transport.page_api.memory_read_api.request", request_mock
+        ):
             result = await api.get_memory_detail()
 
         assert result == {
@@ -1436,7 +1505,9 @@ class TestGetMemoryDetail:
         caplog.set_level(logging.ERROR)
 
         with (
-            patch("core.api.memory_read_api.request", request_mock),
+            patch(
+                "core.platform.transport.page_api.memory_read_api.request", request_mock
+            ),
             pytest.raises(asyncio.CancelledError),
         ):
             await api.get_memory_detail()
@@ -2239,8 +2310,10 @@ class TestMaintenanceWriteGuardCoverage:
         )
 
         with (
-            patch("core.page_api.logger.error") as log_error,
-            patch("core.api.profile_api.request", request_mock),
+            patch(
+                "core.platform.transport.page_api.page_api.logger.error"
+            ) as log_error,
+            patch("core.platform.transport.page_api.profile_api.request", request_mock),
         ):
             result = await api.create_profile()
 

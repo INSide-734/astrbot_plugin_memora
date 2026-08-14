@@ -5,8 +5,10 @@ import json
 
 import pytest
 
-from core.storage.base import BaseStore, ConnectionPool
-from core.storage.base_store import BaseStore as InstanceBaseStore
+from core.features.memory.infrastructure.base import BaseStore, ConnectionPool
+from core.features.memory.infrastructure.base_store import (
+    BaseStore as InstanceBaseStore,
+)
 
 
 class TestConnectionPool:

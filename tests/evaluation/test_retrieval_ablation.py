@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 
 def _engine(
     *, hop: int = 1, reranker: object | None = None, vector_access: bool = True
-):
+) -> Any:
     """构造覆盖 config、retriever、cache 和向量能力的轻量引擎。"""
 
     config = {
@@ -29,7 +30,7 @@ def _engine(
         graph_retriever=graph,
         config=config,
     )
-    from core.adapter_capabilities import (
+    from core.shared.adapter_capabilities import (
         ASTRBOT_FAISS_CAPABILITIES,
         AdapterCapability,
         AdapterCapabilityContract,
@@ -61,7 +62,7 @@ def _engine(
 
             return []
 
-    engine = Engine()
+    engine: Any = Engine()
     engine.config = config
     engine.hybrid_retriever = hybrid
     engine.graph_keyword_retriever = keyword
@@ -75,7 +76,9 @@ def _engine(
 def test_descriptors_report_available_and_equivalent_variants() -> None:
     """能力描述应区分可运行与等价变体。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     descriptors = {
         item["name"]: item
@@ -96,7 +99,7 @@ def test_descriptors_report_available_and_equivalent_variants() -> None:
 def test_descriptors_require_engine_and_tolerate_malformed_live_state() -> None:
     """缺失引擎应 fail closed，畸形组件属性不得破坏能力列表。"""
 
-    from core.evaluation.retrieval_ablation import (
+    from core.features.evaluation.application.retrieval_ablation import (
         RETRIEVAL_VARIANT_NAMES,
         RetrievalAblationController,
     )
@@ -106,7 +109,7 @@ def test_descriptors_require_engine_and_tolerate_malformed_live_state() -> None:
 
     engine = _engine()
     engine.graph_keyword_retriever.expansion_hops = object()
-    malformed_mmr = type("MMRReranker", (), {})()
+    malformed_mmr: Any = type("MMRReranker", (), {})()
     malformed_mmr._lambda = object()
     engine.dual_route_retriever.reranker = malformed_mmr
     descriptors = RetrievalAblationController(engine).descriptors()
@@ -116,8 +119,10 @@ def test_descriptors_require_engine_and_tolerate_malformed_live_state() -> None:
 def test_descriptors_reject_config_and_reranker_no_ops() -> None:
     """已经处于目标状态的配置与 MMR 变体必须标记为 baseline 等价。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
-    from core.retrieval.reranker_factory import MMRReranker
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
+    from core.features.retrieval.reranker_factory import MMRReranker
 
     engine = _engine(reranker=MMRReranker(0.7))
     engine.config["recall_engine.chain_graph_expansion_enabled"] = False
@@ -136,7 +141,9 @@ def test_descriptors_reject_config_and_reranker_no_ops() -> None:
 def test_embedding_variant_requires_document_vector_access() -> None:
     """embedding-similarity 缺少稳定文档向量访问时必须禁用。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     descriptors = {
         item["name"]: item
@@ -153,7 +160,9 @@ def test_embedding_variant_requires_document_vector_access() -> None:
 def test_embedding_variant_rejects_unknown_adapter_with_matching_methods() -> None:
     """未知 adapter 即使方法同名也不能被推断为支持向量访问。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     engine = _engine()
     engine.faiss_db = SimpleNamespace(
@@ -171,12 +180,15 @@ def test_embedding_variant_rejects_unknown_adapter_with_matching_methods() -> No
 def test_prepare_copies_components_config_and_caches() -> None:
     """快照应复制可变组件和缓存，而不污染 live engine。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     live = _engine(hop=1)
     prepared = RetrievalAblationController(live).prepare("graph_neighbors_2_hops")
 
     assert prepared.available is True
+    assert prepared.engine is not None
     assert prepared.engine is not live
     assert prepared.engine.graph_keyword_retriever.expansion_hops == 2
     assert live.graph_keyword_retriever.expansion_hops == 1
@@ -189,11 +201,14 @@ def test_prepare_copies_components_config_and_caches() -> None:
 def test_prepare_config_variant_does_not_mutate_live_engine() -> None:
     """配置类变体只能修改 snapshot config。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     live = _engine()
     prepared = RetrievalAblationController(live).prepare("graph_expansion_off")
 
+    assert prepared.engine is not None
     assert (
         prepared.engine.config["recall_engine.chain_graph_expansion_enabled"] is False
     )
@@ -206,7 +221,9 @@ def test_prepare_config_variant_does_not_mutate_live_engine() -> None:
 def test_prepare_unknown_or_unavailable_variant_is_skipped() -> None:
     """未知或缺少能力的变体应返回稳定不可用结果。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     controller = RetrievalAblationController(_engine(vector_access=False))
 
@@ -223,18 +240,23 @@ def test_prepare_unknown_or_unavailable_variant_is_skipped() -> None:
 async def test_snapshot_search_uses_snapshot_method_binding() -> None:
     """快照的 search_memories 必须绑定到 snapshot 本身。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     live = _engine()
     prepared = RetrievalAblationController(live).prepare("baseline")
 
+    assert prepared.engine is not None
     assert await prepared.engine.search_memories(query="synthetic") == []
 
 
 def test_snapshot_disables_retrieval_optimizer_canonical_writes() -> None:
     """评测快照必须切断 RetrievalOptimizer 的 canonical 写回。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     live = _engine()
     live_update = object()
@@ -244,6 +266,7 @@ def test_snapshot_disables_retrieval_optimizer_canonical_writes() -> None:
 
     prepared = RetrievalAblationController(live).prepare("baseline")
 
+    assert prepared.engine is not None
     assert prepared.engine._retrieval._update_memory is None
     assert callable(prepared.engine._retrieval._create_tracked_task)
     assert live._retrieval._update_memory is live_update
@@ -253,7 +276,9 @@ def test_snapshot_disables_retrieval_optimizer_canonical_writes() -> None:
 def test_prepare_failure_uses_stable_reason_without_exception_text() -> None:
     """快照构造失败只能暴露稳定 reason code。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     class BrokenEngine:
         config = {}
@@ -273,11 +298,13 @@ def test_prepare_failure_uses_stable_reason_without_exception_text() -> None:
 def test_descriptors_reject_noop_config_and_reranker_variants() -> None:
     """已经生效的配置或同权重 reranker 不得再次标记为可消融。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
-    from core.retrieval.embedding_similarity_reranker import (
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
+    from core.features.retrieval.embedding_similarity_reranker import (
         EmbeddingSimilarityReranker,
     )
-    from core.retrieval.reranker_factory import MMRReranker
+    from core.features.retrieval.reranker_factory import MMRReranker
 
     graph_disabled = _engine()
     graph_disabled.config["recall_engine.chain_graph_expansion_enabled"] = False
@@ -316,8 +343,10 @@ def test_descriptors_reject_noop_config_and_reranker_variants() -> None:
 def test_embedding_variant_does_not_silently_fallback_on_vector_failure() -> None:
     """向量执行失败必须成为稳定不可用错误，不能静默回退 MMR。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     live = _engine()
 
@@ -330,6 +359,7 @@ def test_embedding_variant_does_not_silently_fallback_on_vector_failure() -> Non
     prepared = RetrievalAblationController(live).prepare(
         "final_reranker_embedding_similarity"
     )
+    assert prepared.engine is not None
     reranker = prepared.engine.dual_route_retriever.reranker
     candidates = [
         HybridResult(1, 0.9, 0.9, None, None, "候选一", {}),
@@ -345,13 +375,16 @@ def test_embedding_variant_does_not_silently_fallback_on_vector_failure() -> Non
 def test_embedding_probe_failure_is_sticky_across_later_success() -> None:
     """前一个用例的 embedding 失败不能被后续成功覆盖。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     live = _engine()
     prepared = RetrievalAblationController(live).prepare(
         "final_reranker_embedding_similarity"
     )
+    assert prepared.engine is not None
     reranker = prepared.engine.dual_route_retriever.reranker
     candidates = [
         HybridResult(1, 0.9, 0.9, None, None, "候选一", {}),
@@ -371,12 +404,15 @@ def test_embedding_probe_failure_is_sticky_across_later_success() -> None:
 def test_embedding_probe_success_is_not_reset_by_unexercised_case() -> None:
     """成功执行后，未触发目标策略的用例不能重置 available 状态。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
-    from core.retrieval.rrf_fusion import HybridResult
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
+    from core.features.retrieval.rrf_fusion import HybridResult
 
     prepared = RetrievalAblationController(_engine()).prepare(
         "final_reranker_embedding_similarity"
     )
+    assert prepared.engine is not None
     reranker = prepared.engine.dual_route_retriever.reranker
     candidates = [
         HybridResult(1, 0.9, 0.9, None, None, "候选一", {}),
@@ -394,8 +430,10 @@ async def test_snapshot_shallow_copies_real_memory_evolution_store_config(
 ) -> None:
     """真实 MemoryEvolutionStore 配置也必须能创建只读快照。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
-    from core.storage.memory_evolution_store import MemoryEvolutionStore
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
+    from core.features.evolution.infrastructure import MemoryEvolutionStore
 
     store = MemoryEvolutionStore(str(tmp_path / "evolution.db"))
     await store.initialize()
@@ -407,6 +445,7 @@ async def test_snapshot_shallow_copies_real_memory_evolution_store_config(
 
     try:
         assert prepared.available is True
+        assert prepared.engine is not None
         assert prepared.engine.config is not live.config
         assert (
             prepared.engine.config["memory_evolution"]
@@ -420,7 +459,9 @@ async def test_snapshot_shallow_copies_real_memory_evolution_store_config(
 def test_prepare_failure_is_stable_and_cancellation_propagates() -> None:
     """普通快照失败只返回 reason code，取消信号必须继续传播。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     class BrokenEngine:
         config = {}

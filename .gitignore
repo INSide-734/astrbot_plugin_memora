@@ -64,10 +64,13 @@ storage/**/*.sqlite*
 .codegraph/
 .agents/
 .worktrees/
-.codex/
+.codex/*
+!.codex/lsp-client.json
 openspec/
 .uv-cache/
 .tmp*/
 
 # 本地数据目录
 data/
+# Added by code-review-graph
+.code-review-graph/

@@ -6,7 +6,9 @@ import time
 
 import pytest
 
-from core.processors.human_like_formatter import HumanLikeMemoryFormatter
+from core.features.recall.processors.human_like_formatter import (
+    HumanLikeMemoryFormatter,
+)
 
 
 class TestHumanLikeFormatter:

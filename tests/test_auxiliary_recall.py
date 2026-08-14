@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.handlers.auxiliary_recall import AuxiliaryRecall
-from core.managers.retrieval_timing import RetrievalTimingSink
+from core.features.memory.application.retrieval_timing import RetrievalTimingSink
+from core.features.recall.application.auxiliary_recall import AuxiliaryRecall
 
 
 def _config(values: dict[str, object]) -> MagicMock:
@@ -130,7 +130,7 @@ async def test_spontaneous_recall_probability_gates_search(
         return next(draws)
 
     monkeypatch.setattr(
-        "core.handlers.auxiliary_recall.random.random",
+        "core.features.recall.application.auxiliary_recall.random.random",
         next_draw,
     )
 

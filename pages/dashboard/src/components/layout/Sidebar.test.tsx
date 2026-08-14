@@ -174,7 +174,7 @@ describe("Sidebar", () => {
       within(group as HTMLElement)
         .getAllByRole("button")
         .map((button) => button.getAttribute("aria-label")),
-    ).toEqual(["Система", "Конфигурация"]);
+    ).toEqual(["Система", "Конфигурация", "Ворота"]);
   });
 
   it("navigates to config through the shared onNavigate contract", () => {

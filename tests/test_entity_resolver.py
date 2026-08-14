@@ -7,7 +7,7 @@ import tempfile
 
 import pytest
 
-from core.processors.entity_resolver import EntityResolver
+from core.features.recall.processors.entity_resolver import EntityResolver
 
 
 class TestCanonicalize:

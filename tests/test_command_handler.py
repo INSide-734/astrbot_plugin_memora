@@ -16,7 +16,7 @@ class TestHandleHelp:
 
     @pytest.mark.asyncio
     async def test_yields_help_message(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         event = MagicMock()
         event.plain_result = MagicMock(return_value="help_message")
@@ -33,7 +33,7 @@ class TestHandleSummarizeErrors:
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_conversation_manager(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         handler = CommandHandler(
             context=MagicMock(),
@@ -53,7 +53,7 @@ class TestHandleSummarizeErrors:
 
     @pytest.mark.asyncio
     async def test_returns_busy_when_summary_window_locked(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         locker = MagicMock()
         locker.try_begin_summary_window = AsyncMock(return_value=False)
@@ -82,7 +82,7 @@ class TestHandleSummarizeErrors:
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_memory_engine(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         handler = CommandHandler(
             context=MagicMock(),
@@ -102,7 +102,7 @@ class TestHandleSummarizeErrors:
 
     @pytest.mark.asyncio
     async def test_blocks_summarize_when_pending_restore_guard_is_active(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         handler = CommandHandler(
             context=MagicMock(),
@@ -127,8 +127,10 @@ class TestHandleSummarizeErrors:
     ) -> None:
         """手动总结隔离低质量候选后不得写 canonical，但应安全推进窗口。"""
 
-        from core.command_handler import CommandHandler
-        from core.review.memory_quality_gate import MemoryGateResult
+        from core.features.quality.application.memory_quality_gate import (
+            MemoryGateResult,
+        )
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         conversation_manager = MagicMock()
         conversation_manager.store.get_message_count = AsyncMock(return_value=2)
@@ -173,7 +175,10 @@ class TestHandleSummarizeErrors:
         event.unified_msg_origin = "session-1"
         event.plain_result = MagicMock(side_effect=lambda message: message)
 
-        with patch("core.utils.get_persona_id", AsyncMock(return_value="persona-1")):
+        with patch(
+            "core.platform.context_helpers.get_persona_id",
+            AsyncMock(return_value="persona-1"),
+        ):
             results = [result async for result in handler.handle_summarize(event)]
 
         assert len(results) == 2
@@ -192,7 +197,7 @@ class TestMaintenanceWriteGuard:
     """命令层维护写入保护测试。"""
 
     def test_returns_none_when_guard_missing(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         handler = CommandHandler(
             context=MagicMock(),
@@ -205,7 +210,7 @@ class TestMaintenanceWriteGuard:
         assert handler._maintenance_write_guard_message() is None
 
     def test_returns_message_when_guard_active(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         handler = CommandHandler(
             context=MagicMock(),
@@ -222,7 +227,7 @@ class TestMaintenanceWriteGuard:
 
     @pytest.mark.asyncio
     async def test_blocks_forget_when_guard_active(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         handler = CommandHandler(
             context=MagicMock(),
@@ -248,7 +253,7 @@ class TestHandleUpdate:
     @pytest.mark.asyncio
     async def test_apply_delegates_to_runtime_installer(self) -> None:
         """``apply`` 应启动安装器并返回安排重载的提示。"""
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         manager = MagicMock()
         manager.is_enabled.return_value = True
@@ -277,7 +282,7 @@ class TestHandleUpdate:
     @pytest.mark.asyncio
     async def test_apply_reports_unavailable_without_installer(self) -> None:
         """宿主不支持单插件安装时，命令应返回不可用提示。"""
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         manager = MagicMock()
         manager.is_enabled.return_value = True
@@ -299,7 +304,7 @@ class TestHandleUpdate:
 
     @pytest.mark.asyncio
     async def test_blocks_rebuild_index_when_guard_active(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         handler = CommandHandler(
             context=MagicMock(),
@@ -320,7 +325,7 @@ class TestHandleUpdate:
 
     @pytest.mark.asyncio
     async def test_allows_cleanup_preview_when_guard_active(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         context = MagicMock()
         context.conversation_manager.get_curr_conversation_id = AsyncMock(
@@ -347,7 +352,7 @@ class TestHandleUpdate:
 
     @pytest.mark.asyncio
     async def test_blocks_cleanup_exec_when_guard_active(self) -> None:
-        from core.command_handler import CommandHandler
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         handler = CommandHandler(
             context=MagicMock(),

@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.base.config_manager import (
+from core.platform.config import (
     ConfigApplyResult,
     ConfigConflictError,
     ConfigPersistenceError,
     ConfigValidationError,
 )
+from core.platform.resources import PluginResourceLocator
+
+_PLUGIN_ROOT = Path(__file__).resolve().parents[1]
 
 
 class _SchemaConfig(dict):
@@ -32,6 +36,7 @@ class _Request:
         json_error: Exception | None = None,
     ) -> None:
         self.args = args or {}
+        self.query: dict[str, Any] = {}
         self._body = body
         self._json_error = json_error
 
@@ -67,10 +72,11 @@ def _make_api(
     config_manager: Any = None,
     hot_reload: bool = False,
 ) -> tuple[Any, Any]:
-    from core.api.config_api import ConfigApiMixin
+    from core.platform.transport.page_api.config_api import ConfigApiMixin
 
     class _ConfigApi(ConfigApiMixin):
-        pass
+        plugin: Any
+        _maintenance_write_guard: Any
 
     context = SimpleNamespace(
         request=request or _Request(),
@@ -82,6 +88,7 @@ def _make_api(
             schema if schema is not None else {"field": {"type": "string"}}
         ),
         config_manager=config_manager or MagicMock(),
+        resource_locator=PluginResourceLocator(_PLUGIN_ROOT),
         context=context,
         instance_id="instance-123",
         supports_plugin_reload=MagicMock(return_value=hot_reload),
@@ -181,8 +188,28 @@ class TestConfigSchemaApi:
         }
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("schema", [None, [], {}, "bad-schema"])
-    async def test_invalid_or_unavailable_schema_has_stable_error_shape(
+    async def test_non_iterable_provider_result_degrades_to_empty_options(self) -> None:
+        """Provider getter 返回未就绪对象时应安全降级为空列表。"""
+
+        api, plugin = _make_api(
+            embedding_providers=[_Provider("embed-ok", "bge-m3", "ollama_embedding")]
+        )
+        plugin.context.get_all_providers = MagicMock(return_value=object())
+
+        result = await api.get_config_schema()
+
+        assert result["status"] == "ok"
+        assert result["data"]["provider_options"] == {
+            "llm": [],
+            "embedding": [{"id": "embed-ok", "label": "bge-m3"}],
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "schema",
+        [None, [], {}, "bad-schema", {"broken": "schema"}],
+    )
+    async def test_invalid_host_schema_falls_back_to_local_resource(
         self, schema: Any
     ) -> None:
         api, plugin = _make_api()
@@ -190,10 +217,31 @@ class TestConfigSchemaApi:
 
         result = await api.get_config_schema()
 
-        assert result["status"] == "error"
-        assert result["code"] == "schema_unavailable"
-        assert isinstance(result["message"], str) and result["message"]
-        assert set(result) == {"status", "code", "message"}
+        assert result["status"] == "ok"
+        assert "debug" in result["data"]["schema"]
+
+    @pytest.mark.asyncio
+    async def test_schema_unavailable_has_stable_error_when_fallback_fails(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """host 与 source Schema 均不可用时返回稳定错误 envelope。"""
+
+        api, plugin = _make_api()
+        plugin.astrbot_config.schema = {"broken": "schema"}
+        monkeypatch.setattr(
+            plugin.resource_locator,
+            "load_schema",
+            lambda _schema=None: None,
+        )
+
+        result = await api.get_config_schema()
+
+        assert result == {
+            "status": "error",
+            "code": "schema_unavailable",
+            "message": "AstrBot 配置 Schema 不可用",
+        }
 
     @pytest.mark.asyncio
     async def test_schema_read_does_not_require_initialized_memory_engine(self) -> None:
@@ -223,6 +271,43 @@ class TestConfigSchemaApi:
 
 
 class TestConfigStateApi:
+    @pytest.mark.asyncio
+    async def test_state_exposes_prompt_defaults_from_files(self) -> None:
+        manager = MagicMock()
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"debug": False}, "rev-1")
+        )
+        api, plugin = _make_api(config_manager=manager)
+        plugin.prompt_dir = Path(__file__).parent.parent / "core" / "prompts"
+
+        result = await api.get_config_state()
+
+        defaults = result["data"]["prompt_defaults"]
+        assert set(defaults) == {"gate_judge", "group_chat", "private_chat"}
+        assert "候选声明" in defaults["gate_judge"]
+        assert "对话历史" in defaults["group_chat"]
+        assert "对话历史" in defaults["private_chat"]
+
+    @pytest.mark.asyncio
+    async def test_state_prompt_defaults_missing_files_do_not_fail_endpoint(
+        self,
+    ) -> None:
+        manager = MagicMock()
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"debug": False}, "rev-1")
+        )
+        api, plugin = _make_api(config_manager=manager)
+        plugin.prompt_dir = Path("/nonexistent/prompts")
+
+        result = await api.get_config_state()
+
+        assert result["status"] == "ok"
+        assert result["data"]["prompt_defaults"] == {
+            "gate_judge": "",
+            "group_chat": "",
+            "private_chat": "",
+        }
+
     @pytest.mark.asyncio
     async def test_uses_astrbot_web_request_when_context_has_no_request(
         self, monkeypatch: pytest.MonkeyPatch
@@ -259,6 +344,11 @@ class TestConfigStateApi:
                 "revision": "rev-1",
                 "instance_id": "instance-123",
                 "changed": False,
+                "prompt_defaults": {
+                    "gate_judge": "",
+                    "group_chat": "",
+                    "private_chat": "",
+                },
             },
         }
 
@@ -282,7 +372,7 @@ class TestConfigStateApi:
     async def test_reconciles_external_source_change_before_returning_state(
         self,
     ) -> None:
-        from core.base.config_manager import ConfigManager
+        from core.platform.config import ConfigManager
 
         source = {"recall_engine": {"top_k": 5}}
         manager = ConfigManager(source)
@@ -321,6 +411,11 @@ class TestConfigStateApi:
                 "revision": "rev-1",
                 "instance_id": "instance-123",
                 "changed": False,
+                "prompt_defaults": {
+                    "gate_judge": "",
+                    "group_chat": "",
+                    "private_chat": "",
+                },
             },
         }
         plugin._ensure_plugin_ready.assert_not_awaited()
@@ -346,6 +441,11 @@ class TestConfigStateApi:
                 "instance_id": "instance-123",
                 "changed": True,
                 "config": config,
+                "prompt_defaults": {
+                    "gate_judge": "",
+                    "group_chat": "",
+                    "private_chat": "",
+                },
             },
         }
 
@@ -550,6 +650,70 @@ class TestConfigApplyApi:
         recorder.schedule_cleanup.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_apply_gate_change_hot_reloads_without_restart(self) -> None:
+        """门禁叶子保存成功后应即时热重载，不安排插件重启。"""
+
+        from core.features.quality.application.gate_runtime import (
+            GateRuntime,
+            default_gate_snapshot,
+        )
+
+        manager = MagicMock()
+        manager.apply_config_changes = AsyncMock(
+            return_value=ConfigApplyResult("rev-new", ("quality.gate.enabled",))
+        )
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"quality": {"gate": {"enabled": False}}}, "rev-new")
+        )
+        api, plugin = _make_api(
+            request=_Request(
+                body={
+                    "base_revision": "rev-old",
+                    "changes": {"quality.gate.enabled": False},
+                }
+            ),
+            config_manager=manager,
+            hot_reload=True,
+        )
+        gate_runtime = GateRuntime(default_gate_snapshot())
+        plugin.initializer = SimpleNamespace(gate_runtime=gate_runtime)
+
+        result = await api.apply_config()
+
+        assert result["status"] == "ok"
+        assert result["data"]["reload_scheduled"] is False
+        assert result["data"]["restart_required"] is False
+        assert result["data"]["gate_hot_reloaded"] is True
+        assert gate_runtime.snapshot().enabled is False
+
+    @pytest.mark.asyncio
+    async def test_apply_gate_change_without_runtime_prompts_restart(self) -> None:
+        """运行时没有 GateRuntime 时热重载失败，其余字段照旧返回。"""
+
+        manager = MagicMock()
+        manager.apply_config_changes = AsyncMock(
+            return_value=ConfigApplyResult("rev-new", ("quality.gate.enabled",))
+        )
+        api, plugin = _make_api(
+            request=_Request(
+                body={
+                    "base_revision": "rev-old",
+                    "changes": {"quality.gate.enabled": False},
+                }
+            ),
+            config_manager=manager,
+            hot_reload=False,
+        )
+        plugin.initializer = SimpleNamespace()
+
+        result = await api.apply_config()
+
+        assert result["status"] == "ok"
+        assert result["data"]["gate_hot_reloaded"] is False
+        assert result["data"]["restart_required"] is False
+        assert result["data"]["reload_scheduled"] is False
+
+    @pytest.mark.asyncio
     async def test_success_applies_exact_transaction_and_never_logs_values(
         self,
     ) -> None:
@@ -576,7 +740,7 @@ class TestConfigApplyApi:
             hot_reload=True,
         )
 
-        with patch("core.api.config_api.logger") as mock_logger:
+        with patch("core.platform.transport.page_api.config_api.logger") as mock_logger:
             result = await api.apply_config()
 
         manager.apply_config_changes.assert_awaited_once_with(
@@ -596,6 +760,7 @@ class TestConfigApplyApi:
                 "reload_scheduled": True,
                 "restart_required": True,
                 "rebuild_required": False,
+                "gate_hot_reloaded": False,
                 "instance_id": "instance-123",
             },
         }
@@ -645,8 +810,12 @@ class TestConfigApplyApi:
         plugin.context.get_config = lambda: {"timezone": "Asia/Shanghai"}
 
         with (
-            patch("core.api.config_api.set_debug_mode") as set_debug_mode,
-            patch("core.api.config_api.report_debug_event") as report_debug_event,
+            patch(
+                "core.platform.transport.page_api.config_api.set_debug_mode"
+            ) as set_debug_mode,
+            patch(
+                "core.platform.transport.page_api.config_api.report_debug_event"
+            ) as report_debug_event,
         ):
             result = await api.apply_config()
 

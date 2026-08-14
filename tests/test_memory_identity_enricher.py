@@ -10,14 +10,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import pytest_asyncio
 
-from core.identity import IdentityTrust, NameFieldState, ResolvedIdentity
-from core.identity.memory import (
+from core.features.identity.application.enricher import (
     IDENTITY_SCHEMA_VERSION,
     MemoryIdentityEnricher,
 )
-from core.identity.service import ProtocolIdentityService
-from core.injection.models import InjectionExecutionResult, InjectionOutcome
-from core.storage.protocol_identity_store import ProtocolIdentityStore
+from core.features.identity.application.service import ProtocolIdentityService
+from core.features.identity.domain.models import (
+    IdentityTrust,
+    NameFieldState,
+    ResolvedIdentity,
+)
+from core.features.identity.infrastructure.store import ProtocolIdentityStore
+from core.features.injection.domain.models import (
+    InjectionExecutionResult,
+    InjectionOutcome,
+)
 
 
 def _identity(
@@ -558,7 +565,7 @@ async def test_recall_handler_enriches_safe_candidates_before_execution() -> Non
 
     from astrbot.api.platform import MessageType
 
-    from core.handlers.recall_handler import RecallHandler
+    from core.features.recall.application.recall_handler import RecallHandler
 
     config = MagicMock()
     config.filtering_settings = {
@@ -659,7 +666,7 @@ def test_event_handler_passes_runtime_enricher_to_recall_handler() -> None:
     """EventHandler 应把运行时拥有的只读 Enricher 显式注入召回处理器。"""
 
     from core.event_handler import EventHandler
-    from core.identity.runtime import ProtocolIdentityRuntime
+    from core.features.identity.application.runtime import ProtocolIdentityRuntime
 
     identity_enricher = MagicMock()
     runtime = ProtocolIdentityRuntime(enricher=identity_enricher)
@@ -672,6 +679,7 @@ def test_event_handler_passes_runtime_enricher_to_recall_handler() -> None:
             memory_engine=MagicMock(),
             memory_processor=MagicMock(),
             conversation_manager=conversation,
+            identity_runtime=runtime,
         )
 
     assert (

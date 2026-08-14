@@ -17,16 +17,16 @@
 | 入口 | 公开职责 | 主要下游 |
 |---|---|---|
 | `../main.py` | AstrBot 插件入口；创建并持有初始化器、事件处理器、命令处理器、页面 API 与功能委托 | 本表其余入口 |
-| `plugin_initializer.py` · `PluginInitializer` | 提供商等待、数据库/FAISS 准备、组件装配、认知组件初始化与有序关闭 | `initializer/`、`managers/`、`processors/`、`storage/`、`schedulers/` |
-| `initializer/component_factory.py` · `ComponentFactory` | 在 `build_all(...)` 中构造共享数据库、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、协议身份 Runtime、验证器、调度器、注入记录与 Memory Evolution 组件 | `base/`、`identity/`、`storage/`、`retrieval/`、`managers/`、`processors/` |
-| `adapter_capabilities.py` / `provider_adapters.py` | 定义不可变能力快照，并在构建时冻结 LLM/Embedding Provider 调用入口 | `initializer/`、`processors/`、`validators/`、`retrieval/`、`utils/` |
-| `event_handler.py` · `EventHandler` | 处理全量群消息、LLM 请求前召回注入、LLM 响应后反思、会话重置与维护任务关闭 | `handlers/`、`injection/`、`cleaners/`、`dedup/`、`extractors/` |
-| `managers/memory_engine.py` · `MemoryEngine` | 长期记忆的统一运行时门面；组合 managers 中的生命周期、CRUD、召回、统计等能力 | `storage/`、`retrieval/`、`processors/`、`models/` |
-| `page_api.py` · `PluginPageApi` | 以 `PAGE_API_PREFIX` 为主前缀聚合 `api/` mixin，注册仪表盘读写、维护、诊断与评估端点 | `api/`、初始化器发布的共享组件 |
-| `command_handler.py` · `CommandHandler` | AstrBot 命令适配；解析命令后委托 `command_endpoints.py` 与 `commands/` | `command_endpoints.py`、`commands/`、共享 manager |
-| `feature_delegation.py` · `FeatureDelegation` | 探测伴侣插件并决定相关能力由 Memora 本地处理还是委托 | AstrBot 插件上下文、`api/delegation_api.py` |
-| `i18n_backend.py` | 读取 `i18n/*.json` 并提供运行时翻译接口 | `i18n/` 资源 |
-| `version_check.py` | 版本比较与更新检查辅助 | 外部版本元数据 |
+| `platform/composition/plugin_initializer.py` · `PluginInitializer` | 提供商等待、数据库/FAISS 准备、组件装配、认知组件初始化与有序关闭 | `platform/composition/`、`features/`、`shared/` |
+| `platform/composition/component_factory.py` · `ComponentFactory` | 构造共享数据库、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、身份 Runtime、验证器、调度器、注入记录与 Memory Evolution 组件 | `platform/config/`、`features/`、`shared/` |
+| `shared/adapter_capabilities.py` / `platform/provider/adapters.py` | 定义不可变能力快照，并在构建时冻结 LLM/Embedding Provider 调用入口 | `platform/composition/`、`features/retrieval/`、`features/memory/` |
+| `event_handler.py` · `EventHandler` | 处理全量群消息、LLM 请求前召回注入、LLM 响应后反思、会话重置与维护任务关闭 | `features/conversation/`、`features/recall/`、`features/reflection/` |
+| `features/memory/application/memory_engine.py` · `MemoryEngine` | 长期记忆的统一运行时门面；组合生命周期、CRUD、召回与统计能力 | `features/memory/`、`features/retrieval/`、`features/recall/processors/` |
+| `platform/transport/page_api/page_api.py` · `PluginPageApi` | 聚合 Dashboard Page API 路由与响应契约 | `platform/transport/page_api/`、初始化器发布的共享组件 |
+| `platform/transport/commands/command_handler.py` · `CommandHandler` | AstrBot 命令适配并委托查询、维护与诊断命令 | `platform/transport/commands/`、共享运行时组件 |
+| `platform/feature_delegation.py` · `FeatureDelegation` | 探测伴侣插件并决定能力由本地处理还是委托 | AstrBot 插件上下文、Page delegation API |
+| `platform/resources/i18n_backend.py` | 读取 `i18n/*.json` 并提供运行时翻译接口 | `i18n/` 资源 |
+| `platform/version_check.py` | 版本比较与更新检查辅助 | 外部版本元数据 |
 | `__init__.py` | 轻量导出与延迟加载，避免导入 `core` 时提前加载重依赖 | 顶层公开类型 |
 
 `prompts/` 与 `i18n/` 是运行时资源目录，不是独立 Python 包；提示词模板和翻译键的消费者分别位于处理/安全链与 `i18n_backend.py`。
@@ -36,11 +36,11 @@
 1. `main.py` 建立配置、插件级 `BackupManager` 与 `PluginInitializer(context, config_manager, data_dir)`；`_initialize_plugin()` 先执行按需自动备份和 `apply_pending_restores()`，再调用 `initialize()`，避免在恢复事务未应用时发布运行时。
 2. `PluginInitializer` 使用 `ProviderLoader` 与 `ProviderWaiter` 非阻塞等待 embedding/LLM provider；`ComponentFactory` 在索引或数据库 I/O 前验证文本生成和 Embedding 入口并冻结调用方式，能力不足时不发布半初始化运行时。
 3. provider 就绪后，`_run_full_init()` 调用 `ComponentFactory.build_all(...)`，完成数据库、图存储、`MemoryEngine`、`MemoryProcessor`、`ConversationManager`、`ProtocolIdentityRuntime`、索引验证器、衰减调度器、注入决策组件以及 Memory Evolution Store/Gate/Consolidator/Manager 的装配；身份目录普通初始化失败降级为仅解析模式，仅 `enabled=true` 且 mode 为 `readonly`/`active` 时向引擎注入派生 relation/projection 读取器。
-4. 初始化器再建立共享提示词保护服务，以及可选的 affection、expression、jargon、social 认知组件；可选组件失败按现有路径记录并隔离，不得伪装为已就绪。
+4. 初始化器再通过 `platform/security/prompt_protection.py` 建立共享提示词保护服务，并由 `platform/security/lifecycle.py` 负责关停清理；affection、expression、jargon、social 等可选认知组件失败按现有路径记录并隔离，不得伪装为已就绪。
 5. `main.py` 仅使用初始化器发布的实例创建 `EventHandler`、`CommandHandler` 和 `PluginPageApi`，保证消息、命令和页面请求共享同一存储与引擎。
-6. 关闭阶段先阻止新工作并等待/取消事件维护任务，再停止 Memory Evolution worker 并关闭其 Store，然后按依赖顺序关闭注入记录器、调度器、其他 manager/store 和数据库；`CancelledError` 必须继续传播，清理失败不能覆盖原始初始化失败。
+6. 关闭阶段由 `platform/composition/shutdown_lifecycle.py` 先收敛调度器、引擎任务等生产者，再关闭 Memory Evolution、注入组件和后续 manager/store/数据库；`CancelledError` 必须继续传播，清理失败不能覆盖原始初始化失败。
 
-恢复事务在初始化器和 `_ensure_runtime_components()` 均成功后才标记为 `succeeded`；任一阶段失败都由 `BackupManager` 保留失败/回滚状态。支持 AstrBot 插件重载时，`schedule_backup_restore_reload(operation_id)` 通过延迟重载安排热恢复；重载能力不可用或调度失败时，事务保持 `staged`/可手动重启状态，不能伪造已应用成功。
+恢复事务在初始化器和 `_ensure_runtime_components()` 均成功后才标记为 `succeeded`；任一阶段失败都由 `BackupManager` 保留失败/回滚状态。支持 AstrBot 插件重载时，`platform/composition/reload_lifecycle.py` 通过延迟重载安排热恢复；重载能力不可用或调度失败时，事务保持 `staged`/可手动重启状态，不能伪造已应用成功。
 
 ## 架构与数据流
 
@@ -50,40 +50,38 @@ flowchart TD
     Main --> Init[PluginInitializer]
     Init --> Providers[ProviderLoader / ProviderWaiter]
     Init --> Factory[ComponentFactory.build_all]
-    Factory --> Engine[managers/MemoryEngine]
-    Factory --> Processor[processors/MemoryProcessor]
-    Factory --> Conversation[managers/ConversationManager]
-    Factory --> Identity[identity/ProtocolIdentityRuntime]
-    Factory --> Stores[storage/]
-    Factory --> Evolution[Memory Evolution Gate / Worker]
+    Factory --> Engine[features/memory/MemoryEngine]
+    Factory --> Processor[features/recall/processors/MemoryProcessor]
+    Factory --> Conversation[features/conversation/ConversationManager]
+    Factory --> Identity[features/identity/ProtocolIdentityRuntime]
+    Factory --> Stores[feature infrastructure]
+    Factory --> Evolution[features/evolution Gate / Worker]
 
     Main --> Events[EventHandler]
     Events --> Identity
     Identity --> Conversation
     Identity --> Recall
     Identity --> Reflection
-    Events --> Recall[handlers/RecallHandler]
-    Events --> Reflection[handlers/ReflectionHandler]
-    Events --> Injection[injection/ · cleaners/ · security/]
+    Events --> Recall[features/recall/RecallHandler]
+    Events --> Reflection[features/reflection/ReflectionHandler]
+    Events --> Injection[features/injection + platform/security]
     Recall --> Engine
     Reflection --> Engine
     Reflection --> Processor
     Events --> Conversation
     Reflection -->|canonical 写入成功后调度| Evolution
 
-    Main --> Commands[CommandHandler]
-    Commands --> Endpoints[command_endpoints.py · commands/]
-    Endpoints --> Engine
-    Endpoints --> Conversation
+    Main --> Commands[platform/transport/commands]
+    Commands --> Engine
+    Commands --> Conversation
 
-    Dashboard[pages/dashboard/] --> Page[PluginPageApi]
+    Dashboard[pages/dashboard/] --> Page[platform/transport/page_api]
     Main --> Page
-    Page --> ApiMixins[api/ mixins]
-    ApiMixins --> Engine
-    ApiMixins --> Stores
-    ApiMixins --> Runtime[初始化器发布的监控、调度与认知组件]
+    Page --> Engine
+    Page --> Stores
+    Page --> Runtime[初始化器发布的运行时组件]
 
-    Engine --> Retrieval[retrieval/]
+    Engine --> Retrieval[features/retrieval]
     Engine --> Stores
     Evolution --> Derived[Relation / Projection 派生解释平面]
     Derived --> Retrieval
@@ -100,13 +98,15 @@ flowchart TD
 
 ### MemoryEngine
 
-`MemoryEngine` 位于 `managers/` 并以 mixin/协作对象组合记忆生命周期、CRUD、召回和统计能力。调用方使用门面，不应直接拼接其内部 store 与 retriever。持久化标识、事务、软删除、FTS/图/向量一致性属于 `storage/`；排序、融合与可解释召回属于 `retrieval/`；抽取和结构化转换属于 `processors/`。
+`MemoryEngine` 位于 `features/memory/application/` 并以 mixin/协作对象组合记忆生命周期、CRUD、召回和统计能力。调用方使用门面，不应直接拼接其内部 store 与 retriever。持久化标识、事务、软删除、FTS/图/向量一致性属于 `features/memory/infrastructure/`；排序、融合与可解释召回属于 `features/retrieval/`；抽取和结构化转换属于 `features/recall/processors/`。
 
 Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 relation/projection 解释平面。在线召回顺序固定为 direct/graph 合并 → relation expansion → projection attachment → reranker → privacy filter；Projection 只附着到命中 primary source 的 canonical candidate，不增加候选数、不改变 canonical `doc_id`/正文/分数，也不得成为第二套权威记忆。
 
 ### Page API
 
 `PluginPageApi` 聚合 `api/` mixin，并通过插件/初始化器取得共享运行时组件。端点负责 readiness/write guard、参数校验、稳定响应形状和安全错误映射；不得返回凭据、原始数据库对象、未清洗提示词或内部异常。备份恢复端点只返回脱敏摘要、稳定错误码和恢复状态；恢复进度与取消通过 `/backup/status`、`/backup/restore/cancel` 观察和控制。修改路由、方法或响应字段时，同时核对 `pages/dashboard/` 调用方、`tests/test_page_api.py` 与 `tests/test_page_api_contract.py`。
+
+AstrBot 4.27.2 只提供公开 Page 路由注册接口，未提供公开反注册接口；`platform/transport/route_lifecycle.py` 仅隔离 Context 能力探针，并在关停时原地移除当前 `PluginPageApi` 实例拥有的登记，不作为稳定宿主契约向 feature 暴露。
 
 ## 依赖与安全约束
 
@@ -124,36 +124,25 @@ Memory Evolution 只在 canonical 写入之后生成可失效、可重建的 rel
 
 ## 子模块导航
 
-以下 28 个 Python 子模块维护各自的详细上下文：
+以下现有模块维护各自的详细上下文：
 
-- [`affection/AGENTS.md`](affection/AGENTS.md)
-- [`api/AGENTS.md`](api/AGENTS.md)
-- [`base/AGENTS.md`](base/AGENTS.md)
-- [`cleaners/AGENTS.md`](cleaners/AGENTS.md)
-- [`commands/AGENTS.md`](commands/AGENTS.md)
-- [`dedup/AGENTS.md`](dedup/AGENTS.md)
-- [`diagnostics/AGENTS.md`](diagnostics/AGENTS.md)
-- [`evaluation/AGENTS.md`](evaluation/AGENTS.md)
-- [`expression/AGENTS.md`](expression/AGENTS.md)
-- [`extractors/AGENTS.md`](extractors/AGENTS.md)
-- [`handlers/AGENTS.md`](handlers/AGENTS.md)
-- [`identity/AGENTS.md`](identity/AGENTS.md)
-- [`injection/AGENTS.md`](injection/AGENTS.md)
-- [`initializer/AGENTS.md`](initializer/AGENTS.md)
-- [`jargon/AGENTS.md`](jargon/AGENTS.md)
-- [`managers/AGENTS.md`](managers/AGENTS.md)
-- [`models/AGENTS.md`](models/AGENTS.md)
-- [`monitoring/AGENTS.md`](monitoring/AGENTS.md)
-- [`processors/AGENTS.md`](processors/AGENTS.md)
-- [`retrieval/AGENTS.md`](retrieval/AGENTS.md)
-- [`review/AGENTS.md`](review/AGENTS.md)
-- [`schedulers/AGENTS.md`](schedulers/AGENTS.md)
-- [`security/AGENTS.md`](security/AGENTS.md)
-- [`social/AGENTS.md`](social/AGENTS.md)
-- [`storage/AGENTS.md`](storage/AGENTS.md)
-- [`tools/AGENTS.md`](tools/AGENTS.md)
-- [`utils/AGENTS.md`](utils/AGENTS.md)
-- [`validators/AGENTS.md`](validators/AGENTS.md)
+- [`platform/config/AGENTS.md`](platform/config/AGENTS.md)
+- [`platform/composition/AGENTS.md`](platform/composition/AGENTS.md)
+- [`platform/security/AGENTS.md`](platform/security/AGENTS.md)
+- [`platform/transport/page_api/AGENTS.md`](platform/transport/page_api/AGENTS.md)
+- [`platform/transport/commands/AGENTS.md`](platform/transport/commands/AGENTS.md)
+- [`platform/transport/tools/AGENTS.md`](platform/transport/tools/AGENTS.md)
+- [`shared/AGENTS.md`](shared/AGENTS.md)
+- [`features/AGENTS.md`](features/AGENTS.md)
+- [`features/memory/AGENTS.md`](features/memory/AGENTS.md)
+- [`features/retrieval/AGENTS.md`](features/retrieval/AGENTS.md)
+- [`features/recall/AGENTS.md`](features/recall/AGENTS.md)
+- [`features/reflection/AGENTS.md`](features/reflection/AGENTS.md)
+- [`features/injection/AGENTS.md`](features/injection/AGENTS.md)
+- [`features/evaluation/AGENTS.md`](features/evaluation/AGENTS.md)
+- [`features/evolution/AGENTS.md`](features/evolution/AGENTS.md)
+- [`features/quality/AGENTS.md`](features/quality/AGENTS.md)
+- [`features/cognition/AGENTS.md`](features/cognition/AGENTS.md)
 
 相关调用方与工程上下文：
 

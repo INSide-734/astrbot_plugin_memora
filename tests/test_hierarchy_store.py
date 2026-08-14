@@ -11,7 +11,9 @@ class TestEntityHierarchyStore:
 
         import aiosqlite
 
-        from core.storage.hierarchy_store import EntityHierarchyStore
+        from core.features.memory.infrastructure.hierarchy_store import (
+            EntityHierarchyStore,
+        )
 
         async def _make():
             db_path = os.path.join(tempfile.mkdtemp(), "test_hierarchy.db")

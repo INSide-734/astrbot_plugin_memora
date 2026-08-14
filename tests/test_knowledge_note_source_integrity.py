@@ -9,13 +9,13 @@ from unittest.mock import AsyncMock
 import aiosqlite
 import pytest
 
-from core.managers.knowledge_manager import KnowledgeManager
-from core.models.domain_provenance import DomainObjectOrigin, DomainProvenance
-from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
-from core.models.memory_evolution import MemorySourceRef
-from core.models.note_models import Note
-from core.storage.knowledge_store import KnowledgeStore
-from core.storage.note_store import NoteStore
+from core.features.knowledge.application import KnowledgeManager
+from core.features.knowledge.domain import KnowledgeEntry, KnowledgeType
+from core.features.knowledge.infrastructure import KnowledgeStore
+from core.features.notes.domain import Note
+from core.features.notes.infrastructure import NoteStore
+from core.shared.contracts import MemorySourceRef
+from core.shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 
 
 def _provenance(*memory_ids: int) -> DomainProvenance:

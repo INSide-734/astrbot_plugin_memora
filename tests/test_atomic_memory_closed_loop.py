@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from core.processors.memory_processor import MemoryProcessor
-from core.processors.text_processor import TextProcessor
-from core.retrieval.atom_retriever import AtomRetrievalResult, AtomRetriever
-from core.retrieval.dual_route_retriever import DualRouteRetriever
-from core.retrieval.graph_keyword_retriever import GraphKeywordResult
-from core.retrieval.graph_retriever import GraphRetriever
-from core.retrieval.rrf_fusion import HybridResult, RRFFusion
-from core.storage.atom_store import AtomStore
+from core.features.memory.infrastructure.atom_store import AtomStore
+from core.features.recall.processors.memory_processor import MemoryProcessor
+from core.features.recall.processors.text_processor import TextProcessor
+from core.features.retrieval.atom_retriever import AtomRetrievalResult, AtomRetriever
+from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+from core.features.retrieval.graph_keyword_retriever import GraphKeywordResult
+from core.features.retrieval.graph_retriever import GraphRetriever
+from core.features.retrieval.rrf_fusion import HybridResult, RRFFusion
 
 
 def _atom_result(
@@ -271,7 +271,9 @@ async def test_graph_retriever_uses_request_reference_time_and_expiry() -> None:
 def test_atom_graph_entry_contains_complete_time_snapshot() -> None:
     """Atom 图条目必须携带可重建的创建、过期与衰减快照。"""
 
-    from core.processors.atom_graph_extractor import extract_graph_from_atoms
+    from core.features.recall.processors.atom_graph_extractor import (
+        extract_graph_from_atoms,
+    )
 
     atom = SimpleNamespace(
         content="用户下周参加读书会",

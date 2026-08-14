@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.adapter_capabilities import ASTRBOT_FAISS_CAPABILITIES
-from core.retrieval.dual_route_retriever import DualRouteRetriever
-from core.retrieval.graph_keyword_retriever import GraphKeywordResult
-from core.retrieval.graph_retriever import GraphRetriever
-from core.retrieval.graph_vector_retriever import GraphVectorResult
-from core.retrieval.rrf_fusion import HybridResult, RRFFusion
+from core.features.retrieval.dual_route_retriever import DualRouteRetriever
+from core.features.retrieval.graph_keyword_retriever import GraphKeywordResult
+from core.features.retrieval.graph_retriever import GraphRetriever
+from core.features.retrieval.graph_vector_retriever import GraphVectorResult
+from core.features.retrieval.rrf_fusion import HybridResult, RRFFusion
+from core.shared.adapter_capabilities import ASTRBOT_FAISS_CAPABILITIES
 
 
 def _candidate(doc_id: int, score: float, content: str) -> HybridResult:
@@ -90,7 +90,9 @@ def _ablation_engine(*, reranker: object) -> tuple[object, object]:
 async def test_final_reranker_off_does_not_call_live_reranker() -> None:
     """关闭最终重排后必须按 baseline 分数排序，且不调用 live reranker。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     live_reranker = SimpleNamespace(rerank=MagicMock(side_effect=AssertionError))
     engine, _ = _ablation_engine(reranker=live_reranker)
@@ -108,8 +110,10 @@ async def test_final_reranker_off_does_not_call_live_reranker() -> None:
 async def test_final_mmr_variant_invokes_mmr_reranker() -> None:
     """MMR 变体必须替换最终重排器，并在候选数大于 K 时实际调用。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
-    from core.retrieval.reranker_factory import MMRReranker
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
+    from core.features.retrieval.reranker_factory import MMRReranker
 
     engine, _ = _ablation_engine(reranker=SimpleNamespace(rerank=MagicMock()))
     prepared = RetrievalAblationController(engine).prepare("final_reranker_mmr")
@@ -128,7 +132,9 @@ async def test_final_mmr_variant_invokes_mmr_reranker() -> None:
 async def test_embedding_similarity_variant_uses_document_vectors() -> None:
     """向量相似度变体必须读取文档向量并能改变最终排序。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     engine, _ = _ablation_engine(reranker=SimpleNamespace(rerank=MagicMock()))
     prepared = RetrievalAblationController(engine).prepare(
@@ -148,7 +154,9 @@ async def test_embedding_similarity_variant_uses_document_vectors() -> None:
 async def test_embedding_similarity_runtime_failure_is_not_reported_available() -> None:
     """文档向量运行时失效后，探针必须拒绝把 fallback 标记为完成。"""
 
-    from core.evaluation.retrieval_ablation import RetrievalAblationController
+    from core.features.evaluation.application.retrieval_ablation import (
+        RetrievalAblationController,
+    )
 
     engine, _ = _ablation_engine(reranker=SimpleNamespace(rerank=MagicMock()))
     engine.faiss_db.get_vector.side_effect = RuntimeError("vector-secret-canary")

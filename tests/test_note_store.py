@@ -1,9 +1,9 @@
-"""测试笔记存储 — CRUD + prune_versions."""
+"""测试笔记存储的 CRUD 与版本裁剪。"""
 
 import pytest
 
-from core.models.note_models import Note, NoteStatus
-from core.storage.note_store import NoteStore
+from core.features.notes.domain import Note, NoteStatus
+from core.features.notes.infrastructure import NoteStore
 
 
 class TestNoteStore:
@@ -60,7 +60,7 @@ class TestNoteStore:
 
     @pytest.mark.asyncio
     async def test_prune_versions_caps(self, tmp_db_path):
-        """P3: Version count must not exceed max_versions."""
+        """P3：版本数量不得超过 max_versions。"""
         s = NoteStore(tmp_db_path)
         await s.init_table()
         note = await self._create_note(s, "prune", "v1")

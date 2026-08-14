@@ -28,7 +28,7 @@ class TestMemoryLifecycleManager:
 
     @pytest.fixture
     def manager(self, bm25: MagicMock, vector: MagicMock) -> Any:
-        from core.retrieval.memory_lifecycle import MemoryLifecycleManager
+        from core.features.retrieval.memory_lifecycle import MemoryLifecycleManager
 
         return MemoryLifecycleManager(bm25_retriever=bm25, vector_retriever=vector)
 

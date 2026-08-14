@@ -8,9 +8,8 @@ from types import SimpleNamespace
 import pytest
 from astrbot.api.platform import MessageType
 
-from core.identity import (
-    IdentityTrust,
-    NameFieldState,
+from core.features.identity.domain.models import IdentityTrust, NameFieldState
+from core.features.identity.infrastructure.protocols import (
     ProtocolIdentityResolver,
     QQOfficialIdentityAdapter,
 )
@@ -41,7 +40,7 @@ def _qq_official_event(
     timestamp: object = "2026-07-23T12:34:56+08:00",
     union_openid: object = None,
 ) -> SimpleNamespace:
-    """构造贴近 AstrBot 4.26.6 patched botpy 对象的官方事件替身。"""
+    """构造贴近 AstrBot 4.27.2 patched botpy 对象的官方事件替身。"""
 
     author: dict[str, object] = {
         "id": author_id,
@@ -194,6 +193,7 @@ def test_qq_official_union_openid_never_changes_canonical_identity() -> None:
     assert identity.trust_status is IdentityTrust.TRUSTED
     assert identity.stable_user_id == _OPENID
     assert identity.canonical_user_id == _CANONICAL_ID
+    assert identity.canonical_user_id is not None
     assert "UNION" not in identity.canonical_user_id
 
 

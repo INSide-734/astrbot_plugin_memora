@@ -1,4 +1,4 @@
-"""测试 monitoring.metrics real and stub-backed behaviors."""
+"""测试可观测性指标在真实与降级环境中的行为。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ from types import ModuleType
 
 
 def test_metrics_registry_and_well_known_collectors_exist() -> None:
-    import core.monitoring.metrics as metrics
+    """指标 owner 应公开独立注册表与全部常用采集器。"""
+    import core.features.observability.infrastructure.metrics as metrics
 
     assert metrics.REGISTRY is not None
     assert metrics.RECALL_DURATION is not None
@@ -25,7 +26,8 @@ def test_metrics_registry_and_well_known_collectors_exist() -> None:
 
 
 def test_real_metrics_are_usable_when_prometheus_is_available() -> None:
-    import core.monitoring.metrics as metrics
+    """真实 Prometheus 可用时指标应支持记录与采集。"""
+    import core.features.observability.infrastructure.metrics as metrics
 
     metrics.RECALL_REQUESTS.inc()
     metrics.CACHE_HITS.inc(2)
@@ -64,15 +66,21 @@ _EXPECTED_INJECTION_PAYLOAD_BUCKETS = (
 def _record_injection_payload_metric_config() -> tuple[
     tuple[float, ...], tuple[str, ...]
 ]:
-    module_name = "core.monitoring.metrics"
+    """在隔离的假 Prometheus 模块中捕获 payload 指标配置。"""
+    module_name = "core.features.observability.infrastructure.metrics"
     original_metrics = sys.modules.pop(module_name, None)
     original_prometheus = sys.modules.get("prometheus_client")
 
     class StubRegistry:
+        """替代 Prometheus 注册表，避免测试注册真实指标。"""
+
         pass
 
     class RecordingMetric:
+        """记录构造时的 buckets 与 labelnames 参数。"""
+
         def __init__(self, *args, **kwargs) -> None:
+            """保存指标构造参数中与契约相关的两个字段。"""
             self.buckets = tuple(kwargs.get("buckets", ()))
             self.labelnames = tuple(kwargs.get("labelnames", ()))
 
@@ -100,6 +108,7 @@ def _record_injection_payload_metric_config() -> tuple[
 
 
 def test_injection_payload_chars_uses_character_buckets_without_labels() -> None:
+    """payload 字符指标应使用递增字符桶且不声明标签。"""
     bucket_bounds, labelnames = _record_injection_payload_metric_config()
 
     assert bucket_bounds == _EXPECTED_INJECTION_PAYLOAD_BUCKETS
@@ -110,11 +119,13 @@ def test_injection_payload_chars_uses_character_buckets_without_labels() -> None
 
 
 def test_stub_metrics_degrade_gracefully_without_prometheus() -> None:
-    module_name = "core.monitoring.metrics"
+    """缺少 Prometheus 时所有指标操作应稳定降级为空操作。"""
+    module_name = "core.features.observability.infrastructure.metrics"
     original = sys.modules.pop(module_name, None)
     real_import = builtins.__import__
 
     def blocking_import(name, globals=None, locals=None, fromlist=(), level=0):
+        """仅阻断 prometheus_client，其他导入继续委托原实现。"""
         if name == "prometheus_client":
             raise ImportError("blocked for test")
         return real_import(name, globals, locals, fromlist, level)

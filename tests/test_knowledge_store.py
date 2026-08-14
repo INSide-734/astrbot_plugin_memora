@@ -2,9 +2,9 @@
 
 import pytest
 
-from core.base.list_sorting import SortQuery
-from core.models.knowledge_models import KnowledgeEntry, KnowledgeType
-from core.storage.knowledge_store import KnowledgeStore
+from core.features.knowledge.domain import KnowledgeEntry, KnowledgeType
+from core.features.knowledge.infrastructure import KnowledgeStore
+from core.shared.list_sorting import SortQuery
 
 
 def _make_entry(**overrides) -> KnowledgeEntry:
@@ -21,11 +21,11 @@ def _make_entry(**overrides) -> KnowledgeEntry:
 
 
 class TestKnowledgeStoreCRUD:
-    """Basic CRUD operations."""
+    """验证基础增删改查操作。"""
 
     @pytest.mark.asyncio
     async def test_insert_and_get(self, tmp_db_path):
-        """Insert a knowledge entry and retrieve it."""
+        """插入知识条目后应能按 ID 读取。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
@@ -41,20 +41,20 @@ class TestKnowledgeStoreCRUD:
 
     @pytest.mark.asyncio
     async def test_get_missing_returns_none(self, tmp_db_path):
-        """Get non-existent entry returns None."""
+        """读取不存在的条目应返回 None。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
         assert await store.get(99999) is None
 
     @pytest.mark.asyncio
     async def test_update(self, tmp_db_path):
-        """Update changes title/content/category."""
+        """更新应保存标题、正文、分类和访问次数。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
         entry = _make_entry(title="Original")
         entry_id = await store.insert(entry)
-        entry.entry_id = entry_id  # link the ID back for update
+        entry.entry_id = entry_id  # 回填 ID 以执行更新。
 
         entry.title = "Updated"
         entry.content = "New content"
@@ -71,7 +71,7 @@ class TestKnowledgeStoreCRUD:
 
     @pytest.mark.asyncio
     async def test_delete(self, tmp_db_path):
-        """Delete removes entry; get returns None."""
+        """删除条目后按 ID 读取应返回 None。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
@@ -81,14 +81,14 @@ class TestKnowledgeStoreCRUD:
 
     @pytest.mark.asyncio
     async def test_delete_missing(self, tmp_db_path):
-        """Delete non-existent entry returns False."""
+        """删除不存在的条目应返回 False。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
         assert not await store.delete(99999)
 
     @pytest.mark.asyncio
     async def test_count(self, tmp_db_path):
-        """count returns total entries."""
+        """count 应返回知识条目总数。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
         assert await store.count() == 0
@@ -99,11 +99,11 @@ class TestKnowledgeStoreCRUD:
 
 
 class TestKnowledgeStoreSearch:
-    """Search and list operations."""
+    """验证搜索、排序和分页操作。"""
 
     @pytest.mark.asyncio
     async def test_search_finds_by_keyword(self, tmp_db_path):
-        """search returns entries matching keyword in title or content."""
+        """search 应返回标题或正文命中关键词的条目。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
@@ -120,7 +120,7 @@ class TestKnowledgeStoreSearch:
 
     @pytest.mark.asyncio
     async def test_search_by_category(self, tmp_db_path):
-        """search filters by category when provided."""
+        """传入分类时 search 应过滤其他分类。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
@@ -132,7 +132,7 @@ class TestKnowledgeStoreSearch:
 
     @pytest.mark.asyncio
     async def test_search_no_match(self, tmp_db_path):
-        """search returns empty on no match."""
+        """没有命中时 search 应返回空结果。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
@@ -141,7 +141,7 @@ class TestKnowledgeStoreSearch:
 
     @pytest.mark.asyncio
     async def test_list_entries(self, tmp_db_path):
-        """list_entries returns paginated results."""
+        """list_entries 应返回分页结果和总数。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
@@ -154,7 +154,7 @@ class TestKnowledgeStoreSearch:
 
     @pytest.mark.asyncio
     async def test_list_entries_by_category(self, tmp_db_path):
-        """list_entries filters by category."""
+        """list_entries 应按分类过滤。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
@@ -222,11 +222,11 @@ class TestKnowledgeStoreSearch:
 
 
 class TestKnowledgeStoreEdgeCases:
-    """Edge cases and data integrity."""
+    """验证边界条件与数据完整性。"""
 
     @pytest.mark.asyncio
     async def test_insert_preserves_source_ids_and_tags(self, tmp_db_path):
-        """Insert preserves source_ids and tags arrays."""
+        """插入应完整保留 source_ids 与 tags 数组。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 
@@ -240,7 +240,7 @@ class TestKnowledgeStoreEdgeCases:
 
     @pytest.mark.asyncio
     async def test_insert_with_different_categories(self, tmp_db_path):
-        """Insert entries with all knowledge types."""
+        """所有知识分类都应能够插入和读取。"""
         store = KnowledgeStore(tmp_db_path)
         await store.init_table()
 

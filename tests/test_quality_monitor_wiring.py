@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.api.quality_api import QualityApiMixin
-from core.managers.memory_engine import MemoryEngine
-from core.plugin_initializer import PluginInitializer
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.platform.composition.plugin_initializer import PluginInitializer
+from core.platform.transport.page_api.quality_api import QualityApiMixin
 
 
 class _QualityApiStub(QualityApiMixin):
@@ -47,7 +47,9 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
             "memory_processor": memory_processor,
             "memory_quarantine_store": MagicMock(),
             "memory_quality_gate": MagicMock(),
+            "gate_runtime": MagicMock(),
             "conversation_manager": MagicMock(),
+            "identity_runtime": SimpleNamespace(close=AsyncMock()),
             "index_validator": MagicMock(),
             "decay_scheduler": None,
             "injection_decision_store": MagicMock(),
@@ -57,7 +59,7 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
     initializer._create_prompt_protection_service = MagicMock(return_value=MagicMock())
     initializer._initialize_cognitive_components = AsyncMock()
 
-    with patch("core.plugin_initializer.report_debug_event"):
+    with patch("core.platform.composition.plugin_initializer.report_debug_event"):
         await initializer._run_full_init()
 
     engine._record_add_memory_observability(
@@ -72,7 +74,7 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
     result = await api.get_quality_stats()
 
     assert api._get_quality_scorer() is initializer.quality_scorer
-    assert engine._quality_scorer is initializer.quality_scorer
+    assert getattr(engine, "_quality_scorer", None) is initializer.quality_scorer
     assert result["status"] == "ok"
     assert result["data"]["total_scored"] == 1
     assert result["data"]["avg_overall"] > 0

@@ -7,9 +7,11 @@ import json
 import aiosqlite
 import pytest
 
-from core.models.memory_atom import AtomType, MemoryAtom
-from core.storage.atom_store import AtomStore
-from core.validators.persistence_health_validator import PersistenceHealthValidator
+from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
+from core.features.memory.infrastructure.atom_store import AtomStore
+from core.features.memory.infrastructure.validators.persistence_health_validator import (
+    PersistenceHealthValidator,
+)
 
 
 def _atom(content: str) -> MemoryAtom:

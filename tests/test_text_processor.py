@@ -6,7 +6,10 @@ from unittest.mock import patch
 
 import pytest
 
-from core.processors.text_processor import TextProcessor, create_text_processor
+from core.features.recall.processors.text_processor import (
+    TextProcessor,
+    create_text_processor,
+)
 
 
 class TestTextProcessor:
@@ -250,7 +253,7 @@ class TestTextProcessorEdgeCases:
         assert "www.example.com" not in result
 
     def test_add_custom_words_jieba_unavailable(self) -> None:
-        import core.processors.text_processor as tp
+        import core.features.recall.processors.text_processor as tp
 
         original = tp.JIEBA_AVAILABLE
         tp.JIEBA_AVAILABLE = False
@@ -264,8 +267,13 @@ class TestTextProcessorEdgeCases:
 
     def test_segment_jieba_fallback_on_error(self) -> None:
         # Simulate jieba.cut_for_search raising an exception
-        with patch("core.processors.text_processor.JIEBA_AVAILABLE", True):
-            with patch("core.processors.text_processor.JIEBA_RUNTIME_DISABLED", False):
+        with patch(
+            "core.features.recall.processors.text_processor.JIEBA_AVAILABLE", True
+        ):
+            with patch(
+                "core.features.recall.processors.text_processor.JIEBA_RUNTIME_DISABLED",
+                False,
+            ):
                 with patch(
                     "jieba.cut_for_search", side_effect=RuntimeError("jieba crash")
                 ):
@@ -275,7 +283,7 @@ class TestTextProcessorEdgeCases:
                         assert isinstance(result, list)
 
     def test_disable_jieba_runtime(self) -> None:
-        import core.processors.text_processor as tp
+        import core.features.recall.processors.text_processor as tp
 
         tp.JIEBA_RUNTIME_DISABLED = False
         TextProcessor._disable_jieba_runtime()
@@ -299,7 +307,7 @@ class TestTextProcessorEdgeCases:
         assert proc.is_stopword("") is False
 
     def test_add_custom_words_with_failures(self) -> None:
-        import core.processors.text_processor as tp
+        import core.features.recall.processors.text_processor as tp
 
         original = tp.JIEBA_AVAILABLE
         tp.JIEBA_AVAILABLE = True
@@ -313,7 +321,7 @@ class TestTextProcessorEdgeCases:
             tp.JIEBA_AVAILABLE = original
 
     def test_add_custom_words_filter_invalid(self) -> None:
-        import core.processors.text_processor as tp
+        import core.features.recall.processors.text_processor as tp
 
         original = tp.JIEBA_AVAILABLE
         tp.JIEBA_AVAILABLE = True

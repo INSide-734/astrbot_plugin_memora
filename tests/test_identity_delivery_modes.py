@@ -7,8 +7,11 @@ from types import SimpleNamespace
 import pytest
 from astrbot.core.agent.message import TextPart
 
-from core.injection.executor import InjectionExecutionContext, InjectionExecutor
-from core.injection.models import (
+from core.features.injection.application.executor import (
+    InjectionExecutionContext,
+    InjectionExecutor,
+)
+from core.features.injection.domain.models import (
     ContentLevel,
     DeliveryMode,
     InjectionDecision,

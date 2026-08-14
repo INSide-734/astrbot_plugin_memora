@@ -10,41 +10,41 @@ import sys
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.provider import LLMResponse, ProviderRequest
 from astrbot.api.star import Context, Star, StarTools, register
 
-from .core.base.config_manager import ConfigManager
-from .core.command_endpoints import CommandEndpointsMixin
-from .core.command_handler import CommandHandler
 from .core.event_handler import EventHandler
-from .core.feature_delegation import FeatureDelegation
-from .core.handlers.recall_observability import RecallTimingContext
-from .core.i18n_backend import init as i18n_init
-from .core.i18n_backend import t
-from .core.managers.backup_manager import BackupManager
-from .core.managers.backup_models import BackupOperationError
-from .core.managers.update_installer import RuntimeUpdateInstaller
-from .core.managers.update_manager import UpdateManager
-from .core.monitoring import (
-    PerfTracker,
-    close_debug_reporting,
-    report_debug_event,
-    report_debug_exception,
-    set_debug_mode,
+from .core.features.backup.application import BackupManager
+from .core.features.backup.domain import BackupOperationError
+from .core.features.observability.application import PerfTracker
+from .core.features.observability.application import runtime as observability
+from .core.features.recall.application.recall_observability import RecallTimingContext
+from .core.features.updates.application import RuntimeUpdateInstaller, UpdateManager
+from .core.platform.composition.plugin_initializer import PluginInitializer
+from .core.platform.composition.reload_lifecycle import (
+    run_scheduled_plugin_reload,
 )
-from .core.plugin_initializer import PluginInitializer
-from .core.plugin_reload_lifecycle import run_scheduled_plugin_reload
-from .core.plugin_reload_lifecycle import (
+from .core.platform.composition.reload_lifecycle import (
     schedule_learning_reload as schedule_learning_reload_callback,
 )
-from .core.plugin_shutdown_lifecycle import stop_runtime_producers
-from .core.tools import MemoryMemorizeTool, MemorySearchTool
-from .core.utils.version import PLUGIN_VERSION
-from .core.version_check import (  # noqa: F401
+from .core.platform.composition.shutdown_lifecycle import stop_runtime_producers
+from .core.platform.config.manager import ConfigManager
+from .core.platform.feature_delegation import FeatureDelegation
+from .core.platform.resources import (
+    PluginResourceLocator,
+    build_package_resource_reader,
+)
+from .core.platform.resources.i18n_backend import init as i18n_init
+from .core.platform.resources.i18n_backend import t
+from .core.platform.resources.version import PLUGIN_VERSION
+from .core.platform.transport.commands.command_endpoints import CommandEndpointsMixin
+from .core.platform.transport.commands.command_handler import CommandHandler
+from .core.platform.transport.tools import MemoryMemorizeTool, MemorySearchTool
+from .core.platform.version_check import (  # noqa: F401
     _CURRENT_ASTRBOT_VERSION,
     _MIN_ASTRBOT_VERSION,
     _version_lt,
@@ -62,6 +62,8 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     """记忆插件主类"""
 
     def __init__(self, context: Context, config: dict[str, Any]):
+        """初始化插件上下文、配置、持久化目录与运行时占位状态。"""
+
         super().__init__(context)
         self.context = context
         self.instance_id = uuid.uuid4().hex
@@ -77,7 +79,16 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
         # 保留 AstrBot 注入对象，配置变更通过其原子保存能力持久化
         self.astrbot_config = config
-        self.config_manager = ConfigManager(self.astrbot_config)
+        self.resource_locator = PluginResourceLocator(
+            Path(__file__).resolve().parent,
+            package_reader=build_package_resource_reader(__package__),
+        )
+        # 核心提示词文件目录（core/prompts），供运行时与页面接口共用读取。
+        self.prompt_dir = self.resource_locator.plugin_root / "core" / "prompts"
+        self.config_manager = ConfigManager(
+            self.astrbot_config,
+            resource_locator=self.resource_locator,
+        )
         self._update_manager = UpdateManager(
             data_dir,
             self.config_manager,
@@ -86,7 +97,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         self._update_installer = RuntimeUpdateInstaller(
             context=self.context,
             data_dir=data_dir,
-            plugin_root=Path(__file__).resolve().parent,
+            plugin_root=self.resource_locator.plugin_root,
             update_manager=self._update_manager,
         )
 
@@ -115,12 +126,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         self._perf_tracker = PerfTracker(maxlen=200)
 
         # 若开启调试模式，则启用监控装饰器
-        set_debug_mode(
+        observability.set_debug_mode(
             self.config_manager.get("debug", False),
             data_dir=data_dir,
             timezone_name=self.context.get_config().get("timezone"),
         )
-        report_debug_event(
+        observability.report_debug_event(
             "plugin_started",
             component="plugin",
             stage="startup",
@@ -144,7 +155,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             return
 
         try:
-            from .core.page_api import PluginPageApi
+            from .core.platform.transport.page_api.page_api import PluginPageApi
         except Exception as exc:
             logger.warning(
                 f"官方插件页面 API 不可用，已跳过注册并保留旧版兼容模式：{exc}"
@@ -225,7 +236,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     async def _initialize_plugin(self):
         """初始化插件"""
         startup_started = time.perf_counter()
-        report_debug_event(
+        observability.report_debug_event(
             "plugin_initialized",
             component="plugin",
             stage="startup",
@@ -237,7 +248,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         try:
             backup_started = time.perf_counter()
             stage_started = backup_started
-            report_debug_event(
+            observability.report_debug_event(
                 "maintenance_task",
                 component="plugin",
                 stage="startup_backup",
@@ -246,7 +257,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 task_type="maintenance",
             )
             await self._backup_manager.backup_if_needed_async()
-            report_debug_event(
+            observability.report_debug_event(
                 "maintenance_task",
                 component="plugin",
                 stage="startup_backup",
@@ -259,7 +270,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             startup_stage = "startup_restore"
             restore_started = time.perf_counter()
             stage_started = restore_started
-            report_debug_event(
+            observability.report_debug_event(
                 "maintenance_task",
                 component="plugin",
                 stage="startup_restore",
@@ -268,7 +279,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 task_type="maintenance",
             )
             self._backup_manager.apply_pending_restores()
-            report_debug_event(
+            observability.report_debug_event(
                 "maintenance_task",
                 component="plugin",
                 stage="startup_restore",
@@ -285,7 +296,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 self._backup_manager.mark_restore_startup_failure_if_needed(
                     self.initializer.is_failed
                 )
-                report_debug_event(
+                observability.report_debug_event(
                     "plugin_initialized",
                     component="plugin",
                     stage="startup",
@@ -301,7 +312,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             runtime_ready = await self._ensure_runtime_components()
             if not runtime_ready:
                 self._backup_manager.mark_restore_startup_failure_if_needed(True)
-                report_debug_event(
+                observability.report_debug_event(
                     "plugin_initialized",
                     component="plugin",
                     stage="startup",
@@ -315,7 +326,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             self._backup_manager.mark_restore_succeeded()
             self._inject_delegation_services()
             self.feature_delegation.log_status()
-            report_debug_event(
+            observability.report_debug_event(
                 "plugin_initialized",
                 component="plugin",
                 stage="startup",
@@ -324,7 +335,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 duration_ms=max(0.0, (time.perf_counter() - startup_started) * 1000.0),
             )
         except asyncio.CancelledError:
-            report_debug_event(
+            observability.report_debug_event(
                 "plugin_failed",
                 component="plugin",
                 stage=startup_stage,
@@ -334,7 +345,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             )
             raise
         except BackupOperationError as exc:
-            report_debug_exception(
+            observability.report_debug_exception(
                 "maintenance_task",
                 exc,
                 component="plugin",
@@ -344,7 +355,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 task_type="maintenance",
                 duration_ms=max(0.0, (time.perf_counter() - stage_started) * 1000.0),
             )
-            report_debug_exception(
+            observability.report_debug_exception(
                 "plugin_failed",
                 exc,
                 component="plugin",
@@ -358,7 +369,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         except Exception as exc:
             self._backup_manager.mark_restore_startup_failure_if_needed(True)
             if startup_stage in {"startup_backup", "startup_restore"}:
-                report_debug_exception(
+                observability.report_debug_exception(
                     "maintenance_task",
                     exc,
                     component="plugin",
@@ -370,7 +381,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                         0.0, (time.perf_counter() - stage_started) * 1000.0
                     ),
                 )
-            report_debug_exception(
+            observability.report_debug_exception(
                 "plugin_failed",
                 exc,
                 component="plugin",
@@ -394,7 +405,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             return True
 
         publish_started = time.perf_counter()
-        report_debug_event(
+        observability.report_debug_event(
             "plugin_initialized",
             component="plugin",
             stage="runtime_publish",
@@ -404,7 +415,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
         async with self._component_init_lock:
             if self._terminating:
-                report_debug_event(
+                observability.report_debug_event(
                     "plugin_initialized",
                     component="plugin",
                     stage="runtime_publish",
@@ -416,7 +427,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 )
                 return False
             if self.event_handler is not None and self.command_handler is not None:
-                report_debug_event(
+                observability.report_debug_event(
                     "plugin_initialized",
                     component="plugin",
                     stage="runtime_publish",
@@ -436,7 +447,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     self.initializer.conversation_manager,
                 ]
             ):
-                report_debug_event(
+                observability.report_debug_event(
                     "plugin_initialized",
                     component="plugin",
                     stage="runtime_publish",
@@ -455,7 +466,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     self._register_agent_tools_if_needed()
                 except Exception:
                     self._llm_tools_registered = False
-                    report_debug_event(
+                    observability.report_debug_event(
                         "plugin_initialized",
                         component="plugin",
                         stage="runtime_publish",
@@ -477,6 +488,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     memory_engine=self.initializer.memory_engine,  # type: ignore[arg-type]
                     memory_processor=self.initializer.memory_processor,  # type: ignore[arg-type]
                     conversation_manager=self.initializer.conversation_manager,  # type: ignore[arg-type]
+                    identity_runtime=self.initializer.identity_runtime,
                     jargon_filter=getattr(self.initializer, "jargon_filter", None),
                     jargon_miner=getattr(self.initializer, "jargon_miner", None),
                     jargon_query_service=getattr(
@@ -514,6 +526,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     memory_engine=self.initializer.memory_engine,
                     conversation_manager=self.initializer.conversation_manager,
                     index_validator=self.initializer.index_validator,
+                    identity_runtime=self.initializer.identity_runtime,
                     memory_processor=self.initializer.memory_processor,
                     memory_quality_gate=getattr(
                         self.initializer, "memory_quality_gate", None
@@ -542,7 +555,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     update_installer=self._update_installer,
                 )
 
-        report_debug_event(
+        observability.report_debug_event(
             "plugin_initialized",
             component="plugin",
             stage="runtime_publish",
@@ -608,7 +621,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if note_read_enabled or note_write_enabled:
             engine = self.initializer.memory_engine
             if engine and engine.note_manager:
-                from .core.tools.note_tools import (
+                from .core.platform.transport.tools.note_tools import (
                     NoteReadTool,
                     NoteSearchTool,
                     NoteWriteTool,
@@ -624,7 +637,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if self.config_manager.get("agent_tools.enable_knowledge_tools", True):
             engine = self.initializer.memory_engine
             if engine and engine.knowledge_manager:
-                from .core.tools.knowledge_tools import (
+                from .core.platform.transport.tools.knowledge_tools import (
                     KnowledgeReadTool,
                     KnowledgeSearchTool,
                 )
@@ -640,7 +653,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         if self.config_manager.get("agent_tools.enable_profile_tools", True):
             engine = self.initializer.memory_engine
             if engine and engine.profile_manager:
-                from .core.tools.profile_tools import ProfileLookupTool
+                from .core.platform.transport.tools.profile_tools import (
+                    ProfileLookupTool,
+                )
 
                 tools.append(ProfileLookupTool(profile_manager=engine.profile_manager))
 
@@ -655,7 +670,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     self.initializer, "jargon_query_service", None
                 )
                 if jargon_query_svc is not None:
-                    from .core.tools.jargon_tools import (
+                    from .core.platform.transport.tools.jargon_tools import (
                         JargonExplainTool,
                         JargonListTool,
                     )
@@ -674,7 +689,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             else:
                 affection_mgr = getattr(self.initializer, "affection_manager", None)
                 if affection_mgr is not None:
-                    from .core.tools.affection_tools import (
+                    from .core.platform.transport.tools.affection_tools import (
                         AffectionCheckTool,
                         BotMoodTool,
                     )
@@ -691,7 +706,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             else:
                 relation_mgr = getattr(self.initializer, "relation_manager", None)
                 if relation_mgr is not None:
-                    from .core.tools.social_tools import (
+                    from .core.platform.transport.tools.social_tools import (
                         RelationGraphTool,
                         RelationLookupTool,
                     )
@@ -710,7 +725,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     self.initializer, "expression_learner", None
                 )
                 if expression_learner is not None:
-                    from .core.tools.expression_tools import ExpressionRecallTool
+                    from .core.platform.transport.tools.expression_tools import (
+                        ExpressionRecallTool,
+                    )
 
                     tools.append(
                         ExpressionRecallTool(expression_learner=expression_learner)
@@ -759,10 +776,13 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         return snapshot
 
     def _writes_blocked_by_pending_restore(self) -> bool:
+        """返回恢复事务是否阻断写入；状态读取失败时保守阻断。"""
+
         try:
             get_state = getattr(self._backup_manager, "get_maintenance_state", None)
             if callable(get_state):
-                return bool(get_state().get("blocked", False))
+                state = cast(dict[str, object], get_state())
+                return bool(state.get("blocked", False))
             return bool(self._backup_manager.has_pending_restores())
         except Exception:
             logger.error("检查备份恢复维护状态失败", exc_info=True)
@@ -863,6 +883,8 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     # ==================== 生命周期管理 ====================
 
     async def terminate(self):
+        """按依赖顺序关闭运行时组件，并传播任务取消信号。"""
+
         shutdown_started = time.perf_counter()
         shutdown_status = "completed"
         try:
@@ -875,7 +897,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             shutdown_status = "failed"
             raise
         finally:
-            report_debug_event(
+            observability.report_debug_event(
                 "plugin_stopped",
                 component="plugin",
                 stage="shutdown",
@@ -883,7 +905,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 reason_code=f"shutdown_{shutdown_status}",
                 duration_ms=max(0.0, (time.perf_counter() - shutdown_started) * 1000.0),
             )
-            close_debug_reporting()
+            observability.close_debug_reporting()
 
     async def _terminate_impl(self) -> bool:
         """插件停止时执行的清理逻辑。"""
@@ -897,7 +919,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         ) -> None:
             nonlocal shutdown_degraded
             step_started = time.perf_counter()
-            report_debug_event(
+            observability.report_debug_event(
                 "shutdown_step",
                 component="plugin",
                 stage=stage,
@@ -906,7 +928,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             )
             try:
                 await asyncio.wait_for(coro, timeout=timeout)
-                report_debug_event(
+                observability.report_debug_event(
                     "shutdown_step",
                     component="plugin",
                     stage=stage,
@@ -916,7 +938,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 )
                 logger.info(f"  {label} 完成")
             except asyncio.CancelledError:
-                report_debug_event(
+                observability.report_debug_event(
                     "shutdown_step",
                     component="plugin",
                     stage=stage,
@@ -927,7 +949,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 raise
             except asyncio.TimeoutError:
                 shutdown_degraded = True
-                report_debug_event(
+                observability.report_debug_event(
                     "shutdown_step",
                     component="plugin",
                     stage=stage,
@@ -938,7 +960,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 logger.warning(f"  {label} 超时 ({timeout}s)")
             except Exception as e:
                 shutdown_degraded = True
-                report_debug_exception(
+                observability.report_debug_exception(
                     "shutdown_step",
                     e,
                     component="plugin",
@@ -950,7 +972,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 logger.error(f"  {label} 失败：{e}")
 
         def _report_skipped(stage: str, reason_code: str) -> None:
-            report_debug_event(
+            observability.report_debug_event(
                 "shutdown_step",
                 component="plugin",
                 stage=stage,
