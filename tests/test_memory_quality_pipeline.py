@@ -395,3 +395,54 @@ async def test_reflection_write_cancellation_propagates_from_gather() -> None:
         )
 
     conversation_manager.update_session_metadata.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reflection_passes_group_id_from_history_to_gate() -> None:
+    """后台存储任务必须把历史消息的群组标识透传给质量门路由。"""
+
+    conversation_manager = MagicMock()
+    conversation_manager.get_session_metadata = AsyncMock(return_value=0)
+    conversation_manager.update_session_metadata = AsyncMock(return_value=True)
+    conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
+    processor = MagicMock()
+    processor.process_conversation = AsyncMock(
+        return_value=[
+            {
+                "content": "群聊候选",
+                "importance": 0.8,
+                "metadata": {"summary_quality": "high"},
+                "atoms": [],
+            }
+        ]
+    )
+    engine = MagicMock()
+    engine.add_memory = AsyncMock(return_value=11)
+    quality_gate = MagicMock()
+    quality_gate.route_candidate = AsyncMock(
+        return_value=MemoryGateResult(action="allow")
+    )
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=MagicMock(),
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=conversation_manager,
+        enforce_limit_cb=MagicMock(),
+        memory_quality_gate=quality_gate,
+    )
+    handler._prepare_message_batches = AsyncMock(
+        return_value=[[MagicMock(group_id="group-1")]]
+    )
+
+    await handler._storage_task(
+        session_id="session-1",
+        history_messages=[MagicMock(group_id="group-1")],
+        persona_id=None,
+        start_index=0,
+        end_index=2,
+    )
+
+    quality_gate.route_candidate.assert_awaited_once()
+    assert quality_gate.route_candidate.await_args.kwargs["group_id"] == "group-1"
+    assert quality_gate.route_candidate.await_args.kwargs["chat_type"] == "group"

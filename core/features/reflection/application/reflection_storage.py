@@ -171,6 +171,11 @@ class ReflectionStorageMixin:
                 )
                 if not is_group_chat and "GroupMessage" in session_id:
                     is_group_chat = True
+                group_id: str | None = None
+                if history_messages:
+                    first_group_id = getattr(history_messages[0], "group_id", None)
+                    if first_group_id:
+                        group_id = str(first_group_id)
 
                 logger.info(
                     f"[{session_id}] 开始处理记忆，类型={'群聊' if is_group_chat else '私聊'}, "
@@ -347,6 +352,7 @@ class ReflectionStorageMixin:
                         start_index=start_index,
                         end_index=end_index,
                         is_group_chat=is_group_chat,
+                        group_id=group_id,
                         memory_engine=self._memory_engine,
                         memory_quality_gate=self._memory_quality_gate,
                         schedule_evolution_after_write=(
@@ -358,10 +364,12 @@ class ReflectionStorageMixin:
 
                     logger.info(
                         "[%s] 反思候选处理完成：canonical=%d，quarantine=%d，"
-                        "幂等跳过=%d，失败=%d（%d条消息）",
+                        "discard=%d，mark_write=%d，幂等跳过=%d，失败=%d（%d条消息）",
                         session_id,
                         store_summary.canonical_count,
                         store_summary.quarantine_count,
+                        store_summary.discard_count,
+                        store_summary.mark_write_count,
                         store_summary.skipped_idempotent_count,
                         store_summary.failed_count,
                         len(history_messages),

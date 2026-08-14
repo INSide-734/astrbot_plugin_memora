@@ -55,6 +55,7 @@ async def store_reflection_candidates(
     start_index: int,
     end_index: int,
     is_group_chat: bool,
+    group_id: str | None = None,
     memory_engine: Any,
     memory_quality_gate: Any | None,
     schedule_evolution_after_write: Callable[[int], Awaitable[None]],
@@ -69,6 +70,7 @@ async def store_reflection_candidates(
         start_index: 当前来源窗口起始下标。
         end_index: 当前来源窗口固定高水位。
         is_group_chat: 当前窗口是否来自群聊。
+        group_id: 群聊来源的群组标识，用于门禁 profile 绑定解析。
         memory_engine: canonical 记忆引擎。
         memory_quality_gate: 可选的候选质量路由器。
         schedule_evolution_after_write: canonical 写后的兼容演化调度回调。
@@ -105,11 +107,24 @@ async def store_reflection_candidates(
                     persona_id=persona_id,
                     source_window=source_window,
                     is_group_chat=is_group_chat,
+                    group_id=group_id,
+                    chat_type=("group" if is_group_chat else "private"),
                 )
                 if gate_result.action == "quarantined":
                     return ReflectionStoreResult(
                         ReflectionStoreOutcome.QUARANTINED,
                         idempotency_key,
+                    )
+                if gate_result.action == "discard":
+                    return ReflectionStoreResult(
+                        ReflectionStoreOutcome.DISCARDED,
+                        idempotency_key,
+                    )
+                if gate_result.action == "mark_write":
+                    memory["atoms"] = (
+                        gate_result.atoms
+                        if gate_result.atoms is not None
+                        else memory.get("atoms", [])
                     )
             memory_id = await memory_engine.add_memory(
                 content=memory["content"],
@@ -142,10 +157,12 @@ async def store_reflection_candidates(
                 error.__class__.__name__,
                 exc_info=True,
             )
-        return ReflectionStoreResult(
-            ReflectionStoreOutcome.CANONICAL,
-            idempotency_key,
+        outcome = (
+            ReflectionStoreOutcome.MARK_WRITE
+            if metadata.get("gate_disposition") == "mark_write"
+            else ReflectionStoreOutcome.CANONICAL
         )
+        return ReflectionStoreResult(outcome, idempotency_key)
 
     async def _store_with_semaphore(
         memory: dict[str, Any],
