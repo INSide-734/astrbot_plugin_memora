@@ -246,6 +246,36 @@ class TestHandleSearch:
         assert kwargs["user_id"] == "user-001"
 
     @pytest.mark.asyncio
+    async def test_search_passes_include_mark_write_flag_to_engine(self) -> None:
+        """命令检索默认排除 mark_write，显式开关向引擎透传 True。"""
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.search_memories = AsyncMock(return_value=[])
+
+        class TestMixin(QueryCommandMixin):
+            memory_engine = engine
+            _identity_runtime = _identity_runtime()
+
+        event = MagicMock()
+        event.unified_msg_origin = "test-session"
+        event.get_message_type.return_value = MessageType.FRIEND_MESSAGE
+        event.get_sender_id.return_value = "user-001"
+        event.plain_result = MagicMock(return_value="no results")
+
+        async for _ in TestMixin().handle_search(event, "private fact"):
+            pass
+
+        assert engine.search_memories.call_args.kwargs["include_mark_write"] is False
+
+        async for _ in TestMixin().handle_search(
+            event, "private fact", include_mark_write=True
+        ):
+            pass
+
+        assert engine.search_memories.call_args.kwargs["include_mark_write"] is True
+
+    @pytest.mark.asyncio
     async def test_qq_official_search_uses_canonical_user_id(self) -> None:
         """QQ Official 检索必须带机器人实例命名空间，不能直接使用 OpenID。"""
 

@@ -1035,6 +1035,82 @@ class TestMemoryReadValidation:
             }
         ]
 
+    @pytest.mark.asyncio
+    async def test_list_memories_filters_mark_write_by_default(self, tmp_path) -> None:
+        import aiosqlite
+
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
+
+        db_path = str(tmp_path / "memories.db")
+
+        async def _seed() -> None:
+            """写入普通、mark_write 与 quarantine 三行 memory。"""
+
+            async with aiosqlite.connect(db_path) as db:
+                await db.execute(
+                    "CREATE TABLE documents ("
+                    "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT,"
+                    " metadata TEXT, created_at TEXT, updated_at TEXT)"
+                )
+                await db.executemany(
+                    "INSERT INTO documents"
+                    " (id, doc_id, text, metadata, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        (1, "doc-1", "normal", '{"create_time": 100}', "a", "b"),
+                        (
+                            2,
+                            "doc-2",
+                            "low-confidence",
+                            '{"create_time": 200, "gate_disposition": "mark_write"}',
+                            "c",
+                            "d",
+                        ),
+                        (
+                            3,
+                            "doc-3",
+                            "quarantined",
+                            '{"create_time": 300, "gate_disposition": "quarantine"}',
+                            "e",
+                            "f",
+                        ),
+                    ],
+                )
+                await db.commit()
+
+        await _seed()
+
+        class Stub:
+            list_memories = MemoryReadApiMixin.list_memories
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.db_path = db_path
+                return {"memory_engine": engine}, None
+
+            def _normalize_metadata(self, md):
+                return md or {}
+
+        req = _mock_request()
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
+            result = await Stub().list_memories()
+        assert result["status"] == "ok"
+        assert result["data"]["total"] == 2
+        assert [item["id"] for item in result["data"]["items"]] == [3, 1]
+
+        req = _mock_request(include_mark_write="true")
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
+            result = await Stub().list_memories()
+        assert result["status"] == "ok"
+        assert result["data"]["total"] == 3
+        assert [item["id"] for item in result["data"]["items"]] == [3, 2, 1]
+
 
 # ---------------------------------------------------------------------------
 # MemoryWriteApiMixin tests
@@ -1046,10 +1122,10 @@ class TestMemoryWriteValidation:
 
     @pytest.mark.asyncio
     async def test_update_memory_rejected_during_pending_restore(self) -> None:
-        from core.platform.transport.page_api.page_api import PluginPageApi
         from core.platform.transport.page_api.memory_write_api import (
             MemoryWriteApiMixin,
         )
+        from core.platform.transport.page_api.page_api import PluginPageApi
 
         class Stub:
             update_memory = MemoryWriteApiMixin.update_memory

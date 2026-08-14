@@ -147,7 +147,11 @@ class CommandEndpointsMixin:
     @memora.command("search", priority=10)
     @_bind_to_plugin_entrypoint
     async def search(
-        self, event: AstrMessageEvent, query: str, k: int = 5
+        self,
+        event: AstrMessageEvent,
+        query: str,
+        k: int = 5,
+        include_mark_write: bool = False,
     ) -> AsyncGenerator[MessageEventResult, None]:
         """[管理员] 搜索记忆"""
         ready, message = await self._ensure_plugin_ready()
@@ -159,7 +163,9 @@ class CommandEndpointsMixin:
             yield event.plain_result(self._command_handler_not_ready_message())
             return
 
-        async for message in self.command_handler.handle_search(event, query, k):
+        async for message in self.command_handler.handle_search(
+            event, query, k, include_mark_write=include_mark_write
+        ):
             yield message
 
     @permission_type(PermissionType.ADMIN)

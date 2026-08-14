@@ -24,6 +24,10 @@ class MemoryReadApiMixin:
         session_id = str(query.get("session_id", "")).strip() or None
         keyword = str(query.get("keyword", "")).strip()
         status_filter = str(query.get("status", "all")).strip().lower() or "all"
+        include_mark_write_raw = (
+            str(query.get("include_mark_write", "false")).strip().lower()
+        )
+        include_mark_write = include_mark_write_raw in {"1", "true", "yes", "on"}
 
         try:
             page = max(1, int(query.get("page", 1)))
@@ -43,6 +47,7 @@ class MemoryReadApiMixin:
             "keyword": keyword_value,
             "keyword_is_digit": int(bool(keyword_value and keyword.isdigit())),
             "keyword_like": f"%{keyword}%" if keyword_value else None,
+            "include_mark_write": int(include_mark_write),
         }
 
         try:
@@ -65,6 +70,14 @@ class MemoryReadApiMixin:
                             THEN json_extract(metadata, '$.status') END,
                             'active'
                         ) = :status
+                      )
+                      AND (
+                        :include_mark_write = 1
+                        OR COALESCE(
+                            CASE WHEN json_valid(metadata)
+                            THEN json_extract(metadata, '$.gate_disposition') END,
+                            ''
+                        ) <> 'mark_write'
                       )
                       AND (
                         :keyword IS NULL
@@ -109,6 +122,14 @@ class MemoryReadApiMixin:
                             THEN json_extract(metadata, '$.status') END,
                             'active'
                         ) = :status
+                      )
+                      AND (
+                        :include_mark_write = 1
+                        OR COALESCE(
+                            CASE WHEN json_valid(metadata)
+                            THEN json_extract(metadata, '$.gate_disposition') END,
+                            ''
+                        ) <> 'mark_write'
                       )
                       AND (
                         :keyword IS NULL

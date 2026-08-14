@@ -129,7 +129,30 @@ class TestEndpointDelegation:
         results = await _collect(plugin.search(event, "python", k=7))
 
         assert results == ["search-start", "search-done"]
-        handler.handle_search.assert_called_once_with(event, "python", 7)
+        handler.handle_search.assert_called_once_with(
+            event, "python", 7, include_mark_write=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_delegates_include_mark_write_flag_to_command_handler(
+        self,
+    ) -> None:
+        plugin = _Plugin()
+        handler = MagicMock()
+        handler.handle_search = MagicMock(
+            return_value=_yielding_handler("search-start", "search-done")
+        )
+        plugin.command_handler = handler
+        event = _event()
+
+        results = await _collect(
+            plugin.search(event, "python", k=7, include_mark_write=True)
+        )
+
+        assert results == ["search-start", "search-done"]
+        handler.handle_search.assert_called_once_with(
+            event, "python", 7, include_mark_write=True
+        )
 
     @pytest.mark.asyncio
     async def test_forget_delegates_doc_id_to_command_handler(self) -> None:

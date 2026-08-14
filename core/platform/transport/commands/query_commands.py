@@ -36,6 +36,7 @@ class _QueryMemoryEngine(Protocol):
         *,
         chat_type: str = "private",
         user_id: str | None = None,
+        include_mark_write: bool = False,
     ) -> Sequence[Any]:
         """按已校验作用域检索记忆。"""
 
@@ -212,7 +213,11 @@ class QueryCommandMixin:
             )
 
     async def handle_search(
-        self, event: AstrMessageEvent, query: str, k: int = 5
+        self,
+        event: AstrMessageEvent,
+        query: str,
+        k: int = 5,
+        include_mark_write: bool = False,
     ) -> AsyncGenerator[MessageEventResult, None]:
         """处理 /memora search 命令"""
         if not self.memory_engine:
@@ -245,6 +250,7 @@ class QueryCommandMixin:
                 session_id=session_id,
                 chat_type=chat_type,
                 user_id=user_id,
+                include_mark_write=include_mark_write,
             )
 
             if not results:
