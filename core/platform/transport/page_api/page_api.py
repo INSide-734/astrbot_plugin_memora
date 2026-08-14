@@ -22,6 +22,7 @@ from .diagnostics_api import DiagnosticsApiMixin
 from .evaluation_api import EvaluationApiMixin
 from .expression_api import ExpressionApiMixin
 from .feature_routes import FeatureRoutesApiMixin
+from .gate_api import GateApiMixin
 from .graph_api import GraphApiMixin
 from .group_list import GroupListApiMixin
 from .injection_strategy_api import (
@@ -98,6 +99,7 @@ class PluginPageApi(
     ExpressionApiMixin,
     UpdateApiMixin,
     FeatureRoutesApiMixin,
+    GateApiMixin,
     GroupListApiMixin,
     SharedPageApiHelpersMixin,
 ):

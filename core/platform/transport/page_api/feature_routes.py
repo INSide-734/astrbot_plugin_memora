@@ -146,6 +146,14 @@ class FeatureRoutesApiMixin:
             "页面接口：应用配置",
         )
 
+        # ---- 门禁 dry-run ----
+        register(
+            f"{PAGE_API_PREFIX}/gate/dry-run",
+            self.dry_run_gate,
+            ["POST"],
+            "页面接口：门禁规则 dry-run",
+        )
+
         # ---- 话题分割配置 ----
         register(
             f"{PAGE_API_PREFIX}/config/topic-segmentation",
