@@ -141,6 +141,27 @@ pageClass: config-reference-page
 | `"forgetting_agent.cleanup_days_threshold"` | `"int"` | `30` | 最小值：`1`<br>最大值：`3650` | 清理天数阈值（天）<br><small>记忆创建超过该天数后进入清理候选。需同时满足重要性低于阈值才会被删除。</small> |
 | `"forgetting_agent.cleanup_importance_threshold"` | `"float"` | `0.3` | 最小值：`0`<br>最大值：`1` | 清理重要性阈值<br><small>重要性低于该值的旧记忆才会被清理。0.3 表示重要性低于 30% 的记忆。</small> |
 
+## 记忆写入门禁
+
+配置域：`"quality.gate"`。候选记忆写入 canonical 之前按质量原因码执行确定性检查与处置路由（隔离/丢弃/标记写入）。保存后即时热重载生效，无需重启；处置语义、规则引擎与门禁页操作见[门禁配置](/features/gate-configuration)。
+
+| 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
+|---|---|---|---|---|
+| `"quality.gate.enabled"` | `"bool"` | `true` | - | 门禁总开关<br><small>开启后按绑定解析 profile，评估规则树与处置优先级；关闭后规则引擎与 profile 处置不再参与，携带原因码的候选一律回退到隔离（quarantine），不产生 discard 或 mark_write。</small> |
+| `"quality.gate.default_profile"` | `"string"` | `"private"` | 必须存在于 `profiles` | 默认 profile<br><small>没有任何绑定命中时回退到该 profile。内置 `private` 与 `group` 两个 profile，默认分别绑定私聊与群聊。</small> |
+
+:::: warning 复合分支不逐叶进入 Schema
+`profiles`（检查开关、阈值、词表、处置、Judge、规则）与 `bindings`（会话类型/群 ID/人格 ID → profile）是对象数组，Schema 只表达 `enabled` 与 `default_profile` 两个标量叶；复合值由后端 Pydantic 兜底校验，只能在 Dashboard 门禁页（System → 「门禁」，`#/gate`）编辑，通用配置页不显示这些叶。
+::::
+
+### 调优建议
+
+- **处置策略**：默认 `quarantine` 最保守，适合冷启动；确定某类原因码纯属噪声时，用该 profile 的 `disposition_overrides` 改为 `discard` 省去人工复核；想保留低置信但有价值的候选时改用 `mark_write`——写入 canonical 但默认不参与召回、注入与演化，可用 `/memora search <关键词> [k] true` 或记忆列表 API 的 `include_mark_write=true` 显式读取。
+- **阈值**：`min_deterministic_score`（默认 `0.42`）是确定性检查通过线，达到即直接放行；调低让更多候选直接通过、减少进入 Judge 与隔离的数量，调高更严格——更多候选落入 Judge（若仍不低于 `min_judge_score`）或被拒绝。`min_judge_score` 必须不高于 `min_deterministic_score`。
+- **Judge**：默认关闭。开启后仅在确定性检查不足以判定的路径调用 LLM，每次复核消耗额度；自定义模板必须包含 `{claim_text}` 与 `{source_text}` 占位符，可追加 `{chat_type}`、`{topics}`、`{importance}`，不超过 2000 字符。
+- **绑定**：按列表顺序首个精确命中生效，未声明字段视为不约束。为高频群或指定人格建独立 profile 时，先放更具体的绑定，再保留兜底绑定；否则未命中会话回退 `default_profile`。
+- **词表**：否定标记集 `append` 模式在内置标记之上追加，`replace` 模式完全接管；否定白名单始终在内置项（「不错」「没问题」「没准」）之上追加，用于豁免含否定词但语义肯定的表述。
+
 ## 原子质量过滤 (v2.6)
 
 配置域：`"atom_quality_filter"`。控制记忆原子创建时的质量门槛，减少无关联短期聊天记录的存储。六层防线：置信度/长度/重要性阈值 + 信息量预检 + 试用期 TTL + 同批去重 + 冷存储

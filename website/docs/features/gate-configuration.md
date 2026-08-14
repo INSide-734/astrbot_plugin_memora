@@ -67,7 +67,7 @@
 
 ## Judge 与词表
 
-- Judge 是请求级预算保护的可选 LLM 复核，仅在不确路径使用；开启后每次复核消耗 LLM 额度。自定义模板必须包含 `{claim_text}` 与 `{source_text}` 占位符且不超过 2000 字符，保存时后端再次校验。
+- Judge 是请求级预算保护的可选 LLM 复核，仅在不确路径使用；开启后每次复核消耗 LLM 额度。自定义模板必须包含 `{claim_text}` 与 `{source_text}` 占位符，可追加 `{chat_type}`、`{topics}`、`{importance}`，且不超过 2000 字符，保存时后端再次校验。
 - 否定标记集支持「追加」与「替换」两种模式；替换模式下内置标记（不/没/无/未/否/never/not/no）完全由列表接管。
 
 ## Dry-run 测试
@@ -80,5 +80,5 @@
 ## 相关页面
 
 - [管理命令](/reference/commands)（`/memora search` 与 `/memora summarize`）
-- [配置参考](/reference/configuration)
+- [配置参考（记忆生命周期）](/reference/configuration/lifecycle)
 - [质量门禁（开发）](/development/quality-gates)

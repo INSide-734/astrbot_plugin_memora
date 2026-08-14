@@ -7,7 +7,7 @@
 | `/memora status` | 查看插件初始化与核心组件状态。 |
 | `/memora health` | 查看运行时健康评分、异常领域与排障建议。 |
 | `/memora diagnostics` | 查看 Provider、召回、任务、索引和写入的诊断快照。 |
-| `/memora search <query> [k] [true|false]` | 搜索记忆；`k` 默认是 `5`；末尾位置参数 `true` 显式包含低置信 mark_write 记忆（默认排除）。 |
+| `/memora search <query> [k] [true/false]` | 搜索记忆；`k` 默认是 `5`；末尾位置参数 `true` 显式包含低置信 mark_write 记忆（默认排除）。 |
 | `/memora trace <query> [k]` | 追踪当前会话的召回阶段与评分，不回显记忆正文。 |
 | `/memora forget <doc_id>` | 删除指定 canonical 记忆。 |
 | `/memora rebuild-index` | 重建向量与 BM25/FTS 索引。 |
