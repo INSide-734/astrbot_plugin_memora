@@ -20,16 +20,31 @@ REBUILD_REQUIRED_PATHS = frozenset(
 )
 
 
+GATE_HOT_RELOAD_PATHS = ("quality.gate",)
+
+
 def classify_config_effects(changed_paths: tuple[str, ...]) -> tuple[bool, bool]:
     """返回配置变更是否需要重启，以及是否需要重建图派生数据。"""
 
-    restart_required = bool(changed_paths)
+    restart_required = any(
+        not path.startswith(GATE_HOT_RELOAD_PATHS) for path in changed_paths
+    )
     rebuild_required = bool(REBUILD_REQUIRED_PATHS.intersection(changed_paths))
     return restart_required, rebuild_required
 
 
+def gate_hot_reload_required(changed_paths: tuple[str, ...]) -> bool:
+    """返回变更是否包含可热重载的门禁叶子。"""
+
+    return bool(changed_paths) and any(
+        path.startswith(GATE_HOT_RELOAD_PATHS) for path in changed_paths
+    )
+
+
 __all__ = [
+    "GATE_HOT_RELOAD_PATHS",
     "REBUILD_REQUIRED_PATHS",
     "RuntimeConfigEffect",
     "classify_config_effects",
+    "gate_hot_reload_required",
 ]

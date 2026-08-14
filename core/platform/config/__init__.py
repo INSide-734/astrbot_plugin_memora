@@ -21,9 +21,11 @@ if TYPE_CHECKING:
         resolve_config_ownership,
     )
     from .runtime_effects import (
+        GATE_HOT_RELOAD_PATHS,
         REBUILD_REQUIRED_PATHS,
         RuntimeConfigEffect,
         classify_config_effects,
+        gate_hot_reload_required,
     )
     from .validation import (
         get_default_config,
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "CONFIG_SECTION_OWNERSHIP",
+    "GATE_HOT_RELOAD_PATHS",
     "REBUILD_REQUIRED_PATHS",
     "ConfigApplyResult",
     "ConfigConflictError",
@@ -43,6 +46,7 @@ __all__ = [
     "ConfigSectionOwnership",
     "ConfigValidationError",
     "get_default_config",
+    "gate_hot_reload_required",
     "merge_config_with_defaults",
     "migrate_legacy_config",
     "RuntimeConfigEffect",
@@ -54,6 +58,7 @@ __all__ = [
 
 _EXPORTS = {
     "CONFIG_SECTION_OWNERSHIP": (".ownership", "CONFIG_SECTION_OWNERSHIP"),
+    "GATE_HOT_RELOAD_PATHS": (".runtime_effects", "GATE_HOT_RELOAD_PATHS"),
     "REBUILD_REQUIRED_PATHS": (".runtime_effects", "REBUILD_REQUIRED_PATHS"),
     "ConfigApplyResult": (".manager", "ConfigApplyResult"),
     "ConfigConflictError": (".manager", "ConfigConflictError"),
@@ -65,6 +70,10 @@ _EXPORTS = {
     "RuntimeConfigEffect": (".runtime_effects", "RuntimeConfigEffect"),
     "classify_config_effects": (".runtime_effects", "classify_config_effects"),
     "get_default_config": (".validation", "get_default_config"),
+    "gate_hot_reload_required": (
+        ".runtime_effects",
+        "gate_hot_reload_required",
+    ),
     "merge_config_with_defaults": (".validation", "merge_config_with_defaults"),
     "migrate_legacy_config": (".migrations", "migrate_legacy_config"),
     "resolve_config_ownership": (".ownership", "resolve_config_ownership"),

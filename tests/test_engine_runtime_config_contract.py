@@ -280,6 +280,27 @@ def test_runtime_mapping_is_explicit_unique_and_marks_graph_rebuild() -> None:
     } == REBUILD_REQUIRED_PATHS
 
 
+def test_gate_only_change_requires_no_restart() -> None:
+    from core.platform.config import classify_config_effects, gate_hot_reload_required
+
+    assert classify_config_effects(("quality.gate.enabled",)) == (False, False)
+    assert gate_hot_reload_required(("quality.gate.enabled",)) is True
+
+
+def test_other_change_still_requires_restart() -> None:
+    from core.platform.config import classify_config_effects, gate_hot_reload_required
+
+    assert classify_config_effects(("debug",)) == (True, False)
+    assert gate_hot_reload_required(("debug",)) is False
+
+
+def test_mixed_change_still_requires_restart() -> None:
+    from core.platform.config import classify_config_effects
+
+    restart, rebuild = classify_config_effects(("quality.gate.enabled", "debug"))
+    assert restart is True and rebuild is False
+
+
 def test_runtime_mapping_fallbacks_match_pydantic_defaults() -> None:
     """映射表后备值必须与唯一 Pydantic 默认配置完全一致。"""
 
