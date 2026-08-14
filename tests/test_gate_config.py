@@ -564,3 +564,71 @@ def test_action_numeric_payload_rejects_bool(action):
                 )
             ],
         )
+
+
+@pytest.mark.parametrize(
+    "predicate",
+    [
+        {"op": "length_cmp", "field": "content", "cmp": "gt", "value": True},
+        {"op": "numeric_cmp", "field": "importance", "cmp": "gte", "value": True},
+        {"op": "exists", "field": "importance"},
+    ],
+)
+def test_predicate_incompatible_numeric_or_field_rejected(predicate):
+    """谓词数值负载不接受 bool；exists 不支持 importance。"""
+    with pytest.raises(ValidationError):
+        GateConfig(
+            default_profile="x",
+            bindings=[],  # type: ignore[arg-type]
+            profiles=[  # type: ignore[arg-type]
+                GateProfile(
+                    name="x",
+                    rules=[  # type: ignore[arg-type]
+                        {
+                            "id": "r1",
+                            "when": predicate,
+                            "action": {"kind": "drop_atoms", "value": True},
+                        }
+                    ],
+                )
+            ],
+        )
+
+
+def test_empty_judge_template_allowed():
+    """空模板放行（= 内置模板）。"""
+    profile = GateProfile(name="x", judge={"enabled": True, "prompt_template": ""})  # type: ignore[arg-type]
+    assert profile.judge.prompt_template == ""
+
+
+@pytest.mark.parametrize(
+    "reason_code",
+    sorted(
+        {
+            "grounding_claim_missing",
+            "grounding_source_missing",
+            "grounding_reference_invalid",
+            "grounding_source_evidence_missing",
+            "grounding_source_evidence_invalid",
+            "grounding_source_changed",
+            "grounding_subject_ambiguous",
+            "grounding_subject_mismatch",
+            "grounding_numeric_conflict",
+            "grounding_negation_conflict",
+            "grounding_claim_unsupported",
+            "grounding_needs_judge",
+            "grounding_judge_supported",
+            "grounding_judge_rejected",
+            "grounding_judge_unavailable",
+            "grounding_not_verified",
+            "summary_quality_low",
+        }
+    ),
+)
+def test_all_builtin_reason_codes_accepted_as_override(reason_code):
+    """全部内置原因码均可作为处置映射键。"""
+    profile = GateProfile(
+        name="x",
+        disposition_overrides={reason_code: "discard"},  # type: ignore[arg-type]
+    )
+    assert profile.disposition_overrides[reason_code] == "discard"

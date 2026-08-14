@@ -234,14 +234,21 @@ def _validate_predicate(node: RulePredicate) -> None:
                     raise ValueError(f"regex 无法编译: {exc}") from exc
             if n.op == "contains" and not n.values:
                 raise ValueError("contains 需要 values")
-            if n.op == "length_cmp" and (n.cmp is None or not isinstance(n.value, int)):
-                raise ValueError("length_cmp 需要 cmp 与整数 value")
+            if n.op == "length_cmp" and (
+                n.cmp is None
+                or isinstance(n.value, bool)
+                or not isinstance(n.value, int)
+            ):
+                raise ValueError("length_cmp 需要 cmp 与整数 value 且不接受 bool")
             if n.op == "numeric_cmp" and (
                 n.field != "importance"
                 or n.cmp is None
+                or isinstance(n.value, bool)
                 or not isinstance(n.value, (int, float))
             ):
-                raise ValueError("numeric_cmp 仅支持 importance 且需要 cmp/value")
+                raise ValueError(
+                    "numeric_cmp 仅支持 importance 且需要数值 cmp/value，不接受 bool"
+                )
         elif n.op in ("and", "or"):
             if n.field is not None or n.child is not None:
                 raise ValueError(f"{n.op} 不接受 field/child")
