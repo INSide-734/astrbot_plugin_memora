@@ -36,6 +36,7 @@ from .multi_query_fusion import fuse_query_results, split_candidate_budget
 from .provider_privacy_prefilter import (
     ProviderPrivacyContext,
     ProviderPrivacyPrefilter,
+    filter_confidential_from_group,
     rerank_with_provider_boundary,
 )
 from .retrieval_execution import RouteExecutionCoordinator
@@ -720,17 +721,8 @@ class DualRouteRetriever:
         results: list[HybridResult],
         chat_type: str,
     ) -> list[HybridResult]:
-        """群聊场景过滤机密记忆（私聊秘密不在群聊暴露）。
-
-        向后兼容：没有 privacy_level 的记忆视为 "shared"（都可访问）。
-        """
-        if chat_type != "group":
-            return results
-        return [
-            r
-            for r in results
-            if (r.metadata or {}).get("privacy_level", "shared") != "confidential"
-        ]
+        """群聊场景过滤机密记忆（私聊秘密不在群聊暴露）。"""
+        return filter_confidential_from_group(results, chat_type)
 
     def _apply_persona_boost(
         self,
