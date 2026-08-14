@@ -230,65 +230,65 @@ export type GateActionKind =
 export type GateListMode = "append" | "replace";
 
 /** 门禁检查开关。 */
-export interface GateChecks {
+export type GateChecks = {
   numeric_check: boolean;
   negation_check: boolean;
   group_subject_check: boolean;
   quality_low_check: boolean;
-}
+};
 
 /** 判定阈值；后端约束 min_judge_score ≤ min_deterministic_score。 */
-export interface GateThresholds {
+export type GateThresholds = {
   min_deterministic_score: number;
   min_judge_score: number;
   min_inference_score: number;
-}
+};
 
 /** 支持分参数：token 分与 SequenceMatcher 序列分加权。 */
-export interface GateScoring {
+export type GateScoring = {
   token_weight: number;
   sequence_enabled: boolean;
   sequence_weight: number;
-}
+};
 
 /** 引用上限。 */
-export interface GateReferences {
+export type GateReferences = {
   max_references: number;
-}
+};
 
 /** 质量判定参数。 */
-export interface GateQualityParams {
+export type GateQualityParams = {
   min_summary_chars: number;
-}
+};
 
 /** 可配置词表（模式 + 词项）。 */
-export interface GateWordListConfig {
+export type GateWordListConfig = {
   mode: GateListMode;
   items: string[];
-}
+};
 
 /** 同义替换对。 */
-export interface GateSynonymPair {
+export type GateSynonymPair = {
   source: string;
   target: string;
-}
+};
 
 /** 词表组。 */
-export interface GateWordLists {
+export type GateWordLists = {
   negation_whitelist: string[];
   negation_markers: GateWordListConfig;
   generic_terms: GateWordListConfig;
   synonym_pairs: GateSynonymPair[];
-}
+};
 
 /** Judge 开关与自定义模板（空模板 = 内置）。 */
-export interface GateJudge {
+export type GateJudge = {
   enabled: boolean;
   prompt_template: string;
-}
+};
 
 /** 规则谓词树节点。 */
-export interface GateRulePredicate {
+export type GateRulePredicate = {
   op: GatePredicateOp;
   field?: GateRuleField | null;
   pattern?: string | null;
@@ -297,35 +297,35 @@ export interface GateRulePredicate {
   value?: number | null;
   children?: GateRulePredicate[] | null;
   child?: GateRulePredicate | null;
-}
+};
 
 /** 规则动作（按 kind 互斥携带 payload）。 */
-export interface GateRuleAction {
+export type GateRuleAction = {
   kind: GateActionKind;
   value?: string | number | boolean | null;
   delta?: number | null;
   values?: string[] | null;
-}
+};
 
 /** 门禁规则。 */
-export interface GateRuleData {
+export type GateRuleData = {
   id: string;
   enabled: boolean;
   description: string;
   when: GateRulePredicate;
   action: GateRuleAction;
-}
+};
 
 /** profile 绑定（按序首个匹配生效）。 */
-export interface GateBindingData {
+export type GateBindingData = {
   profile: string;
   chat_type?: GateChatType | null;
   group_id?: string | null;
   persona_id?: string | null;
-}
+};
 
 /** 门禁 profile。 */
-export interface GateProfileData {
+export type GateProfileData = {
   name: string;
   checks: GateChecks;
   thresholds: GateThresholds;
@@ -337,12 +337,12 @@ export interface GateProfileData {
   disposition: GateDisposition;
   disposition_overrides: Record<string, GateDisposition>;
   rules: GateRuleData[];
-}
+};
 
 /** 门禁整体配置（config 对象 quality.gate 分支）。 */
-export interface GateConfigData {
+export type GateConfigData = {
   enabled: boolean;
   default_profile: string;
   bindings: GateBindingData[];
   profiles: GateProfileData[];
-}
+};
