@@ -8,6 +8,7 @@ import json
 import sqlite3
 import sys
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from pathlib import Path
 from typing import Any, cast
 
@@ -142,7 +143,7 @@ def inspect_schema_contract(
 
     try:
         uri = f"file:{database.as_posix()}?mode=ro"
-        with sqlite3.connect(uri, uri=True) as connection:
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
             actual = {
                 "tables": _name_set(connection, "table"),
                 "indexes": _name_set(connection, "index"),
@@ -187,7 +188,7 @@ def _canonical_rows(database: Path) -> list[tuple[Any, ...]]:
     """读取派生重建所需的 canonical 行。"""
 
     uri = f"file:{database.as_posix()}?mode=ro"
-    with sqlite3.connect(uri, uri=True) as connection:
+    with closing(sqlite3.connect(uri, uri=True)) as connection:
         return connection.execute(
             "SELECT id,text,metadata,created_at,updated_at FROM documents ORDER BY id"
         ).fetchall()
@@ -232,7 +233,7 @@ async def _rebuild_fts5(
         for row in rows:
             await retriever.add_document(int(row[0]), str(row[1]))
         results = await retriever.search(query, limit=max(1, len(rows)))
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection:
             indexed = int(
                 connection.execute(
                     "SELECT COUNT(DISTINCT doc_id) FROM memora_memories_fts"
@@ -346,7 +347,7 @@ async def _rebuild_graph(
         await store.initialize()
         result = await store.replace_memory_graph(source_id, nodes, [edge], [entry])
         stats = await store.get_memory_entry_stats()
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection:
             fts_matches = int(
                 connection.execute(
                     "SELECT COUNT(*) FROM memora_graph_entries_fts "
@@ -502,8 +503,8 @@ async def _build_derived_rebuild_evidence(
     scratch_root.mkdir(parents=True, exist_ok=False)
     derived_database = scratch_root / "derived-evidence.db"
     with (
-        sqlite3.connect(source_database) as source,
-        sqlite3.connect(derived_database) as target,
+        closing(sqlite3.connect(source_database)) as source,
+        closing(sqlite3.connect(derived_database)) as target,
     ):
         source.backup(target)
     rows = _canonical_rows(derived_database)

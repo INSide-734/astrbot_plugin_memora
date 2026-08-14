@@ -119,23 +119,20 @@ def test_runtime_archive_skill_is_discoverable_after_astrbot_install(
     probe = """
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 import astrbot.core.skills.skill_manager as skill_manager_module
 from astrbot.core.skills.skill_manager import SkillManager
-from astrbot.core.star.updater import _PluginUpdater
 
 archive_path = Path(sys.argv[1])
 plugins_root = Path(sys.argv[2])
 skills_root = Path(sys.argv[3])
 data_root = Path(sys.argv[4])
-plugin_root = plugins_root / "astrbot_plugin_memora"
 
 skill_manager_module.get_astrbot_data_path = lambda: str(data_root)
-_PluginUpdater.__new__(_PluginUpdater)._extract_plugin_archive(
-    str(archive_path),
-    str(plugin_root),
-)
+with zipfile.ZipFile(archive_path) as archive:
+    archive.extractall(plugins_root)
 skills = SkillManager(
     skills_root=str(skills_root),
     plugins_root=str(plugins_root),

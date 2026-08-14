@@ -9,6 +9,7 @@ import sqlite3
 import sys
 import zipfile
 from collections.abc import Awaitable, Callable
+from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -73,7 +74,7 @@ def _tree_marker(plugin_root: Path) -> str:
 def _create_legacy_database(path: Path) -> None:
     """创建会执行至少一个 ALTER 的匿名 v7 canonical 数据库。"""
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         connection.executescript(
             """
             CREATE TABLE documents (
@@ -102,7 +103,7 @@ def _create_legacy_database(path: Path) -> None:
 def _legacy_snapshot(path: Path) -> tuple[int, int, tuple[str, ...]]:
     """读取迁移恢复后的数量、版本和 documents 列。"""
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         count = int(connection.execute("SELECT COUNT(*) FROM documents").fetchone()[0])
         version = int(
             connection.execute("SELECT MAX(version) FROM db_version").fetchone()[0]

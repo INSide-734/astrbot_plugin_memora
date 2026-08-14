@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import uuid
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -172,9 +172,11 @@ def test_health_scorer_handles_missing_and_malformed_inputs_defensively():
 
 
 @pytest.mark.asyncio
-async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload():
+async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload(
+    tmp_path: Path,
+):
     """事件 Store 应保存安全标量、支持筛选并返回独立副本。"""
-    db_path = Path(f"diagnostics_event_store_test_{uuid.uuid4().hex}.sqlite3")
+    db_path = tmp_path / "diagnostics.sqlite3"
     store = DiagnosticEventStore(db_path)
     try:
         await store.initialize()
@@ -232,9 +234,9 @@ async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload()
         assert fetched is not None
         assert fetched["payload"]["attempt_count"] == 60
         fetched["payload"]["attempt_count"] = 0
-        assert (await store.get_event(first["event_id"]))["payload"][
-            "attempt_count"
-        ] == 60
+        persisted = await store.get_event(first["event_id"])
+        assert persisted is not None
+        assert persisted["payload"]["attempt_count"] == 60
 
         resolved = await store.resolve_event(first["event_id"])
         assert resolved is not None
@@ -250,7 +252,12 @@ async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload()
         assert defensive["domain"] == "unknown"
         assert defensive["severity"] == "info"
         assert (
-            len(await store.list_events(limit="not-a-number", include_resolved=False))
+            len(
+                await store.list_events(
+                    limit=cast(int, "not-a-number"),
+                    include_resolved=False,
+                )
+            )
             == 2
         )
     finally:

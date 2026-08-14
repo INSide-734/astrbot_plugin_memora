@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import fnmatch
 import hashlib
 import json
@@ -10,11 +11,11 @@ import os
 import shutil
 import sqlite3
 import stat
-import subprocess
 import tempfile
 import zipfile
 import zlib
 from collections.abc import Mapping, Sequence
+from contextlib import closing
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -339,7 +340,7 @@ def seed_data_dir(data_dir: Path, fixture: Mapping[str, Any]) -> Path:
     sql = (root / str(fixture["seed_sql"])).read_text(encoding="utf-8")
     _validate_seed_sql(sql)
     try:
-        with sqlite3.connect(database) as connection:
+        with closing(sqlite3.connect(database)) as connection:
             connection.executescript(sql)
             connection.commit()
     except sqlite3.Error as exc:
@@ -371,7 +372,7 @@ def fingerprint_data(data_dir: Path, fixture: Mapping[str, Any]) -> dict[str, An
     database = data_dir / str(fixture["database"])
     uri = f"file:{database.as_posix()}?mode=ro"
     try:
-        with sqlite3.connect(uri, uri=True) as connection:
+        with closing(sqlite3.connect(uri, uri=True)) as connection:
             quick_check_rows = connection.execute("PRAGMA quick_check").fetchall()
             quick_check = [str(row[0]) for row in quick_check_rows]
             schema_rows = connection.execute(
@@ -444,20 +445,21 @@ def compare_manifests(
 ) -> dict[str, Any]:
     """按 diff 0/1/>1 语义比较 runtime manifest。"""
 
-    old_path, new_path = temporary / "old.manifest", temporary / "new.manifest"
-    old_path.write_text("\n".join(old) + "\n", encoding="utf-8")
-    new_path.write_text("\n".join(new) + "\n", encoding="utf-8")
-    try:
-        completed = subprocess.run(
-            ["diff", "-u", str(old_path), str(new_path)],
-            check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+    old_path = temporary / "old.manifest"
+    new_path = temporary / "new.manifest"
+    old_lines = [f"{item}\n" for item in old]
+    new_lines = [f"{item}\n" for item in new]
+    old_path.write_text("".join(old_lines), encoding="utf-8")
+    new_path.write_text("".join(new_lines), encoding="utf-8")
+    difference = "".join(
+        difflib.unified_diff(
+            old_lines,
+            new_lines,
+            fromfile="old.manifest",
+            tofile="new.manifest",
         )
-    except OSError as exc:
-        raise RollbackVerificationError("manifest_diff_command_failed") from exc
-    if completed.returncode > 1:
-        raise RollbackVerificationError("manifest_diff_command_failed")
+    ).encode("utf-8")
+    exit_code = 0 if list(old) == list(new) else 1
     changed = sorted(set(old).symmetric_difference(new))
     unexpected = [
         name
@@ -465,11 +467,11 @@ def compare_manifests(
         if not any(fnmatch.fnmatchcase(name, pattern) for pattern in allowed_patterns)
     ]
     return {
-        "exit_code": completed.returncode,
-        "review_required": completed.returncode == 1,
+        "exit_code": exit_code,
+        "review_required": exit_code == 1,
         "difference_count": len(changed),
         "unexpected_count": len(unexpected),
-        "diff_hash": _sha256_bytes(completed.stdout),
+        "diff_hash": _sha256_bytes(difference),
         "old_manifest_hash": _sha256_bytes(_canonical_json(list(old))),
         "new_manifest_hash": _sha256_bytes(_canonical_json(list(new))),
     }
