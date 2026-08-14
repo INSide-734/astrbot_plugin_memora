@@ -238,6 +238,7 @@ class ReflectionStorageMixin:
                         cost_control=self._cost_control,
                         is_group_chat=is_group_chat,
                         persona_id=persona_id,
+                        group_id=group_id,
                     )
                     for i, result in enumerate(batch_results):
                         if isinstance(result, BaseException):

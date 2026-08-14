@@ -231,6 +231,7 @@ class CommandHandler(
                 messages=history_messages,
                 is_group_chat=is_group_chat,
                 persona_id=persona_id,
+                group_id=group_id,
             )
 
             all_topics: list[str] = []

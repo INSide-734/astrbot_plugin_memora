@@ -379,6 +379,29 @@ async def test_reflection_extra_batch_uses_single_reservation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reflection_batches_pass_group_id_to_processor() -> None:
+    """反思批次必须把群组标识透传给 process_conversation 解析 profile。"""
+
+    from core.features.reflection.application.llm_budget import (
+        process_reflection_batches,
+    )
+
+    process_conversation = AsyncMock(return_value=[{"batch": 0}])
+
+    results = await process_reflection_batches(
+        [["a"]],
+        process_conversation=process_conversation,
+        cost_control=_quality_control(),
+        is_group_chat=True,
+        persona_id="persona-1",
+        group_id="group-9",
+    )
+
+    assert results == [[{"batch": 0}]]
+    assert process_conversation.await_args.kwargs["group_id"] == "group-9"
+
+
+@pytest.mark.asyncio
 async def test_event_handler_reuses_and_clears_turn_budget() -> None:
     """召回与响应必须共享新轮次预算，后台任务继承后事件引用应清理。"""
 

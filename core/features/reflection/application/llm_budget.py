@@ -49,6 +49,7 @@ async def process_reflection_batches(
     cost_control: CostControl,
     is_group_chat: bool,
     persona_id: str | None,
+    group_id: str | None = None,
 ) -> list[list[MemoryResult] | BaseException]:
     """执行基础批次和受预算约束的额外批次，并保留普通失败供上游处理。"""
 
@@ -58,6 +59,7 @@ async def process_reflection_batches(
                 messages=batches[0],
                 is_group_chat=is_group_chat,
                 persona_id=persona_id,
+                group_id=group_id,
             )
         ]
 
@@ -77,6 +79,7 @@ async def process_reflection_batches(
                     messages=batch,
                     is_group_chat=is_group_chat,
                     persona_id=persona_id,
+                    group_id=group_id,
                 )
         async with budgeted_extra_llm_call(
             cost_control,
@@ -89,6 +92,7 @@ async def process_reflection_batches(
                     messages=batch,
                     is_group_chat=is_group_chat,
                     persona_id=persona_id,
+                    group_id=group_id,
                     llm_max_retries=1,
                 )
 

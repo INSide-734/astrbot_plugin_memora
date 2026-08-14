@@ -67,6 +67,7 @@ def _build_summary_case(
     actual_count: int,
     last_summarized_index: int,
     add_side_effect: Exception | None = None,
+    message_group_id: str | None = None,
 ) -> tuple[CommandHandler, MagicMock, MagicMock, MagicMock]:
     """装配不访问真实 Provider 或存储的手动总结场景。
 
@@ -76,6 +77,7 @@ def _build_summary_case(
         actual_count: 会话当前真实消息数。
         last_summarized_index: 执行前的总结进度。
         add_side_effect: canonical 写入时需要注入的异常。
+        message_group_id: 窗口消息携带的群组标识；缺省为私聊消息。
 
     返回:
         命令处理器、事件、会话管理器和记忆引擎替身。
@@ -86,7 +88,10 @@ def _build_summary_case(
         return_value=last_summarized_index
     )
     conversation_manager.get_messages_range = AsyncMock(
-        return_value=[MagicMock(group_id=None), MagicMock(group_id=None)]
+        return_value=[
+            MagicMock(group_id=message_group_id),
+            MagicMock(group_id=message_group_id),
+        ]
     )
     conversation_manager.update_session_metadata = AsyncMock(return_value=True)
     conversation_manager.update_session_metadata_fields = AsyncMock(return_value=True)
@@ -167,6 +172,26 @@ async def test_quarantine_only_reports_no_canonical_write_and_advances() -> None
             "pending_summary": None,
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_summarize_passes_group_id_to_processor() -> None:
+    """手动总结必须把群组标识透传给 process_conversation 解析 profile。"""
+    handler, event, _conversation_manager, engine = _build_summary_case(
+        candidates=[_candidate("群聊事实", importance=0.8, topics=["群聊"])],
+        gate_actions=["allow"],
+        actual_count=8,
+        last_summarized_index=6,
+        message_group_id="group-7",
+    )
+    processor = handler._memory_processor
+    assert processor is not None
+    await _run_summary(handler, event)
+    processor.process_conversation.assert_awaited_once()
+    call = processor.process_conversation.await_args.kwargs
+    assert call["group_id"] == "group-7"
+    assert call["is_group_chat"] is True
+    engine.add_memory.assert_awaited_once()
 
 
 @pytest.mark.asyncio

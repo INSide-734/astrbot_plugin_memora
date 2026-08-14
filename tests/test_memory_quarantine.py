@@ -788,6 +788,61 @@ async def test_approve_blocks_when_judge_unavailable(
 
 
 @pytest.mark.asyncio
+async def test_approve_judge_cancellation_blocks_and_propagates(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """Judge 取消必须先恢复 blocked 再传播，不得遗留 approving 状态。"""
+
+    from core.features.quality.domain.gate_config import GateProfile
+
+    engine = MagicMock()
+    engine.add_memory = AsyncMock()
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata.return_value = []
+    processor.resolve_grounding_judge = AsyncMock(side_effect=asyncio.CancelledError)
+    conversation_manager = MagicMock()
+    conversation_manager.get_messages_range = AsyncMock(
+        return_value=[_source_message()]
+    )
+    validator = MagicMock()
+    validator.revalidate_stored_evidence = MagicMock(return_value=_needs_judge_result())
+    gate_runtime = MagicMock()
+    gate_runtime.resolve_profile.return_value = GateProfile(name="p")
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=conversation_manager,
+        grounding_validator=validator,
+        gate_runtime=gate_runtime,
+    )
+    staged = await quarantine_store.stage_candidate(
+        candidate_key="needs-judge-cancel",
+        reason_codes=["grounding_needs_judge"],
+        content="用户喜欢咖啡。",
+        metadata={"key_facts": ["用户喜欢咖啡。"]},
+        importance=0.7,
+        session_id="session-1",
+        persona_id=None,
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await gate.approve(
+            staged["candidate_id"],
+            expected_revision=staged["revision"],
+            actor_id="admin",
+        )
+
+    blocked = await quarantine_store.get_candidate(staged["candidate_id"])
+    assert blocked is not None
+    assert blocked["status"] == "blocked"
+    assert blocked["failure_reason"] == "approval_cancelled_before_write"
+    engine.add_memory.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_approval_correction_rejects_oversized_content_before_claim(
     quarantine_store: MemoryQuarantineStore,
 ) -> None:

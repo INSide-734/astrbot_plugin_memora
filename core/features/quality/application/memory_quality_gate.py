@@ -276,11 +276,21 @@ class MemoryQualityGate:
             if profile is None:
                 validation = validation.with_unavailable_judge()
             else:
-                validation = await self.memory_processor.resolve_grounding_judge(
-                    validation,
-                    is_group_chat=bool(claimed["is_group_chat"]),
-                    profile=profile,
-                )
+                try:
+                    validation = await self.memory_processor.resolve_grounding_judge(
+                        validation,
+                        is_group_chat=bool(claimed["is_group_chat"]),
+                        profile=profile,
+                    )
+                except asyncio.CancelledError:
+                    # Judge 取消时先恢复为 blocked，再向上传播，不得遗留 approving。
+                    await self.store.block_approval(
+                        candidate_id,
+                        expected_revision=claimed["revision"],
+                        actor_id=actor_id,
+                        reason_code="approval_cancelled_before_write",
+                    )
+                    raise
         if not validation.allowed:
             return await self.store.block_approval(
                 candidate_id,

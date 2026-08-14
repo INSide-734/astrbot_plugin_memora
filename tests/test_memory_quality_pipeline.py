@@ -446,3 +446,5 @@ async def test_reflection_passes_group_id_from_history_to_gate() -> None:
     quality_gate.route_candidate.assert_awaited_once()
     assert quality_gate.route_candidate.await_args.kwargs["group_id"] == "group-1"
     assert quality_gate.route_candidate.await_args.kwargs["chat_type"] == "group"
+    # 同一 group_id 必须贯穿 profile 解析与质量门路由。
+    assert processor.process_conversation.await_args.kwargs["group_id"] == "group-1"
