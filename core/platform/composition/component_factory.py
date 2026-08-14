@@ -438,6 +438,7 @@ class ComponentFactory:
                 memory_engine=memory_engine,
                 memory_processor=memory_processor,
                 conversation_manager=conversation_manager,
+                gate_runtime=gate_runtime,
             )
             logger.info("记忆质量隔离门已初始化")
             await db_setup.auto_rebuild_index_if_needed(
