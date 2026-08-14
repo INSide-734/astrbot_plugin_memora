@@ -231,6 +231,26 @@ def test_debug_defaults_to_disabled_and_matches_schema() -> None:
     assert MemoraConfig(debug=True).debug is True
 
 
+def test_quality_gate_schema_leaves_match_pydantic_defaults() -> None:
+    """quality.gate 标量叶必须存在于 schema 且默认值与 Pydantic 一致。"""
+
+    from core.platform.config.config_validator import MemoraConfig
+
+    schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+    gate_items = schema["quality"]["items"]["gate"]["items"]
+
+    assert gate_items["enabled"] == {
+        "description": "门禁总开关",
+        "type": "bool",
+        "default": True,
+    }
+    assert gate_items["default_profile"]["default"] == "private"
+
+    config = MemoraConfig()
+    assert config.quality.gate.enabled is True
+    assert config.quality.gate.default_profile == "private"
+
+
 def test_memory_evolution_defaults_to_disabled() -> None:
     from core.platform.config.config_validator import MemoraConfig
 
