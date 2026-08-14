@@ -5,13 +5,14 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.shared.cost_control import CostControl
 from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.shared.contracts.conversation import Message
+from core.shared.cost_control import CostControl
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 
 _ProcessorFactory = Callable[..., MemoryProcessor]
@@ -741,3 +742,152 @@ class TestGeneratePersonaInterpretations:
             )
         # Error should be handled, should not raise
         assert "secondary" not in result
+
+
+class _CountingGateRuntime:
+    """记录 snapshot() 调用次数的假门禁运行时。"""
+
+    def __init__(self, snapshot: Any) -> None:
+        self._snapshot = snapshot
+        self.snapshot_calls = 0
+
+    def snapshot(self) -> Any:
+        """返回固定快照并累计调用次数。"""
+
+        self.snapshot_calls += 1
+        return self._snapshot
+
+
+class TestGateIntegration:
+    @pytest.fixture
+    def make_gated_processor(self) -> Callable[..., MemoryProcessor]:
+        def _make(
+            runtime: _CountingGateRuntime,
+            llm_response: str,
+            *,
+            cost_control: CostControl | None = None,
+        ) -> MemoryProcessor:
+            ctx = MagicMock()
+            ctx.get_using_provider.return_value = None
+            ctx.persona_manager = None
+            ctx.get_registered_llm_tools.return_value = []
+            provider = MagicMock()
+            response = AsyncMock()
+            response.completion_text = llm_response
+            provider.text_chat = AsyncMock(return_value=response)
+            return MemoryProcessor(
+                context=ctx,
+                llm_provider=provider,
+                config={},
+                cost_control=cost_control,
+                gate_runtime=runtime,
+            )
+
+        return _make
+
+    @pytest.mark.asyncio
+    async def test_profile_checks_toggle_disables_numeric_check(
+        self, make_gated_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """profile 关闭数字检查后，来源不含的数字不再触发冲突原因码。"""
+        from core.features.quality.application.gate_runtime import build_gate_snapshot
+        from core.features.quality.domain.gate_config import GateConfig, GateProfile
+
+        config = GateConfig(
+            profiles=(
+                GateProfile(name="private", checks={"numeric_check": False}),
+                GateProfile(name="group", checks={"numeric_check": False}),
+            )
+        )
+        runtime = _CountingGateRuntime(build_gate_snapshot(config))
+        llm_response = (
+            '{"memories":[{"content":"用户有三台手机",'
+            '"key_facts":["用户有三台手机"],"topics":["手机"],'
+            '"importance":0.7,"sentiment":"neutral",'
+            '"source_refs":[{"message_index":0,"start":0,"end":7}]}],'
+            '"confidence":0.8,"extraction_quality":"high"}'
+        )
+        proc = make_gated_processor(runtime, llm_response)
+        messages = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="我喜欢喝咖啡。",
+                sender_id="user1",
+                sender_name="Alice",
+                timestamp=time.time(),
+            )
+        ]
+
+        results = await proc.process_conversation(messages)
+
+        assert results
+        assert (
+            "grounding_numeric_conflict"
+            not in results[0]["metadata"]["grounding_reason_codes"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_gate_disabled_skips_grounding(
+        self, make_gated_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """主开关关闭时跳过 grounding 与质量判定，候选全部放行。"""
+        from core.features.quality.application.gate_runtime import build_gate_snapshot
+        from core.features.quality.domain.gate_config import GateConfig
+
+        runtime = _CountingGateRuntime(build_gate_snapshot(GateConfig(enabled=False)))
+        llm_response = (
+            '{"summary":"某用户做了某事","topics":["测试"],'
+            '"key_facts":["某用户做了某事"],"sentiment":"positive","importance":0.7}'
+        )
+        proc = make_gated_processor(runtime, llm_response)
+        messages = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="你好",
+                sender_id="user1",
+                sender_name="Alice",
+                timestamp=time.time(),
+            )
+        ]
+
+        results = await proc.process_conversation(messages)
+
+        assert results
+        for result in results:
+            assert result["metadata"]["quality_gate_action"] == "allow"
+            assert result["metadata"]["grounding_reason_codes"] == []
+            assert result["metadata"]["grounding_status"] == "grounded"
+
+    @pytest.mark.asyncio
+    async def test_window_uses_single_snapshot(
+        self, make_gated_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """一次窗口只取一次快照，保证窗口内配置一致。"""
+        from core.features.quality.application.gate_runtime import build_gate_snapshot
+        from core.features.quality.domain.gate_config import GateConfig
+
+        runtime = _CountingGateRuntime(build_gate_snapshot(GateConfig()))
+        llm_response = (
+            '{"summary":"测试摘要","topics":["测试"],'
+            '"key_facts":["事实1"],"sentiment":"positive","importance":0.7}'
+        )
+        proc = make_gated_processor(runtime, llm_response)
+        messages = [
+            Message(
+                id=1,
+                session_id="s1",
+                role="user",
+                content="你好，我喜欢喝咖啡",
+                sender_id="user1",
+                sender_name="Alice",
+                timestamp=time.time(),
+            )
+        ]
+
+        await proc.process_conversation(messages)
+
+        assert runtime.snapshot_calls == 1

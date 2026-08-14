@@ -345,6 +345,7 @@ class ComponentFactory:
                 ),
             },
             cost_control=cost_control,
+            gate_runtime=gate_runtime,
             topic_embed_fn=topic_embedding_adapter.embed,
         )
         logger.info("MemoryProcessor 已初始化")

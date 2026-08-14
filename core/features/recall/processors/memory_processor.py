@@ -12,16 +12,18 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ....shared.contracts.conversation import Message
 from ....platform.security.guardrails import (
     MemoryExtractionResult,
     validate_and_clean_json,
     validate_llm_response,
 )
+from ....shared.contracts.conversation import Message
 from ....shared.cost_control import CostControl
 from ....shared.extra_llm_budget import budgeted_extra_llm_call
 from ...identity.application.enricher import build_memory_identity_context
 from ...memory.domain.memory_atom import MemoryAtom
+from ...quality.application.gate_runtime import default_gate_snapshot
+from ...quality.domain.gate_config import BUILTIN_GENERIC_TERMS, GateProfile
 from .atom_classifier import classify_atoms
 from .conversation_formatter import ConversationFormatter
 from .json_parser import JsonParser
@@ -56,6 +58,7 @@ class MemoryProcessor:
         llm_provider: Any = None,
         config: dict[str, Any] | None = None,
         cost_control: CostControl | None = None,
+        gate_runtime: Any | None = None,
         grounding_judge: Callable[[dict[str, Any]], Awaitable[bool | Mapping[str, Any]]]
         | None = None,
         topic_embed_fn: Callable[[list[str]], Awaitable[list[list[float]]]]
@@ -68,6 +71,7 @@ class MemoryProcessor:
             llm_provider: 固定 Provider 或由上下文解析的 Provider 标识。
             config: 处理器运行时配置快照。
             cost_control: 共享的请求级成本门。
+            gate_runtime: 门禁运行时；缺省时使用内置默认快照。
             grounding_judge: 可选的来源可信度 Judge。
             topic_embed_fn: 策略 B 使用的批量 Embedding 入口。
         """
@@ -75,7 +79,7 @@ class MemoryProcessor:
         self.context = context
         self.config = config or {}
         self.cost_control = cost_control or CostControl()
-
+        self._gate_runtime = gate_runtime
         self.llm_client = LLMClient(context, llm_provider)
         prompt_dir = Path(__file__).parent.parent / "prompts"
         prompt_config = {
@@ -134,6 +138,7 @@ class MemoryProcessor:
         interest_profile: list[str] | None = None,
         continuity_context: str | None = None,
         llm_max_retries: int = 3,
+        group_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """处理对话批次并生成结构化记忆（可能返回多条独立话题记忆）。
 
@@ -215,8 +220,26 @@ class MemoryProcessor:
             current_stage = "parse"
             stage_started = time.perf_counter()
             structured_data = self._parse_llm_response(llm_response_text, is_group_chat)
+            # 窗口入口取一次门禁快照并解析 profile，保证窗口内配置一致。
+            gate_snapshot = (
+                self._gate_runtime.snapshot()
+                if self._gate_runtime is not None
+                else default_gate_snapshot()
+            )
+            profile = gate_snapshot.resolve_profile(
+                "group" if is_group_chat else "private", group_id, persona_id
+            )
+            gate_enabled = gate_snapshot.enabled
 
-            quality = self.quality.validate_summary_quality(structured_data)
+            quality = (
+                "normal"
+                if not gate_enabled or not profile.checks.quality_low_check
+                else self.quality.validate_summary_quality(
+                    structured_data,
+                    min_summary_chars=profile.quality.min_summary_chars,
+                    generic_terms=_resolved_generic_terms(profile),
+                )
+            )
             if quality == "low":
                 logger.warning(
                     "[MemoryProcessor] 总结质量不达标（low），候选将进入隔离队列"
@@ -363,15 +386,26 @@ class MemoryProcessor:
                 elif is_group_chat and mem.get("participants"):
                     mem_metadata["participants"] = mem["participants"]
 
-                grounding = self.grounding_validator.validate(
-                    mem,
-                    messages,
-                    is_group_chat=is_group_chat,
-                )
-                if grounding.requires_judge:
-                    grounding = await self._resolve_grounding_with_judge(
-                        grounding,
+                if gate_enabled:
+                    grounding = self.grounding_validator.validate(
+                        mem,
+                        messages,
                         is_group_chat=is_group_chat,
+                        profile=profile,
+                    )
+                    if grounding.requires_judge:
+                        grounding = await self._resolve_grounding_with_judge(
+                            grounding,
+                            is_group_chat=is_group_chat,
+                            profile=profile,
+                        )
+                else:
+                    # 门禁关闭时跳过来源校验，候选按已接地放行。
+                    grounding = GroundingResult(
+                        allowed=True,
+                        status="grounded",
+                        reason_codes=(),
+                        evidence=[],
                     )
                 mem_metadata["grounding_status"] = grounding.status
                 mem_metadata["grounding_reason_codes"] = list(grounding.reason_codes)
@@ -480,6 +514,7 @@ class MemoryProcessor:
         grounding: GroundingResult,
         *,
         is_group_chat: bool,
+        profile: GateProfile,
     ) -> GroundingResult:
         """用请求预算保护可选 Judge，并把普通失败降级为隔离。"""
 
@@ -763,6 +798,15 @@ class MemoryProcessor:
                 )
 
         return interpretations
+
+
+def _resolved_generic_terms(profile: GateProfile) -> tuple[str, ...]:
+    """按词表模式合并内置泛化词；replace 模式完全由配置掌控。"""
+
+    config = profile.word_lists.generic_terms
+    if config.mode == "replace":
+        return tuple(config.items)
+    return BUILTIN_GENERIC_TERMS + tuple(config.items)
 
 
 def _referenced_subject_ids(
