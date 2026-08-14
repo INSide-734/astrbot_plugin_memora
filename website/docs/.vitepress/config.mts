@@ -62,6 +62,10 @@ export default withMermaid(
           text: "功能指南",
           items: [
             { text: "Dashboard", link: "/features/dashboard" },
+            {
+              text: "门禁配置",
+              link: "/features/gate-configuration",
+            },
             { text: "Agent 工具", link: "/features/agent-tools" },
             { text: "Page API", link: "/features/page-api" },
           ],

@@ -45,7 +45,13 @@ flowchart LR
     K -->|"low / 未忠实"| M["quality_gate_action=quarantine；不生成 Atom"]
     L --> N["list[{content, metadata, importance, atoms}]"]
     M --> N
-    N --> O["ReflectionHandler / MemoryQualityGate"]
+    N --> O["MemoryQualityGate"]
+    O --> P["GateRuntime.resolve_profile\n绑定顺序首个匹配 → default_profile"]
+    P --> Q["gate_rule_engine\nAND/OR/NOT 规则树 + 六类动作"]
+    Q --> R{"处置：规则 force > 原因码 override > profile 默认"}
+    R -->|quarantine| S["隔离状态机（人工批准）"]
+    R -->|discard| T["不落库 + 计数观测"]
+    R -->|mark_write| U["写 canonical\n默认不召回/不演化"]
 ```
 
 重要边界：`MemoryProcessor` 在结构化解析与 `StorageBuilder` 之间通过
@@ -63,7 +69,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - Prompt 模板优先级由 `PromptBuilder` 实现：配置自定义模板 > `core/prompts/*.txt` > 最小硬编码回退；系统提示可含当前时间、人格、连续性、兴趣与话题引导。
 - 输出解析优先 `MemoryExtractionResult` guardrail；验证失败才进入旧 JSON 解析器，并写入 `_guardrail_fallback`。不要把“回退成功”误标为已通过 guardrail。
 - 每条模型结果必须带当前窗口的匿名 `S<n>` source offset；旧输出仅允许由当前窗口唯一推断受控引用。数字、否定极性、群聊主体和引用边界先走确定性校验，不确定路径才使用请求级预算保护的 Judge。
-- 低质量或来源未通过的候选仍返回，但写 `quality_gate_action=quarantine`、稳定原因码和内部证据；此时不提前生成 Atom。生产调用方必须交给 `MemoryQualityGate`，不得直接写 canonical、FTS、FAISS、图或 Evolution。
+- 低质量或来源未通过的候选仍返回，但写 `quality_gate_action=quarantine`、稳定原因码和内部证据；此时不提前生成 Atom。生产调用方必须交给 `MemoryQualityGate` 按门禁配置路由（quarantine/discard/mark_write），不得直接写 canonical、FTS、FAISS、图或 Evolution；mark_write 处置由门禁补齐 `gate_disposition`/`gate_reason_codes` 并按需重建 Atom。
 - 每条记忆写 `schema_version=v3`、最多 150 字符 `source_snippet`；`StorageBuilder` 同时维护 `summary_schema_version=v2` 的摘要元数据，这是不同层级的版本字段。
 - 重要性可受情感强度、首因/近因和兴趣命中影响，并始终上限钳制到 1.0。
 - `build_memory_from_structured_data()` 用于已有结构化数据；`classify_atoms_from_metadata()` 尊重 `atom_enabled`；`generate_persona_interpretations()` 是可选逐 persona 额外 LLM 调用，每个 persona 必须分别取得请求预算并固定单次 Provider 请求，单个失败释放 reservation 且不影响其他 persona。

@@ -24,7 +24,7 @@
 
 | 路径 | 责任 |
 |---|---|
-| `src/pages/` | 16 个功能页面；页面必须使用共享 `PageFrame` |
+| `src/pages/` | 17 个功能页面；页面必须使用共享 `PageFrame` |
 | `src/components/brand/` | `MemoraLogo` 品牌图形；Sidebar 等品牌入口统一复用 |
 | `src/components/layout/` | `Sidebar`、`PageFrame`、`PageHeader`、`PageToolbar`、`PageContent`、指标和状态布局原语 |
 | `src/components/ui/` | Base UI-backed shadcn 本地组件；优先复用，不手写等价控件 |
@@ -37,7 +37,7 @@
 | `src/index.css` | shadcn 语义 token、亮暗主题、Geist 和旧 token 兼容别名 |
 | `scripts/` | runtime/browser smoke、helper 与截图基线断言 |
 
-## 16 个 Hash 路由与五组导航
+## 17 个 Hash 路由与五组导航
 
 `src/App.tsx` 的 `HASH_TO_PAGE` 和 `src/lib/navigation.ts` 必须一起维护。URL 形如 `#/memory`；空、未知或无效 hash 当前回退到 `graph`。不要引入第二套路由器。
 
@@ -59,6 +59,7 @@
 | Relationships | `#/social` | 社交关系 |
 | System | `#/system` | 运行观测、Provider 和系统操作 |
 | System | `#/config` | 插件配置编辑与冲突处理 |
+| System | `#/gate` | 记忆写入门禁：profile 与绑定、检查/阈值/词表/处置/Judge/规则与 dry-run |
 
 导航组固定为 Overview、Memory、Insights、Relationships、System。新增或移动页面时同时更新 `PageId`、懒加载映射、hash 映射、导航、三语言文案、全局搜索、mock、单测和 browser smoke；保留脏表单前进/后退保护与 history index 行为。
 
@@ -67,7 +68,7 @@
 ```mermaid
 flowchart LR
     U[Dashboard 用户] --> A[src/App.tsx\nHash 路由与全局壳]
-    A --> P[src/pages\n16 个 PageFrame 页面]
+    A --> P[src/pages\n17 个 PageFrame 页面]
     P --> H[src/hooks\n查询 编辑 配置 SSE]
     H --> B[src/lib/bridge.ts]
     B --> X[AstrBot page bridge]
@@ -196,17 +197,18 @@ npx vitest run --environment jsdom src/pages/SystemPage.test.tsx src/mock/server
 
 行为变更先写能失败的 Vitest + React Testing Library 测试。构建不能替代 runtime smoke，runtime smoke 不能替代真实 Playwright browser smoke；仓库级 `python scripts/check_all.py` 是最终门禁，不是开发时缩小反馈环的替代品。
 
-## Browser smoke 与 50 张截图
+## Browser smoke 与 55 张截图
 
-`scripts/browser_smoke.mjs` 在桌面 1366×900、移动 390×844、宽屏 2048×1152 下验证页面，并覆盖暗色、zh/en/ru、Graph、全局搜索、Evaluation 桌面双列/移动单列变体卡片、编辑/配置 revision 冲突、确认流程、横向溢出、加载稳定性和控制台/page error。脚本定义的 50 张基线全部必须生成、尺寸匹配且超过最低字节阈值：
+`scripts/browser_smoke.mjs` 在桌面 1366×900、移动 390×844、宽屏 2048×1152 下验证页面，并覆盖暗色、zh/en/ru、Graph、全局搜索、Evaluation 桌面双列/移动单列变体卡片、编辑/配置 revision 冲突、门禁页桌面/移动/暗色/冲突与绑定列表、确认流程、横向溢出、加载稳定性和控制台/page error。脚本定义的 55 张基线全部必须生成、尺寸匹配且超过最低字节阈值：
 
 - 配置/注入/搜索（10）：`config.png`、`config-conflict.png`、`mobile-config.png`、`injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png`、`mobile-injection-detail.png`、`wide-injection-overview.png`、`global-search-scroll.png`、`global-search-memory-target.png`。
 - 主要页面/智能控制台（12）：`graph.png`、`memory.png`、`system.png`、`jargon.png`、`intelligence-evaluation.png`、`mobile-intelligence-evaluation.png`、`intelligence-trace.png`、`intelligence-diagnostics.png`、`intelligence-review.png`、`mobile-system.png`、`mobile-jargon.png`、`system-confirmation.png`。
 - 主题/预览/宽屏（9）：`dark-learning.png`、`dark-system.png`、`preview.png`、`mobile-preview.png`、`dark-preview.png`、`wide-preview.png`、`wide-learning.png`、`wide-affection.png`、`wide-social.png`。
 - i18n/编辑（10）：`i18n-en-preview.png`、`i18n-en-memory.png`、`i18n-ru-preview.png`、`i18n-ru-memory.png`、`editing-social-sheet.png`、`editing-social-conflict.png`、`editing-error-summary.png`、`editing-batch-toolbar.png`、`editing-mobile-affection.png`、`editing-mobile-mood.png`。
 - 数据表/编辑器/密度（9）：`knowledge-table-default.png`、`knowledge-table-columns.png`、`knowledge-editor-view.png`、`knowledge-editor-edit.png`、`mobile-knowledge-table.png`、`mobile-knowledge-editor.png`、`wide-profiles-table.png`、`dark-social-table.png`、`injection-decisions-compact.png`。
+- 门禁（5）：`gate.png`、`mobile-gate.png`、`gate-conflict.png`、`gate-profiles.png`、`dark-gate.png`。
 
-Browser smoke 通过后仍须人工打开 50 张图片，不能只看 exit code/字节数。重点检查：
+Browser smoke 通过后仍须人工打开 55 张图片，不能只看 exit code/字节数。重点检查：
 
 - Recall Trace 的 query、会话 ID、用户 ID属于用户主动填写的检索控件；它们不得出现在 trace response、历史 trace、Diagnostics、日志或模型可见 metadata 中。
 - Review Queue 是受控人工复核页面，可以按复核权限显示候选正文和来源；这些字段不得复制到 Recall Trace、Diagnostics、注入观测或模型输入。

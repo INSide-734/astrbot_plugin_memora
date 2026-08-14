@@ -85,7 +85,8 @@ flowchart LR
 
 ## 跨模块契约
 
-- 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
+- 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryQualityGate` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
+- 门禁链与 mark_write：写入门禁按绑定顺序首个精确匹配解析 profile（chat_type/group_id/persona_id 字段缺省视为不约束，未命中回落 `default_profile`），处置优先级为规则 `force_disposition` > 原因码 override > profile 默认。`discard` 不落库；`quarantine` 走隔离状态机人工批准后重取证；`mark_write` 写 canonical 但携带 `gate_disposition=mark_write` 标记，默认不参与召回、注入与演化，仅 `/memora search` 末尾位置参数 `true` 或记忆列表 API `include_mark_write=true` 显式包含。门禁快照热重载为原子替换，窗口内评估始终引用同一快照；任何处置路径不得绕过 source revision、scope、privacy 与 role 校验。
 - 身份链：协议事件 → 固定适配器 `ProtocolIdentityResolver` → `ResolvedIdentity` → 身份目录/会话名称同步 → 召回与反思。OneBot 11 只把规范化 QQ 号作为 canonical user ID；QQ 官方按平台实例隔离场景 OpenID，不能伪装成 QQ 号，`union_openid` 不参与主键；名称是可更新辅助数据，匿名、冲突和非法事件不得写用户目录。
 - 稳定身份 metadata 由可信来源消息确定并锚定长期记忆参与者；新记忆携带 canonical → protocol/namespace/stable/label 的内部来源证据，legacy 别名只在原会话作用域且唯一匹配时附着到召回候选副本，不改 canonical memory、分数、排序、ID、revision 或 System Prompt。
 - 演化链：canonical memory 成功写入后 → `MemoryEvolutionGate` → job queue/worker → relation/projection 派生解释平面。canonical SQLite 记录及其整数 ID 始终是唯一权威身份；Projection 只能作为有 source/revision 证据的读时注解，不能形成第二套 canonical memory 或 `doc_id`。

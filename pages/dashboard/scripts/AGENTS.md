@@ -5,7 +5,7 @@
 ## 入口
 
 - `runtime_smoke.mjs`：验证生产 bundle 在宿主 bridge/mock 下能启动并完成关键加载。
-- `browser_smoke.mjs`：Playwright 桌面、移动和宽屏导航、交互、溢出、控制台错误与 50 张截图基线；Evaluation 变体卡片保留桌面和 390px 移动端证据。
+- `browser_smoke.mjs`：Playwright 桌面、移动和宽屏导航、交互、溢出、控制台错误与 55 张截图基线；Evaluation 变体卡片保留桌面和 390px 移动端证据，门禁页保留桌面/移动/暗色/冲突与绑定列表证据。
 - `config_smoke_fixture.mjs`：读取根 `_conf_schema.json`，为非宿主 browser smoke bridge 提供 schema、revision conflict 和 reload 生命周期；不得复制第二份手写 schema。
 - `evaluation_smoke_fixture.mjs`：为 browser smoke 提供评测数据集和动态消融能力 descriptor；不可用变体保留稳定 reason code，默认选择必须与生产契约一致。报告 fixture 只能使用安全逐用例数值，不得恢复 query、ranked/relevant ID 或身份 metadata。
 - `evaluation_smoke_helpers.mjs`：负责打开固定匿名报告、等待变体状态/安全 effective settings 可见，并验证变体卡片在桌面双列、移动端单列且无溢出，避免把交互继续堆入超长 browser smoke 主文件。

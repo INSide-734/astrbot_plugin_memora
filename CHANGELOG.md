@@ -16,6 +16,7 @@ Memora 的所有重要变更都记录在此文件中。
 ### 新增
 
 - mark_write 低置信记忆写入 canonical 后默认不参与召回与演化，避免污染注入与派生证据；`/memora search` 末尾位置参数 `true` 与记忆列表 API `include_mark_write=true` 可显式包含。
+- 记忆写入门禁可配置化：新增 `quality.gate` 配置域与 Dashboard 门禁页（profile 与绑定、检查/阈值/词表/处置/Judge/自定义规则/dry-run），支持按绑定上下文解析 profile、规则树与六类动作、三处置路由（quarantine/discard/mark_write）与保存即时生效的热重载。
 
 ### 修复
 

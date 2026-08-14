@@ -69,7 +69,8 @@ sequenceDiagram
 - `config_validator.py`、对应 feature domain 模型、`CONFIG_SECTION_OWNERSHIP`；
 - `REBUILD_REQUIRED_PATHS`、组合根的 engine runtime projection 和 reload 调度；
 - Page API `/config/schema|state|apply`、Dashboard 类型/默认值、旧配置迁移和契约测试；
-- `platform/config/__init__.py` 的惰性公开导出及所有旧 owner 的恒等导出测试。
+- `platform/config/__init__.py` 的惰性公开导出及所有旧 owner 的恒等导出测试；
+- quality 门禁分支：`quality.gate` 的 `bindings`/`profiles` 复合数组由 Pydantic 兜底校验（schema 只表达 `enabled`/`default_profile` 两片标量叶）；变更必须同步 `core/features/quality/domain/gate_config.py`、`GateRuntime` 快照构建、门禁页/规则引擎/召回过滤与 `tests/test_gate_config.py`；热重载由 `gate_hot_reload_required()`（`GATE_HOT_RELOAD_PATHS = ("quality.gate",)`）判定并保持窗口内快照一致。
 
 ## 最窄验证入口
 
