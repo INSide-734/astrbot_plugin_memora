@@ -41,7 +41,9 @@ BUILTIN_GATE_REASON_CODES: frozenset[str] = frozenset(
 _CUSTOM_RULE_RE = re.compile(r"^custom_rule_([a-z0-9_-]{1,64})$")
 _PLACEHOLDER_CLAIM, _PLACEHOLDER_SOURCE = "{claim_text}", "{source_text}"
 _PLACEHOLDER_RE = re.compile(r"\{([a-z0-9_]+)\}")
-_ALLOWED_PLACEHOLDERS = frozenset({"claim_text", "source_text"})
+_ALLOWED_PLACEHOLDERS = frozenset(
+    {"claim_text", "source_text", "chat_type", "topics", "importance"}
+)
 DISPOSITION_SAFETY_ORDER: tuple[str, ...] = ("quarantine", "discard", "mark_write")
 BUILTIN_NEGATION_WHITELIST: tuple[str, ...] = ("不错", "没问题", "没准")
 BUILTIN_NEGATION_MARKERS: tuple[str, ...] = (

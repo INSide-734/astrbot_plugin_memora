@@ -32,7 +32,11 @@ from .conversation_formatter import ConversationFormatter
 from .json_parser import JsonParser
 from .llm_client import LLMClient
 from .memory_grounding import GroundingResult, MemoryGroundingValidator
-from .prompt_builder import PromptBuilder
+from .prompt_builder import (
+    PromptBuilder,
+    load_prompt_file,
+    render_extraction_prompt,
+)
 from .quality_validator import QualityValidator
 from .reflection_generation_observability import (
     report_generation_stage as _report_generation_stage,
@@ -45,14 +49,6 @@ from .topic_segmentation_pipeline import (
 
 if TYPE_CHECKING:
     from ....shared.contracts import PromptProtectionPort
-
-
-_GROUNDING_JUDGE_PROMPT = (
-    "判断候选记忆是否完全由给定来源支持。只输出 JSON："
-    '{{"supported": true}} 或 {{"supported": false}}。\n'
-    "候选声明：{claim_text}\n"
-    "来源片段：{source_text}"
-)
 
 
 class MemoryProcessor:
@@ -94,11 +90,20 @@ class MemoryProcessor:
         self.cost_control = cost_control or CostControl()
         self._gate_runtime = gate_runtime
         self.llm_client = LLMClient(context, llm_provider)
-        prompt_dir = Path(__file__).parent.parent / "prompts"
+        # core 包内 prompts 目录（core/prompts）：本文件位于 core/features/recall/processors，
+        # parents[3] 即 core 包根，规避按相对层级推算目录的漂移。
+        prompt_dir = Path(__file__).resolve().parents[3] / "prompts"
         prompt_config = {
             k: self.config.get(k, "")
             for k in ("group_chat_template", "private_chat_template")
         }
+        try:
+            self._judge_prompt_default = load_prompt_file(
+                "grounding_judge_prompt.txt", prompt_dir
+            )
+        except Exception:
+            logger.warning("[MemoryProcessor] Judge 默认模板加载失败，使用空模板")
+            self._judge_prompt_default = ""
         self.prompt_builder = PromptBuilder(prompt_dir, config=prompt_config)
         self.quality = QualityValidator()
         self.json_parser = JsonParser(self.quality)
@@ -171,20 +176,26 @@ class MemoryProcessor:
         identity_context = build_memory_identity_context(messages)
 
         current_date = datetime.now().strftime("%Y-%m-%d %H:%M")
-        if is_group_chat:
-            prompt = self.prompt_builder.group_chat_prompt.replace(
-                "{conversation}", grounded_conversation_text
-            )
-        else:
-            prompt = self.prompt_builder.private_chat_prompt.replace(
-                "{conversation}", grounded_conversation_text
-            )
-        prompt = prompt.replace("{current_date}", current_date)
+        conversation_type = "群聊" if is_group_chat else "私聊"
+        template = (
+            self.prompt_builder.group_chat_prompt
+            if is_group_chat
+            else self.prompt_builder.private_chat_prompt
+        )
+        prompt = render_extraction_prompt(
+            template,
+            conversation=grounded_conversation_text,
+            current_date=current_date,
+            chat_type=conversation_type,
+            continuity_topics=continuity_context or "",
+            interests="、".join((interest_profile or [])[:5]),
+            emotion_tags="、".join(emotion_tags or []),
+            emotional_intensity=f"{emotional_intensity:.2f}",
+        )
         prompt += identity_context.prompt_constraint()
         prompt += self.grounding_validator.prompt_contract(len(messages))
         identity_metadata = identity_context.metadata()
 
-        conversation_type = "群聊" if is_group_chat else "私聊"
         try:
             logger.info(
                 f"[MemoryProcessor] 准备调用 LLM，对话类型={conversation_type}, 消息数={len(messages)}"
@@ -411,6 +422,8 @@ class MemoryProcessor:
                             grounding,
                             is_group_chat=is_group_chat,
                             profile=profile,
+                            topics=tuple(mem_topics),
+                            importance=mem_importance,
                         )
                 else:
                     # 门禁关闭时跳过来源校验，候选按已接地放行。
@@ -528,6 +541,8 @@ class MemoryProcessor:
         *,
         is_group_chat: bool,
         profile: GateProfile,
+        topics: tuple[str, ...] = (),
+        importance: float = 0.5,
     ) -> GroundingResult:
         """按 profile 开关解析 Judge；成本许可未放行时由开关旁路，仍受额度约束。"""
 
@@ -539,6 +554,9 @@ class MemoryProcessor:
             "claim_text": grounding.claim_text,
             "source_text": grounding.source_text,
             "is_group_chat": bool(is_group_chat),
+            "chat_type": "群聊" if is_group_chat else "私聊",
+            "topics": "、".join(topics) or "无",
+            "importance": str(importance),
         }
         try:
             if self.cost_control.allow("memory_grounding_judge"):
@@ -590,17 +608,15 @@ class MemoryProcessor:
     ) -> Mapping[str, Any]:
         """只向 Provider 发送当前候选声明和已引用片段。"""
 
-        if template:
-            # 占位符合法性由配置校验保证，这里直接渲染。
-            prompt = template.format(
-                claim_text=payload["claim_text"],
-                source_text=payload["source_text"],
-            )
-        else:
-            prompt = _GROUNDING_JUDGE_PROMPT.format(
-                claim_text=str(payload.get("claim_text") or "")[:1200],
-                source_text=str(payload.get("source_text") or "")[:2400],
-            )
+        # 空配置 = 文件默认模板；占位符合法性由配置校验保证，这里直接渲染。
+        template_text = template or self._judge_prompt_default
+        prompt = template_text.format(
+            claim_text=str(payload.get("claim_text") or "")[:1200],
+            source_text=str(payload.get("source_text") or "")[:2400],
+            chat_type=payload.get("chat_type", "私聊"),
+            topics=payload.get("topics", "无"),
+            importance=payload.get("importance", "0.5"),
+        )
         response_text = await self.llm_client.call_llm_with_retry(
             prompt=prompt,
             system_prompt="只做来源忠实性判断，不补充来源之外的事实。",

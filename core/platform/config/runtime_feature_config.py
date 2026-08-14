@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import re
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .feature_contributions import (
     AtomClassifierConfig,
@@ -14,6 +15,19 @@ from .feature_contributions import (
     HybridScoringConfig,
     PersonaDecayConfig,
     WriteReliabilityConfig,
+)
+
+_EXTRACTION_PLACEHOLDER_RE = re.compile(r"\{([a-z0-9_]+)\}")
+_EXTRACTION_ALLOWED_PLACEHOLDERS = frozenset(
+    {
+        "conversation",
+        "current_date",
+        "chat_type",
+        "continuity_topics",
+        "interests",
+        "emotion_tags",
+        "emotional_intensity",
+    }
 )
 
 
@@ -72,10 +86,29 @@ class NotesConfig(BaseModel):
 
 
 class PromptTemplatesConfig(BaseModel):
-    """私聊和群聊抽取 Prompt 覆盖配置。"""
+    """私聊和群聊抽取 Prompt 覆盖配置；空串=文件默认模板。"""
 
     group_chat_template: str = ""
     private_chat_template: str = ""
+
+    @model_validator(mode="after")
+    def _template_placeholders(self) -> "PromptTemplatesConfig":
+        for name in ("group_chat_template", "private_chat_template"):
+            template = getattr(self, name)
+            if not template:
+                continue
+            if "{conversation}" not in template:
+                raise ValueError(f"{name} 必须包含 {{conversation}} 占位符")
+            placeholders = set(_EXTRACTION_PLACEHOLDER_RE.findall(template))
+            if not placeholders <= _EXTRACTION_ALLOWED_PLACEHOLDERS:
+                raise ValueError(
+                    f"{name} 包含未知占位符: "
+                    + ", ".join(sorted(placeholders - _EXTRACTION_ALLOWED_PLACEHOLDERS))
+                )
+            residual = _EXTRACTION_PLACEHOLDER_RE.sub("", template)
+            if "{" in residual or "}" in residual:
+                raise ValueError(f"{name} 包含未闭合或多余的 {{}} 花括号")
+        return self
 
 
 class ReconsolidationConfig(BaseModel):

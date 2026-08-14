@@ -1001,3 +1001,40 @@ class TestGroundingJudgeResolution:
         assert "我只有一台手机" in prompt
         assert "{claim_text}" not in prompt
         assert "{source_text}" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_judge_template_renders_extended_placeholders(self) -> None:
+        """自定义模板渲染 {chat_type}/{topics}/{importance} 后发送给 Provider。"""
+        from core.features.quality.domain.gate_config import GateJudge, GateProfile
+
+        ctx = MagicMock()
+        ctx.get_using_provider.return_value = None
+        provider = MagicMock()
+        response = AsyncMock()
+        response.completion_text = '{"supported": true}'
+        provider.text_chat = AsyncMock(return_value=response)
+        proc = MemoryProcessor(context=ctx, llm_provider=provider, config={})
+        profile = GateProfile(
+            name="p",
+            judge=GateJudge(
+                enabled=True,
+                prompt_template=(
+                    "{chat_type} 判断：{claim_text} vs {source_text}，"
+                    "主题 {topics}，重要性 {importance}"
+                ),
+            ),
+        )
+
+        with extra_llm_budget_scope(ExtraLlmBudget(1)):
+            result = await proc.resolve_grounding_judge(
+                self._needs_judge(),
+                is_group_chat=True,
+                profile=profile,
+                topics=("猫",),
+                importance=0.9,
+            )
+
+        assert result.allowed is True
+        prompt = provider.text_chat.await_args.kwargs["prompt"]
+        assert "群聊" in prompt and "猫" in prompt and "0.9" in prompt
+        assert "候选声明" in prompt and "来源片段" in prompt

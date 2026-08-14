@@ -7,6 +7,56 @@ from typing import Any
 from astrbot.api import logger
 
 
+def load_prompt_file(name: str, prompt_dir: Path) -> str:
+    """读取核心提示词文件；文件不存在或读取异常时向上抛出。"""
+
+    return (prompt_dir / name).read_text(encoding="utf-8")
+
+
+_EXTRACTION_PLACEHOLDERS = (
+    "conversation",
+    "current_date",
+    "chat_type",
+    "continuity_topics",
+    "interests",
+    "emotion_tags",
+    "emotional_intensity",
+)
+
+
+def render_extraction_prompt(
+    template: str,
+    *,
+    conversation: str,
+    current_date: str,
+    chat_type: str,
+    continuity_topics: str = "",
+    interests: str = "",
+    emotion_tags: str = "",
+    emotional_intensity: str = "",
+) -> str:
+    """渲染抽取模板的 7 个占位符；可选占位符缺省为空串。
+
+    逐占位符替换而非 str.format：默认文件模板内含 JSON 示例花括号，
+    format 会把它们误判为替换字段。未知占位符在保存校验期已拒绝，
+    渲染期不可能出现。
+    """
+
+    values = {
+        "conversation": conversation,
+        "current_date": current_date,
+        "chat_type": chat_type,
+        "continuity_topics": continuity_topics,
+        "interests": interests,
+        "emotion_tags": emotion_tags,
+        "emotional_intensity": emotional_intensity,
+    }
+    rendered = template
+    for name in _EXTRACTION_PLACEHOLDERS:
+        rendered = rendered.replace(f"{{{name}}}", values[name])
+    return rendered
+
+
 class PromptBuilder:
     """加载提示词模板 + 构建带人格的 system_prompt
 
@@ -36,16 +86,16 @@ class PromptBuilder:
         # 2. 回退到文件模板
         try:
             if not custom_private:
-                private_prompt_file = prompt_dir / "private_chat_prompt.txt"
-                with open(private_prompt_file, encoding="utf-8") as f:
-                    self.private_chat_prompt = f.read()
+                self.private_chat_prompt = load_prompt_file(
+                    "private_chat_prompt.txt", prompt_dir
+                )
             else:
                 self.private_chat_prompt = custom_private
 
             if not custom_group:
-                group_prompt_file = prompt_dir / "group_chat_prompt.txt"
-                with open(group_prompt_file, encoding="utf-8") as f:
-                    self.group_chat_prompt = f.read()
+                self.group_chat_prompt = load_prompt_file(
+                    "group_chat_prompt.txt", prompt_dir
+                )
             else:
                 self.group_chat_prompt = custom_group
 

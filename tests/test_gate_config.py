@@ -323,6 +323,34 @@ def test_judge_template_unclosed_brace_rejected():
         )
 
 
+@pytest.mark.parametrize("bad", ["无占位符", "{claim_text} 只有声明", "{secret}"])
+def test_judge_template_placeholder_whitelist(bad: str):
+    with pytest.raises(ValidationError):
+        GateConfig(
+            default_profile="x",
+            profiles=[  # type: ignore[arg-type]
+                GateProfile(
+                    name="x",
+                    judge={"enabled": True, "prompt_template": bad},  # type: ignore[arg-type]
+                )
+            ],
+        )
+
+
+def test_judge_template_five_placeholders_accepted():
+    profile = GateProfile(
+        name="x",
+        judge={  # type: ignore[arg-type]
+            "enabled": True,
+            "prompt_template": (
+                "{chat_type}: {claim_text} vs {source_text}"
+                "（主题 {topics}，重要性 {importance}）"
+            ),
+        },
+    )
+    assert profile.judge.prompt_template != ""
+
+
 def test_profiles_and_rules_are_tuples():
     cfg = GateConfig()
     assert isinstance(cfg.profiles, tuple)

@@ -281,6 +281,8 @@ class MemoryQualityGate:
                         validation,
                         is_group_chat=bool(claimed["is_group_chat"]),
                         profile=profile,
+                        topics=tuple(metadata.get("topics") or ()),
+                        importance=float(claimed["importance"]),
                     )
                 except asyncio.CancelledError:
                     # Judge 取消时先恢复为 blocked，再向上传播，不得遗留 approving。

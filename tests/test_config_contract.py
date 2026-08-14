@@ -771,3 +771,38 @@ async def test_schema_options_use_exact_json_scalar_equality() -> None:
     assert "recall_engine.top_k" in exc_info.value.field_errors
     assert manager.get_config_snapshot() == snapshot_before
     assert source.saved_snapshots == []
+
+
+@pytest.mark.parametrize("field", ["group_chat_template", "private_chat_template"])
+@pytest.mark.parametrize("bad", ["无占位符", "{secret}", "{conversation} {{oops"])
+def test_prompt_templates_reject_invalid_placeholders(field: str, bad: str) -> None:
+    """抽取模板必须含 {conversation}、占位符白名单与花括号闭合。"""
+    from pydantic import ValidationError
+
+    from core.platform.config.config_validator import MemoraConfig
+
+    with pytest.raises(ValidationError):
+        MemoraConfig.model_validate({"prompt_templates": {field: bad}})
+
+
+def test_prompt_templates_accept_all_seven_placeholders() -> None:
+    from core.platform.config.config_validator import MemoraConfig
+
+    template = (
+        "{chat_type} 对话:{conversation} 日期:{current_date} "
+        "连续:{continuity_topics} 兴趣:{interests} 情绪:{emotion_tags} "
+        "强度:{emotional_intensity}"
+    )
+    config = MemoraConfig.model_validate(
+        {"prompt_templates": {"group_chat_template": template}}
+    )
+    assert config.prompt_templates.group_chat_template == template
+
+
+def test_prompt_templates_empty_means_file_default() -> None:
+    """空模板放行（= 文件默认）。"""
+    from core.platform.config.config_validator import MemoraConfig
+
+    config = MemoraConfig()
+    assert config.prompt_templates.group_chat_template == ""
+    assert config.prompt_templates.private_chat_template == ""
