@@ -97,6 +97,9 @@ ALLOWED_FIELDS = frozenset(
         "response_chars",
         "prompt_tokens",
         "completion_tokens",
+        "gate_mark_write_count",
+        "gate_discard_count",
+        "gate_quarantine_count",
     }
 )
 
@@ -133,6 +136,9 @@ _NUMERIC_FIELDS = frozenset(
         "response_chars",
         "prompt_tokens",
         "completion_tokens",
+        "gate_mark_write_count",
+        "gate_discard_count",
+        "gate_quarantine_count",
     }
 )
 _ENUM_FIELDS = {
@@ -330,6 +336,7 @@ _VALUE_FIELDS = {
             "event_handler_shutdown_started",
             "evolution_cancelled",
             "evolution_disabled",
+            "evolution_gate_mark_write",
             "evolution_schedule_error",
             "evolution_scheduled",
             "evolution_skipped",

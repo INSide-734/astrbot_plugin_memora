@@ -352,6 +352,27 @@ def test_allowlist_keeps_pre_existing_values(tmp_path: Path) -> None:
     assert "assistant_response_persisted" in _VALUE_FIELDS["reason_code"]
 
 
+def test_allowlist_covers_gate_disposition_counts_and_evolution_skip() -> None:
+    """门禁处置计数与 mark_write 演化跳过原因码必须进允许清单。"""
+    from core.features.observability.infrastructure.debug_reporter import (
+        _NUMERIC_FIELDS,
+        _VALUE_FIELDS,
+        ALLOWED_FIELDS,
+    )
+
+    for field in (
+        "gate_mark_write_count",
+        "gate_discard_count",
+        "gate_quarantine_count",
+    ):
+        assert field in ALLOWED_FIELDS
+        assert field in _NUMERIC_FIELDS
+
+    reason_codes = _VALUE_FIELDS["reason_code"]
+    assert "evolution_gate_mark_write" in reason_codes
+    assert "gate_config_applied" in reason_codes
+
+
 def test_file_rotation_keeps_current_file_and_two_backups(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
