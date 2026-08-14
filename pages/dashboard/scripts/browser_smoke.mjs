@@ -91,6 +91,11 @@ const SCREENSHOT_BASELINES = {
   "wide-profiles-table.png": { width: 2048, height: 1152, minBytes: 10_000 },
   "dark-social-table.png": { width: 1366, height: 900, minBytes: 10_000 },
   "injection-decisions-compact.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "gate.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "mobile-gate.png": { width: 390, height: 844, minBytes: 10_000 },
+  "gate-conflict.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "gate-profiles.png": { width: 1366, height: 900, minBytes: 10_000 },
+  "dark-gate.png": { width: 1366, height: 900, minBytes: 10_000 },
 };
 
 const INJECTION_SMOKE_NOW_MS = Date.UTC(2026, 6, 15, 8, 0, 0);
@@ -2099,10 +2104,12 @@ async function openBundledConfigPage(
   errors,
   initialHash = "#/config",
   expectedText = null,
+  pageInitScript = null,
 ) {
   const context = await browser.newContext({ viewport });
   const page = await context.newPage();
   collectPageErrors(page, errors);
+  if (pageInitScript) await page.addInitScript(pageInitScript);
   await installBundledMockBridge(page);
   await page.goto(`${pathToFileURL(htmlPath).href}${initialHash}`, { waitUntil: "load" });
   await page.bringToFront();
@@ -2120,8 +2127,10 @@ async function openBundledConfigPage(
  *   返回稳定后的配置域、字段数量及已删除配置域的可见性。
  */
 async function waitForConfigReady(page, label) {
-  const expectedSections = 41;
-  const expectedFields = 227;
+  // quality.gate 分支（enabled/default_profile 两片标量叶）加入 schema 后
+  // 配置页总 section 41→42、总字段 227→229。
+  const expectedSections = 42;
+  const expectedFields = 229;
   await waitForRootText(
     page,
     ["配置", "单次召回数量", "recall_engine.top_k", "已同步"],
@@ -2900,6 +2909,190 @@ async function runMobileConfigSmoke(browser, errors, screenshotsDir) {
   }
 }
 
+async function waitForGateReady(page, label) {
+  await waitForRootText(
+    page,
+    [
+      "记忆写入门禁",
+      "Profile 与绑定",
+      "检查开关",
+      "阈值与算法参数",
+      "词表",
+      "处置策略",
+      "规则",
+      "Dry-run 测试",
+      "已同步",
+    ],
+    label,
+  );
+  await page.waitForFunction(
+    () => {
+      const root = document.querySelector("#root");
+      const text = root?.innerText ?? "";
+      return !root?.querySelector('[data-slot="skeleton"]')
+        && !text.includes("正在加载门禁配置");
+    },
+    undefined,
+    { timeout: 10_000 },
+  );
+}
+
+
+async function runGateSmoke(browser, errors, screenshotsDir) {
+  const screenshots = [];
+
+  const desktop = await openBundledConfigPage(
+    browser,
+    { width: 1366, height: 900 },
+    errors,
+    "#/gate",
+    ["记忆写入门禁", "Profile 与绑定", "已同步"],
+  );
+  try {
+    const page = desktop.page;
+    await waitForGateReady(page, "#/gate:desktop");
+    await assertNoHorizontalOverflow(page, "#/gate:desktop");
+    screenshots.push(
+      await captureBaselineScreenshot(
+        page,
+        path.join(screenshotsDir, "gate.png"),
+        "gate",
+      ),
+    );
+
+    // gate-profiles：绑定列表新增一行 + profile 管理区（卡片操作与删除受阻提示）可见。
+    await page.getByRole("button", { name: "添加绑定", exact: true }).click();
+    await page.locator("#gate-binding-chat-2").waitFor({ state: "visible", timeout: 5_000 });
+    await page.getByRole("button", { name: "新增 Profile", exact: true })
+      .scrollIntoViewIfNeeded();
+    screenshots.push(
+      await captureBaselineScreenshot(
+        page,
+        path.join(screenshotsDir, "gate-profiles.png"),
+        "gate-profiles",
+      ),
+    );
+
+    // gate-conflict：翻转总开关制造本地修改，种子远端 revision 后保存触发版本冲突。
+    await page.locator('[data-slot="page-content"]').last().evaluate((element) => {
+      element.scrollTo({ top: 0, left: 0 });
+    });
+    const initialCalls = await getBrowserBridgeCalls(page);
+    const initialState = initialCalls.find(
+      (call) =>
+        call.method === "GET"
+        && call.endpoint === "page/config/state"
+        && call.response?.data?.changed === true,
+    );
+    const initialRevision = initialState?.response?.data?.revision;
+    if (!initialRevision) {
+      throw new Error("Browser gate smoke did not capture its initial revision");
+    }
+    await page.getByRole("switch", { name: "门禁总开关" }).click();
+    await page.waitForFunction(
+      () => document.querySelector("#root")?.innerText.includes("有未保存更改"),
+      undefined,
+      { timeout: 5_000 },
+    );
+    const seeded = await page.evaluate(
+      async ({ revision }) =>
+        window.__memoraRawBridge.apiPost("page/config/apply", {
+          base_revision: revision,
+          changes: { "quality.gate.enabled": false },
+        }),
+      { revision: initialRevision },
+    );
+    if (seeded?.status !== "ok") {
+      throw new Error(`Browser gate smoke could not seed the remote revision: ${JSON.stringify(seeded)}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 850));
+
+    await page.getByRole("button", { name: "保存配置", exact: true }).click();
+    const conflictDialog = page.getByRole("dialog", {
+      name: "AstrBot 中的配置已更改",
+      exact: true,
+    });
+    await conflictDialog.waitFor({ state: "visible", timeout: 5_000 });
+    await conflictDialog
+      .getByRole("button", { name: "在最新版本上重新应用我的更改", exact: true })
+      .waitFor({ state: "visible", timeout: 5_000 });
+    for (const label of ["我的本地更改", "AstrBot 远端更改", "重叠更改"]) {
+      await conflictDialog.getByText(label, { exact: true }).waitFor({ timeout: 5_000 });
+    }
+    const conflictPaths = await conflictDialog.locator("code").evaluateAll(
+      (nodes) => nodes.map((node) => node.textContent?.trim()),
+    );
+    if (
+      conflictPaths.length !== 4
+      || conflictPaths.filter((path) => path === "quality.gate.enabled").length !== 3
+      || conflictPaths.filter((path) => path === "quality.gate.bindings").length !== 1
+    ) {
+      throw new Error(`Browser gate conflict paths are incomplete: ${JSON.stringify(conflictPaths)}`);
+    }
+    screenshots.push(
+      await captureBaselineScreenshot(
+        page,
+        path.join(screenshotsDir, "gate-conflict.png"),
+        "gate-conflict",
+      ),
+    );
+  } finally {
+    await desktop.context.close();
+  }
+
+  const mobile = await openBundledConfigPage(
+    browser,
+    { width: 390, height: 844 },
+    errors,
+    "#/gate",
+    ["记忆写入门禁", "Profile 与绑定", "已同步"],
+  );
+  try {
+    await waitForGateReady(mobile.page, "#/gate:mobile");
+    await assertNoHorizontalOverflow(mobile.page, "#/gate:mobile");
+    screenshots.push(
+      await captureBaselineScreenshot(
+        mobile.page,
+        path.join(screenshotsDir, "mobile-gate.png"),
+        "mobile-gate",
+      ),
+    );
+  } finally {
+    await mobile.context.close();
+  }
+
+  const dark = await openBundledConfigPage(
+    browser,
+    { width: 1366, height: 900 },
+    errors,
+    "#/gate",
+    ["记忆写入门禁", "Profile 与绑定", "已同步"],
+    {
+      content: 'localStorage.setItem("memora_theme", "dark"); localStorage.setItem("memora_theme_override", "1");',
+    },
+  );
+  try {
+    await waitForGateReady(dark.page, "#/gate:dark");
+    await dark.page.waitForFunction(
+      () => document.documentElement.getAttribute("data-theme") === "dark",
+      undefined,
+      { timeout: 5_000 },
+    );
+    screenshots.push(
+      await captureBaselineScreenshot(
+        dark.page,
+        path.join(screenshotsDir, "dark-gate.png"),
+        "dark-gate",
+      ),
+    );
+  } finally {
+    await dark.context.close();
+  }
+
+
+  return screenshots;
+}
+
 async function installBridge(page) {
   await page.addInitScript((sensitiveFields) => {
     let nextSubscriptionId = 1;
@@ -3219,6 +3412,9 @@ try {
   baselineResults.push(
     ...await runUnifiedEditingSmoke(page, browser, errors, screenshotsDir),
   );
+  baselineResults.push(
+    ...await runGateSmoke(browser, errors, screenshotsDir),
+  );
 
   await navigateSidebar(
     page,
@@ -3343,6 +3539,8 @@ try {
       "dark-social-table",
     )
   );
+
+
 
   const i18nContext = await browser.newContext({ viewport: { width: 1366, height: 900 } });
   try {
