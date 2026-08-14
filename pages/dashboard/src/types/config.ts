@@ -178,3 +178,171 @@ export interface ConfigSyncResult {
   acceptRemote: () => void;
   rebaseRemote: () => void;
 }
+
+// ---- 记忆写入门禁（quality.gate）领域类型 ----
+// 与后端 core/features/quality/domain/gate_config.py 的 Pydantic 模型同构：
+// GateConfig { enabled, default_profile, bindings, profiles }，profile 内含
+// checks/thresholds/scoring/references/quality/word_lists/judge/disposition/
+// disposition_overrides/rules。复合分支由后端 Pydantic 兜底校验。
+
+/** 处置策略：隔离 / 丢弃 / 标记写入。 */
+export type GateDisposition = "quarantine" | "discard" | "mark_write";
+
+/** 规则强制处置（比默认处置多一个 allow）。 */
+export type GateRuleForce = GateDisposition | "allow";
+
+/** 会话类型（绑定与 dry-run 上下文共用）。 */
+export type GateChatType = "private" | "group";
+
+/** 谓词运算符。 */
+export type GatePredicateOp =
+  | "regex"
+  | "contains"
+  | "exists"
+  | "length_cmp"
+  | "numeric_cmp"
+  | "and"
+  | "or"
+  | "not";
+
+/** 谓词可用字段（脱敏候选视图）。 */
+export type GateRuleField =
+  | "content"
+  | "summary"
+  | "key_facts"
+  | "topics"
+  | "participants"
+  | "importance";
+
+/** 比较运算符。 */
+export type GateCompareOp = "gt" | "gte" | "lt" | "lte" | "eq";
+
+/** 规则动作类型。 */
+export type GateActionKind =
+  | "force_disposition"
+  | "importance_delta"
+  | "set_importance"
+  | "add_topics"
+  | "set_privacy"
+  | "drop_atoms";
+
+/** 词表模式：追加（与内置并集）或替换（完全掌控）。 */
+export type GateListMode = "append" | "replace";
+
+/** 门禁检查开关。 */
+export interface GateChecks {
+  numeric_check: boolean;
+  negation_check: boolean;
+  group_subject_check: boolean;
+  quality_low_check: boolean;
+}
+
+/** 判定阈值；后端约束 min_judge_score ≤ min_deterministic_score。 */
+export interface GateThresholds {
+  min_deterministic_score: number;
+  min_judge_score: number;
+  min_inference_score: number;
+}
+
+/** 支持分参数：token 分与 SequenceMatcher 序列分加权。 */
+export interface GateScoring {
+  token_weight: number;
+  sequence_enabled: boolean;
+  sequence_weight: number;
+}
+
+/** 引用上限。 */
+export interface GateReferences {
+  max_references: number;
+}
+
+/** 质量判定参数。 */
+export interface GateQualityParams {
+  min_summary_chars: number;
+}
+
+/** 可配置词表（模式 + 词项）。 */
+export interface GateWordListConfig {
+  mode: GateListMode;
+  items: string[];
+}
+
+/** 同义替换对。 */
+export interface GateSynonymPair {
+  source: string;
+  target: string;
+}
+
+/** 词表组。 */
+export interface GateWordLists {
+  negation_whitelist: string[];
+  negation_markers: GateWordListConfig;
+  generic_terms: GateWordListConfig;
+  synonym_pairs: GateSynonymPair[];
+}
+
+/** Judge 开关与自定义模板（空模板 = 内置）。 */
+export interface GateJudge {
+  enabled: boolean;
+  prompt_template: string;
+}
+
+/** 规则谓词树节点。 */
+export interface GateRulePredicate {
+  op: GatePredicateOp;
+  field?: GateRuleField | null;
+  pattern?: string | null;
+  values?: string[] | null;
+  cmp?: GateCompareOp | null;
+  value?: number | null;
+  children?: GateRulePredicate[] | null;
+  child?: GateRulePredicate | null;
+}
+
+/** 规则动作（按 kind 互斥携带 payload）。 */
+export interface GateRuleAction {
+  kind: GateActionKind;
+  value?: string | number | boolean | null;
+  delta?: number | null;
+  values?: string[] | null;
+}
+
+/** 门禁规则。 */
+export interface GateRuleData {
+  id: string;
+  enabled: boolean;
+  description: string;
+  when: GateRulePredicate;
+  action: GateRuleAction;
+}
+
+/** profile 绑定（按序首个匹配生效）。 */
+export interface GateBindingData {
+  profile: string;
+  chat_type?: GateChatType | null;
+  group_id?: string | null;
+  persona_id?: string | null;
+}
+
+/** 门禁 profile。 */
+export interface GateProfileData {
+  name: string;
+  checks: GateChecks;
+  thresholds: GateThresholds;
+  scoring: GateScoring;
+  references: GateReferences;
+  quality: GateQualityParams;
+  word_lists: GateWordLists;
+  judge: GateJudge;
+  disposition: GateDisposition;
+  disposition_overrides: Record<string, GateDisposition>;
+  rules: GateRuleData[];
+}
+
+/** 门禁整体配置（config 对象 quality.gate 分支）。 */
+export interface GateConfigData {
+  enabled: boolean;
+  default_profile: string;
+  bindings: GateBindingData[];
+  profiles: GateProfileData[];
+}

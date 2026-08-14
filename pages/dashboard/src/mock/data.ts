@@ -685,3 +685,77 @@ export const REVIEW_ACTIONS: Record<string, ReviewAction[]> = {
     },
   ],
 };
+
+// ================================================================
+// 门禁（quality.gate）样例配置：默认 private/group 两 profile +
+// 两条默认绑定 + 一条示例规则 r1。与后端 GateConfig 默认值同构。
+// ================================================================
+import type { GateConfigData, GateProfileData } from "@/types/config";
+
+function mockGateProfile(
+  name: string,
+  overrides: Partial<GateProfileData> = {},
+): GateProfileData {
+  return {
+    name,
+    checks: {
+      numeric_check: true,
+      negation_check: true,
+      group_subject_check: true,
+      quality_low_check: true,
+    },
+    thresholds: {
+      min_deterministic_score: 0.42,
+      min_judge_score: 0.08,
+      min_inference_score: 0.2,
+    },
+    scoring: {
+      token_weight: 1,
+      sequence_enabled: true,
+      sequence_weight: 0.7,
+    },
+    references: { max_references: 8 },
+    quality: { min_summary_chars: 10 },
+    word_lists: {
+      negation_whitelist: [],
+      negation_markers: { mode: "append", items: [] },
+      generic_terms: { mode: "append", items: [] },
+      synonym_pairs: [],
+    },
+    judge: { enabled: false, prompt_template: "" },
+    disposition: "quarantine",
+    disposition_overrides: {},
+    rules: [],
+    ...overrides,
+  };
+}
+
+export const MOCK_GATE_CONFIG: GateConfigData = {
+  enabled: true,
+  default_profile: "private",
+  bindings: [
+    { profile: "private", chat_type: "private" },
+    { profile: "group", chat_type: "group" },
+  ],
+  profiles: [
+    mockGateProfile("private", {
+      word_lists: {
+        negation_whitelist: ["不错", "没问题", "没准"],
+        negation_markers: { mode: "append", items: [] },
+        generic_terms: { mode: "append", items: [] },
+        synonym_pairs: [{ source: "手机", target: "电话" }],
+      },
+      disposition_overrides: { summary_quality_low: "discard" },
+      rules: [
+        {
+          id: "r1",
+          enabled: true,
+          description: "含「测试勿存」标记的内容直接丢弃",
+          when: { op: "regex", field: "content", pattern: "测试勿存" },
+          action: { kind: "force_disposition", value: "discard" },
+        },
+      ],
+    }),
+    mockGateProfile("group"),
+  ],
+};
