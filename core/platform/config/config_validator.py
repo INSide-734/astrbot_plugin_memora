@@ -5,6 +5,7 @@ config_validator.py - 配置验证模块
 
 from pydantic import Field
 
+from ...features.quality.domain.gate_config import QualityFeatureConfig
 from ...shared.cost_control import CostControlConfig
 from .feature_config import JargonConfig
 from .feature_contributions import (
@@ -88,6 +89,9 @@ class MemoraConfig(RuntimeFeatureConfigSections):
     )
     cost_control: CostControlConfig = Field(
         default_factory=CostControlConfig, description="成本控制配置"
+    )
+    quality: QualityFeatureConfig = Field(
+        default_factory=QualityFeatureConfig, description="记忆写入门禁配置"
     )
     memory_evolution: MemoryEvolutionConfig = Field(
         default_factory=MemoryEvolutionConfig, description="记忆演化配置"

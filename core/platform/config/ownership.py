@@ -128,6 +128,9 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "cost_control": _ownership(
         "cost_control", ConfigOwnershipKind.RUNTIME, "core.shared.cost_control"
     ),
+    "quality": _ownership(
+        "quality", ConfigOwnershipKind.RUNTIME, "core.features.quality"
+    ),
     "memory_evolution": _ownership(
         "memory_evolution",
         ConfigOwnershipKind.RUNTIME,

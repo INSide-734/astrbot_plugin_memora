@@ -14,6 +14,7 @@ from ...features.memory.domain.graph_memory_config import GraphMemoryConfig
 from ...features.memory.domain.migration_config import MigrationSettings
 from ...features.memory.domain.persona_decay_config import PersonaDecayConfig
 from ...features.memory.domain.write_reliability_config import WriteReliabilityConfig
+from ...features.quality.domain.gate_config import QualityFeatureConfig
 from ...features.recall.domain import (
     FilteringConfig,
     HumanLikeMemoryConfig,
@@ -52,6 +53,7 @@ __all__ = [
     "MigrationSettings",
     "PersonaDecayConfig",
     "PresetName",
+    "QualityFeatureConfig",
     "RecallEngineConfig",
     "ReflectionEngineConfig",
     "RerankerConfig",

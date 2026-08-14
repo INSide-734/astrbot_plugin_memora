@@ -139,3 +139,15 @@ def test_security_config_old_path_reuses_platform_owner() -> None:
     from core.platform.config.security_config import SecurityConfig
 
     assert LegacySecurityConfig is SecurityConfig
+
+
+def test_quality_section_owner_identity() -> None:
+    from core.platform.config.ownership import CONFIG_SECTION_OWNERSHIP
+
+    assert CONFIG_SECTION_OWNERSHIP["quality"].owner == "core.features.quality"
+
+
+def test_memora_config_default_gate() -> None:
+    from core.platform.config.config_validator import MemoraConfig
+
+    assert MemoraConfig().quality.gate.enabled is True
