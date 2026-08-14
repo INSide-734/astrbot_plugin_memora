@@ -22,6 +22,7 @@ from core.features.quality.application.memory_quality_gate import (
 )
 from core.features.quality.domain.gate_config import GateConfig
 from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
+from core.features.recall.processors.memory_grounding import GroundingResult
 from core.shared.contracts.conversation import Message
 
 
@@ -637,6 +638,152 @@ async def test_rejected_candidate_cannot_be_approved(
             actor_id="admin",
         )
 
+    engine.add_memory.assert_not_awaited()
+
+
+def _needs_judge_result(*, evidence: list | None = None) -> Any:
+    """构造重验证返回的 requires_judge 结论。"""
+
+    return GroundingResult(
+        allowed=False,
+        status="needs_judge",
+        reason_codes=("grounding_needs_judge",),
+        evidence=evidence or [],
+        source_text="我喜欢咖啡。",
+        claim_text="用户喜欢咖啡。",
+        requires_judge=True,
+    )
+
+
+def _judge_supported_result() -> GroundingResult:
+    """构造 Judge 放行后的 grounded 结论。"""
+
+    return GroundingResult(
+        allowed=True,
+        status="grounded",
+        reason_codes=("grounding_judge_supported",),
+        evidence=[],
+        source_text="我喜欢咖啡。",
+        claim_text="用户喜欢咖啡。",
+        requires_judge=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_approve_resolves_needs_judge_via_judge(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """重验证返回 requires_judge 时，批准路径复用同一 Judge 解析。"""
+
+    from core.features.quality.domain.gate_config import GateProfile
+
+    engine = MagicMock()
+    engine.add_memory = AsyncMock(return_value=77)
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata.return_value = []
+    processor.resolve_grounding_judge = AsyncMock(
+        return_value=_judge_supported_result()
+    )
+    conversation_manager = MagicMock()
+    conversation_manager.get_messages_range = AsyncMock(
+        return_value=[_source_message()]
+    )
+    validator = MagicMock()
+    validator.revalidate_stored_evidence = MagicMock(return_value=_needs_judge_result())
+    gate_runtime = MagicMock()
+    gate_runtime.resolve_profile.return_value = GateProfile(name="p")
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=conversation_manager,
+        grounding_validator=validator,
+        gate_runtime=gate_runtime,
+    )
+    staged = await quarantine_store.stage_candidate(
+        candidate_key="needs-judge-approve",
+        reason_codes=["grounding_needs_judge"],
+        content="用户喜欢咖啡。",
+        metadata={"key_facts": ["用户喜欢咖啡。"]},
+        importance=0.7,
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window={
+            "start_index": 0,
+            "end_index": 1,
+            "message_count": 1,
+            "group_id": "group-1",
+        },
+        is_group_chat=True,
+    )
+    approved = await gate.approve(
+        staged["candidate_id"],
+        expected_revision=staged["revision"],
+        actor_id="admin",
+    )
+
+    assert approved["status"] == "approved"
+    assert approved["canonical_memory_id"] == 77
+    engine.add_memory.assert_awaited_once()
+    processor.resolve_grounding_judge.assert_awaited_once()
+    resolution = processor.resolve_grounding_judge.await_args
+    assert resolution.kwargs["is_group_chat"] is True
+    assert resolution.kwargs["profile"].name == "p"
+    gate_runtime.resolve_profile.assert_called_once_with(
+        "group", "group-1", "persona-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_approve_blocks_when_judge_unavailable(
+    quarantine_store: MemoryQuarantineStore,
+) -> None:
+    """Judge 不可用时批准必须 fail-closed 阻塞为 grounding_judge_unavailable。"""
+
+    from core.features.quality.domain.gate_config import GateProfile
+
+    engine = MagicMock()
+    engine.add_memory = AsyncMock()
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata.return_value = []
+    processor.resolve_grounding_judge = AsyncMock(
+        return_value=_needs_judge_result().with_unavailable_judge()
+    )
+    conversation_manager = MagicMock()
+    conversation_manager.get_messages_range = AsyncMock(
+        return_value=[_source_message()]
+    )
+    validator = MagicMock()
+    validator.revalidate_stored_evidence = MagicMock(return_value=_needs_judge_result())
+    gate_runtime = MagicMock()
+    gate_runtime.resolve_profile.return_value = GateProfile(name="p")
+    gate = MemoryQualityGate(
+        quarantine_store,
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=conversation_manager,
+        grounding_validator=validator,
+        gate_runtime=gate_runtime,
+    )
+    staged = await quarantine_store.stage_candidate(
+        candidate_key="needs-judge-unavailable",
+        reason_codes=["grounding_needs_judge"],
+        content="用户喜欢咖啡。",
+        metadata={"key_facts": ["用户喜欢咖啡。"]},
+        importance=0.7,
+        session_id="session-1",
+        persona_id=None,
+        source_window={"start_index": 0, "end_index": 1, "message_count": 1},
+        is_group_chat=False,
+    )
+    blocked = await gate.approve(
+        staged["candidate_id"],
+        expected_revision=staged["revision"],
+        actor_id="admin",
+    )
+
+    assert blocked["status"] == "blocked"
+    assert blocked["failure_reason"] == "grounding_judge_unavailable"
     engine.add_memory.assert_not_awaited()
 
 

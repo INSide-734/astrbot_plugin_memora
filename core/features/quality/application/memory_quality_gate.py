@@ -155,6 +155,10 @@ class MemoryQualityGate:
             session_id=session_id,
             source_window=source_window,
         )
+        # quarantine 表未单独存 group_id：并入 source_window 供批准路径解析 profile。
+        staged_window = (
+            {**source_window, "group_id": group_id} if group_id else dict(source_window)
+        )
         stored = await self.store.stage_candidate(
             candidate_key=candidate_key,
             reason_codes=reason_codes,
@@ -163,7 +167,7 @@ class MemoryQualityGate:
             importance=float(candidate.get("importance", 0.5)),
             session_id=session_id,
             persona_id=persona_id,
-            source_window=source_window,
+            source_window=staged_window,
             is_group_chat=is_group_chat,
         )
         return MemoryGateResult(
@@ -258,6 +262,25 @@ class MemoryQualityGate:
                 reason_code="grounding_revalidation_failed",
             )
             raise
+        if validation.requires_judge:
+            # 重验证需要 Judge 时走与自动路径同一解析；不可用仍 fail-closed 阻塞。
+            profile = (
+                self.gate_runtime.resolve_profile(
+                    "group" if claimed["is_group_chat"] else "private",
+                    source_window.get("group_id"),
+                    claimed.get("persona_id"),
+                )
+                if self.gate_runtime is not None
+                else None
+            )
+            if profile is None:
+                validation = validation.with_unavailable_judge()
+            else:
+                validation = await self.memory_processor.resolve_grounding_judge(
+                    validation,
+                    is_group_chat=bool(claimed["is_group_chat"]),
+                    profile=profile,
+                )
         if not validation.allowed:
             return await self.store.block_approval(
                 candidate_id,

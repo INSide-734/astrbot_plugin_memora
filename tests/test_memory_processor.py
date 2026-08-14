@@ -792,12 +792,16 @@ class TestGateIntegration:
     ) -> None:
         """profile 关闭数字检查后，来源不含的数字不再触发冲突原因码。"""
         from core.features.quality.application.gate_runtime import build_gate_snapshot
-        from core.features.quality.domain.gate_config import GateConfig, GateProfile
+        from core.features.quality.domain.gate_config import (
+            GateChecks,
+            GateConfig,
+            GateProfile,
+        )
 
         config = GateConfig(
             profiles=(
-                GateProfile(name="private", checks={"numeric_check": False}),
-                GateProfile(name="group", checks={"numeric_check": False}),
+                GateProfile(name="private", checks=GateChecks(numeric_check=False)),
+                GateProfile(name="group", checks=GateChecks(numeric_check=False)),
             )
         )
         runtime = _CountingGateRuntime(build_gate_snapshot(config))
@@ -935,9 +939,9 @@ class TestGroundingJudgeResolution:
         self, make_judge_processor: Callable[..., MemoryProcessor]
     ) -> None:
         """开关开启而成本许可未放行时，Judge 仍经请求预算旁路执行。"""
-        from core.features.quality.domain.gate_config import GateProfile
+        from core.features.quality.domain.gate_config import GateJudge, GateProfile
 
-        profile = GateProfile(name="p", judge={"enabled": True})
+        profile = GateProfile(name="p", judge=GateJudge(enabled=True))
         judge = AsyncMock(return_value=True)
         # balanced 模式默认不放行 memory_grounding_judge
         proc = make_judge_processor(judge, cost_control=CostControl())
@@ -958,9 +962,9 @@ class TestGroundingJudgeResolution:
         self, make_judge_processor: Callable[..., MemoryProcessor]
     ) -> None:
         """开关开启但请求预算额度为零时，仍 fail-closed 隔离。"""
-        from core.features.quality.domain.gate_config import GateProfile
+        from core.features.quality.domain.gate_config import GateJudge, GateProfile
 
-        profile = GateProfile(name="p", judge={"enabled": True})
+        profile = GateProfile(name="p", judge=GateJudge(enabled=True))
         judge = AsyncMock(return_value=True)
         proc = make_judge_processor(judge, cost_control=CostControl())
 
