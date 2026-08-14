@@ -13,6 +13,10 @@ Memora 的所有重要变更都记录在此文件中。
 - 删除无收益证据且从未正确装配的 `weight_learning`（MAB）配置（`enabled`、`epsilon`、`group_by_persona`）与实现；统一反馈与参数候选改由 FeedbackSignal 管线和自主学习 shadow 候选承担。
 - 自主学习改为默认关闭的 shadow 候选模式：删除无消费者的 `learning_rate`、`target_hit_rate_low/high`、`quality_ema_alpha` 配置叶，`enabled` 默认从 `true` 改为 `false`。
 
+### 新增
+
+- mark_write 低置信记忆写入 canonical 后默认不参与召回与演化，避免污染注入与派生证据；`/memora search` 末尾位置参数 `true` 与记忆列表 API `include_mark_write=true` 可显式包含。
+
 ### 修复
 
 - 记忆再巩固改为候选闭环：召回只生成 pending 候选，不再自动改写 canonical；人工按来源 revision CAS 应用并可回滚旧正文。
