@@ -58,34 +58,25 @@ flowchart LR
 | 模块 | 职责 | 上下文 |
 |---|---|---|
 | `core/` | 后端总览 | [AGENTS.md](./core/AGENTS.md) |
-| `core/base/` | 配置、异常、基础约束 | [AGENTS.md](./core/base/AGENTS.md) |
-| `core/initializer/` | Provider、数据库与组件构造 | [AGENTS.md](./core/initializer/AGENTS.md) |
-| `core/identity/` | 协议稳定身份、名称目录、会话同步与只读召回增强 | [AGENTS.md](./core/identity/AGENTS.md) |
-| `core/handlers/` | 召回与反思编排 | [AGENTS.md](./core/handlers/AGENTS.md) |
-| `core/injection/` | 注入路由、选择、执行与记录 | [AGENTS.md](./core/injection/AGENTS.md) |
-| `core/managers/` | 生命周期与领域管理器 | [AGENTS.md](./core/managers/AGENTS.md) |
-| `core/processors/` | 抽取、分类、格式化与话题处理 | [AGENTS.md](./core/processors/AGENTS.md) |
-| `core/retrieval/` | 多路检索、融合与重排 | [AGENTS.md](./core/retrieval/AGENTS.md) |
-| `core/storage/` | SQLite、FTS、图与决策持久化 | [AGENTS.md](./core/storage/AGENTS.md) |
-| `core/api/` | Page API 与响应契约 | [AGENTS.md](./core/api/AGENTS.md) |
-| `core/security/` | Prompt 保护与输出护栏 | [AGENTS.md](./core/security/AGENTS.md) |
-| `core/review/` | 复核检测、队列与动作历史 | [AGENTS.md](./core/review/AGENTS.md) |
-| `core/models/` | 共享领域模型 | [AGENTS.md](./core/models/AGENTS.md) |
-| `core/tools/` | AstrBot Agent 工具 | [AGENTS.md](./core/tools/AGENTS.md) |
-| `core/commands/` | `/memora` 查询与维护命令 | [AGENTS.md](./core/commands/AGENTS.md) |
-| `core/cleaners/` | 历史注入清理 | [AGENTS.md](./core/cleaners/AGENTS.md) |
-| `core/extractors/` | 消息内容提取 | [AGENTS.md](./core/extractors/AGENTS.md) |
-| `core/dedup/` | 消息去重 | [AGENTS.md](./core/dedup/AGENTS.md) |
-| `core/validators/` | 索引/持久化校验与重建 | [AGENTS.md](./core/validators/AGENTS.md) |
-| `core/schedulers/` | 衰减与回填调度 | [AGENTS.md](./core/schedulers/AGENTS.md) |
-| `core/monitoring/` | 指标、追踪与质量评分 | [AGENTS.md](./core/monitoring/AGENTS.md) |
-| `core/diagnostics/` | 诊断事件与健康评分 | [AGENTS.md](./core/diagnostics/AGENTS.md) |
-| `core/evaluation/` | 离线检索评测 | [AGENTS.md](./core/evaluation/AGENTS.md) |
-| `core/affection/` | 好感度与 Bot 情绪 | [AGENTS.md](./core/affection/AGENTS.md) |
-| `core/expression/` | 表达模式学习 | [AGENTS.md](./core/expression/AGENTS.md) |
-| `core/jargon/` | 黑话挖掘、存储与查询 | [AGENTS.md](./core/jargon/AGENTS.md) |
-| `core/social/` | 社交关系 | [AGENTS.md](./core/social/AGENTS.md) |
-| `core/utils/` | 通用工具与降级实现 | [AGENTS.md](./core/utils/AGENTS.md) |
+| `core/platform/config/` | 配置模型、验证、revision 与运行时影响 | [AGENTS.md](./core/platform/config/AGENTS.md) |
+| `core/platform/composition/` | Provider、数据库与组件构造 | [AGENTS.md](./core/platform/composition/AGENTS.md) |
+| `core/features/identity/` | 协议稳定身份、名称目录与会话同步 | [AGENTS.md](./core/features/identity/AGENTS.md) |
+| `core/features/recall/` | 召回、注入前编排与记忆处理 | [AGENTS.md](./core/features/recall/AGENTS.md) |
+| `core/features/injection/` | 注入路由、选择、执行与记录 | [AGENTS.md](./core/features/injection/AGENTS.md) |
+| `core/features/memory/` | MemoryEngine 门面、canonical 存储与图基础设施 | [AGENTS.md](./core/features/memory/AGENTS.md) |
+| `core/features/retrieval/` | 多路检索、融合与重排 | [AGENTS.md](./core/features/retrieval/AGENTS.md) |
+| `core/features/quality/` | 质量门、复核队列与隔离候选 | [AGENTS.md](./core/features/quality/AGENTS.md) |
+| `core/features/evaluation/` | 离线检索评测 | [AGENTS.md](./core/features/evaluation/AGENTS.md) |
+| `core/features/decay/` | 衰减与维护操作 | [AGENTS.md](./core/features/decay/AGENTS.md) |
+| `core/features/backfill/` | 旧记忆回填调度 | [AGENTS.md](./core/features/backfill/AGENTS.md) |
+| `core/features/observability/` | 指标、追踪与质量评分 | [AGENTS.md](./core/features/observability/AGENTS.md) |
+| `core/features/diagnostics/` | 诊断事件与健康评分 | [AGENTS.md](./core/features/diagnostics/AGENTS.md) |
+| `core/features/cognition/` | 好感度、表达、黑话与社交关系 | [AGENTS.md](./core/features/cognition/AGENTS.md) |
+| `core/platform/security/` | Prompt 保护与输出护栏 | [AGENTS.md](./core/platform/security/AGENTS.md) |
+| `core/platform/transport/page_api/` | Page API 与响应契约 | [AGENTS.md](./core/platform/transport/page_api/AGENTS.md) |
+| `core/platform/transport/commands/` | `/memora` 查询与维护命令 | [AGENTS.md](./core/platform/transport/commands/AGENTS.md) |
+| `core/platform/transport/tools/` | AstrBot Agent 工具 | [AGENTS.md](./core/platform/transport/tools/AGENTS.md) |
+| `core/shared/` | 共享端口、DTO 与纯工具 | [AGENTS.md](./core/shared/AGENTS.md) |
 | `pages/dashboard/` | React 管理面板 | [AGENTS.md](./pages/dashboard/AGENTS.md) |
 | `tests/` | pytest 测试体系 | [AGENTS.md](./tests/AGENTS.md) |
 | `scripts/` | 门禁、smoke 与 benchmark | [AGENTS.md](./scripts/AGENTS.md) |
@@ -115,6 +106,12 @@ flowchart LR
 - `asyncio.CancelledError` 必须传播；普通可恢复失败不得破坏聊天主链路。
 - SQL 值参数绑定；动态标识符只允许固定 allowlist。
 - Dashboard 复用 Base UI-backed shadcn、`PageFrame`、语义 token、Lucide 与三语言 key；桌面/移动端均需可访问、可滚动、无重叠和页面级横向溢出。
+
+## LSP 检查
+
+- 每次新增或修改源码文件后，必须对本轮涉及且受已安装语言服务器支持的文件逐一调用 Codex LSP `mcp__lsp__diagnostics`，默认使用 `severity: "error"`；任何后续修复再次改变文件时必须重复检查，直至不再存在本轮引入的 LSP 错误。
+- 若诊断提示语言服务器缺失，先调用 `mcp__lsp__status` 确认状态并安装或配置对应服务；若文件类型不受 LSP 支持或服务不可用，记录原因并执行该文件类型对应的 lint、类型检查或验证命令，不得静默跳过。
+- Python LSP 报告 `reportMissingImports` 或依赖无法解析时，必须先用 `uv run --locked python` 在锁定环境中复现导入，并确认 `.venv` 已由 `uv sync --locked --dev` 同步、`[tool.pyright]` 指向该 `.venv` 与 Python 3.12；不得通过关闭 `reportMissingImports`、添加宽泛 `extraPaths` 或忽略规则掩盖虚拟环境配置错误。
 
 ## Python 环境、Ruff 与提交前门禁
 

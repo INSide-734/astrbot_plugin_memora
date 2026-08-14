@@ -142,26 +142,23 @@ User Message → EventHandler → MessageContentExtractor → ConversationManage
 
 ### Module Overview
 
-| Module | Files | Responsibility |
-|--------|-------|----------------|
-| `core/base/` | 5 | Configuration, constants, exception definitions |
-| `core/platform/composition/` | 12 | Plugin initialization, Provider loading, DB setup, and runtime lifecycle |
-| `core/managers/` | 40+ | Core business logic: memory engine, conversation, decay, backup |
-| `core/processors/` | 20 | LLM-driven memory extraction, classification, formatting |
-| `core/retrieval/` | 22 | Multi-path retrieval: BM25, vector, hybrid, graph, reranking |
-| `core/storage/` | 16 | SQLite persistence: atoms, conversations, graphs, notes, knowledge |
-| `core/api/` | 15 | REST API endpoints: CRUD, batch, stats, backup |
-| `core/validators/` | 5 | Index consistency verification and rebuild |
-| `core/schedulers/` | 2 | Memory decay and backup scheduling |
-| `core/models/` | 8 | Data model definitions |
-| `core/tools/` | 5 | AstrBot LLM Agent tool integration |
-| `core/commands/` | 3 | User commands: query and maintenance |
-| `core/handlers/` | 3 | Recall and reflection event handlers |
-| `core/cleaners/` | 2 | Injection cleaning |
-| `core/dedup/` | 2 | Message deduplication |
-| `core/extractors/` | 2 | Message content extraction |
-| `pages/dashboard/` | — | React web admin panel (10 pages) |
-| `tests/` | 19 | pytest test suite |
+| Module | Responsibility |
+|--------|----------------|
+| `core/platform/config/` | Configuration models, validation, revisions, and runtime effects |
+| `core/platform/composition/` | Provider loading, database setup, component wiring, and lifecycle |
+| `core/platform/transport/` | Page API, commands, Agent tools, and realtime transport |
+| `core/platform/security/` | Prompt protection and structured-output guardrails |
+| `core/shared/` | Shared ports, DTOs, SQL constants, and pure utilities |
+| `core/features/memory/` | MemoryEngine, canonical persistence, graph storage, and validators |
+| `core/features/conversation/` | Sessions, messages, and conversation management |
+| `core/features/recall/` | Recall orchestration and memory processing |
+| `core/features/retrieval/` | BM25, vector, graph, fusion, and reranking |
+| `core/features/injection/` | Injection routing, execution, formatting, and decision recording |
+| `core/features/reflection/` | Reflection windows, candidate extraction, and canonical writes |
+| `core/features/evaluation/` | Offline retrieval evaluation and ablation |
+| `core/features/cognition/` | Affection, expression, jargon, and social relationships |
+| `pages/dashboard/` | React web administration panel |
+| `tests/` | pytest behavioral, contract, integration, and evaluation suites |
 
 ## Quick Start
 
