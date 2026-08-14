@@ -16,7 +16,7 @@ from core.features.evaluation.application.derived_metadata_ablation import (
     RunLocalDerivedMetadataIndex,
     run_derived_metadata_ablation,
 )
-from core.models.derived_metadata import (
+from core.features.evaluation.domain.derived_metadata import (
     DerivedMetadataProposal,
     DerivedMetadataSourceRef,
 )

@@ -1,4 +1,4 @@
-"""测试 core/tools/note_tools.py — NoteSearchTool, NoteReadTool, NoteWriteTool."""
+"""platform transport note tools 行为测试。"""
 
 from __future__ import annotations
 

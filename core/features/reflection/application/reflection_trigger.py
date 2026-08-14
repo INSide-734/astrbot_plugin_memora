@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
-from ....platform.context_helpers import get_persona_id
 from ...observability.infrastructure.debug_reporter import report_debug_event
 
 if TYPE_CHECKING:
@@ -45,15 +45,15 @@ class ReflectionTrigger:
 
     def __init__(
         self,
-        context: Any,
         config_manager: ConfigManager,
         conversation_manager: ConversationManager,
+        persona_resolver: Callable[[AstrMessageEvent], Awaitable[str | None]],
     ) -> None:
-        """保存窗口计算所需的上下文、配置与会话管理器。"""
+        """保存窗口计算所需的配置、会话管理器与人格解析器。"""
 
-        self._context = context
         self._config_manager = config_manager
         self._conversation_manager = conversation_manager
+        self._persona_resolver = persona_resolver
 
     async def prepare(
         self,
@@ -79,7 +79,7 @@ class ReflectionTrigger:
         if progress is None:
             return None
 
-        persona_id = await get_persona_id(self._context, event)
+        persona_id = await self._persona_resolver(event)
         return await self._prepare_request(
             session_id,
             persona_id,

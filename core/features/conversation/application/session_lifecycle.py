@@ -5,7 +5,7 @@
 
 from astrbot.api import logger
 
-from ..domain.models import Session
+from ....shared.contracts.conversation import Session
 
 
 class SessionLifecycleMixin:

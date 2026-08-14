@@ -1,4 +1,4 @@
-"""测试 core/utils/task_scheduler.py — TaskScheduler + _NoOpScheduler."""
+"""core/platform/task_scheduler.py 行为与降级测试。"""
 
 from __future__ import annotations
 

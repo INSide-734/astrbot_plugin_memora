@@ -1,4 +1,4 @@
-"""core/utils/cache_manager.py 测试 — CacheManager、TTL、LRU、装饰器。"""
+"""core/shared/cache_manager.py 测试：CacheManager、TTL、LRU 与装饰器。"""
 
 from __future__ import annotations
 

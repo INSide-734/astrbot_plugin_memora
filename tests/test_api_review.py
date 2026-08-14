@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.platform.transport.page_api.page_api import PAGE_API_PREFIX, PluginPageApi
-from core.review import (
+from core.features.quality import (
     ReviewAction,
     ReviewItem,
     ReviewReason,
     ReviewSeverity,
 )
+from core.platform.transport.page_api.page_api import PAGE_API_PREFIX, PluginPageApi
 
 
 def _mock_request(**args):

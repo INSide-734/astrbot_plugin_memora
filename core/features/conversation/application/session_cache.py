@@ -10,7 +10,7 @@
 
 import time
 
-from ..domain.models import Message
+from ....shared.contracts.conversation import Message
 
 
 class SessionCacheMixin:

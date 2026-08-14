@@ -50,18 +50,6 @@ def test_reflection_package_lazily_exports_feature_layers() -> None:
 def test_reflection_configs_old_path_reuses_feature_owner() -> None:
     """根配置聚合器应恒等导出 reflection feature 的配置模型。"""
 
-    from core.base.config_validator import (
-        LegacyBackfillConfig as LegacyLegacyBackfillConfig,
-    )
-    from core.base.config_validator import (
-        ReflectionEngineConfig as LegacyReflectionEngineConfig,
-    )
-    from core.base.config_validator import StrategyBConfig as LegacyStrategyBConfig
-    from core.base.config_validator import StrategyCConfig as LegacyStrategyCConfig
-    from core.base.config_validator import StrategyDConfig as LegacyStrategyDConfig
-    from core.base.config_validator import (
-        TopicSegmentationConfig as LegacyTopicSegmentationConfig,
-    )
     from core.features.reflection.domain import (
         LegacyBackfillConfig,
         ReflectionEngineConfig,
@@ -69,6 +57,24 @@ def test_reflection_configs_old_path_reuses_feature_owner() -> None:
         StrategyCConfig,
         StrategyDConfig,
         TopicSegmentationConfig,
+    )
+    from core.platform.config.config_validator import (
+        LegacyBackfillConfig as LegacyLegacyBackfillConfig,
+    )
+    from core.platform.config.config_validator import (
+        ReflectionEngineConfig as LegacyReflectionEngineConfig,
+    )
+    from core.platform.config.config_validator import (
+        StrategyBConfig as LegacyStrategyBConfig,
+    )
+    from core.platform.config.config_validator import (
+        StrategyCConfig as LegacyStrategyCConfig,
+    )
+    from core.platform.config.config_validator import (
+        StrategyDConfig as LegacyStrategyDConfig,
+    )
+    from core.platform.config.config_validator import (
+        TopicSegmentationConfig as LegacyTopicSegmentationConfig,
     )
 
     assert LegacyReflectionEngineConfig is ReflectionEngineConfig

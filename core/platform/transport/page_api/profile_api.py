@@ -10,7 +10,6 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
-from ....features.profiles.domain.models import TagCategory, UserTag
 from ....features.profiles.infrastructure.profile_store import PROFILE_SORT_COLUMNS
 from ....shared.entity_editing import (
     EditConflictError,
@@ -22,10 +21,20 @@ from ....shared.list_sorting import parse_sort_query
 from .editing_utils import (
     conflict_error,
     entity_ok,
-    finite_float,
     reject_unknown_fields,
     require_object,
     required_text,
+)
+from .profile_tags import ProfileTagsApiMixin
+from .profile_validation import (
+    _apply_revisioned_tag_action,
+    _batch_failure,
+    _normalize_batch_tag,
+    _parse_batch_item,
+    _parse_identity,
+    _parse_revision,
+    _validate_editable_payload,
+    _validate_preferences,
 )
 from .response_utils import error_response, ok_response
 
@@ -278,217 +287,7 @@ def _exception_response(
     return error_response("用户画像操作失败", code="internal_error")
 
 
-def _validate_preferences(value: Any, *, field: str) -> dict | None:
-    if not isinstance(value, Mapping):
-        return _field_error(field, "必须为对象")
-    unknown = sorted(set(value) - _PREFERENCE_FIELDS)
-    if unknown:
-        return _field_error(field + "." + unknown[0], "字段不可写")
-    if "reply_style" in value:
-        reply_style = value["reply_style"]
-        if (
-            not isinstance(reply_style, str)
-            or not reply_style.strip()
-            or len(reply_style.strip()) > 128
-        ):
-            return _field_error(
-                field + ".reply_style",
-                "必须为非空字符串且不超过 128 字符",
-            )
-    for name in ("preferred_topics", "avoided_topics"):
-        if name not in value:
-            continue
-        items = value[name]
-        if not isinstance(items, list) or len(items) > 100:
-            return _field_error(field + "." + name, "必须为最多 100 项的数组")
-        normalized: list[str] = []
-        for item in items:
-            if not isinstance(item, str) or not item.strip() or len(item.strip()) > 128:
-                return _field_error(
-                    field + "." + name, "每项必须为非空字符串且不超过 128 字符"
-                )
-            if item.strip() in normalized:
-                return _field_error(field + "." + name, "项目不得重复")
-            normalized.append(item.strip())
-    if "active_hours" in value:
-        hours = value["active_hours"]
-        if not isinstance(hours, list) or len(hours) > 24:
-            return _field_error(field + ".active_hours", "必须为最多 24 项的数组")
-        if any(
-            isinstance(hour, bool) or not isinstance(hour, int) or not 0 <= hour <= 23
-            for hour in hours
-        ):
-            return _field_error(field + ".active_hours", "每项必须为 0 到 23 的整数")
-        if len(set(hours)) != len(hours):
-            return _field_error(field + ".active_hours", "项目不得重复")
-    return None
-
-
-def _validate_tags(value: Any, *, field: str) -> dict | None:
-    if not isinstance(value, list):
-        return _field_error(field, "必须为数组")
-    if len(value) > _MAX_TAGS:
-        return _field_error(field, "项目过多")
-    for index, item in enumerate(value):
-        item_field = field + "." + str(index)
-        if not isinstance(item, Mapping):
-            return _field_error(item_field, "必须为对象")
-        unknown = reject_unknown_fields(item, _TAG_FIELDS)
-        if unknown:
-            unknown["field_errors"] = {
-                item_field + "." + name: message
-                for name, message in unknown.get("field_errors", {}).items()
-            }
-            return unknown
-    return None
-
-
-def _validate_editable_payload(
-    payload: Mapping[str, Any], *, prefix: str = ""
-) -> dict | None:
-    if "preferences" in payload:
-        error = _validate_preferences(
-            payload["preferences"], field=prefix + "preferences"
-        )
-        if error:
-            return error
-    if "tags" in payload:
-        return _validate_tags(payload["tags"], field=prefix + "tags")
-    return None
-
-
-def _parse_identity(
-    value: Any,
-) -> tuple[dict[str, str] | None, str | None, dict | None]:
-    identity, error = require_object(value)
-    if error:
-        return None, None, _field_error("identity", "必须为对象")
-    unknown = reject_unknown_fields(identity, _IDENTITY_FIELDS)
-    if unknown:
-        return None, None, unknown
-    try:
-        user_id = required_text(identity.get("user_id"), field="identity.user_id")
-    except EntityValidationError as exc:
-        return None, None, _validation_error(exc)
-    normalized = {"user_id": user_id}
-    return normalized, user_id, None
-
-
-def _parse_revision(value: Any) -> tuple[str | None, dict | None]:
-    try:
-        return (
-            required_text(value, field="expected_revision", maximum=256),
-            None,
-        )
-    except EntityValidationError as exc:
-        return None, _validation_error(exc)
-
-
-def _parse_batch_item(
-    value: Any,
-) -> tuple[dict[str, str] | None, str | None, str | None, dict | None]:
-    item, error = require_object(value)
-    if error:
-        return None, None, None, _field_error("item", "必须为对象")
-    unknown = reject_unknown_fields(item, _BATCH_ITEM_FIELDS)
-    if unknown:
-        return None, None, None, unknown
-    identity, user_id, identity_error = _parse_identity(item.get("identity"))
-    if identity_error:
-        return None, None, None, identity_error
-    revision, revision_error = _parse_revision(item.get("expected_revision"))
-    if revision_error:
-        return identity, user_id, None, revision_error
-    return identity, user_id, revision, None
-
-
-def _batch_failure(identity: Mapping[str, Any], error: Mapping[str, Any]) -> dict:
-    failure: dict[str, Any] = {
-        "identity": dict(identity),
-        "code": error.get("code", "internal_error"),
-        "message": error.get("message", "用户画像操作失败"),
-    }
-    if error.get("field_errors"):
-        failure["field_errors"] = dict(error["field_errors"])
-    data = error.get("data")
-    if isinstance(data, Mapping):
-        if isinstance(data.get("current_entity"), Mapping):
-            failure["current_entity"] = dict(data["current_entity"])
-        if data.get("current_revision") is not None:
-            failure["current_revision"] = data["current_revision"]
-    return failure
-
-
-def _normalize_batch_tag(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping):
-        raise EntityValidationError({"params.tag": "必须为对象"})
-    unknown = sorted(set(value) - _TAG_FIELDS)
-    if unknown:
-        raise EntityValidationError(
-            {"params.tag." + name: "字段不可写" for name in unknown}
-        )
-    category = required_text(
-        value.get("category"), field="params.tag.category", maximum=64
-    )
-    if category not in {item.value for item in TagCategory}:
-        raise EntityValidationError({"params.tag.category": "不支持的标签分类"})
-    tag_value = required_text(value.get("value"), field="params.tag.value")
-    confidence = finite_float(
-        value.get("confidence", 0.5), field="params.tag.confidence"
-    )
-    if not 0.0 <= confidence <= 1.0:
-        raise EntityValidationError({"params.tag.confidence": "必须在 0.0 到 1.0 之间"})
-    return {"category": category, "value": tag_value, "confidence": confidence}
-
-
-async def _apply_revisioned_tag_action(
-    manager: Any,
-    profile_ref: tuple,
-    action: str,
-    tag: Mapping[str, Any],
-) -> None:
-    user_id, expected_revision = profile_ref
-    current = await manager.get_profile(user_id)
-    if current is None:
-        raise EntityNotFoundError("用户画像不存在")
-    current_entity = _safe_profile_to_dict(current)
-    if current_entity is None:
-        raise RuntimeError("profile serialization failed")
-    current_preferences = current_entity.get("preferences", {})
-    editable_preferences = {
-        "reply_style": current_preferences.get("reply_style", "casual"),
-        "preferred_topics": current_preferences.get("preferred_topics", []),
-        "avoided_topics": current_preferences.get("avoided_topics", []),
-        "active_hours": current_preferences.get("active_hours", []),
-    }
-    current_tags = list(current_entity.get("tags", []) or [])
-    identity = (tag["category"], tag["value"])
-    if action == "tags_add":
-        if not any(
-            isinstance(item, Mapping)
-            and (item.get("category"), item.get("value")) == identity
-            for item in current_tags
-        ):
-            current_tags.append(dict(tag))
-    else:
-        current_tags = [
-            item
-            for item in current_tags
-            if not (
-                isinstance(item, Mapping)
-                and (item.get("category"), item.get("value")) == identity
-            )
-        ]
-    await manager.update_profile_manual(
-        user_id=user_id,
-        display_name=current_entity.get("display_name", ""),
-        preferences=editable_preferences,
-        tags=current_tags,
-        expected_revision=expected_revision,
-    )
-
-
-class ProfileApiMixin:
+class ProfileApiMixin(ProfileTagsApiMixin):
     async def list_profiles(self):
         engines, err = await self._ensure_plugin_ready()
         if err:
@@ -565,6 +364,7 @@ class ProfileApiMixin:
             payload, error = require_object(await request.get_json(silent=True))
             if error:
                 return error
+            assert payload is not None
             _select_audit("create", _safe_identity(payload.get("user_id", "")))
             unknown = reject_unknown_fields(payload, _CREATE_FIELDS)
             if unknown:
@@ -608,6 +408,7 @@ class ProfileApiMixin:
             payload, error = _json_object_payload_or_error(payload)
             if error:
                 return error
+            assert payload is not None
             if any(
                 field in payload
                 for field in ("identity", "changes", "expected_revision")
@@ -682,6 +483,7 @@ class ProfileApiMixin:
         changes, changes_error = require_object(payload.get("changes"))
         if changes_error:
             return _field_error("changes", "必须为对象")
+        assert changes is not None
         unknown_changes = reject_unknown_fields(changes, _EDITABLE_FIELDS)
         if unknown_changes:
             return unknown_changes
@@ -721,6 +523,7 @@ class ProfileApiMixin:
             payload, error = _json_object_payload_or_error(payload)
             if error:
                 return error
+            assert payload is not None
             if "identity" in payload or "expected_revision" in payload:
                 return await self._delete_profile_envelope(payload)
             user_id = _coerce_user_id(payload.get("user_id", ""))
@@ -788,6 +591,7 @@ class ProfileApiMixin:
             payload, error = require_object(await request.get_json(silent=True))
             if error:
                 return error
+            assert payload is not None
             if "user_ids" in payload:
                 return await self._legacy_batch_delete_profiles(payload)
             return await self._batch_profile_actions(payload)
@@ -869,6 +673,7 @@ class ProfileApiMixin:
         params, params_error = require_object(payload.get("params", {}))
         if params_error:
             return _field_error("params", "必须为对象")
+        assert params is not None
         allowed_params = frozenset() if action == "delete" else frozenset({"tag"})
         unknown_params = reject_unknown_fields(params, allowed_params)
         if unknown_params:
@@ -897,6 +702,9 @@ class ProfileApiMixin:
             if item_error:
                 failures.append(_batch_failure(identity_ref, item_error))
                 continue
+            assert identity is not None
+            assert user_id is not None
+            assert revision is not None
             try:
                 if action == "delete":
                     deleted = await manager.delete_profile_manual(
@@ -905,6 +713,7 @@ class ProfileApiMixin:
                     if not deleted:
                         raise EntityNotFoundError("用户画像不存在")
                 else:
+                    assert tag is not None
                     await _apply_revisioned_tag_action(
                         manager,
                         (user_id, revision),
@@ -944,73 +753,8 @@ class ProfileApiMixin:
 
     @_audit_boundary("manage_tags")
     async def manage_profile_tags(self):
-        guard = getattr(self, "_maintenance_write_guard", lambda: None)()
-        if guard:
-            return guard
-        payload = await request.get_json(silent=True)
-        payload, error = _json_object_payload_or_error(payload)
-        if error:
-            return error
-        user_id = _coerce_user_id(payload.get("user_id", ""))
-        action = str(payload.get("action", ""))
-        if not user_id:
-            return error_response("user_id required: 缺少必填参数 user_id")
-        if action not in ("add", "remove"):
-            return error_response("action 必须为 'add' 或 'remove'")
-        _select_audit("tag_" + action, {"user_id": user_id})
-        engines, err = await self._ensure_plugin_ready()
-        if err:
-            return err
-        engine = engines["memory_engine"]
-        manager = getattr(engine, "profile_manager", None)
-        if manager is None:
-            return _component_unavailable()
-        profile = await manager.get_profile(user_id)
-        if profile is None:
-            return error_response("画像不存在")
-        tag = payload.get("tag", {})
-        if not isinstance(tag, dict):
-            return error_response("tag 必须为对象 {category, value, confidence}")
-        unknown = reject_unknown_fields(tag, _TAG_FIELDS)
-        if unknown:
-            return unknown
-        raw_category = tag.get("category")
-        raw_value = tag.get("value")
-        if not isinstance(raw_category, str) or not isinstance(raw_value, str):
-            return _field_error("tag", "category 和 value 必须为字符串")
-        category_value = raw_category.strip()
-        value = raw_value.strip()
-        if not category_value or not value or len(value) > 128:
-            return _field_error("tag", "category 和 value 必须为非空有界字符串")
-        if category_value not in {item.value for item in TagCategory}:
-            return _field_error("tag.category", "未知标签分类")
-        if action == "add":
-            try:
-                confidence = finite_float(
-                    tag.get("confidence", 0.5), field="tag.confidence"
-                )
-            except EntityValidationError:
-                return error_response("confidence 必须为数字", code="validation_error")
-            if not 0.0 <= confidence <= 1.0:
-                return _field_error("tag.confidence", "必须在 0.0 到 1.0 之间")
-            profile = await manager.add_tag(
-                user_id,
-                UserTag.from_dict(
-                    {
-                        "category": category_value,
-                        "value": value,
-                        "confidence": confidence,
-                        "source": "manual",
-                    }
-                ),
-            )
-        else:
-            profile = await manager.remove_tag(user_id, category_value, value)
-        if profile is None:
-            return error_response("画像不存在")
-        response = _profile_response_or_error(profile)
-        _audit_event("tag_" + action, {"user_id": user_id}, result="success")
-        return response
+        """在原审计边界内委托画像标签增删实现。"""
+        return await self._manage_profile_tags()
 
 
 __all__ = ["ProfileApiMixin"]

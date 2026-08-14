@@ -5,7 +5,9 @@ from __future__ import annotations
 import aiosqlite
 import pytest
 
-from core.validators.persistence_health_validator import PersistenceHealthValidator
+from core.features.memory.infrastructure.validators.persistence_health_validator import (
+    PersistenceHealthValidator,
+)
 
 
 @pytest.mark.asyncio

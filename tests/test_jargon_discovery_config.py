@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.base.config_validator import JargonConfig, MemoraConfig
+from core.platform.config.config_validator import JargonConfig, MemoraConfig
 from core.platform.transport.page_api.jargon_api import JargonApiMixin
 
 

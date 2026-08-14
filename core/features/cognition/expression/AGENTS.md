@@ -6,7 +6,7 @@
 
 ## 职责与边界
 
-`core/expression/` 用确定性规则从相邻的“用户消息 → Bot 回复”中学习 `(situation, expression)`，按 `(group_id, persona_id, user_id)` 隔离、累计权重、衰减和淘汰，并提供高权重模式查询或 Prompt 文本格式化。该模块不调用 LLM、不生成新回复、不判断消息安全性，也不负责将格式化文本自动注入模型；初始化在 `core/platform/composition/plugin_initializer.py`，控制台浏览在 `core/api/expression_api.py`，Agent 查询在 `core/tools/expression_tools.py`。
+`core/features/cognition/expression/` 用确定性规则从相邻的“用户消息 → Bot 回复”中学习表达模式，按群/人格/用户隔离、衰减和淘汰。初始化位于组合根，控制台与 Agent 入口分别位于 platform transport Page API 和 tools。
 
 ## 架构与数据流
 
@@ -45,10 +45,10 @@ flowchart LR
 
 ## 依赖方向
 
-- 上游：`core/platform/composition/plugin_initializer.py`、`core/api/expression_api.py`、`core/tools/expression_tools.py`。
+- 上游：`core/platform/composition/plugin_initializer.py`、Page API expression mixin、platform transport tools。
 - 本模块：`pattern_learner.py -> models.py + pattern_store.py`。
-- 下游：`core/storage/base.py` 的 PRAGMA、`aiosqlite`；无 LLM 依赖。
-- 相关上下文：[存储模块](../../../storage/AGENTS.md)、[工具模块](../../../tools/AGENTS.md)。
+- 下游：`core/shared/sql.py` 的 PRAGMA、`aiosqlite`；无 LLM 依赖。
+- 相关上下文：[shared](../../../shared/AGENTS.md)、[工具模块](../../../platform/transport/tools/AGENTS.md)。
 
 ## 隐私、安全与修改约束
 

@@ -3,7 +3,7 @@
 # Agent 工具
 
 **最后核对：** 2026-07-17  
-**公共入口：** `core/tools/__init__.py`  
+**公共入口：** `core/platform/transport/tools/__init__.py`
 **注册入口：** `main.py::_register_agent_tools_if_needed()`
 
 ## 职责边界
@@ -51,7 +51,7 @@ flowchart TD
 - 知识、画像、黑话、好感度、社交、表达工具默认开启，但仅在对应依赖存在时注册。
 - FeatureDelegation 已把黑话、好感度、表达或 persona/social 交给伴侣插件时，本地对应工具不注册，避免双重能力。
 
-生产路由判断 memory tool 可用时，不只看注册标志，还检查当前请求 ToolSet 中名为 `recall_long_term_memory` 的工具是否存在且 active；详见 [注入模块 AGENTS.md](../../../injection/AGENTS.md)。
+生产路由判断 memory tool 可用时，不只看注册标志，还检查当前请求 ToolSet 中名为 `recall_long_term_memory` 的工具是否存在且 active；详见 [注入模块 AGENTS.md](../../../features/injection/AGENTS.md)。
 
 ## 关键调用契约
 
@@ -100,6 +100,6 @@ python -m pytest tests/test_plugin_init.py -q
 ## 相关上下文
 
 - [根级 AGENTS.md](../../../../AGENTS.md)
-- [注入模块 AGENTS.md](../../../injection/AGENTS.md)
-- [初始化模块 AGENTS.md](../../../initializer/AGENTS.md)
+- [注入模块 AGENTS.md](../../../features/injection/AGENTS.md)
+- [组合根 AGENTS.md](../../composition/AGENTS.md)
 - `main.py`

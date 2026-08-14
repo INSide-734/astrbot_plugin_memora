@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from core.platform.transport.commands.command_handler import CommandHandler
 from core.features.quality.application.memory_quality_gate import MemoryGateResult
 from core.platform.resources import i18n_backend
+from core.platform.transport.commands.command_handler import CommandHandler
 
 
 @pytest.fixture(autouse=True)
@@ -132,7 +132,10 @@ async def _run_summary(handler: CommandHandler, event: MagicMock) -> list[str]:
     返回:
         命令依次产生的文本结果。
     """
-    with patch("core.utils.get_persona_id", AsyncMock(return_value="persona-1")):
+    with patch(
+        "core.platform.context_helpers.get_persona_id",
+        AsyncMock(return_value="persona-1"),
+    ):
         return [result async for result in handler.handle_summarize(event)]
 
 

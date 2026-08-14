@@ -8,7 +8,7 @@ from typing import Any, cast
 
 import pytest
 
-from core.models.derived_metadata import DerivedMetadataSourceRef
+from core.features.evaluation.domain.derived_metadata import DerivedMetadataSourceRef
 from core.shared.contracts import (
     CanonicalMemoryCommitted,
     MemorySourceRef,

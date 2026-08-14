@@ -16,8 +16,8 @@ from core.features.evolution.domain import (
     RelationView,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
+from core.platform.transport.tools import __all__ as exported_tools
 from core.platform.transport.tools.memory_memorize_tool import MemoryMemorizeTool
-from core.tools import __all__ as exported_tools
 
 
 def test_agent_canonical_tools_expose_add_only_contract() -> None:

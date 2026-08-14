@@ -22,11 +22,11 @@ from typing import Any, Iterable
 from astrbot.api import logger
 
 from ....shared.number_utils import clamp_float, safe_float
-from ...decay.application.operations import _normalize_batch_metadata
-from ..infrastructure.sql_contract import (
+from ....shared.sql import (
     MEMORY_FTS_OPTIMIZE_SQL,
     MEMORY_FTS_TABLE,
 )
+from ...decay.application.operations import _normalize_batch_metadata
 
 _TREND_DAYS = 90
 _MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000

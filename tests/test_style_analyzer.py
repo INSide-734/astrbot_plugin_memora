@@ -1,4 +1,4 @@
-"""测试 core/utils/style_analyzer.py — StyleAnalyzer, StyleProfile, StyleEvolution."""
+"""expression style analyzer 行为测试。"""
 
 from __future__ import annotations
 

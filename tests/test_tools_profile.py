@@ -1,4 +1,4 @@
-"""测试 core/tools/profile_tools.py — ProfileLookupTool."""
+"""platform transport profile tool 行为测试。"""
 
 from __future__ import annotations
 

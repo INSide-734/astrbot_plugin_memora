@@ -7,8 +7,6 @@ import pytest
 
 import core.features.decay as decay_feature
 from core.features.decay.application import operations as feature_operations
-from core.managers import decay_operations as legacy_operations
-from core.schedulers import decay_scheduler as legacy_scheduler
 
 
 def test_decay_package_defers_application_imports() -> None:
@@ -43,39 +41,16 @@ def test_decay_package_lazily_exports_contracts() -> None:
         decay_feature.__getattr__("missing_decay_contract")
 
 
-def test_legacy_decay_operations_reuse_feature_implementation() -> None:
-    """旧 manager 路径只能导出 decay application 的唯一实现。"""
-
-    assert legacy_operations.__all__ == feature_operations.__all__
-    assert (
-        legacy_operations.DecayOperationsMixin
-        is feature_operations.DecayOperationsMixin
-    )
-    assert (
-        legacy_operations._normalize_batch_metadata
-        is feature_operations._normalize_batch_metadata
-    )
-
-
-def test_legacy_decay_scheduler_reuses_feature_implementation() -> None:
-    """旧 scheduler 路径只能导出 decay application 的唯一实现。"""
-
-    from core.features.decay.application import scheduler as feature_scheduler
-
-    assert legacy_scheduler.__all__ == feature_scheduler.__all__
-    assert legacy_scheduler.DecayScheduler is feature_scheduler.DecayScheduler
-
-
 def test_decay_configs_old_path_reuses_feature_owner() -> None:
     """根配置聚合器应恒等导出 decay feature 的配置模型。"""
 
-    from core.base.config_validator import (
+    from core.features.decay.domain import ForgettingAgentConfig, ImportanceDecayConfig
+    from core.platform.config.config_validator import (
         ForgettingAgentConfig as LegacyForgettingAgentConfig,
     )
-    from core.base.config_validator import (
+    from core.platform.config.config_validator import (
         ImportanceDecayConfig as LegacyImportanceDecayConfig,
     )
-    from core.features.decay.domain import ForgettingAgentConfig, ImportanceDecayConfig
 
     assert LegacyForgettingAgentConfig is ForgettingAgentConfig
     assert LegacyImportanceDecayConfig is ImportanceDecayConfig
@@ -84,9 +59,9 @@ def test_decay_configs_old_path_reuses_feature_owner() -> None:
 def test_flashbulb_config_old_path_reuses_decay_feature_owner() -> None:
     """旧运行时配置路径应恒等导出 decay 的闪光灯记忆模型。"""
 
-    from core.base.runtime_feature_config import (
+    from core.features.decay.domain import FlashbulbConfig
+    from core.platform.config.runtime_feature_config import (
         FlashbulbConfig as LegacyFlashbulbConfig,
     )
-    from core.features.decay.domain import FlashbulbConfig
 
     assert LegacyFlashbulbConfig is FlashbulbConfig

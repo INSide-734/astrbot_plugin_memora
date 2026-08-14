@@ -4,7 +4,7 @@ import json
 
 from astrbot.api import logger
 
-from ..domain.models import Message
+from ....shared.contracts.conversation import Message
 
 
 class MessageQueryMixin:

@@ -127,10 +127,10 @@ class TestHandleSummarizeErrors:
     ) -> None:
         """手动总结隔离低质量候选后不得写 canonical，但应安全推进窗口。"""
 
-        from core.platform.transport.commands.command_handler import CommandHandler
         from core.features.quality.application.memory_quality_gate import (
             MemoryGateResult,
         )
+        from core.platform.transport.commands.command_handler import CommandHandler
 
         conversation_manager = MagicMock()
         conversation_manager.store.get_message_count = AsyncMock(return_value=2)
@@ -175,7 +175,10 @@ class TestHandleSummarizeErrors:
         event.unified_msg_origin = "session-1"
         event.plain_result = MagicMock(side_effect=lambda message: message)
 
-        with patch("core.utils.get_persona_id", AsyncMock(return_value="persona-1")):
+        with patch(
+            "core.platform.context_helpers.get_persona_id",
+            AsyncMock(return_value="persona-1"),
+        ):
             results = [result async for result in handler.handle_summarize(event)]
 
         assert len(results) == 2

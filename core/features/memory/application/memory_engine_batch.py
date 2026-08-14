@@ -10,7 +10,7 @@ import json
 
 from astrbot.api import logger
 
-from ..infrastructure.sql_contract import (
+from ....shared.sql import (
     MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
 )
 

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import importlib
-from importlib.util import find_spec
 
 
 def _reload_observability_runtime():
@@ -12,12 +11,6 @@ def _reload_observability_runtime():
     import core.features.observability.application.runtime as runtime
 
     return importlib.reload(runtime)
-
-
-def test_legacy_manager_metrics_collector_is_absent() -> None:
-    """指标只能由 observability feature 提供，不保留第二套 Manager。"""
-
-    assert find_spec("core.managers.metrics_collector") is None
 
 
 def test_set_debug_mode_toggles_functions_decorated_before_enable(

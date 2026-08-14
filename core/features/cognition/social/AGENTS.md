@@ -6,7 +6,7 @@
 
 ## 职责与边界
 
-`core/social/` 维护有方向的 `(from_user, to_user, relation_type, group_id)` 关系、关系类型分类、强度、互动次数和标签，并以类型难度系数抑制自动强度变化。它是图记忆/互动关系之上的显式领域层，不负责从消息中推断关系类型，也不自动创建反向边。组件由 `core/platform/composition/plugin_initializer.py` 初始化，控制台编辑在 `core/api/social_api.py`，Agent 查询在 `core/tools/social_tools.py`。
+`core/features/cognition/social/` 维护有方向的用户关系、类型、强度、互动次数和标签。组件由组合根初始化，控制台编辑与 Agent 查询分别位于 platform transport Page API 和 tools。
 
 ## 架构与数据流
 
@@ -44,10 +44,10 @@ flowchart LR
 
 ## 依赖方向
 
-- 上游：`core/platform/composition/plugin_initializer.py`、`core/api/social_api.py`、`core/tools/social_tools.py`。
+- 上游：`core/platform/composition/plugin_initializer.py`、Page API social mixin、platform transport tools。
 - 本模块：`relation_manager.py -> models.py + relation_store.py`。
-- 下游：`core/storage/base.py`、`core/shared/entity_editing.py`、`aiosqlite`。
-- 相关上下文：[存储模块](../../../storage/AGENTS.md)、[基础领域能力](../../../base/AGENTS.md)。
+- 下游：`core/features/memory/infrastructure/base.py`、`core/shared/entity_editing.py`、`core/shared/sql.py`、`aiosqlite`。
+- 相关上下文：[Memory feature](../../memory/AGENTS.md)、[shared](../../../shared/AGENTS.md)。
 
 ## 隐私、安全与修改约束
 

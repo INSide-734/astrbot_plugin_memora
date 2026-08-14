@@ -6,7 +6,7 @@
 
 ## 职责与边界
 
-`core/jargon/` 实现“统计发现 → LLM 语义推断 → 人工确认/编辑 → 群内查询与解释”的独立术语管线。它面向群组黑话、缩写和俚语，不负责通用关键词检索、消息安全审查或自动授权。组件由 `core/platform/composition/plugin_initializer.py` 初始化；控制台管理经 `core/api/jargon_api.py` 与 `JargonAdminService`，Agent 查询经 `core/tools/jargon_tools.py`。
+`core/features/cognition/jargon/` 实现“统计发现 → LLM 语义推断 → 人工确认/编辑 → 群内查询与解释”管线。组件由组合根初始化；控制台管理位于 Page API，Agent 查询位于 platform transport tools。
 
 `jargon.enabled` 默认关闭。关闭时初始化器不创建本模块组件，消息旁路不会累计候选或调用 LLM，页面 API 也不得惰性创建 `JargonMiner`；已有 SQLite 词条数据不删除。
 
@@ -47,11 +47,11 @@ flowchart LR
 
 ## 依赖方向
 
-- 上游：`core/platform/composition/plugin_initializer.py`、`core/api/jargon_api.py`、`core/tools/jargon_tools.py`。
-- 本模块：`statistical_filter.py -> models.py`；`jargon_miner.py -> filter + store + models`；`jargon_query.py` 和 `jargon_admin_service.py -> store`。
-- 下游：`jieba`、可选 LLM 客户端、`core/storage/base_store.py`、`core/shared/entity_editing.py`。
+- 上游：`core/platform/composition/plugin_initializer.py`、Page API jargon mixin、platform transport tools。
+- 本模块：`statistical_filter.py -> models.py`；`jargon_miner.py -> filter + store + models`；query/admin service → store。
+- 下游：`jieba`、可选 LLM、memory feature `base_store.py`、`core/shared/entity_editing.py`。
 - 包入口使用懒加载；新增公共导出必须同步 `__all__` 与 `__getattr__`。
-- 相关上下文：[存储模块](../../../storage/AGENTS.md)、[基础领域能力](../../../base/AGENTS.md)。
+- 相关上下文：[Memory feature](../../memory/AGENTS.md)、[shared](../../../shared/AGENTS.md)。
 
 ## 隐私、安全与修改约束
 

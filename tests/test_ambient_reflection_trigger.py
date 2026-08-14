@@ -131,7 +131,7 @@ async def test_ambient_messages_schedule_summary_without_assistant_response() ->
     event = _group_event()
 
     with patch(
-        "core.features.reflection.application.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         await handler.maybe_schedule_summary(event)
@@ -219,7 +219,7 @@ async def test_summary_trigger_bounds_each_window_to_trigger_rounds() -> None:
     )
 
     with patch(
-        "core.features.reflection.application.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(
@@ -279,7 +279,7 @@ async def test_summary_gate_reports_effective_five_round_threshold() -> None:
             "core.features.reflection.application.reflection_trigger.report_debug_event"
         ) as report,
         patch(
-            "core.features.reflection.application.reflection_trigger.get_persona_id",
+            "core.features.reflection.application.reflection_handler.get_persona_id",
             new=AsyncMock(return_value="persona-1"),
         ),
     ):
@@ -370,7 +370,7 @@ async def test_summary_backlog_drains_in_bounded_windows() -> None:
     handler._storage_task = AsyncMock(side_effect=store_window)
 
     with patch(
-        "core.features.reflection.application.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(
@@ -434,7 +434,7 @@ async def test_pending_retry_keeps_original_bounded_end() -> None:
     )
 
     with patch(
-        "core.features.reflection.application.reflection_trigger.get_persona_id",
+        "core.features.reflection.application.reflection_handler.get_persona_id",
         new=AsyncMock(return_value="persona-1"),
     ):
         request = await handler._summary_trigger.prepare(

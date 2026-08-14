@@ -92,7 +92,7 @@ flowchart LR
 
 ## 依赖方向
 
-`command_endpoints` → `CommandHandler` → 本目录 mixin → engine/manager/validator/context 或窄异步提供器。`main.py` 负责从现有 Page API 对象提取健康、指标和 trace callable；命令模块不应导入 Page API，也不应直接操作 SQLite。动态注入规则见 [注入模块 AGENTS.md](../../../injection/AGENTS.md)。
+`command_endpoints` → `CommandHandler` → 本目录 mixin → engine/manager/validator/context 或窄异步提供器。命令模块不应导入 Page API，也不应直接操作 SQLite。动态注入规则见 [注入模块 AGENTS.md](../../../features/injection/AGENTS.md)。
 
 ## 测试定位与精确验证
 
@@ -106,7 +106,7 @@ python -m pytest tests/test_command_handler.py tests/test_commands.py tests/test
 ## 相关上下文
 
 - [根级 AGENTS.md](../../../../AGENTS.md)
-- [注入模块 AGENTS.md](../../../injection/AGENTS.md)
-- `core/command_endpoints.py`
-- `core/command_handler.py`
-- `core/cleaners/`
+- [注入模块 AGENTS.md](../../../features/injection/AGENTS.md)
+- `core/platform/transport/commands/command_endpoints.py`
+- `core/platform/transport/commands/command_handler.py`
+- `core/features/recall/application/injection_cleaner.py`

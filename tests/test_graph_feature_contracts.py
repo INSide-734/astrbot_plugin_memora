@@ -4,23 +4,15 @@ from core.features.memory.graph import (
     GraphEdge,
     GraphEntry,
     GraphReplaceResult,
-    GraphStore,
-)
-from core.features.memory.graph.infrastructure.graph_store import (
-    GraphStore as LegacyGraphStore,
 )
 from core.features.memory.infrastructure.validators import (
-    IndexValidator,
     PersistenceHealthValidator,
 )
-from core.validators.index_validator import IndexValidator as LegacyIndexValidator
 
 
-def test_graph_feature_exports_and_legacy_infrastructure_imports() -> None:
-    """graph 模型应由 feature 导出，旧基础设施路径复用唯一实现。"""
+def test_graph_feature_exports_owned_contracts() -> None:
+    """graph 包应导出模型、Store 与验证器 owner。"""
 
-    assert LegacyGraphStore is GraphStore
-    assert LegacyIndexValidator is IndexValidator
     assert GraphEdge is not None
     assert GraphEntry is not None
     assert GraphReplaceResult is not None

@@ -6,7 +6,7 @@
 
 ## 职责与边界
 
-`core/affection/` 负责按 `(group_id, user_id)` 维护用户对 Bot 的好感度、按群维护 Bot 情绪，以及把一次交互分类为 `InteractionType` 后应用情绪门控、分数变化、群总量重分配和情绪级联。它不负责消息路由、提示词注入或控制台鉴权；组件由 `core/platform/composition/plugin_initializer.py` 创建，控制台写操作由 `core/api/affection_api.py` 做请求边界校验，Agent 只通过 `core/tools/affection_tools.py` 查询。
+`core/features/cognition/affection/` 负责按 `(group_id, user_id)` 维护用户对 Bot 的好感度、按群维护 Bot 情绪，以及把一次交互分类为 `InteractionType` 后应用情绪门控、分数变化、群总量重分配和情绪级联。组件由组合根创建，控制台写操作位于 Page API，Agent 查询位于 `core/platform/transport/tools/affection_tools.py`。
 
 ## 架构与数据流
 
@@ -48,10 +48,10 @@ flowchart LR
 
 ## 依赖方向
 
-- 上游：`core/platform/composition/plugin_initializer.py`、`core/api/affection_api.py`、`core/tools/affection_tools.py`。
+- 上游：`core/platform/composition/plugin_initializer.py`、Page API affection mixin、platform transport tools。
 - 本模块：`affection_manager.py -> models.py + affection_store.py + mood_cascade.py`；`mood_cascade.py -> models.py`。
-- 下游：`core/shared/entity_editing.py`、`core/storage/base_store.py`、`aiosqlite`、可选 LLM 适配器。
-- 相关上下文：[存储模块](../../../storage/AGENTS.md)、[基础领域能力](../../../base/AGENTS.md)。
+- 下游：`core/shared/entity_editing.py`、`core/features/memory/infrastructure/base_store.py`、`aiosqlite`、可选 LLM 适配器。
+- 相关上下文：[Memory feature](../../memory/AGENTS.md)、[shared](../../../shared/AGENTS.md)。
 
 ## 隐私、安全与修改约束
 

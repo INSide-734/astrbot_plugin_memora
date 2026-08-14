@@ -8,8 +8,8 @@ import json
 import aiosqlite
 import pytest
 
+from core.features.decay.application.operations import DecayOperationsMixin
 from core.features.memory.infrastructure.base import apply_perf_pragmas
-from core.managers.decay_operations import DecayOperationsMixin
 
 
 class _DecayHost(DecayOperationsMixin):

@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import ValidationError
 
-from core.base.config_validator import CostControlConfig
+from core.platform.config.config_validator import CostControlConfig
 from core.platform.config.cost_control import build_cost_control_from_config
 from core.shared.cost_control import CostControl
 from core.shared.extra_llm_budget import (

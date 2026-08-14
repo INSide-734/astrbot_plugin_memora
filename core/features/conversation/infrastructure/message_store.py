@@ -5,7 +5,7 @@ import time
 
 from astrbot.api import logger
 
-from ..domain.models import Message, serialize_to_json
+from ....shared.contracts.conversation import Message, serialize_to_json
 from .message_queries import MessageQueryMixin
 
 

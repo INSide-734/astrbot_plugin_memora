@@ -3,12 +3,12 @@
 # 自适应记忆注入
 
 **最后核对：** 2026-07-17  
-**公共入口：** `core/injection/__init__.py`  
-**生产调用方：** `core/handlers/recall_handler.py`
+**公共入口：** `core/features/injection/__init__.py`
+**生产调用方：** `core/features/recall/application/recall_handler.py`
 
 ## 职责边界
 
-本目录定义稳定模型、不可变预设、纯路由、候选选择、原子执行和脱敏决策记录。检索候选由 `MemoryEngine` 产生；Provider 兼容降级在 `core/utils/injection_adapter.py`；提示词保护在 `core/security/prompt_sanitizer.py`；SQLite 表与查询在 `core/storage/injection_decision_store.py`。
+本目录定义稳定模型、不可变预设、纯路由、候选选择、原子执行和脱敏决策记录。检索候选由 `MemoryEngine` 产生；Provider 兼容适配与格式化位于本 feature application，提示词保护位于 `core/platform/security/`，决策持久化位于本 feature infrastructure。
 
 ```mermaid
 flowchart LR
@@ -28,7 +28,7 @@ flowchart LR
 
 ## 稳定公共接口
 
-`core.injection` 公开导出模型枚举与 dataclass、`PRESETS`/`get_preset()`/`resolve_preset()`、`InjectionRoutingConfig`/`InjectionStrategyRouter`、`InjectionExecutionContext`/`InjectionExecutor`、`candidate_utility` 和 `InjectionDecisionRecorder`。新增或重命名导出必须同步包级 `__all__` 与 `tests/test_injection_models.py`。
+`core.features.injection` 公开导出模型枚举与 dataclass、`PRESETS`/`get_preset()`/`resolve_preset()`、`InjectionRoutingConfig`/`InjectionStrategyRouter`、`InjectionExecutionContext`/`InjectionExecutor`、`candidate_utility` 和 `InjectionDecisionRecorder`。新增或重命名导出必须同步包级 `__all__` 与 `tests/test_injection_models.py`。
 
 ### 模型与预设
 
@@ -81,11 +81,11 @@ Gemini 的伪工具方式降级为 `user_message_before`；未知或不支持工
 
 `InjectionDecisionRecorder.record()` 是非阻塞、无 I/O 的请求路径：默认容量 10000，满时丢最旧并计数；单 worker 默认 50 条或 250ms 批写。失败批次恢复到 retained 列表并指数重试（5 秒封顶），同时继续保持总待处理量有界。清理按保留天数/最大行数执行，另有每日清理和每持久化 1000 行、每小时至多一次的轻量清理。`close(timeout)` 尽量冲刷，超时取消 worker。
 
-Page API 只能返回 allowlist 后的脱敏字段；详见 [API 模块 AGENTS.md](../../../api/AGENTS.md)。
+Page API 只能返回 allowlist 后的脱敏字段；详见 [Page API AGENTS.md](../../platform/transport/page_api/AGENTS.md)。
 
 ## 依赖方向
 
-`handlers/recall_handler` → 本模块 → `utils.injection_budget`、监控指标；执行期按需调用 formatter。Provider 适配、安全服务、存储通过构造参数或类型边界接入。本模块不能导入 Page API 或命令。
+`features/recall/application/recall_handler` → 本模块 → injection budget、formatter 与监控指标。Provider 适配、安全服务、存储通过构造参数或类型边界接入。本模块不能导入 Page API 或命令。
 
 ## 测试定位与精确验证
 
@@ -101,8 +101,8 @@ python -m pytest tests/test_handlers.py -q
 ## 相关上下文
 
 - [根级 AGENTS.md](../../../../AGENTS.md)
-- [初始化模块 AGENTS.md](../../../initializer/AGENTS.md)
-- [API 模块 AGENTS.md](../../../api/AGENTS.md)
-- [工具模块 AGENTS.md](../../../tools/AGENTS.md)
-- [处理器模块 AGENTS.md](../../../handlers/AGENTS.md)
-- [安全模块 AGENTS.md](../../../platform/security/AGENTS.md)
+- [组合根 AGENTS.md](../../platform/composition/AGENTS.md)
+- [Page API AGENTS.md](../../platform/transport/page_api/AGENTS.md)
+- [工具 AGENTS.md](../../platform/transport/tools/AGENTS.md)
+- [召回 AGENTS.md](../recall/AGENTS.md)
+- [安全 AGENTS.md](../../platform/security/AGENTS.md)

@@ -5,8 +5,8 @@ from typing import Any, cast
 
 from astrbot.api.platform import MessageType
 
+from ....shared.contracts.conversation import Message
 from ...identity.contracts import IdentityTrust, ResolvedIdentity
-from ..domain.models import Message
 from .sender_resolver import _resolve_sender_name
 
 

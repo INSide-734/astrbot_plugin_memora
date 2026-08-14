@@ -8,11 +8,12 @@ from __future__ import annotations
 import asyncio
 import time
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
 
+from .event_cognitive import CognitiveComponentsMixin
 from .features.conversation.application.conversation_manager import ConversationManager
 from .features.conversation.application.dedup_manager import DedupManager
 from .features.conversation.application.message_content_extractor import (
@@ -50,7 +51,7 @@ if TYPE_CHECKING:
     from .shared.contracts import PromptProtectionPort
 
 
-class EventHandler:
+class EventHandler(CognitiveComponentsMixin):
     """事件处理器 — 协调各子模块处理 AstrBot 事件"""
 
     _IDENTITY_SYNC_MARKER_ATTR = "_memora_identity_sync_scheduled"
@@ -116,7 +117,7 @@ class EventHandler:
         self._recall_handler = RecallHandler(
             context=context,
             config_manager=config_manager,
-            memory_engine=memory_engine,
+            memory_engine=cast(Any, memory_engine),
             conversation_manager=conversation_manager,
             injection_adapter=self._injection_adapter,
             enforce_limit_cb=self._enforce_message_limit,
@@ -143,7 +144,7 @@ class EventHandler:
         self._reflection_handler = ReflectionHandler(
             context=context,
             config_manager=config_manager,
-            memory_engine=memory_engine,
+            memory_engine=cast(Any, memory_engine),
             memory_processor=memory_processor,
             conversation_manager=conversation_manager,
             enforce_limit_cb=self._enforce_message_limit,
@@ -367,58 +368,6 @@ class EventHandler:
                 reason_code="capture_error",
             )
             logger.error("处理群聊全量消息时发生错误", exc_info=True)
-
-    async def _feed_cognitive_components(
-        self,
-        event: AstrMessageEvent,
-        content: str,
-        identity: ResolvedIdentity,
-    ) -> None:
-        """尽力向可选的 v1.0+ 认知模块投喂输入数据。"""
-        group_id = event.unified_msg_origin or "default"
-        sender_id = self._user_id_for_identity(event, identity)
-        if sender_id is None:
-            return
-        try:
-            if self._jargon_filter is not None:
-                self._jargon_filter.update(content, group_id, sender_id)
-        except Exception:
-            logger.debug("[认知模块] 黑话过滤器更新失败", exc_info=True)
-
-        try:
-            if self._expression_learner is not None:
-                self._expression_learner.buffer_message(
-                    group_id=group_id,
-                    sender_id=sender_id,
-                    content=content,
-                )
-                await self._expression_learner.maybe_learn(group_id)
-        except Exception:
-            logger.debug("[认知模块] 表达模式学习器更新失败", exc_info=True)
-
-        try:
-            if self._relation_manager is not None:
-                await self._relation_manager.apply_delta(
-                    from_user=sender_id,
-                    to_user="bot",
-                    group_id=group_id,
-                    delta=0.01,
-                    reason="group_message",
-                )
-        except Exception:
-            logger.debug("[认知模块] 社交关系更新失败", exc_info=True)
-
-        try:
-            if self._jargon_miner is not None:
-                stats = (
-                    self._jargon_filter.get_stats(group_id)
-                    if self._jargon_filter is not None
-                    else None
-                )
-                if stats and stats.candidate_count > 0:
-                    await self._jargon_miner.run_once(group_id, limit=2)
-        except Exception:
-            logger.debug("[认知模块] 黑话挖掘执行失败", exc_info=True)
 
     @monitored
     async def handle_memory_recall(

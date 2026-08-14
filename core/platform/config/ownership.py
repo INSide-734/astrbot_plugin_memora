@@ -220,12 +220,12 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "flashbulb": _ownership(
         "flashbulb",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.decay_operations",
+        "core.features.decay.application.operations",
     ),
     "forgetting_agent": _ownership(
         "forgetting_agent",
         ConfigOwnershipKind.RUNTIME,
-        "core.managers.decay_operations",
+        "core.features.decay.application.operations",
     ),
     "atom_quality_filter": _ownership(
         "atom_quality_filter",

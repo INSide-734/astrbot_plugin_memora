@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from core import tools as tool_exports
+from core.platform.transport import tools as tool_exports
 
 
 @pytest.mark.parametrize("tool_name", tool_exports.__all__)

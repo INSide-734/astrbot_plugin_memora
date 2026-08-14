@@ -3,15 +3,15 @@
 # Retrieval 模块上下文
 
 **最后更新：** 2026-07-20
-**源码范围：** `core/retrieval/*.py`（28 个 Python 文件）
+**源码范围：** `core/features/retrieval/*.py`
 
 ## 职责与边界
 
-`core/retrieval/` 负责从文档、FAISS、图、原子和知识库生成候选，执行 RRF、时间/重要性加权、MMR/可插拔重排、个性化与隐私过滤，并可生成有界、脱敏的召回追踪。持久化 CRUD 属于 [`core/storage/AGENTS.md`](../../../storage/AGENTS.md)，统一生命周期和缓存增强属于 [`core/managers/AGENTS.md`](../../../managers/AGENTS.md)；派生关系扩展与 Projection 读取服务由 `core/features/evolution/application/` 唯一持有，本模块只消费其公开读取契约。
+`core/features/retrieval/` 负责从文档、FAISS、图、原子和知识库生成候选，执行 RRF、时间/重要性加权、MMR/可插拔重排、个性化与隐私过滤，并生成有界、脱敏的召回追踪。canonical 与图持久化属于 [`features/memory`](../memory/AGENTS.md)，派生关系扩展与 Projection 读取由 [`features/evolution`](../evolution/AGENTS.md) 唯一持有，本模块只消费其公开读取契约。
 
 ## Memory Evolution 召回顺序
 
-`DualRouteRetriever` 的在线顺序固定为：direct/graph candidate merge → Evolution application 的 `DerivedRelationExpander` → `ProjectionReader` attachment → reranker → privacy filter。只有 `enabled=true` 且 mode 为 `readonly`/`active` 时才调用 relation/projection reader；`disabled` 与 `shadow` 必须保持 baseline，不能因派生表存在而读取。两个 reader 不在 `core.retrieval` 保留兼容实现或包级导出。
+`DualRouteRetriever` 的在线顺序固定为：direct/graph candidate merge → Evolution application 的 `DerivedRelationExpander` → `ProjectionReader` attachment → reranker → privacy filter。只有 `enabled=true` 且 mode 为 `readonly`/`active` 时才调用 relation/projection reader；`disabled` 与 `shadow` 必须保持 baseline，不能因派生表存在而读取。旧 `core/retrieval` 包已删除。
 
 - relation expansion 只增加有 scope/隐私证据的 canonical candidate，并受 per-seed/global expansion budget 限制。
 - ProjectionReader 只把通过 active、类型开关、validity、scope、privacy、source revision、role 和统一 `reference_time` 校验的 projection metadata 附着到已有 primary canonical candidate；supporting/conflict source 只用于证据校验，不能单独生成 candidate。普通非冲突 Projection 可在 supporting mapping 已由 Store 移除且 primary 仍有效时保留；`semantic_summary` 合成自全部来源，任一 mapping/revision 失效都必须整条失效。检测到 stale/越权 source 或缺少 conflict side 时整体不附着。

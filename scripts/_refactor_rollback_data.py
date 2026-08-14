@@ -243,7 +243,7 @@ async def _rebuild_fts5(
         return {
             "status": "closed",
             "reason_code": "fts5_rebuild_verified",
-            "implementation": "core.retrieval.BM25Retriever/sqlite_fts5",
+            "implementation": "core.features.retrieval.BM25Retriever/sqlite_fts5",
             "indexed_count": indexed,
             "query_match_count": len(results),
             "matched_id_hash": _hash(sorted(result.doc_id for result in results)),
@@ -358,7 +358,7 @@ async def _rebuild_graph(
         return {
             "status": "closed",
             "reason_code": "graph_rebuild_verified",
-            "implementation": "core.storage.GraphStore",
+            "implementation": "core.features.memory.graph.GraphStore",
             "node_count": stats["graph_nodes"],
             "edge_count": stats["graph_edges"],
             "entry_count": stats["graph_entries"],
@@ -455,7 +455,7 @@ async def _rebuild_evolution(
                 if len(relations) == 1
                 else "relation_rebuild_incomplete"
             ),
-            "implementation": "core.storage.MemoryEvolutionStore",
+            "implementation": "core.features.evolution.MemoryEvolutionStore",
             "active_count": len(relations),
         }
         projection = {
@@ -465,7 +465,7 @@ async def _rebuild_evolution(
                 if len(bundles) == 1
                 else "projection_rebuild_incomplete"
             ),
-            "implementation": "core.storage.MemoryEvolutionStore",
+            "implementation": "core.features.evolution.MemoryEvolutionStore",
             "active_count": len(bundles),
             "source_mapping_count": len(bundles[0].sources) if bundles else 0,
         }

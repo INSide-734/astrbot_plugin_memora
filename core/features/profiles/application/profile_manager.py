@@ -38,9 +38,16 @@ class ProfileManager:
         self._store = profile_store
 
     async def ensure_profile(self, user_id: str) -> UserProfile:
-        """返回已有画像，缺失时创建空画像。"""
+        """返回已有画像，缺失时创建空画像。
 
-        return await self._store.get_or_create_profile(user_id)
+        Raises:
+            RuntimeError: Store 未能返回已创建的画像。
+        """
+
+        profile = await self._store.get_or_create_profile(user_id)
+        if profile is None:
+            raise RuntimeError("画像创建后仍不可用")
+        return profile
 
     async def get_profile(self, user_id: str) -> UserProfile | None:
         """按可信用户 ID 读取画像。"""

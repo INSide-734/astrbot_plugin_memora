@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tomllib
 from pathlib import Path
 
@@ -84,6 +85,35 @@ def test_ruff_and_pre_commit_are_versioned() -> None:
     assert {"pre-commit", "ruff"} <= _dependency_names(dependency_groups["dev"])
     assert tool["ruff"]["target-version"] == "py312"
     assert tool["ruff"]["lint"]["select"] == ["E4", "E7", "E9", "F", "I"]
+
+
+def test_lsp_uses_locked_uv_virtual_environment() -> None:
+    """Pyright LSP 应由锁定的 uv 环境启动并分析项目依赖。"""
+    pyproject = _load_pyproject()
+    dependency_groups = pyproject["dependency-groups"]
+    tool = pyproject["tool"]
+    assert isinstance(dependency_groups, dict)
+    assert isinstance(tool, dict)
+
+    assert "pyright" in _dependency_names(dependency_groups["dev"])
+    assert tool["pyright"]["venvPath"] == "."
+    assert tool["pyright"]["venv"] == ".venv"
+    assert tool["pyright"]["pythonVersion"] == "3.12"
+
+    lsp_config_path = REPO_ROOT / ".codex" / "lsp-client.json"
+    assert lsp_config_path.is_file(), "仓库缺少项目级 LSP 配置"
+    lsp_config = json.loads(lsp_config_path.read_text(encoding="utf-8"))
+    pyright = lsp_config["lsp"]["pyright-uv"]
+    assert pyright["command"] == [
+        "uv",
+        "run",
+        "--locked",
+        "python",
+        "scripts/run_pyright_langserver.py",
+        "--stdio",
+    ]
+    assert pyright["extensions"] == [".py", ".pyi"]
+    assert (REPO_ROOT / "scripts" / "run_pyright_langserver.py").is_file()
 
 
 def test_pre_commit_hooks_cover_ruff_and_file_integrity() -> None:

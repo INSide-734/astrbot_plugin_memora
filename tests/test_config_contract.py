@@ -128,7 +128,7 @@ def _get_path(config: Mapping[str, Any], path: tuple[str, ...]) -> Any:
 
 
 def _model_numeric_bounds() -> dict[str, dict[str, int | float]]:
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     model_schema = MemoraConfig.model_json_schema()
     definitions = model_schema.get("$defs", {})
@@ -187,7 +187,7 @@ def _schema_numeric_bounds(
 
 
 def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
     schema_defaults = list(_iter_schema_defaults(schema))
@@ -217,7 +217,7 @@ def test_memora_config_preserves_every_schema_leaf_and_default() -> None:
 
 def test_debug_defaults_to_disabled_and_matches_schema() -> None:
     """调试开关默认关闭，并与根级 schema 保持一致。"""
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
 
@@ -232,7 +232,7 @@ def test_debug_defaults_to_disabled_and_matches_schema() -> None:
 
 
 def test_memory_evolution_defaults_to_disabled() -> None:
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     config = MemoraConfig()
 
@@ -243,7 +243,7 @@ def test_memory_evolution_defaults_to_disabled() -> None:
 def test_memory_evolution_rejects_unknown_mode() -> None:
     from pydantic import ValidationError
 
-    from core.base.config_validator import MemoraConfig
+    from core.platform.config.config_validator import MemoraConfig
 
     with pytest.raises(ValidationError):
         MemoraConfig.model_validate({"memory_evolution": {"mode": "running"}})
@@ -252,7 +252,7 @@ def test_memory_evolution_rejects_unknown_mode() -> None:
 def test_hybrid_preset_order_is_rejected() -> None:
     from pydantic import ValidationError
 
-    from core.base.config_validator import RecallEngineConfig
+    from core.platform.config.config_validator import RecallEngineConfig
 
     with pytest.raises(ValidationError, match="min <= base <= max"):
         RecallEngineConfig(

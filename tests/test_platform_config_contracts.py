@@ -1,17 +1,12 @@
-"""平台配置 owner 与旧入口清理契约测试。"""
+"""平台配置 owner 契约测试。"""
 
-import importlib.util
 import subprocess
 import sys
 
 import pytest
 
-import core
-import core.base
 import core.platform.config as platform_config
-from core.base import config_validator as legacy_validation
 from core.platform.config import manager as platform_config_manager
-from core.platform.config import validation as platform_validation
 from core.platform.config.validation import (
     get_default_config,
     merge_config_with_defaults,
@@ -69,23 +64,6 @@ def test_platform_config_package_lazily_exports_contracts() -> None:
         platform_config.__getattr__("missing_config_contract")
 
 
-def test_migrated_config_manager_compatibility_paths_are_removed() -> None:
-    """配置管理迁移完成后不得恢复 base 或 core 根兼容入口。"""
-
-    assert importlib.util.find_spec("core.base.config_manager") is None
-    assert "ConfigManager" not in core.base.__all__
-    assert "ConfigManager" not in core.__all__
-    assert not hasattr(core.base, "ConfigManager")
-    assert not hasattr(core, "ConfigManager")
-
-
-def test_config_validation_old_path_reuses_platform_exports() -> None:
-    """旧配置校验入口应恒等导出平台层的唯一编排实现。"""
-
-    for name in platform_validation.__all__:
-        assert getattr(legacy_validation, name) is getattr(platform_validation, name)
-
-
 def test_platform_config_validation_builds_and_validates_defaults() -> None:
     """平台校验 owner 应生成完整默认树并返回规范化模型。"""
 
@@ -116,10 +94,12 @@ def test_platform_config_validation_merges_and_checks_runtime_changes() -> None:
 def test_platform_runtime_configs_old_path_reuses_platform_owner() -> None:
     """根配置聚合器应恒等导出 platform 拥有的运行时配置模型。"""
 
-    from core.base.config_validator import (
+    from core.platform.config.config_validator import (
         IndexRebuildSettings as LegacyIndexRebuildSettings,
     )
-    from core.base.config_validator import ProviderConfig as LegacyProviderConfig
+    from core.platform.config.config_validator import (
+        ProviderConfig as LegacyProviderConfig,
+    )
     from core.platform.config.provider_config import ProviderConfig
     from core.platform.config.rebuild_config import IndexRebuildSettings
 
@@ -130,14 +110,18 @@ def test_platform_runtime_configs_old_path_reuses_platform_owner() -> None:
 def test_platform_transport_configs_old_paths_reuse_platform_owner() -> None:
     """宿主工具与控制台配置旧路径应恒等导出 platform 唯一模型。"""
 
-    from core.base.config_validator import (
+    from core.platform.config.config_validator import (
         AgentToolsConfig as LegacyRootAgentToolsConfig,
     )
-    from core.base.config_validator import DashboardConfig as LegacyRootDashboardConfig
-    from core.base.feature_config import (
+    from core.platform.config.config_validator import (
+        DashboardConfig as LegacyRootDashboardConfig,
+    )
+    from core.platform.config.feature_config import (
         AgentToolsConfig as LegacyAgentToolsConfig,
     )
-    from core.base.feature_config import DashboardConfig as LegacyDashboardConfig
+    from core.platform.config.feature_config import (
+        DashboardConfig as LegacyDashboardConfig,
+    )
     from core.platform.config.transport_config import AgentToolsConfig, DashboardConfig
 
     assert LegacyRootAgentToolsConfig is AgentToolsConfig
@@ -149,7 +133,9 @@ def test_platform_transport_configs_old_paths_reuse_platform_owner() -> None:
 def test_security_config_old_path_reuses_platform_owner() -> None:
     """根配置聚合器应恒等导出 platform 拥有的安全配置模型。"""
 
-    from core.base.config_validator import SecurityConfig as LegacySecurityConfig
+    from core.platform.config.config_validator import (
+        SecurityConfig as LegacySecurityConfig,
+    )
     from core.platform.config.security_config import SecurityConfig
 
     assert LegacySecurityConfig is SecurityConfig

@@ -5,9 +5,6 @@ import sys
 
 import core.features.evolution as evolution_feature
 import core.features.evolution.application as evolution_application
-from core.base.config_validator import (
-    MemoryEvolutionConfig as LegacyMemoryEvolutionConfig,
-)
 from core.features.evolution.application import (
     contradiction_detector as feature_contradiction_detector,
 )
@@ -52,6 +49,9 @@ from core.features.evolution.infrastructure import (
 from core.features.evolution.infrastructure import (
     memory_evolution_store as feature_store,
 )
+from core.platform.config.config_validator import (
+    MemoryEvolutionConfig as LegacyMemoryEvolutionConfig,
+)
 from core.shared.contracts import MemorySourceRef
 
 
@@ -78,25 +78,18 @@ def test_evolution_domain_owner_first_import_stays_lightweight() -> None:
     assert result.stdout.strip() == "core.features.evolution.domain.models"
 
 
-def test_retrieval_first_import_resolves_evolution_readers_without_legacy_paths() -> (
-    None
-):
-    """先导入 retrieval 时应解析 feature reader，且旧模块不可再导入。"""
+def test_retrieval_first_import_resolves_evolution_readers() -> None:
+    """先导入 retrieval owner 时应能解析 evolution reader。"""
 
     result = subprocess.run(
         [
             sys.executable,
             "-c",
-            "import importlib.util; "
-            "import core.retrieval as retrieval; "
+            "from core.features.retrieval.rrf_fusion import HybridResult; "
             "from core.features.evolution.application import "
             "DerivedRelationExpander, ProjectionReader; "
-            "assert not hasattr(retrieval, 'DerivedRelationExpander'); "
-            "assert importlib.util.find_spec("
-            "'core.retrieval.derived_relation_expander') is None; "
-            "assert importlib.util.find_spec("
-            "'core.retrieval.projection_reader') is None; "
-            "print(DerivedRelationExpander.__module__, ProjectionReader.__module__)",
+            "print(HybridResult.__name__, DerivedRelationExpander.__module__, "
+            "ProjectionReader.__module__)",
         ],
         check=False,
         capture_output=True,
@@ -105,13 +98,13 @@ def test_retrieval_first_import_resolves_evolution_readers_without_legacy_paths(
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[-1] == (
-        "core.features.evolution.application.derived_relation_expander "
+        "HybridResult core.features.evolution.application.derived_relation_expander "
         "core.features.evolution.application.projection_reader"
     )
 
 
 def test_evolution_readers_first_import_resolves_retrieval_without_cycle() -> None:
-    """先导入 feature reader 时应能随后加载完整 retrieval 包。"""
+    """先导入 evolution reader 时应能随后加载 retrieval owner。"""
 
     result = subprocess.run(
         [
@@ -119,10 +112,9 @@ def test_evolution_readers_first_import_resolves_retrieval_without_cycle() -> No
             "-c",
             "from core.features.evolution.application import "
             "DerivedRelationExpander, ProjectionReader; "
-            "import core.retrieval as retrieval; "
             "from core.features.retrieval.rrf_fusion import HybridResult; "
-            "assert retrieval.HybridResult is HybridResult; "
-            "print(DerivedRelationExpander.__name__, ProjectionReader.__name__)",
+            "print(DerivedRelationExpander.__name__, ProjectionReader.__name__, "
+            "HybridResult.__name__)",
         ],
         check=False,
         capture_output=True,
@@ -131,7 +123,7 @@ def test_evolution_readers_first_import_resolves_retrieval_without_cycle() -> No
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines()[-1] == (
-        "DerivedRelationExpander ProjectionReader"
+        "DerivedRelationExpander ProjectionReader HybridResult"
     )
 
 

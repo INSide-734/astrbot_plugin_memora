@@ -93,7 +93,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 
 策略输出必须保持输入顺序、边界合法和至少可回退为单段；C/D 的运行成本门控由 handlers 中的 `TopicBatchPreparer` 负责。
 
-Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM proposal 服务已全部归属 `core/features/evolution/application/`；`core/processors/` 不再提供旧路径或兼容导出。其 source/revision、alias、预算和取消契约见 [`../managers/AGENTS.md`](../../../../managers/AGENTS.md) 的 Evolution 生命周期说明。
+Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM proposal 服务已全部归属 `core/features/evolution/application/`；旧 `core/processors` 路径已删除。其 source/revision、alias、预算和取消契约见 [`evolution/AGENTS.md`](../../evolution/AGENTS.md)。
 
 ## 其他处理器地图
 

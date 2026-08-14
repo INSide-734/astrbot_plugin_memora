@@ -1,6 +1,5 @@
 """平台 composition 组件的新 owner 与 Provider 契约。"""
 
-import importlib.util
 from unittest.mock import MagicMock
 
 from astrbot.api.provider import Provider
@@ -67,19 +66,6 @@ def test_composition_package_exports_owned_components() -> None:
         composition_package.close_identity_runtime_after_failure
         is close_identity_runtime_after_failure
     )
-
-
-def test_migrated_composition_compatibility_modules_are_removed() -> None:
-    """已迁移的 Composition 旧模块不得重新出现。"""
-
-    legacy_modules = (
-        "core.plugin_initializer",
-        "core.initializer.component_factory",
-        "core.initializer.faiss_checker",
-        "core.initializer.provider_waiter",
-    )
-
-    assert all(importlib.util.find_spec(name) is None for name in legacy_modules)
 
 
 def test_composition_uses_public_provider_contract() -> None:

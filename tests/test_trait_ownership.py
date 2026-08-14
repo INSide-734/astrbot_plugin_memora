@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,13 +11,6 @@ import pytest
 from core.features.memory.application.memory_engine import MemoryEngine
 
 _ROOT = Path(__file__).resolve().parents[1]
-
-
-def test_trait_evolution_module_removed_from_production() -> None:
-    """遗留 Trait Evolution 实现必须从生产包中移除。"""
-
-    with pytest.raises(ImportError):
-        importlib.import_module("core.managers.trait_evolution")
 
 
 def test_trait_evolution_absent_from_public_config_contract() -> None:

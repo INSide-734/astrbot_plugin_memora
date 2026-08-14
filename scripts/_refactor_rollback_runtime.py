@@ -191,11 +191,11 @@ async def _run_migration_case(
     _ensure_repo_root_importable()
     import aiosqlite
 
-    from core.managers.schema_manager import SchemaManager
-    from core.managers.schema_migration import (
+    from core.features.memory.application.schema_migration import (
         SchemaMigrationCoordinator,
         SchemaMigrationError,
     )
+    from core.features.memory.infrastructure.schema_manager import SchemaManager
 
     root.mkdir(parents=True, exist_ok=False)
     database = root / "memora.db"

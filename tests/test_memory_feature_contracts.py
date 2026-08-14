@@ -1,26 +1,7 @@
-"""Memory feature 所有权与旧路径兼容契约。"""
+"""Memory feature 所有权契约。"""
 
 import subprocess
 import sys
-
-from core.features.memory import (
-    AtomStore,
-    SchemaManager,
-    WriteOpJournal,
-)
-from core.features.memory.infrastructure.atom_store import AtomStore as LegacyAtomStore
-from core.features.memory.infrastructure.base_store import (
-    BaseStore as FeatureInstanceBaseStore,
-)
-from core.features.memory.infrastructure.base_store import (
-    BaseStore as LegacyInstanceBaseStore,
-)
-from core.features.memory.infrastructure.schema_manager import (
-    SchemaManager as LegacySchemaManager,
-)
-from core.features.memory.infrastructure.write_op_journal import (
-    WriteOpJournal as LegacyWriteOpJournal,
-)
 
 
 def test_memory_domain_owner_first_import_stays_lightweight() -> None:
@@ -44,20 +25,13 @@ def test_memory_domain_owner_first_import_stays_lightweight() -> None:
     assert result.stdout.strip() == "core.features.memory.domain.revision"
 
 
-def test_legacy_canonical_infrastructure_imports_are_feature_implementations() -> None:
-    """旧 canonical 基础设施路径只能导出 memory feature 的唯一实现。"""
-
-    assert LegacyAtomStore is AtomStore
-    assert LegacyInstanceBaseStore is FeatureInstanceBaseStore
-    assert LegacySchemaManager is SchemaManager
-    assert LegacyWriteOpJournal is WriteOpJournal
-
-
 def test_graph_config_old_path_reuses_feature_owner() -> None:
     """根配置聚合器应恒等导出 graph feature 的唯一配置模型。"""
 
-    from core.base.config_validator import GraphMemoryConfig as LegacyGraphMemoryConfig
     from core.features.memory.domain.graph_memory_config import GraphMemoryConfig
+    from core.platform.config.config_validator import (
+        GraphMemoryConfig as LegacyGraphMemoryConfig,
+    )
 
     assert LegacyGraphMemoryConfig is GraphMemoryConfig
 
@@ -65,8 +39,10 @@ def test_graph_config_old_path_reuses_feature_owner() -> None:
 def test_migration_config_old_path_reuses_memory_feature_owner() -> None:
     """根配置聚合器应恒等导出 memory feature 的迁移配置模型。"""
 
-    from core.base.config_validator import MigrationSettings as LegacyMigrationSettings
     from core.features.memory.domain.migration_config import MigrationSettings
+    from core.platform.config.config_validator import (
+        MigrationSettings as LegacyMigrationSettings,
+    )
 
     assert LegacyMigrationSettings is MigrationSettings
 
@@ -74,11 +50,11 @@ def test_migration_config_old_path_reuses_memory_feature_owner() -> None:
 def test_write_reliability_config_old_path_reuses_memory_feature_owner() -> None:
     """旧运行时配置路径应恒等导出 memory feature 的写入可靠性模型。"""
 
-    from core.base.runtime_feature_config import (
-        WriteReliabilityConfig as LegacyWriteReliabilityConfig,
-    )
     from core.features.memory.domain.write_reliability_config import (
         WriteReliabilityConfig,
+    )
+    from core.platform.config.runtime_feature_config import (
+        WriteReliabilityConfig as LegacyWriteReliabilityConfig,
     )
 
     assert LegacyWriteReliabilityConfig is WriteReliabilityConfig
@@ -87,18 +63,20 @@ def test_write_reliability_config_old_path_reuses_memory_feature_owner() -> None
 def test_memory_runtime_configs_old_path_reuses_memory_feature_owner() -> None:
     """其余 memory 运行时配置旧路径应恒等导出唯一领域模型。"""
 
-    from core.base.runtime_feature_config import (
-        AtomClassifierConfig as LegacyAtomClassifierConfig,
-    )
-    from core.base.runtime_feature_config import ExportConfig as LegacyExportConfig
-    from core.base.runtime_feature_config import (
-        PersonaDecayConfig as LegacyPersonaDecayConfig,
-    )
     from core.features.memory.domain.atom_classifier_config import (
         AtomClassifierConfig,
     )
     from core.features.memory.domain.export_config import ExportConfig
     from core.features.memory.domain.persona_decay_config import PersonaDecayConfig
+    from core.platform.config.runtime_feature_config import (
+        AtomClassifierConfig as LegacyAtomClassifierConfig,
+    )
+    from core.platform.config.runtime_feature_config import (
+        ExportConfig as LegacyExportConfig,
+    )
+    from core.platform.config.runtime_feature_config import (
+        PersonaDecayConfig as LegacyPersonaDecayConfig,
+    )
 
     assert LegacyAtomClassifierConfig is AtomClassifierConfig
     assert LegacyExportConfig is ExportConfig

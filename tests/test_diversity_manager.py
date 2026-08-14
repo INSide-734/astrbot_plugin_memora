@@ -1,4 +1,4 @@
-"""core/utils/diversity_manager.py 测试 — ResponseDiversityManager。"""
+"""expression diversity manager 行为测试。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""测试 core/validators/ — index validation, rebuild, and embedding retry.
+"""memory feature 的索引验证、重建和 Embedding 重试测试。
 
 The IndexValidator class uses mixin composition:
     IndexValidator(IndexRebuilderMixin)
@@ -33,7 +33,9 @@ def _make_faiss_mock(ntotal: int = 0):
 
 
 def _make_validator(db_path: str = ":memory:", faiss_db=None):
-    from core.validators.index_validator import IndexValidator
+    from core.features.memory.infrastructure.validators.index_validator import (
+        IndexValidator,
+    )
 
     return IndexValidator(db_path, faiss_db or MagicMock())
 
@@ -310,7 +312,7 @@ class TestPersistenceHealthValidator:
     async def test_reports_cross_table_orphans_and_duplicate_note_versions(
         self, tmp_db_path
     ):
-        from core.validators.persistence_health_validator import (
+        from core.features.memory.infrastructure.validators.persistence_health_validator import (
             PersistenceHealthValidator,
         )
 
@@ -389,7 +391,7 @@ class TestPersistenceHealthValidator:
 
     @pytest.mark.asyncio
     async def test_reports_ok_when_optional_tables_are_missing(self, tmp_db_path):
-        from core.validators.persistence_health_validator import (
+        from core.features.memory.infrastructure.validators.persistence_health_validator import (
             PersistenceHealthValidator,
         )
 

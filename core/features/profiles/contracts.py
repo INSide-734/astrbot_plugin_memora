@@ -9,8 +9,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
-from ...shared.domain_provenance import DomainProvenance
 from ...shared.contracts import MemorySourceRef
+from ...shared.domain_provenance import DomainProvenance
 from .domain.models import UserPreferences, UserProfile, UserTag
 
 
@@ -18,7 +18,7 @@ from .domain.models import UserPreferences, UserProfile, UserTag
 class ProfileStorePort(Protocol):
     """画像应用服务所需的持久化最小接口。"""
 
-    async def get_or_create_profile(self, user_id: str) -> UserProfile:
+    async def get_or_create_profile(self, user_id: str) -> UserProfile | None:
         """读取画像，不存在时创建空画像。"""
 
         ...

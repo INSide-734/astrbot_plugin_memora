@@ -6,11 +6,13 @@ import pytest
 def test_retrieval_configs_old_path_reuses_feature_owner() -> None:
     """根配置聚合器应恒等导出 retrieval feature 的配置模型。"""
 
-    from core.base.config_validator import (
+    from core.features.retrieval.domain import FusionStrategyConfig, RerankerConfig
+    from core.platform.config.config_validator import (
         FusionStrategyConfig as LegacyFusionStrategyConfig,
     )
-    from core.base.config_validator import RerankerConfig as LegacyRerankerConfig
-    from core.features.retrieval.domain import FusionStrategyConfig, RerankerConfig
+    from core.platform.config.config_validator import (
+        RerankerConfig as LegacyRerankerConfig,
+    )
 
     assert LegacyFusionStrategyConfig is FusionStrategyConfig
     assert LegacyRerankerConfig is RerankerConfig
@@ -19,10 +21,10 @@ def test_retrieval_configs_old_path_reuses_feature_owner() -> None:
 def test_hybrid_scoring_config_old_path_reuses_retrieval_feature_owner() -> None:
     """旧运行时配置路径应恒等导出 retrieval 的混合评分模型。"""
 
-    from core.base.runtime_feature_config import (
+    from core.features.retrieval.domain import HybridScoringConfig
+    from core.platform.config.runtime_feature_config import (
         HybridScoringConfig as LegacyHybridScoringConfig,
     )
-    from core.features.retrieval.domain import HybridScoringConfig
 
     assert LegacyHybridScoringConfig is HybridScoringConfig
     assert HybridScoringConfig().model_dump() == {

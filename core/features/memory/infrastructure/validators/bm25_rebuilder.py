@@ -5,11 +5,11 @@ from typing import Any
 import aiosqlite
 from astrbot.api import logger
 
-from ..base import apply_perf_pragmas
-from ..sql_contract import (
+from .....shared.sql import (
     MEMORY_FTS_INSERT_SQL,
     MEMORY_FTS_TABLE,
 )
+from ..base import apply_perf_pragmas
 
 
 class Bm25RebuilderMixin:

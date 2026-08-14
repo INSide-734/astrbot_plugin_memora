@@ -44,11 +44,11 @@ def test_recall_package_lazily_exports_application_contract() -> None:
 def test_recall_config_old_path_reuses_feature_owner() -> None:
     """根配置聚合器应恒等导出 recall feature 的配置模型与类型。"""
 
-    from core.base.config_validator import PresetName as LegacyPresetName
-    from core.base.config_validator import (
+    from core.features.recall.domain import PresetName, RecallEngineConfig
+    from core.platform.config.config_validator import PresetName as LegacyPresetName
+    from core.platform.config.config_validator import (
         RecallEngineConfig as LegacyRecallEngineConfig,
     )
-    from core.features.recall.domain import PresetName, RecallEngineConfig
 
     assert LegacyPresetName is PresetName
     assert LegacyRecallEngineConfig is RecallEngineConfig
@@ -57,8 +57,10 @@ def test_recall_config_old_path_reuses_feature_owner() -> None:
 def test_recall_filtering_config_old_path_reuses_feature_owner() -> None:
     """根配置聚合器应恒等导出 recall feature 的过滤配置模型。"""
 
-    from core.base.config_validator import FilteringConfig as LegacyFilteringConfig
     from core.features.recall.domain import FilteringConfig
+    from core.platform.config.config_validator import (
+        FilteringConfig as LegacyFilteringConfig,
+    )
 
     assert LegacyFilteringConfig is FilteringConfig
 
@@ -66,9 +68,9 @@ def test_recall_filtering_config_old_path_reuses_feature_owner() -> None:
 def test_human_like_memory_config_old_path_reuses_recall_feature_owner() -> None:
     """旧运行时路径应恒等导出 recall 的类人召回配置模型。"""
 
-    from core.base.runtime_feature_config import (
+    from core.features.recall.domain import HumanLikeMemoryConfig
+    from core.platform.config.runtime_feature_config import (
         HumanLikeMemoryConfig as LegacyHumanLikeMemoryConfig,
     )
-    from core.features.recall.domain import HumanLikeMemoryConfig
 
     assert LegacyHumanLikeMemoryConfig is HumanLikeMemoryConfig

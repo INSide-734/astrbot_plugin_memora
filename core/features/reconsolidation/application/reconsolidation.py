@@ -649,6 +649,8 @@ class ReconsolidationManager:
         """调用 LLM 生成修订文本；失败或输出过短返回 None。"""
 
         try:
+            if self._llm is None:
+                return None
             prompt = self._RECONSOLIDATION_PROMPT.format(
                 original=text,
                 context=context[:500],

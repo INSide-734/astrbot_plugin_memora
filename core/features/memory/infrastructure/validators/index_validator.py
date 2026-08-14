@@ -10,13 +10,13 @@ from typing import Any, cast
 import aiosqlite
 from astrbot.api import logger
 
-from ..base import apply_perf_pragmas
-from ..sql_contract import (
+from .....shared.sql import (
     MEMORY_FTS_CLEAR_SQL,
     MEMORY_FTS_COUNT_DISTINCT_DOC_IDS_SQL,
     MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL,
     MEMORY_FTS_TABLE,
 )
+from ..base import apply_perf_pragmas
 from .index_rebuilder import IndexRebuilderMixin
 
 

@@ -7,12 +7,12 @@
 
 ## 职责与威胁边界
 
-`core/security/` 保护两条 LLM 边界：
+`core/platform/security/` 保护两条 LLM 边界：
 
 1. **Prompt/回复链**：包装注入的历史记忆，按请求作用域登记敏感原文，清理模型回复中的标签、泄露关键词和原文片段，再以四种相似度算法复查。
 2. **结构化输出链**：从不可信 LLM 文本提取/修复 JSON，并用 Pydantic 模型验证记忆和图抽取结果后才交给处理/存储逻辑。
 
-本模块不实现用户认证、授权、传输加密、宿主沙箱、SQL 执行或 Dashboard XSS 防护。动态注入格式由 [`../utils/AGENTS.md`](../utils/AGENTS.md) 生成，严格模式由 [`../base/AGENTS.md`](../base/AGENTS.md) 定义并由 handlers/injection 调用链执行。
+本模块不实现用户认证、授权、传输加密、宿主沙箱、SQL 执行或 Dashboard XSS 防护。动态注入格式位于 [`features/injection`](../../features/injection/AGENTS.md)，严格模式配置位于 [`platform/config`](../config/AGENTS.md)。
 
 ## 端到端安全链
 
@@ -93,7 +93,7 @@ flowchart TD
 - `GraphExtractionResult`
   - 每个 entity 至少有 `name/type`；每个 relation 至少有 `source/target/relation`。
 
-这些是 LLM 交换 Schema，不等同于 [`../models/AGENTS.md`](../models/AGENTS.md) 的持久化 `MemoryAtom`/图 dataclass。处理器负责显式转换，尤其注意两套 atom type 词汇不同。
+这些是 LLM 交换 Schema，不等同于 [`features/memory`](../../features/memory/AGENTS.md) 的持久化 `MemoryAtom`/图 dataclass。处理器负责显式转换，尤其注意两套 atom type 词汇不同。
 
 ### JSON 清洗与验证
 

@@ -15,7 +15,11 @@ from core.features.reconsolidation.application.reconsolidation import (
 from core.features.reconsolidation.infrastructure.reconsolidation_store import (
     ReconsolidationStore,
 )
-from core.page_api import PAGE_API_ALIAS_PREFIXES, PAGE_API_PREFIX, PluginPageApi
+from core.platform.transport.page_api.page_api import (
+    PAGE_API_ALIAS_PREFIXES,
+    PAGE_API_PREFIX,
+    PluginPageApi,
+)
 
 
 def _mock_request(

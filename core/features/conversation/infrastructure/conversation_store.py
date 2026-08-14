@@ -11,8 +11,8 @@ from pathlib import Path
 import aiosqlite
 from astrbot.api import logger
 
+from ....shared.contracts.conversation import Session, serialize_to_json
 from ....shared.sql import apply_perf_pragmas
-from ..domain.models import Session, serialize_to_json
 from .message_store import MessageStoreMixin
 
 

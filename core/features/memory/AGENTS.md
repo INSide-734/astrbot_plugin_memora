@@ -3,7 +3,7 @@
 # Memory 模块上下文
 
 **最后更新：** 2026-07-21
-**源码范围：** `core/features/memory/application/*.py`（MemoryEngine 门面与协作对象）；旧 `core/managers/` 仅保留兼容 re-export
+**源码范围：** `core/features/memory/`（MemoryEngine 门面、canonical/graph 基础设施与验证器）
 
 ## 职责与边界
 
@@ -15,7 +15,7 @@
 自主学习与反馈聚合唯一归属 `core/features/learning/`：application 管理可信反馈聚合、shadow 候选和单一 CAS 发布，domain 保存候选与反馈模型，infrastructure 保存隔离事件、状态和配置适配；`core/features/memory/` 只在 `MemoryEngine` 生命周期中装配和持有这些组件，不再转发 Learning 类型。自主学习不得直接修改生产检索权重或调用 `update_memory()`。
 Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection 应用与语义压缩唯一归属 `core/features/evolution/application/`，Store 唯一归属 `core/features/evolution/infrastructure/`；`core/features/memory/` 只保留 MemoryEngine 写后钩子，不再转发 Evolution 应用类型。
 
-本层负责“何时、按什么顺序、失败后如何补偿”；底层表 CRUD 属于 [`core/storage/AGENTS.md`](../../storage/AGENTS.md)，候选召回和排序属于 [`core/retrieval/AGENTS.md`](../../retrieval/AGENTS.md)，定时触发属于 [`core/schedulers/AGENTS.md`](../../schedulers/AGENTS.md)。Memory Evolution 的关系/Projection 事务与 revision 校验由 feature application 编排，具体 SQLite 表访问属于 feature infrastructure。
+本层负责“何时、按什么顺序、失败后如何补偿”；canonical/graph/索引表 CRUD 位于本 feature infrastructure，候选召回和排序属于 [`features/retrieval`](../retrieval/AGENTS.md)，定时维护由 [`features/decay`](../decay/AGENTS.md) 与 [`features/backfill`](../backfill/AGENTS.md) 触发。Memory Evolution 的关系/Projection 事务与 revision 校验由 evolution feature 编排。
 
 ```mermaid
 graph TD
@@ -147,7 +147,7 @@ sequenceDiagram
 
 | 区域 | 文件 | 事实边界 |
 |---|---|---|
-| 会话 | `features/conversation/application/`（`conversation_manager.py` 及 6 个 mixin，旧 `core/managers/` 路径仅保留 re-export） | `ConversationStore` 上层 LRU、上下文窗口、事件适配和元数据；缓存由 `_cache_lock` 保护 |
+| 会话 | `features/conversation/application/`（`conversation_manager.py` 及 6 个 mixin） | `ConversationStore` 上层 LRU、上下文窗口、事件适配和元数据；缓存由 `_cache_lock` 保护 |
 | 图同步 | `graph_memory_manager.py`、`features/memory/graph/infrastructure/` | 删除旧图产物后重建节点/边/条目与图向量；向量 ID 最终回写 SQLite |
 | 原子生命周期 | `atom_lifecycle_manager.py`、`features/memory/application/atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |

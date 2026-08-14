@@ -268,8 +268,10 @@ async def test_embedding_retry_wraps_invalid_count_without_leaking_provider_erro
 ):
     """重试边界必须保留安全原因链，并隐藏 Provider 原始错误正文。"""
 
+    from core.features.memory.infrastructure.validators.embedding_retry import (
+        EmbeddingRetryMixin,
+    )
     from core.platform.provider.adapters import AdapterResponseError
-    from core.validators.embedding_retry import EmbeddingRetryMixin
 
     provider = MagicMock(spec=[])
     provider.get_embeddings = AsyncMock(return_value=[[0.1]])
@@ -505,8 +507,8 @@ async def test_dual_route_skips_explicitly_unsupported_derived_reference_time() 
 def test_injection_provider_contract_preserves_legacy_tuple_and_safe_summary() -> None:
     """Provider 新 contract 不得破坏旧 tuple 调用方，也不得输出实例身份。"""
 
-    from core.shared.adapter_capabilities import AdapterCapability
     from core.features.injection.application.injection_adapter import InjectionAdapter
+    from core.shared.adapter_capabilities import AdapterCapability
 
     provider = MagicMock()
     provider.provider_config = {"type": "openai_chat_completion", "id": "secret-id"}
@@ -527,8 +529,8 @@ def test_injection_provider_contract_preserves_legacy_tuple_and_safe_summary() -
 def test_injection_unknown_provider_does_not_infer_runtime_capabilities() -> None:
     """未知 Provider 不得因 MagicMock 属性或方法存在而获得能力。"""
 
-    from core.shared.adapter_capabilities import AdapterCapability
     from core.features.injection.application.injection_adapter import InjectionAdapter
+    from core.shared.adapter_capabilities import AdapterCapability
 
     snapshot = InjectionAdapter().describe_capabilities(MagicMock())
 

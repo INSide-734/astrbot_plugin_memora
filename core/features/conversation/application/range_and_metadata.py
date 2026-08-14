@@ -10,7 +10,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..domain.models import Message
+from ....shared.contracts.conversation import Message
 
 
 class RangeAndMetadataMixin:

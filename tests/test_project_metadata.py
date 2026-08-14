@@ -226,7 +226,7 @@ def test_requirements_cover_mandatory_runtime_dependencies() -> None:
 
 
 def test_agent_tool_switches_are_aligned_across_schema_model_and_main() -> None:
-    from core.base.config_validator import AgentToolsConfig
+    from core.platform.config.config_validator import AgentToolsConfig
 
     schema = json.loads(_read_text("_conf_schema.json"))
     main_py = _read_text("main.py")
@@ -258,7 +258,7 @@ def test_agent_tool_switches_are_aligned_across_schema_model_and_main() -> None:
 
 
 def test_security_switches_are_aligned_across_schema_and_model() -> None:
-    from core.base.config_validator import SecurityConfig, get_default_config
+    from core.platform.config.config_validator import SecurityConfig, get_default_config
 
     schema = json.loads(_read_text("_conf_schema.json"))
     security_props = schema["security"]["items"]

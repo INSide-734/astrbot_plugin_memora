@@ -19,8 +19,7 @@ from ...shared.adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
-from ..memory.infrastructure.base import apply_perf_pragmas
-from ..memory.infrastructure.sql_contract import (
+from ...shared.sql import (
     DOCUMENTS_TABLE,
     MEMORY_FTS_CREATE_SQL,
     MEMORY_FTS_DELETE_BY_DOC_ID_SQL,
@@ -28,6 +27,7 @@ from ..memory.infrastructure.sql_contract import (
     MEMORY_FTS_SEARCH_SQL,
     MEMORY_FTS_TABLE,
 )
+from ..memory.infrastructure.base import apply_perf_pragmas
 from ..recall.processors.text_processor import TextProcessor
 
 

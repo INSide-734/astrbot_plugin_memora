@@ -1,4 +1,4 @@
-"""测试 core/tools/knowledge_tools.py — KnowledgeSearchTool, KnowledgeReadTool."""
+"""platform transport knowledge tools 行为测试。"""
 
 from __future__ import annotations
 
@@ -248,7 +248,7 @@ class TestKnowledgeReadTool:
 
 def test_init_exports_all_tools():
     """工具包入口应导出全部公开工具类。"""
-    from core.tools import __all__ as tools_all
+    from core.platform.transport.tools import __all__ as tools_all
 
     expected = {
         "KnowledgeSearchTool",

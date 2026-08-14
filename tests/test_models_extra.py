@@ -1,8 +1,4 @@
-"""测试 core/models/ — conversation, graph, knowledge, note, recall strategy,
-user profile, and default stopwords models.
-
-Excludes memory_atom.py (already tested in test_memory_atom.py).
-"""
+"""测试 shared 与各 feature 拥有的领域模型。"""
 
 from __future__ import annotations
 
@@ -13,7 +9,7 @@ from typing import Any
 import pytest
 
 # ---------------------------------------------------------------------------
-# 1. core/models/conversation_models.py
+# 1. core/shared/contracts/conversation.py
 # ---------------------------------------------------------------------------
 
 
@@ -468,7 +464,7 @@ class TestSerializationHelpers:
 
 
 # ---------------------------------------------------------------------------
-# 2. core/models/graph_models.py
+# 2. core/features/memory/graph/domain/models.py
 # ---------------------------------------------------------------------------
 
 
@@ -897,7 +893,7 @@ class TestNote:
 
 
 # ---------------------------------------------------------------------------
-# 5. core/models/recall_strategy.py
+# 5. core/shared/recall_strategy.py
 # ---------------------------------------------------------------------------
 
 
@@ -1409,7 +1405,7 @@ class TestUserProfile:
 
 
 # ---------------------------------------------------------------------------
-# 7. core/models/default_stopwords.py
+# 7. core/shared/default_stopwords.py
 # ---------------------------------------------------------------------------
 
 

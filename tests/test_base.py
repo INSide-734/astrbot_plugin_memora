@@ -89,7 +89,7 @@ class TestExceptionSubclasses:
 
 
 # ---------------------------------------------------------------------------
-# 3. core/base/config_validator.py
+# 3. core/platform/config/config_validator.py
 # ---------------------------------------------------------------------------
 
 
@@ -97,13 +97,13 @@ class TestGetDefaultConfig:
     """Tests for get_default_config()."""
 
     def test_returns_dict(self) -> None:
-        from core.base.config_validator import get_default_config
+        from core.platform.config.config_validator import get_default_config
 
         config = get_default_config()
         assert isinstance(config, dict)
 
     def test_contains_expected_top_level_keys(self) -> None:
-        from core.base.config_validator import get_default_config
+        from core.platform.config.config_validator import get_default_config
 
         config = get_default_config()
         expected_keys = {
@@ -126,7 +126,7 @@ class TestGetDefaultConfig:
         assert not missing, f"Missing top-level keys: {missing}"
 
     def test_dashboard_defaults(self) -> None:
-        from core.base.config_validator import get_default_config
+        from core.platform.config.config_validator import get_default_config
 
         config = get_default_config()
         dashboard = config["dashboard"]
@@ -135,7 +135,7 @@ class TestGetDefaultConfig:
         assert dashboard["max_output_chars"] == 20000
 
     def test_session_manager_defaults(self) -> None:
-        from core.base.config_validator import get_default_config
+        from core.platform.config.config_validator import get_default_config
 
         config = get_default_config()
         sm = config["session_manager"]
@@ -147,7 +147,7 @@ class TestGetDefaultConfig:
         assert sm["cleanup_batch_size"] == 50
 
     def test_recall_engine_defaults(self) -> None:
-        from core.base.config_validator import get_default_config
+        from core.platform.config.config_validator import get_default_config
 
         config = get_default_config()
         re_cfg = config["recall_engine"]
@@ -170,7 +170,7 @@ class TestGetDefaultConfig:
         assert re_cfg["injection_decision_max_rows"] == 100_000
 
     def test_graph_memory_defaults(self) -> None:
-        from core.base.config_validator import get_default_config
+        from core.platform.config.config_validator import get_default_config
 
         config = get_default_config()
         gm = config["graph_memory"]
@@ -181,7 +181,7 @@ class TestGetDefaultConfig:
         assert gm["max_topics_per_memory"] == 6
 
     def test_topic_segmentation_defaults(self) -> None:
-        from core.base.config_validator import get_default_config
+        from core.platform.config.config_validator import get_default_config
 
         config = get_default_config()
         ts = config["topic_segmentation"]
@@ -197,13 +197,13 @@ class TestValidateConfig:
     """Tests for validate_config()."""
 
     def test_valid_empty_config_returns_memora_config(self) -> None:
-        from core.base.config_validator import MemoraConfig, validate_config
+        from core.platform.config.config_validator import MemoraConfig, validate_config
 
         result = validate_config({})
         assert isinstance(result, MemoraConfig)
 
     def test_partial_override_preserves_defaults(self) -> None:
-        from core.base.config_validator import validate_config
+        from core.platform.config.config_validator import validate_config
 
         result = validate_config({"recall_engine": {"top_k": 10}})
         assert result.recall_engine.top_k == 10
@@ -211,20 +211,20 @@ class TestValidateConfig:
         assert result.session_manager.max_sessions == 100
 
     def test_invalid_config_raises_value_error(self) -> None:
-        from core.base.config_validator import validate_config
+        from core.platform.config.config_validator import validate_config
 
         with pytest.raises(ValueError, match="插件配置无效"):
             validate_config({"session_manager": {"max_sessions": -1}})
 
     def test_extra_fields_allowed_by_default(self) -> None:
-        from core.base.config_validator import validate_config
+        from core.platform.config.config_validator import validate_config
 
         # Extra fields should not cause validation failure (model_config extra=allow)
         result = validate_config({"unknown_section": {"key": "value"}})
         assert result is not None
 
     def test_topic_segmentation_strategy_valid_values(self) -> None:
-        from core.base.config_validator import validate_config
+        from core.platform.config.config_validator import validate_config
 
         for strat in [
             "a_b_hybrid",
@@ -241,7 +241,7 @@ class TestMergeConfigWithDefaults:
     """Tests for merge_config_with_defaults()."""
 
     def test_empty_user_config_returns_full_defaults(self) -> None:
-        from core.base.config_validator import merge_config_with_defaults
+        from core.platform.config.config_validator import merge_config_with_defaults
 
         merged = merge_config_with_defaults({})
         assert "session_manager" in merged
@@ -249,26 +249,26 @@ class TestMergeConfigWithDefaults:
         assert "graph_memory" in merged
 
     def test_user_value_overrides_default(self) -> None:
-        from core.base.config_validator import merge_config_with_defaults
+        from core.platform.config.config_validator import merge_config_with_defaults
 
         merged = merge_config_with_defaults({"recall_engine": {"top_k": 20}})
         assert merged["recall_engine"]["top_k"] == 20
 
     def test_deep_merge_preserves_nested_defaults(self) -> None:
-        from core.base.config_validator import merge_config_with_defaults
+        from core.platform.config.config_validator import merge_config_with_defaults
 
         merged = merge_config_with_defaults({"recall_engine": {"top_k": 20}})
         # top_k overridden but importance_weight preserved from defaults
         assert merged["recall_engine"]["importance_weight"] == 1.0
 
     def test_non_dict_user_value_replaces_default(self) -> None:
-        from core.base.config_validator import merge_config_with_defaults
+        from core.platform.config.config_validator import merge_config_with_defaults
 
         merged = merge_config_with_defaults({"recall_engine": "not_a_dict"})
         assert merged["recall_engine"] == "not_a_dict"
 
     def test_deep_nested_merge(self) -> None:
-        from core.base.config_validator import merge_config_with_defaults
+        from core.platform.config.config_validator import merge_config_with_defaults
 
         merged = merge_config_with_defaults(
             {"topic_segmentation": {"strategy_b": {"similarity_threshold": 0.8}}}
@@ -282,7 +282,7 @@ class TestValidateRuntimeConfigChanges:
     """Tests for validate_runtime_config_changes()."""
 
     def test_valid_simple_change(self) -> None:
-        from core.base.config_validator import (
+        from core.platform.config.config_validator import (
             MemoraConfig,
             validate_runtime_config_changes,
         )
@@ -294,7 +294,7 @@ class TestValidateRuntimeConfigChanges:
         )
 
     def test_valid_nested_change(self) -> None:
-        from core.base.config_validator import (
+        from core.platform.config.config_validator import (
             MemoraConfig,
             validate_runtime_config_changes,
         )
@@ -308,7 +308,7 @@ class TestValidateRuntimeConfigChanges:
         )
 
     def test_invalid_change_returns_false(self) -> None:
-        from core.base.config_validator import (
+        from core.platform.config.config_validator import (
             MemoraConfig,
             validate_runtime_config_changes,
         )
@@ -322,7 +322,7 @@ class TestValidateRuntimeConfigChanges:
         )
 
     def test_multiple_changes_valid(self) -> None:
-        from core.base.config_validator import (
+        from core.platform.config.config_validator import (
             MemoraConfig,
             validate_runtime_config_changes,
         )
@@ -340,7 +340,7 @@ class TestValidateRuntimeConfigChanges:
         )
 
     def test_empty_changes_valid(self) -> None:
-        from core.base.config_validator import (
+        from core.platform.config.config_validator import (
             MemoraConfig,
             validate_runtime_config_changes,
         )
@@ -353,32 +353,32 @@ class TestMemoraConfigBoundaries:
     """验证 Pydantic 字段约束的边界值。"""
 
     def test_session_manager_max_sessions_boundary_min(self) -> None:
-        from core.base.config_validator import MemoraConfig
+        from core.platform.config.config_validator import MemoraConfig
 
         cfg = MemoraConfig.model_validate({"session_manager": {"max_sessions": 1}})
         assert cfg.session_manager.max_sessions == 1
 
     def test_session_manager_max_sessions_boundary_max(self) -> None:
-        from core.base.config_validator import MemoraConfig
+        from core.platform.config.config_validator import MemoraConfig
 
         cfg = MemoraConfig.model_validate({"session_manager": {"max_sessions": 10000}})
         assert cfg.session_manager.max_sessions == 10000
 
     def test_recall_engine_top_k_boundary_zero(self) -> None:
-        from core.base.config_validator import MemoraConfig
+        from core.platform.config.config_validator import MemoraConfig
 
         cfg = MemoraConfig.model_validate({"recall_engine": {"top_k": 0}})
         assert cfg.recall_engine.top_k == 0
 
     def test_recall_engine_can_disable_auto_recall(self) -> None:
-        from core.base.config_validator import MemoraConfig
+        from core.platform.config.config_validator import MemoraConfig
 
         # top_k=0 按配置契约关闭自动召回。
         cfg = MemoraConfig.model_validate({"recall_engine": {"top_k": 0}})
         assert cfg.recall_engine.top_k == 0
 
     def test_graph_memory_route_weights_normalized(self) -> None:
-        from core.base.config_validator import MemoraConfig
+        from core.platform.config.config_validator import MemoraConfig
 
         # 字段值各自合法但总和不为 1.0 时仍应归一化。
         cfg = MemoraConfig.model_validate(
@@ -525,8 +525,8 @@ class TestConfigManager:
         assert mgr.get("graph_memory.enabled") is False
 
     def test_invalid_section_falls_back_without_losing_other_sections(self) -> None:
-        from core.base.config_validator import get_default_config
         from core.platform.config import ConfigManager
+        from core.platform.config.config_validator import get_default_config
 
         defaults = get_default_config()
         mgr = ConfigManager(

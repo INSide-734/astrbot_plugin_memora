@@ -1,4 +1,4 @@
-"""updates feature 与旧路径的唯一实现契约。"""
+"""updates feature 的唯一所有权契约。"""
 
 import subprocess
 import sys
@@ -6,10 +6,7 @@ import sys
 import pytest
 
 from core.features.updates import domain as feature_domain
-from core.features.updates.application import installer as feature_installer
 from core.features.updates.application import manager as feature_manager
-from core.managers import update_installer as legacy_installer
-from core.managers import update_manager as legacy_manager
 
 
 def test_updates_package_defers_feature_layer_imports() -> None:
@@ -45,36 +42,15 @@ def test_updates_package_lazily_exports_feature_layers() -> None:
         updates_feature.__getattr__("missing_updates_contract")
 
 
-def test_legacy_update_types_reuse_feature_domain_types() -> None:
-    """旧 update manager 路径只能导出 feature domain 的唯一类型。"""
-
-    assert legacy_manager.UpdateError is feature_domain.UpdateError
-    assert legacy_installer.RuntimeUpdateError is feature_domain.RuntimeUpdateError
-    assert legacy_manager.UpdateRelease is feature_domain.UpdateRelease
-    assert legacy_manager.DownloadedUpdate is feature_domain.DownloadedUpdate
-
-
 def test_legacy_update_config_reuses_feature_domain_owner() -> None:
     """旧配置路径只能导出 updates feature 的唯一配置模型。"""
 
-    from core.base.config_validator import UpdateSettings as LegacyRootUpdateSettings
-    from core.base.feature_config import (
+    from core.platform.config.config_validator import (
+        UpdateSettings as LegacyRootUpdateSettings,
+    )
+    from core.platform.config.feature_config import (
         UpdateSettings as LegacyFeatureUpdateSettings,
     )
 
     assert LegacyRootUpdateSettings is feature_domain.UpdateSettings
     assert LegacyFeatureUpdateSettings is feature_domain.UpdateSettings
-
-
-def test_legacy_update_manager_reuses_feature_implementation() -> None:
-    """旧 UpdateManager 路径只能导出 application service 的唯一实现。"""
-
-    assert legacy_manager.UpdateManager is feature_manager.UpdateManager
-
-
-def test_legacy_update_installer_reuses_feature_implementation() -> None:
-    """旧 installer 路径只能导出 updates application 的唯一实现。"""
-
-    assert legacy_installer.__all__ == feature_installer.__all__
-    for name in feature_installer.__all__:
-        assert getattr(legacy_installer, name) is getattr(feature_installer, name)

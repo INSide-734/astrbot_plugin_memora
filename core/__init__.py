@@ -2,16 +2,8 @@
 Memora 核心模块
 提供统一的记忆管理引擎
 
-目录结构:
-- base/: 基础组件（异常、配置、常量）
-- models/: 数据模型
-- managers/: 管理器（会话管理、记忆引擎）
-- processors/: 处理器（记忆处理、文本处理）
-- validators/: 验证器（索引验证）
-- retrieval/: 检索系统
-- utils/: 工具函数
-
-所有公共导出均为懒加载 — 仅在被实际访问时才导入对应子模块。
+目录结构按 ``platform``、``shared`` 与 ``features`` 组织；根包只保留明确的
+稳定类型，并在首次访问时从唯一 owner 延迟加载。
 """
 
 from typing import Any
@@ -94,19 +86,19 @@ def __getattr__(name: str) -> Any:
         _lazy.update({k: v for k, v in locals().items() if k in __all__})
         return _lazy[name]
 
-    # ── models ──
+    # ── conversation domain ──
     if name in (
         "MemoryEvent",
         "Message",
         "Session",
     ):
-        from .models import (
+        from .shared.contracts.conversation import (
             MemoryEvent as MemoryEvent,
         )
-        from .models import (
+        from .shared.contracts.conversation import (
             Message as Message,
         )
-        from .models import (
+        from .shared.contracts.conversation import (
             Session as Session,
         )
 
