@@ -3,16 +3,45 @@
 from __future__ import annotations
 
 import re
-from typing import Literal
+from types import MappingProxyType
+from typing import Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 GateDisposition = Literal["quarantine", "discard", "mark_write"]
 RuleActionForce = Literal["quarantine", "discard", "mark_write", "allow"]
-_REASON_CODE_RE = re.compile(
-    r"^(grounding_[a-z_]+|quality_low|custom_rule_[a-z0-9_-]{1,64})$"
+BUILTIN_GATE_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "grounding_claim_missing",
+        "grounding_source_missing",
+        "grounding_reference_invalid",
+        "grounding_source_evidence_missing",
+        "grounding_source_evidence_invalid",
+        "grounding_source_changed",
+        "grounding_subject_ambiguous",
+        "grounding_subject_mismatch",
+        "grounding_numeric_conflict",
+        "grounding_negation_conflict",
+        "grounding_claim_unsupported",
+        "grounding_needs_judge",
+        "grounding_judge_supported",
+        "grounding_judge_rejected",
+        "grounding_judge_unavailable",
+        "grounding_not_verified",
+        "summary_quality_low",
+    }
 )
+_CUSTOM_RULE_RE = re.compile(r"^custom_rule_([a-z0-9_-]{1,64})$")
 _PLACEHOLDER_CLAIM, _PLACEHOLDER_SOURCE = "{claim_text}", "{source_text}"
+_PLACEHOLDER_RE = re.compile(r"\{([a-z0-9_]+)\}")
+_ALLOWED_PLACEHOLDERS = frozenset({"claim_text", "source_text"})
 DISPOSITION_SAFETY_ORDER: tuple[str, ...] = ("quarantine", "discard", "mark_write")
 BUILTIN_NEGATION_WHITELIST: tuple[str, ...] = ("不错", "没问题", "没准")
 BUILTIN_NEGATION_MARKERS: tuple[str, ...] = (
@@ -36,7 +65,7 @@ SYNONYM_DEFAULTS: tuple[tuple[str, str], ...] = ()
 
 
 class _Frozen(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    model_config = ConfigDict(frozen=True, extra="forbid", validate_default=True)
 
 
 class GateChecks(_Frozen):
@@ -74,11 +103,11 @@ class GateQualityParams(_Frozen):
 
 class WordListConfig(_Frozen):
     mode: Literal["append", "replace"] = "append"
-    items: list[str] = Field(default_factory=list, max_length=50)
+    items: tuple[str, ...] = Field(default_factory=tuple, max_length=50)
 
     @field_validator("items")
     @classmethod
-    def _item_bounds(cls, items: list[str]) -> list[str]:
+    def _item_bounds(cls, items: tuple[str, ...]) -> tuple[str, ...]:
         for item in items:
             if not item or len(item) > 32:
                 raise ValueError("词表项必须非空且不超过 32 字符")
@@ -91,14 +120,14 @@ class SynonymPair(_Frozen):
 
 
 class GateWordLists(_Frozen):
-    negation_whitelist: list[str] = Field(default_factory=list, max_length=50)
+    negation_whitelist: tuple[str, ...] = Field(default_factory=tuple, max_length=50)
     negation_markers: WordListConfig = Field(default_factory=WordListConfig)
     generic_terms: WordListConfig = Field(default_factory=WordListConfig)
-    synonym_pairs: list[SynonymPair] = Field(default_factory=list, max_length=20)
+    synonym_pairs: tuple[SynonymPair, ...] = Field(default_factory=tuple, max_length=20)
 
     @field_validator("negation_whitelist")
     @classmethod
-    def _whitelist_bounds(cls, items: list[str]) -> list[str]:
+    def _whitelist_bounds(cls, items: tuple[str, ...]) -> tuple[str, ...]:
         for item in items:
             if not item or len(item) > 32:
                 raise ValueError("否定白名单项必须非空且不超过 32 字符")
@@ -111,16 +140,47 @@ class GateJudge(_Frozen):
 
     @model_validator(mode="after")
     def _template_placeholders(self) -> "GateJudge":
-        if self.prompt_template and not (
-            _PLACEHOLDER_CLAIM in self.prompt_template
-            and _PLACEHOLDER_SOURCE in self.prompt_template
-        ):
+        template = self.prompt_template
+        if not template:
+            return self
+        if _PLACEHOLDER_CLAIM not in template or _PLACEHOLDER_SOURCE not in template:
             raise ValueError("Judge 模板必须包含 {claim_text} 与 {source_text}")
+        placeholders = set(_PLACEHOLDER_RE.findall(template))
+        if not placeholders <= _ALLOWED_PLACEHOLDERS:
+            raise ValueError(
+                "Judge 模板包含未知占位符: "
+                + ", ".join(sorted(placeholders - _ALLOWED_PLACEHOLDERS))
+            )
+        residual = _PLACEHOLDER_RE.sub("", template)
+        if "{" in residual or "}" in residual:
+            raise ValueError("Judge 模板包含未闭合或多余的 {} 花括号")
         return self
 
 
 _FIELDS = ("content", "summary", "key_facts", "topics", "participants", "importance")
 _OPS_LEAF = ("regex", "contains", "exists", "length_cmp", "numeric_cmp")
+_PAYLOAD_FIELDS = ("pattern", "values", "cmp", "value")
+_LEAF_PAYLOAD_ALLOWED: dict[str, tuple[str, ...]] = {
+    "regex": ("pattern",),
+    "contains": ("values",),
+    "exists": (),
+    "length_cmp": ("cmp", "value"),
+    "numeric_cmp": ("cmp", "value"),
+}
+_ACTION_PAYLOAD_ALLOWED: dict[str, tuple[str, ...]] = {
+    "force_disposition": ("value",),
+    "importance_delta": ("delta",),
+    "set_importance": ("value",),
+    "add_topics": ("values",),
+    "set_privacy": ("value",),
+    "drop_atoms": ("value",),
+}
+
+
+def _reject_irrelevant(n: RulePredicate, allowed: tuple[str, ...]) -> None:
+    for name in _PAYLOAD_FIELDS:
+        if name not in allowed and getattr(n, name) is not None:
+            raise ValueError(f"{n.op} 不接受 {name}")
 
 
 class RulePredicate(_Frozen):
@@ -134,11 +194,18 @@ class RulePredicate(_Frozen):
         | None
     ) = None
     pattern: str | None = None
-    values: list[str] | None = None
+    values: tuple[str, ...] | None = None
     cmp: Literal["gt", "gte", "lt", "lte", "eq"] | None = None
     value: int | float | None = None
-    children: list["RulePredicate"] | None = None
+    children: tuple["RulePredicate", ...] | None = None
     child: "RulePredicate | None" = None
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def _value_not_bool(cls, v: object) -> object:
+        if isinstance(v, bool):
+            raise ValueError("value 不接受 bool")
+        return v
 
 
 def _validate_predicate(node: RulePredicate) -> None:
@@ -149,8 +216,15 @@ def _validate_predicate(node: RulePredicate) -> None:
         if depth > 4 or counter[0] > 32:
             raise ValueError("规则树深度不能超过 4 且节点数不能超过 32")
         if n.op in _OPS_LEAF:
+            if n.child is not None or n.children is not None:
+                raise ValueError(f"{n.op} 不接受 child/children")
             if n.field is None:
                 raise ValueError(f"{n.op} 需要 field")
+            _reject_irrelevant(n, _LEAF_PAYLOAD_ALLOWED[n.op])
+            if n.op in ("regex", "contains", "exists", "length_cmp") and (
+                n.field == "importance"
+            ):
+                raise ValueError(f"{n.op} 不支持 importance 字段（仅限文本/列表字段）")
             if n.op == "regex":
                 if not n.pattern or len(n.pattern) > 500:
                     raise ValueError("regex pattern 必须非空且不超过 500 字符")
@@ -169,11 +243,17 @@ def _validate_predicate(node: RulePredicate) -> None:
             ):
                 raise ValueError("numeric_cmp 仅支持 importance 且需要 cmp/value")
         elif n.op in ("and", "or"):
+            if n.field is not None or n.child is not None:
+                raise ValueError(f"{n.op} 不接受 field/child")
+            _reject_irrelevant(n, ())
             if not n.children:
                 raise ValueError(f"{n.op} 需要 children")
             for child in n.children:
                 walk(child, depth + 1, counter)
         else:  # not
+            if n.field is not None or n.children is not None:
+                raise ValueError("not 不接受 field/children")
+            _reject_irrelevant(n, ())
             if n.child is None:
                 raise ValueError("not 需要单个 child")
             walk(n.child, depth + 1, counter)
@@ -192,11 +272,21 @@ class RuleAction(_Frozen):
     ]
     value: str | float | bool | None = None
     delta: float | None = Field(default=None, ge=-1.0, le=1.0)
-    values: list[str] | None = Field(default=None, max_length=5)
+    values: tuple[str, ...] | None = Field(default=None, max_length=5)
+
+    @field_validator("delta", mode="before")
+    @classmethod
+    def _delta_not_bool(cls, v: object) -> object:
+        if isinstance(v, bool):
+            raise ValueError("delta 不接受 bool")
+        return v
 
     @model_validator(mode="after")
     def _kind_payload(self) -> "RuleAction":
         kind, value, delta, values = self.kind, self.value, self.delta, self.values
+        for name, provided in (("value", value), ("delta", delta), ("values", values)):
+            if name not in _ACTION_PAYLOAD_ALLOWED[kind] and provided is not None:
+                raise ValueError(f"{kind} 不接受 {name}")
         if kind == "force_disposition":
             if value not in ("quarantine", "discard", "mark_write", "allow"):
                 raise ValueError("force_disposition 值非法")
@@ -204,8 +294,12 @@ class RuleAction(_Frozen):
             if delta is None:
                 raise ValueError("importance_delta 需要 delta")
         elif kind == "set_importance":
-            if not isinstance(value, (int, float)) or not 0.0 <= value <= 1.0:
-                raise ValueError("set_importance 需要 value ∈ [0,1]")
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not 0.0 <= value <= 1.0
+            ):
+                raise ValueError("set_importance 需要 value ∈ [0,1] 且不接受 bool")
         elif kind == "add_topics":
             if not values or any(not v or len(v) > 32 for v in values):
                 raise ValueError("add_topics 需要 1-5 个非空 ≤32 字符主题")
@@ -245,23 +339,42 @@ class GateProfile(_Frozen):
     disposition_overrides: dict[str, GateDisposition] = Field(
         default_factory=dict, max_length=20
     )
-    rules: list[GateRuleConfig] = Field(default_factory=list, max_length=50)
+    rules: tuple[GateRuleConfig, ...] = Field(default_factory=tuple, max_length=50)
 
     @field_validator("disposition_overrides")
     @classmethod
-    def _reason_codes(cls, overrides: dict[str, str]) -> dict[str, str]:
-        for code in overrides:
-            if not _REASON_CODE_RE.match(code):
-                raise ValueError(f"未知原因码: {code}")
-        return overrides
+    def _freeze_overrides(
+        cls, overrides: dict[str, GateDisposition]
+    ) -> Mapping[str, GateDisposition]:
+        return MappingProxyType(dict(overrides or {}))
+
+    @field_serializer("disposition_overrides")
+    def _serialize_overrides(
+        self, overrides: Mapping[str, GateDisposition]
+    ) -> dict[str, GateDisposition]:
+        return dict(overrides)
 
     @field_validator("rules")
     @classmethod
-    def _unique_ids(cls, rules: list[GateRuleConfig]) -> list[GateRuleConfig]:
+    def _unique_ids(
+        cls, rules: tuple[GateRuleConfig, ...]
+    ) -> tuple[GateRuleConfig, ...]:
         ids = [rule.id for rule in rules]
         if len(ids) != len(set(ids)):
             raise ValueError("规则 id 必须唯一")
         return rules
+
+    @model_validator(mode="after")
+    def _override_codes(self) -> "GateProfile":
+        rule_ids = {rule.id for rule in self.rules}
+        for code in self.disposition_overrides:
+            if code in BUILTIN_GATE_REASON_CODES:
+                continue
+            match = _CUSTOM_RULE_RE.fullmatch(code)
+            if match and match.group(1) in rule_ids:
+                continue
+            raise ValueError(f"未知原因码: {code}")
+        return self
 
 
 class GateBinding(_Frozen):
@@ -271,24 +384,24 @@ class GateBinding(_Frozen):
     persona_id: str | None = Field(default=None, max_length=64)
 
 
-def _default_profiles() -> list[GateProfile]:
-    return [GateProfile(name="private"), GateProfile(name="group")]
+def _default_profiles() -> tuple[GateProfile, ...]:
+    return (GateProfile(name="private"), GateProfile(name="group"))
 
 
-def _default_bindings() -> list[GateBinding]:
-    return [
+def _default_bindings() -> tuple[GateBinding, ...]:
+    return (
         GateBinding(profile="private", chat_type="private"),
         GateBinding(profile="group", chat_type="group"),
-    ]
+    )
 
 
 class GateConfig(_Frozen):
     enabled: bool = True
     default_profile: str = "private"
-    bindings: list[GateBinding] = Field(
+    bindings: tuple[GateBinding, ...] = Field(
         default_factory=_default_bindings, max_length=50
     )
-    profiles: list[GateProfile] = Field(
+    profiles: tuple[GateProfile, ...] = Field(
         default_factory=_default_profiles, max_length=20
     )
 
