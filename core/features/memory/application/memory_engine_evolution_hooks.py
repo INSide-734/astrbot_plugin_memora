@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from typing import Any
 
 from astrbot.api import logger
 
@@ -13,6 +15,7 @@ from ...observability.infrastructure.debug_reporter import (
     report_debug_event,
     report_debug_exception,
 )
+from ...quality.application.gate_disposition_filter import is_mark_write
 from ..domain.revision import memory_revision
 from .write_coordinator import write_with_retry
 
@@ -71,6 +74,17 @@ class MemoryEngineEvolutionHooksMixin:
                         task_type="evolution",
                     )
                     return
+                metadata = await self._read_source_metadata_for_evolution(memory_id)
+                if is_mark_write(metadata):
+                    report_debug_event(
+                        "storage_task",
+                        component="memory_engine",
+                        stage="evolution_schedule",
+                        status="skipped",
+                        reason_code="evolution_gate_mark_write",
+                        task_type="evolution",
+                    )
+                    return
                 decision = await write_with_retry(
                     lambda: manager.schedule_consider(sources[0])
                 )
@@ -111,6 +125,40 @@ class MemoryEngineEvolutionHooksMixin:
                     "[写入] canonical 已提交但演化调度失败，异常类型=%s",
                     error.__class__.__name__,
                 )
+
+    async def _read_source_metadata_for_evolution(
+        self, memory_id: int
+    ) -> dict[str, Any]:
+        """尽力读取 canonical metadata，供 mark_write 演化守卫判断。
+
+        引擎未初始化或读取失败时返回空字典，不阻断正常演化调度。
+        """
+
+        db_connection = getattr(self, "db_connection", None)
+        if db_connection is None:
+            return {}
+        try:
+            cursor = await db_connection.execute(
+                "SELECT metadata FROM documents WHERE id = ?", (int(memory_id),)
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return {}
+        if row is None:
+            return {}
+        raw_metadata = row[0]
+        if isinstance(raw_metadata, dict):
+            return raw_metadata
+        if isinstance(raw_metadata, str):
+            try:
+                parsed = json.loads(raw_metadata)
+            except (TypeError, ValueError):
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
 
     async def _invalidate_evolution_after_delete(self, memory_id: int) -> None:
         """canonical 删除提交后标记关联 relation/projection 不可见。"""

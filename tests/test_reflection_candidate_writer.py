@@ -122,6 +122,7 @@ async def test_mark_write_action_writes_with_tagged_metadata() -> None:
         "atoms": [],
     }
 
+    schedule_evolution_after_write = AsyncMock()
     results = await feature_writer.store_reflection_candidates(
         [candidate],
         completed_idempotency_keys=set(),
@@ -132,7 +133,7 @@ async def test_mark_write_action_writes_with_tagged_metadata() -> None:
         is_group_chat=False,
         memory_engine=memory_engine,
         memory_quality_gate=quality_gate,
-        schedule_evolution_after_write=AsyncMock(),
+        schedule_evolution_after_write=schedule_evolution_after_write,
     )
 
     memory_engine.add_memory.assert_awaited_once()
@@ -140,6 +141,7 @@ async def test_mark_write_action_writes_with_tagged_metadata() -> None:
     assert add_kwargs["metadata"]["gate_disposition"] == "mark_write"
     assert add_kwargs["atoms"] == fake_atoms
     assert results[0].outcome is ReflectionStoreOutcome.MARK_WRITE
+    schedule_evolution_after_write.assert_not_awaited()
 
 
 @pytest.mark.asyncio

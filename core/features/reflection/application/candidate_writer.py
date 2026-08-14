@@ -147,7 +147,9 @@ async def store_reflection_candidates(
 
         try:
             record_continuity_topics(memory_engine, session_id, memory)
-            await schedule_evolution_after_write(memory_id)
+            if metadata.get("gate_disposition") != "mark_write":
+                # mark_write 低置信记忆不进入演化；引擎写后钩子已上报跳过观测。
+                await schedule_evolution_after_write(memory_id)
         except asyncio.CancelledError:
             raise
         except Exception as error:
