@@ -97,6 +97,45 @@ _CHINESE_NUMBERS = {
     "九": 9,
     "十": 10,
 }
+_CJK_DIGITS = {
+    "零": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+_CJK_UNITS = {"十": 10, "百": 100, "千": 1000, "万": 10000, "亿": 100000000}
+_CJK_NUM_RE = re.compile(r"[零一二两三四五六七八九十百千万亿]+")
+
+
+def _cjk_to_int(text: str) -> int:
+    """把纯中文数字串（含进位组合，如"二十三"→23）解析为整数。"""
+
+    total = 0
+    section = 0
+    number = 0
+    for char in text:
+        if char in _CJK_DIGITS:
+            number = _CJK_DIGITS[char]
+            continue
+        unit = _CJK_UNITS[char]
+        if unit >= 10000:
+            section = (section + number) * unit if (section or number) else unit
+            total += section
+            section = 0
+            number = 0
+        else:
+            section += (number or 1) * unit
+            number = 0
+    return total + section + number
+
+
 _WEEKDAYS = {
     "monday": 0,
     "tuesday": 1,

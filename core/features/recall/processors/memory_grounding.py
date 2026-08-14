@@ -10,16 +10,17 @@ from difflib import SequenceMatcher
 from typing import Any
 
 from ....shared.contracts.conversation import Message
-from .grounding_dates import supported_claim_date_numbers
+from ...quality.application.gate_runtime import GateSnapshot, default_gate_snapshot
+from ...quality.domain.gate_config import (
+    BUILTIN_NEGATION_MARKERS,
+    BUILTIN_NEGATION_WHITELIST,
+    GateProfile,
+)
+from .grounding_dates import _CJK_NUM_RE, _cjk_to_int, supported_claim_date_numbers
 
-_MAX_REFERENCES = 8
-_MIN_INFERENCE_SCORE = 0.2
-_MIN_DETERMINISTIC_SCORE = 0.42
-_MIN_JUDGE_SCORE = 0.08
 _NUMBER_RE = re.compile(r"(?<![A-Za-z0-9_])\d+(?:\.\d+)?")
 _LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._-]*")
 _CJK_CHUNK_RE = re.compile(r"[\u3400-\u9fff]+")
-_NEGATION_MARKERS = ("不", "没", "无", "未", "否", "never", "not", "no")
 _GENERIC_TOKENS = {
     "用户",
     "对方",
@@ -89,8 +90,11 @@ class GroundingResult:
 class MemoryGroundingValidator:
     """使用受控消息引用、关键锚点和词面覆盖验证记忆候选。"""
 
+    def __init__(self, snapshot: GateSnapshot | None = None) -> None:
+        """绑定门禁快照；缺省用内置默认快照（= 当前硬编码行为）。"""
+        self._snapshot = snapshot or default_gate_snapshot()
+
     def prompt_contract(self, message_count: int) -> str:
-        """生成要求模型返回匿名来源引用的固定 Prompt 片段。"""
 
         upper = max(0, int(message_count) - 1)
         return (
@@ -115,32 +119,47 @@ class MemoryGroundingValidator:
         messages: list[Message],
         *,
         is_group_chat: bool,
+        profile: GateProfile | None = None,
     ) -> GroundingResult:
         """验证候选声明、来源范围、关键锚点和群聊主体。"""
 
+        if profile is None:
+            profile = self._snapshot.resolve_profile(
+                "group" if is_group_chat else "private", None, None
+            )
         claim_text = self._claim_text(candidate)
+
         if not claim_text:
             return self._rejected("grounding_claim_missing", claim_text=claim_text)
         if not messages:
             return self._rejected("grounding_source_missing", claim_text=claim_text)
 
         raw_refs = candidate.get("source_refs")
-        explicit_refs = isinstance(raw_refs, list) and bool(raw_refs)
-        if explicit_refs:
-            resolved = self._resolve_references(raw_refs, messages, inferred=False)
+        if isinstance(raw_refs, list) and raw_refs:
+            resolved = self._resolve_references(
+                raw_refs,
+                messages,
+                inferred=False,
+                max_refs=profile.references.max_references,
+            )
             if resolved is None:
                 return self._rejected(
                     "grounding_reference_invalid",
                     claim_text=claim_text,
                 )
         else:
-            inferred_refs = self._infer_references(claim_text, messages)
+            inferred_refs = self._infer_references(claim_text, messages, profile)
             if not inferred_refs:
                 return self._rejected(
                     "grounding_source_evidence_missing",
                     claim_text=claim_text,
                 )
-            resolved = self._resolve_references(inferred_refs, messages, inferred=True)
+            resolved = self._resolve_references(
+                inferred_refs,
+                messages,
+                inferred=True,
+                max_refs=profile.references.max_references,
+            )
             if resolved is None:
                 return self._rejected(
                     "grounding_source_evidence_missing",
@@ -148,42 +167,46 @@ class MemoryGroundingValidator:
                 )
 
         evidence, source_text, referenced_messages = resolved
-        subject_reason = self._validate_group_subject(
-            candidate,
-            referenced_messages,
-            is_group_chat=is_group_chat,
-        )
-        if subject_reason:
-            return self._rejected(
-                subject_reason,
-                evidence=evidence,
-                source_text=source_text,
-                claim_text=claim_text,
+        if profile.checks.group_subject_check:
+            subject_reason = self._validate_group_subject(
+                candidate,
+                referenced_messages,
+                is_group_chat=is_group_chat,
+                profile=profile,
             )
+            if subject_reason:
+                return self._rejected(
+                    subject_reason,
+                    evidence=evidence,
+                    source_text=source_text,
+                    claim_text=claim_text,
+                )
 
-        numeric_reason = self._validate_numbers(
-            claim_text,
-            source_text,
-            referenced_messages,
-        )
-        if numeric_reason:
-            return self._rejected(
-                numeric_reason,
-                evidence=evidence,
-                source_text=source_text,
-                claim_text=claim_text,
+        if profile.checks.numeric_check:
+            numeric_reason = self._validate_numbers(
+                claim_text,
+                source_text,
+                referenced_messages,
             )
-        negation_reason = self._validate_negation(claim_text, source_text)
-        if negation_reason:
-            return self._rejected(
-                negation_reason,
-                evidence=evidence,
-                source_text=source_text,
-                claim_text=claim_text,
-            )
+            if numeric_reason:
+                return self._rejected(
+                    numeric_reason,
+                    evidence=evidence,
+                    source_text=source_text,
+                    claim_text=claim_text,
+                )
+        if profile.checks.negation_check:
+            negation_reason = self._validate_negation(claim_text, source_text, profile)
+            if negation_reason:
+                return self._rejected(
+                    negation_reason,
+                    evidence=evidence,
+                    source_text=source_text,
+                    claim_text=claim_text,
+                )
 
-        support_score = self._support_score(claim_text, source_text)
-        if support_score >= _MIN_DETERMINISTIC_SCORE:
+        support_score = self._support_score(claim_text, source_text, profile)
+        if support_score >= profile.thresholds.min_deterministic_score:
             return GroundingResult(
                 allowed=True,
                 status="grounded",
@@ -192,7 +215,7 @@ class MemoryGroundingValidator:
                 source_text=source_text,
                 claim_text=claim_text,
             )
-        if support_score >= _MIN_JUDGE_SCORE:
+        if support_score >= profile.thresholds.min_judge_score:
             return GroundingResult(
                 allowed=False,
                 status="needs_judge",
@@ -216,13 +239,18 @@ class MemoryGroundingValidator:
         evidence: list[dict[str, Any]],
         *,
         is_group_chat: bool,
+        profile: GateProfile | None = None,
     ) -> GroundingResult:
         """按消息指纹重新定位持久化证据并复用完整校验。"""
 
+        if profile is None:
+            profile = self._snapshot.resolve_profile(
+                "group" if is_group_chat else "private", None, None
+            )
         if not evidence:
             return self._rejected("grounding_source_evidence_missing")
-        refs: list[dict[str, int]] = []
-        for item in evidence[:_MAX_REFERENCES]:
+        refs: list[dict[str, Any]] = []
+        for item in evidence[: profile.references.max_references]:
             if not isinstance(item, dict):
                 return self._rejected("grounding_source_evidence_invalid")
             fingerprint = str(item.get("message_fingerprint") or "")
@@ -245,7 +273,9 @@ class MemoryGroundingValidator:
             )
         replay = dict(candidate)
         replay["source_refs"] = refs
-        return self.validate(replay, messages, is_group_chat=is_group_chat)
+        return self.validate(
+            replay, messages, is_group_chat=is_group_chat, profile=profile
+        )
 
     @staticmethod
     def message_fingerprint(message: Message) -> str:
@@ -261,31 +291,37 @@ class MemoryGroundingValidator:
         messages: list[Message],
         *,
         inferred: bool,
+        max_refs: int,
     ) -> tuple[list[dict[str, Any]], str, list[Message]] | None:
         """校验引用边界并构造内部证据，不接受布尔值冒充整数。"""
 
         evidence: list[dict[str, Any]] = []
         snippets: list[str] = []
         referenced_messages: list[Message] = []
-        for raw_ref in raw_refs[:_MAX_REFERENCES]:
+        for raw_ref in raw_refs[:max_refs]:
             if not isinstance(raw_ref, dict):
-                return None
+                continue  # 坏引用过滤化：单条非法不再毁整条候选
             message_index = raw_ref.get("message_index")
             start = raw_ref.get("start")
             end = raw_ref.get("end")
-            if any(isinstance(value, bool) for value in (message_index, start, end)):
-                return None
-            if not all(isinstance(value, int) for value in (message_index, start, end)):
-                return None
+            if (
+                isinstance(message_index, bool)
+                or isinstance(start, bool)
+                or isinstance(end, bool)
+                or not isinstance(message_index, int)
+                or not isinstance(start, int)
+                or not isinstance(end, int)
+            ):
+                continue
             if message_index < 0 or message_index >= len(messages):
-                return None
+                continue
             message = messages[message_index]
             content = Message.content_to_text(message.content)
             if start < 0 or end <= start or end > len(content):
-                return None
+                continue
             snippet = content[start:end].strip()
             if not snippet:
-                return None
+                continue
             evidence.append(
                 {
                     "message_index": message_index,
@@ -305,26 +341,26 @@ class MemoryGroundingValidator:
         self,
         claim_text: str,
         messages: list[Message],
+        profile: GateProfile,
     ) -> list[dict[str, int]]:
         """仅在模型缺少引用时从当前窗口推断高相关受控引用。"""
 
+        min_score = profile.thresholds.min_inference_score
         scored: list[tuple[float, int, str]] = []
         for index, message in enumerate(messages):
             content = Message.content_to_text(message.content)
             if not content.strip():
                 continue
-            score = self._support_score(claim_text, content)
+            score = self._support_score(claim_text, content, profile)
             scored.append((score, index, content))
         if not scored:
             return []
         scored.sort(reverse=True)
         best_score = scored[0][0]
-        if best_score < _MIN_INFERENCE_SCORE:
+        if best_score < min_score:
             return []
         selected = [
-            item
-            for item in scored
-            if item[0] >= max(_MIN_INFERENCE_SCORE, best_score - 0.08)
+            item for item in scored if item[0] >= max(min_score, best_score - 0.08)
         ]
         return [
             {"message_index": index, "start": 0, "end": len(content)}
@@ -337,6 +373,7 @@ class MemoryGroundingValidator:
         referenced_messages: list[Message],
         *,
         is_group_chat: bool,
+        profile: GateProfile,
     ) -> str | None:
         """用真实引用消息验证群聊主体，禁止模型自行交换参与者。"""
 
@@ -350,7 +387,7 @@ class MemoryGroundingValidator:
             if not sender_key:
                 continue
             labels = {
-                self._normalize_text(value)
+                self._normalize_text(value, profile)
                 for value in (
                     message.sender_id,
                     message.sender_name,
@@ -364,7 +401,7 @@ class MemoryGroundingValidator:
         if len(users) <= 1:
             return None
         participants = {
-            self._normalize_text(item)
+            self._normalize_text(item, profile)
             for item in (candidate.get("participants") or [])
             if isinstance(item, str) and item.strip()
         }
@@ -396,10 +433,13 @@ class MemoryGroundingValidator:
 
     @staticmethod
     def _canonical_numbers(text: str) -> set[str]:
-        """规范前导零和小数尾零，避免同一数值因书写形式不同而冲突。"""
+        """规范前导零和小数尾零，并把中文数字归一为阿拉伯数字。"""
 
+        converted = _CJK_NUM_RE.sub(
+            lambda match: str(_cjk_to_int(match.group(0))), text
+        )
         canonical: set[str] = set()
-        for raw_value in _NUMBER_RE.findall(text):
+        for raw_value in _NUMBER_RE.findall(converted):
             integer, separator, fraction = raw_value.partition(".")
             integer = integer.lstrip("0") or "0"
             if separator:
@@ -408,24 +448,36 @@ class MemoryGroundingValidator:
         return canonical
 
     @staticmethod
-    def _validate_negation(claim_text: str, source_text: str) -> str | None:
-        """阻止候选与紧邻来源片段出现相反否定极性。"""
+    def _validate_negation(
+        claim_text: str, source_text: str, profile: GateProfile
+    ) -> str | None:
+        """阻止候选与紧邻来源片段出现相反否定极性（白名单短语先剔除）。"""
 
-        claim_negative = any(
-            marker in claim_text.casefold() for marker in _NEGATION_MARKERS
+        whitelist = set(BUILTIN_NEGATION_WHITELIST) | set(
+            profile.word_lists.negation_whitelist
         )
-        source_negative = any(
-            marker in source_text.casefold() for marker in _NEGATION_MARKERS
-        )
+        claim_clean, source_clean = claim_text, source_text
+        for phrase in sorted(whitelist, key=len, reverse=True):
+            claim_clean = claim_clean.replace(phrase, "")
+            source_clean = source_clean.replace(phrase, "")
+        marker_cfg = profile.word_lists.negation_markers
+        if marker_cfg.mode == "replace":
+            markers = tuple(marker_cfg.items)
+        else:
+            markers = tuple(BUILTIN_NEGATION_MARKERS) + tuple(marker_cfg.items)
+        claim_negative = any(marker in claim_clean.casefold() for marker in markers)
+        source_negative = any(marker in source_clean.casefold() for marker in markers)
         if claim_negative != source_negative:
             return "grounding_negation_conflict"
         return None
 
-    def _support_score(self, claim_text: str, source_text: str) -> float:
-        """组合词元覆盖和字符序列相似度，允许有限同义改写。"""
+    def _support_score(
+        self, claim_text: str, source_text: str, profile: GateProfile
+    ) -> float:
+        """组合词元覆盖与字符序列相似度，权重由 profile 控制。"""
 
-        claim_normalized = self._normalize_text(claim_text)
-        source_normalized = self._normalize_text(source_text)
+        claim_normalized = self._normalize_text(claim_text, profile)
+        source_normalized = self._normalize_text(source_text, profile)
         if not claim_normalized or not source_normalized:
             return 0.0
         if (
@@ -439,11 +491,13 @@ class MemoryGroundingValidator:
             len(claim_tokens.intersection(source_tokens)) / len(claim_tokens)
             if claim_tokens
             else 0.0
-        )
+        ) * profile.scoring.token_weight
+        if not profile.scoring.sequence_enabled:
+            return token_score
         sequence_score = SequenceMatcher(
             None, claim_normalized, source_normalized
         ).ratio()
-        return max(token_score, sequence_score * 0.7)
+        return max(token_score, sequence_score * profile.scoring.sequence_weight)
 
     @staticmethod
     def _claim_text(candidate: dict[str, Any]) -> str:
@@ -459,11 +513,17 @@ class MemoryGroundingValidator:
         return " ".join(parts)
 
     @staticmethod
-    def _normalize_text(value: str) -> str:
+    def _normalize_text(value: str, profile: GateProfile | None = None) -> str:
         """统一大小写、兼容字符和同义表达，并保留英文词元边界。"""
 
         normalized = unicodedata.normalize("NFKC", str(value)).casefold()
-        for source, target in _SYNONYM_REPLACEMENTS:
+        replacements = _SYNONYM_REPLACEMENTS
+        if profile is not None:
+            replacements = replacements + tuple(
+                (pair.source.casefold(), pair.target.casefold())
+                for pair in profile.word_lists.synonym_pairs
+            )
+        for source, target in replacements:
             normalized = normalized.replace(source, target)
         return re.sub(r"[^a-z0-9\u3400-\u9fff]+", " ", normalized).strip()
 
