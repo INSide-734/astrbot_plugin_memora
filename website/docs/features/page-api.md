@@ -10,7 +10,7 @@ Page API 是 AstrBot 插件页面与 Memora 后端之间的管理边界，主要
 /astrbot_plugin_memora/page/*
 ```
 
-具体处理器由 `PluginPageApi` 的多个聚焦 mixin 组合，源代码以 [`core/page_api.py`](https://github.com/INSide-734/astrbot_plugin_memora/blob/main/core/page_api.py) 和 `core/api/` 为准。
+具体处理器由 `PluginPageApi` 的多个聚焦 mixin 组合，源代码位于 [`core/platform/transport/page_api/`](https://github.com/INSide-734/astrbot_plugin_memora/tree/main/core/platform/transport/page_api)。
 
 ## 能力范围
 
