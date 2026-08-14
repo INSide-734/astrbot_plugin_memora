@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+import core.features.learning.infrastructure.feedback_signal_store as feedback_store_module
 from core.features.learning.domain.models import (
     FeedbackAdapterKind,
     FeedbackOutcome,
@@ -18,6 +20,26 @@ from core.features.learning.domain.models import (
     build_trusted_feedback_event,
 )
 from core.features.learning.infrastructure import FeedbackSignalStore
+
+
+class _WindowsOsProxy:
+    """模拟 Windows 缺失 fchmod 且无法打开目录的 os 能力。"""
+
+    name = "nt"
+
+    def __getattr__(self, name: str):
+        """转发通用 os API，并隐藏 Windows 不提供的 POSIX 能力。"""
+
+        if name in {"fchmod", "O_NOFOLLOW", "O_DIRECTORY"}:
+            raise AttributeError(name)
+        return getattr(os, name)
+
+    def open(self, path, flags: int) -> int:
+        """模拟 Windows 不支持以文件描述符打开目录。"""
+
+        if Path(path).is_dir():
+            raise OSError("directory handles are unavailable")
+        return os.open(path, flags)
 
 
 def _event(
@@ -90,8 +112,30 @@ def test_opaque_token_is_keyed_stable_across_restart_and_install_isolated(
     assert token != other_install_token
     assert token != f"decision:{legacy_digest}"
     assert len(key_material) == 32
-    assert key_path.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":
+        assert key_path.stat().st_mode & 0o777 == 0o600
     assert key_material not in first_path.read_bytes()
+
+
+def test_store_initializes_when_fchmod_is_unavailable(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Windows 能力下仍应创建密钥并保持 token 跨重启稳定。"""
+
+    monkeypatch.setattr(feedback_store_module, "os", _WindowsOsProxy())
+    path = tmp_path / "no-fchmod.db"
+    store = FeedbackSignalStore(path)
+    store.initialize()
+    token = store.opaque_token("decision", "forget:7")
+    store.close()
+
+    reopened = FeedbackSignalStore(path)
+    reopened.initialize()
+    try:
+        assert reopened.opaque_token("decision", "forget:7") == token
+    finally:
+        reopened.close()
 
 
 @pytest.mark.parametrize("corruption", [None, b"short", b"x" * 32])
@@ -118,6 +162,7 @@ def test_existing_store_rejects_missing_or_malformed_token_key(
     reopened.close()
 
 
+@pytest.mark.skipif(os.name == "nt", reason="Windows 不提供 POSIX 文件权限位")
 def test_existing_store_rejects_overly_permissive_token_key(tmp_path) -> None:
     """密钥文件出现 group/other 权限时不得继续使用。"""
 

@@ -499,7 +499,7 @@ def _load_or_create_token_key(path: Path, *, allow_create: bool) -> bytes:
     except OSError as exc:
         raise RuntimeError("feedback_token_key_create_failed") from exc
     try:
-        os.fchmod(file_descriptor, 0o600)
+        _set_private_file_mode(file_descriptor, temporary_name)
         with os.fdopen(file_descriptor, "wb") as handle:
             file_descriptor = -1
             handle.write(candidate)
@@ -527,8 +527,19 @@ def _load_or_create_token_key(path: Path, *, allow_create: bool) -> bytes:
     return installed
 
 
+def _set_private_file_mode(file_descriptor: int, path: str) -> None:
+    """优先通过描述符设置 0600；不支持时回退到路径级权限 API。"""
+
+    fchmod = getattr(os, "fchmod", None)
+    if fchmod is not None:
+        fchmod(file_descriptor, 0o600)
+        return
+    # Windows 的权限边界由父目录 ACL 提供，chmod 仅提供有限兼容。
+    os.chmod(path, 0o600)
+
+
 def _read_token_key(path: Path) -> bytes | None:
-    """不跟随链接读取 0600 普通文件，并严格校验密钥长度。"""
+    """读取普通密钥文件；POSIX 严格校验 0600，并校验密钥长度。"""
 
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -539,9 +550,8 @@ def _read_token_key(path: Path) -> bytes | None:
         raise RuntimeError("feedback_token_key_invalid") from exc
     try:
         metadata = os.fstat(file_descriptor)
-        if (
-            not stat.S_ISREG(metadata.st_mode)
-            or stat.S_IMODE(metadata.st_mode) != 0o600
+        if not stat.S_ISREG(metadata.st_mode) or (
+            os.name != "nt" and stat.S_IMODE(metadata.st_mode) != 0o600
         ):
             raise RuntimeError("feedback_token_key_invalid")
         value = os.read(file_descriptor, _TOKEN_KEY_BYTES + 1)
@@ -553,7 +563,10 @@ def _read_token_key(path: Path) -> bytes | None:
 
 
 def _fsync_directory(path: Path) -> None:
-    """持久化同目录原子链接，确保重启后 key 与数据库 fingerprint 一致。"""
+    """POSIX 持久化目录链接；Windows 无目录描述符时依赖原子链接语义。"""
+
+    if os.name == "nt":
+        return
 
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     file_descriptor = os.open(path, flags)
