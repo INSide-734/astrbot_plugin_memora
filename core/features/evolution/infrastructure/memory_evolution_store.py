@@ -326,6 +326,16 @@ class MemoryEvolutionStore(
             sources_by_id[memory_id] for memory_id in ids if memory_id in sources_by_id
         ]
 
+    async def load_mark_write_ids(self) -> frozenset[int]:
+        """读取携带 mark_write 门禁标记的 canonical ID 集合。"""
+
+        rows = await self._fetch_all(
+            """SELECT id FROM documents
+               WHERE json_valid(metadata)
+                 AND json_extract(metadata, '$.gate_disposition') = 'mark_write'"""
+        )
+        return frozenset(int(row["id"]) for row in rows)
+
     async def load_all_sources(
         self,
         *,

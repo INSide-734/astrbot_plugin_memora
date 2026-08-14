@@ -372,6 +372,61 @@ async def test_rebuild_from_canonical_invalidates_old_and_requeues_sources(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_rebuild_skips_mark_write_sources(tmp_path):
+    """全量重建不得把 mark_write 低置信记忆重新排入演化队列。"""
+    from core.features.evolution.application import (
+        MemoryEvolutionGate,
+        MemoryEvolutionManager,
+    )
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    await _create_documents(store.db_path)
+    async with aiosqlite.connect(store.db_path) as db:
+        await db.execute(
+            "INSERT INTO documents(id,doc_id,text,metadata,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                19,
+                "doc-19",
+                "低置信证据",
+                json.dumps(
+                    {
+                        "scope_key": "private:user-a",
+                        "privacy_level": "shared",
+                        "gate_disposition": "mark_write",
+                    }
+                ),
+                datetime(2026, 7, 21, tzinfo=UTC).isoformat(),
+                "r19",
+            ),
+        )
+        await db.commit()
+    manager = MemoryEvolutionManager(
+        store,
+        MemoryEvolutionGate(
+            {
+                "enabled": True,
+                "mode": "shadow",
+                "trigger_threshold": 0.5,
+                "max_pending_jobs": 20,
+            }
+        ),
+        AsyncMock(),
+        {"enabled": True, "mode": "shadow", "trigger_threshold": 0.5},
+    )
+
+    result = await manager.rebuild_from_canonical()
+
+    assert result["success"] is True
+    assert result["canonical_sources"] == 2
+    assert result["scheduled_jobs"] == 2
+    assert await store.pending_count() == 2
+    await manager.stop()
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_rebuild_failure_returns_degraded_result_without_losing_canonical(
     tmp_path,
 ):

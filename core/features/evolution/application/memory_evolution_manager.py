@@ -352,6 +352,11 @@ class MemoryEvolutionManager(
             sources = await self.store.load_all_sources(
                 max_content_chars=self.max_input_chars
             )
+            # mark_write 低置信记忆不进入演化，重建补偿同样排除。
+            mark_write_ids = await self.store.load_mark_write_ids()
+            sources = [
+                source for source in sources if source.memory_id not in mark_write_ids
+            ]
             scheduled = await self.reconcile_recent_sources(sources, replay=True)
             return {
                 "success": True,
