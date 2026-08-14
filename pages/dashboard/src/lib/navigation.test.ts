@@ -37,6 +37,17 @@ describe("dashboard navigation catalog", () => {
       "social",
       "system",
       "config",
+      "gate",
+    ]);
+  });
+
+  it("places Gate at the end of the System group", () => {
+    const system = DASHBOARD_NAVIGATION.find((group) => group.id === "system");
+
+    expect(system?.items.map((item) => item.id)).toEqual([
+      "system",
+      "config",
+      "gate",
     ]);
   });
 

@@ -38,6 +38,7 @@ const InjectionStrategyPage = lazy(() =>
     default: module.InjectionStrategyPage,
   })),
 );
+const GatePage = lazy(() => import("@/pages/GatePage").then((m) => ({ default: m.GatePage })));
 
 /** Lightweight fallback shown while a page chunk loads over the network. */
 function PageLoader() {
@@ -63,6 +64,7 @@ const HASH_TO_PAGE: Record<string, PageId> = {
   profiles: "profiles", knowledge: "knowledge", notes: "notes", learning: "learning",
   jargon: "jargon", affection: "affection", social: "social",
   intelligence: "intelligence",
+  gate: "gate",
 };
 
 const HISTORY_INDEX_KEY = "__memoraHistoryIndex";
@@ -462,6 +464,12 @@ export default function App() {
                   <IntelligencePage
                     showToast={showToast}
                     navigationTarget={navigationIntent?.intelligenceTarget ?? null}
+                  />
+                )}
+                {currentPage === "gate" && (
+                  <GatePage
+                    showToast={showConfigToast}
+                    onDirtyChange={handleCurrentPageDirtyChange}
                   />
                 )}
                 </Suspense>

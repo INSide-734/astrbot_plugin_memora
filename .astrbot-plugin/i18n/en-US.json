@@ -164,6 +164,7 @@
       "recall": "Recall Test",
       "system": "System",
       "config": "Configuration",
+      "gate": "Gate",
       "profiles": "User Profiles",
       "knowledge": "Knowledge Base",
       "notes": "Notes",
@@ -177,6 +178,11 @@
       "jargon": "Jargon",
       "affection": "Affection",
       "social": "Social"
+    },
+    "gate": {
+      "title": "Memory Write Gate",
+      "subtitle": "Configure checks, thresholds, word lists, disposition, Judge, and custom rules. Changes take effect immediately — no restart required.",
+      "wip": "Under construction"
     },
     "injection": {
       "title": "Injection Strategy",

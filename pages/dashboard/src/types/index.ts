@@ -2,7 +2,8 @@ export type PageId =
   | "graph" | "memory" | "recall" | "injection" | "system" | "config"
   | "profiles" | "knowledge" | "notes" | "learning"
   | "preview" | "timeline"
-  | "jargon" | "affection" | "social" | "intelligence";
+  | "jargon" | "affection" | "social" | "intelligence"
+  | "gate";
 
 export * from "./intelligence";
 export * from "./injection";

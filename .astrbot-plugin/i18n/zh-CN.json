@@ -164,6 +164,7 @@
       "recall": "召回测试",
       "system": "系统概览",
       "config": "配置",
+      "gate": "门禁",
       "profiles": "用户画像",
       "knowledge": "知识库",
       "notes": "笔记",
@@ -177,6 +178,11 @@
       "jargon": "黑话发现",
       "affection": "好感度",
       "social": "社交关系"
+    },
+    "gate": {
+      "title": "记忆写入门禁",
+      "subtitle": "配置检查开关、阈值、词表、处置策略、Judge 与自定义规则，保存后即时生效，无需重启。",
+      "wip": "建设中"
     },
     "injection": {
       "title": "注入策略",

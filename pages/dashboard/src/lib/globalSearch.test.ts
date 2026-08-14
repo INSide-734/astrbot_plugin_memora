@@ -216,9 +216,25 @@ describe("global dashboard search helpers", () => {
     expect(searchLocalEntries(entries, "Configuration", 10).items.map((entry) => entry.page)).toEqual([
       "config",
     ]);
-    expect(searchLocalEntries(entries, "Page", 100).items.map((entry) => entry.page)).toEqual(
-      DASHBOARD_NAVIGATION.flatMap((group) => group.items.map((item) => item.id)),
-    );
+    expect(searchLocalEntries(entries, "Page", 100).items.map((entry) => entry.page)).toEqual([
+      "preview",
+      "graph",
+      "memory",
+      "timeline",
+      "recall",
+      "injection",
+      "knowledge",
+      "notes",
+      "intelligence",
+      "learning",
+      "jargon",
+      "profiles",
+      "affection",
+      "social",
+      "system",
+      "gate",
+      "config",
+    ]);
 
     const injectionEntries = buildPageSearchEntries((key) => {
       if (key === "nav.injection") return "Injection Strategy";
