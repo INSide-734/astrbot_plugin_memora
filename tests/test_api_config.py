@@ -598,6 +598,70 @@ class TestConfigApplyApi:
         recorder.schedule_cleanup.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_apply_gate_change_hot_reloads_without_restart(self) -> None:
+        """门禁叶子保存成功后应即时热重载，不安排插件重启。"""
+
+        from core.features.quality.application.gate_runtime import (
+            GateRuntime,
+            default_gate_snapshot,
+        )
+
+        manager = MagicMock()
+        manager.apply_config_changes = AsyncMock(
+            return_value=ConfigApplyResult("rev-new", ("quality.gate.enabled",))
+        )
+        manager.get_config_snapshot_async = AsyncMock(
+            return_value=({"quality": {"gate": {"enabled": False}}}, "rev-new")
+        )
+        api, plugin = _make_api(
+            request=_Request(
+                body={
+                    "base_revision": "rev-old",
+                    "changes": {"quality.gate.enabled": False},
+                }
+            ),
+            config_manager=manager,
+            hot_reload=True,
+        )
+        gate_runtime = GateRuntime(default_gate_snapshot())
+        plugin.initializer = SimpleNamespace(gate_runtime=gate_runtime)
+
+        result = await api.apply_config()
+
+        assert result["status"] == "ok"
+        assert result["data"]["reload_scheduled"] is False
+        assert result["data"]["restart_required"] is False
+        assert result["data"]["gate_hot_reloaded"] is True
+        assert gate_runtime.snapshot().enabled is False
+
+    @pytest.mark.asyncio
+    async def test_apply_gate_change_without_runtime_prompts_restart(self) -> None:
+        """运行时没有 GateRuntime 时热重载失败，其余字段照旧返回。"""
+
+        manager = MagicMock()
+        manager.apply_config_changes = AsyncMock(
+            return_value=ConfigApplyResult("rev-new", ("quality.gate.enabled",))
+        )
+        api, plugin = _make_api(
+            request=_Request(
+                body={
+                    "base_revision": "rev-old",
+                    "changes": {"quality.gate.enabled": False},
+                }
+            ),
+            config_manager=manager,
+            hot_reload=False,
+        )
+        plugin.initializer = SimpleNamespace()
+
+        result = await api.apply_config()
+
+        assert result["status"] == "ok"
+        assert result["data"]["gate_hot_reloaded"] is False
+        assert result["data"]["restart_required"] is False
+        assert result["data"]["reload_scheduled"] is False
+
+    @pytest.mark.asyncio
     async def test_success_applies_exact_transaction_and_never_logs_values(
         self,
     ) -> None:
@@ -644,6 +708,7 @@ class TestConfigApplyApi:
                 "reload_scheduled": True,
                 "restart_required": True,
                 "rebuild_required": False,
+                "gate_hot_reloaded": False,
                 "instance_id": "instance-123",
             },
         }

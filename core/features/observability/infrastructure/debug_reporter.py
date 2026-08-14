@@ -45,8 +45,8 @@ EVENTS = frozenset(
         "shutdown_step",
         "plugin_stopped",
         "instrumented_call",
+        "gate_config_applied",
         "debug_event_rejected",
-        "debug_file_sink_disabled",
     }
 )
 
@@ -137,16 +137,10 @@ _NUMERIC_FIELDS = frozenset(
 _ENUM_FIELDS = {
     "status": frozenset(
         {
-            "started",
-            "running",
             "completed",
             "failed",
+            "ok",
             "degraded",
-            "skipped",
-            "cancelled",
-            "ready",
-            "waiting",
-            "disabled",
         }
     ),
     "outcome": frozenset(
@@ -214,6 +208,7 @@ _VALUE_FIELDS = {
             "instrumentation",
             "initializer",
             "injection",
+            "config_api",
             "maintenance",
             "memory_engine",
             "page_api",
@@ -225,6 +220,7 @@ _VALUE_FIELDS = {
     "stage": frozenset(
         {
             "batch_prepare",
+            "gate_hot_reload",
             "atom",
             "call",
             "capture",
@@ -288,7 +284,6 @@ _VALUE_FIELDS = {
             "PROTECTION_FAILED",
             "PROTECTION_SCOPE_FAILED",
             "agent_tools_unavailable",
-            "assistant_response_persisted",
             "backup_restore_error",
             "batch_extraction_failed",
             "batches_prepared",
@@ -336,6 +331,7 @@ _VALUE_FIELDS = {
             "full_initialization_completed",
             "full_initialization_error",
             "full_initialization_started",
+            "gate_config_applied",
             "group_source_error",
             "history_injection_removed",
             "initialization_cancelled",
@@ -445,6 +441,7 @@ _VALUE_FIELDS = {
             "decay_scheduler",
             "embedding_and_llm_ready",
             "expression",
+            "gate_runtime",
             "graph_database",
             "index_validator",
             "injection_recorder",

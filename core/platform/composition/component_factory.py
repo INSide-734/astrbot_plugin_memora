@@ -51,7 +51,12 @@ from ...features.notes.application import NoteProposalPipeline
 from ...features.notes.infrastructure import NoteGenerator
 from ...features.profiles.application import ProfileProposalPipeline
 from ...features.profiles.infrastructure import ProfileExtractor
+from ...features.quality.application.gate_runtime import (
+    GateRuntime,
+    build_gate_snapshot,
+)
 from ...features.quality.application.memory_quality_gate import MemoryQualityGate
+from ...features.quality.domain.gate_config import GateConfig
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
@@ -124,12 +129,19 @@ class ComponentFactory:
         episode_config = self.config_manager.get_section("episode_clustering")
         if not isinstance(episode_config, dict):
             episode_config = {}
+        gate_section = self.config_manager.get_section("quality")
+        if not isinstance(gate_section, dict):
+            gate_section = {}
+        gate_runtime = GateRuntime(
+            build_gate_snapshot(
+                GateConfig.model_validate(gate_section.get("gate") or {})
+            )
+        )
         cost_control_section = self.config_manager.get_section("cost_control")
         if not isinstance(cost_control_section, dict):
             cost_control_section = {}
         cost_control_config = CostControlConfig.model_validate(cost_control_section)
         cost_control = build_cost_control_from_config(cost_control_config)
-
         if not embedding_provider:
             raise ProviderNotReadyError("Embedding Provider 未初始化")
         if not llm_provider or not isinstance(llm_provider, Provider):
@@ -529,6 +541,7 @@ class ComponentFactory:
             "memory_processor": memory_processor,
             "memory_quarantine_store": memory_quarantine_store,
             "memory_quality_gate": memory_quality_gate,
+            "gate_runtime": gate_runtime,
             "backup_manager": backup_manager,
             "conversation_manager": conversation_manager,
             "identity_runtime": identity_runtime,

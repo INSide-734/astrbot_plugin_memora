@@ -701,6 +701,7 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
             "memory_processor": memory_processor,
             "memory_quarantine_store": MagicMock(),
             "memory_quality_gate": MagicMock(),
+            "gate_runtime": MagicMock(),
             "conversation_manager": SimpleNamespace(identity_runtime=runtime),
             "identity_runtime": runtime,
             "index_validator": MagicMock(),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
@@ -10,7 +11,9 @@ from astrbot.api import logger
 
 from ....features.observability.application.runtime import set_debug_mode
 from ....features.observability.infrastructure.debug_reporter import report_debug_event
-from ...config import classify_config_effects
+from ....features.quality.application.gate_runtime import build_gate_snapshot
+from ....features.quality.domain.gate_config import GateConfig
+from ...config import classify_config_effects, gate_hot_reload_required
 from ...config.manager import (
     ConfigConflictError,
     ConfigPersistenceError,
@@ -214,10 +217,19 @@ class ConfigApiMixin:
 
         self._apply_live_debug_mode(result.changed_paths)
         self._schedule_injection_decision_cleanup(result.changed_paths)
+        gate_hot_reloaded = (
+            await self._reload_gate_runtime()
+            if gate_hot_reload_required(result.changed_paths)
+            else False
+        )
         restart_required, rebuild_required = classify_config_effects(
             result.changed_paths
         )
-        reload_scheduled = self._schedule_plugin_reload(result.changed_paths)
+        reload_scheduled = (
+            self._schedule_plugin_reload(result.changed_paths)
+            if restart_required
+            else False
+        )
 
         logger.info(
             "[ConfigApi] 配置已应用 revision=%s paths=%s",
@@ -231,6 +243,7 @@ class ConfigApiMixin:
                 "reload_scheduled": reload_scheduled,
                 "restart_required": restart_required,
                 "rebuild_required": rebuild_required,
+                "gate_hot_reloaded": gate_hot_reloaded,
                 "instance_id": self.plugin.instance_id,
             }
         )
@@ -287,6 +300,36 @@ class ConfigApiMixin:
             "[ConfigApi] 问题报告调试模式已在当前进程%s",
             "启用" if enabled else "停用",
         )
+
+    async def _reload_gate_runtime(self) -> bool:
+        """把新持久化的门禁配置热重载到 GateRuntime；失败保留旧快照。"""
+
+        initializer = getattr(self.plugin, "initializer", None)
+        gate_runtime = getattr(initializer, "gate_runtime", None)
+        if gate_runtime is None:
+            logger.warning("[ConfigApi] 门禁配置已保存，运行时不可用，重启后生效")
+            return False
+        try:
+            snapshot, _ = await self.plugin.config_manager.get_config_snapshot_async()
+            quality = snapshot.get("quality") or {}
+            gate_config = GateConfig.model_validate(quality.get("gate") or {})
+            gate_runtime.reload(build_gate_snapshot(gate_config))
+            report_debug_event(
+                "gate_config_applied",
+                component="config_api",
+                stage="gate_hot_reload",
+                status="ok",
+                reason_code="gate_config_applied",
+            )
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "[ConfigApi] 门禁热重载失败，旧配置继续生效，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return False
 
     def _schedule_injection_decision_cleanup(
         self,

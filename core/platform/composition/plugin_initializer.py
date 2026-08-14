@@ -27,6 +27,7 @@ from ...features.observability.infrastructure.debug_reporter import (
     report_debug_event,
     report_debug_exception,
 )
+from ...features.quality.application.gate_runtime import GateRuntime
 from ...features.quality.application.memory_quality_gate import MemoryQualityGate
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
@@ -76,6 +77,7 @@ class PluginInitializer(InitializerReadinessMixin):
         self.memory_processor: MemoryProcessor | None = None
         self.memory_quarantine_store: MemoryQuarantineStore | None = None
         self.memory_quality_gate: MemoryQualityGate | None = None
+        self.gate_runtime: GateRuntime | None = None
         self.conversation_manager: ConversationManager | None = None
         self.identity_runtime: ProtocolIdentityRuntime | None = None
         self.index_validator: IndexValidator | None = None
@@ -284,7 +286,7 @@ class PluginInitializer(InitializerReadinessMixin):
             self.memory_processor = components["memory_processor"]
             self.memory_quarantine_store = components["memory_quarantine_store"]
             self.memory_quality_gate = components["memory_quality_gate"]
-            self.conversation_manager = components["conversation_manager"]
+            self.gate_runtime = components["gate_runtime"]
             self.identity_runtime = components["identity_runtime"]
             self.index_validator = components["index_validator"]
             self.decay_scheduler = components["decay_scheduler"]
@@ -308,6 +310,7 @@ class PluginInitializer(InitializerReadinessMixin):
                 ("memory_processor", self.memory_processor),
                 ("memory_quarantine_store", self.memory_quarantine_store),
                 ("memory_quality_gate", self.memory_quality_gate),
+                ("gate_runtime", self.gate_runtime),
                 ("conversation_manager", self.conversation_manager),
                 ("identity_runtime", self.identity_runtime),
                 ("index_validator", self.index_validator),
