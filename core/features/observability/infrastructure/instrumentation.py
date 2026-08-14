@@ -11,7 +11,7 @@ from typing import Any, Callable, TypeVar
 
 from astrbot.api import logger
 
-from .metrics import REGISTRY, Counter, Histogram
+from .metrics import REGISTRY, Counter, Histogram  # type: ignore[attr-defined]
 
 # ---------------------------------------------------------------------------
 # 全局开关
@@ -172,8 +172,8 @@ def monitored(func: _F) -> _F:
         def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             depth = _trace_depth.get()
             start = time.perf_counter()
+            indent = "  " * depth
             if _trace_enabled:
-                indent = "  " * depth
                 logger.debug(f"{indent}>>> {fqn}")
                 _trace_depth.set(depth + 1)
 
@@ -218,8 +218,8 @@ def monitored(func: _F) -> _F:
     async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
         depth = _trace_depth.get()
         start = time.perf_counter()
+        indent = "  " * depth
         if _trace_enabled:
-            indent = "  " * depth
             logger.debug(f"{indent}>>> {fqn}")
             _trace_depth.set(depth + 1)
 

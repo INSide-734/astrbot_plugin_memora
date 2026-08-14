@@ -112,7 +112,8 @@ class PerfTracker:
         if not self._samples:
             return None
         values = sorted(
-            sample.get(key, 0.0) for _sequence, sample in self._samples if key in sample
+            float(sample[key]) for _sequence, sample in self._samples 
+            if key in sample and isinstance(sample.get(key), (int, float))
         )
         if not values:
             return None
