@@ -43,6 +43,7 @@ export function ChecksSection({
   return (
     <FieldSet className="rounded-lg border p-4">
       <FieldLegend>{t("gate.checks.title")}</FieldLegend>
+      <p className="text-sm text-muted-foreground">{t("gate.help.checks")}</p>
       <FieldGroup>
         {rows.map((row) => (
           <Field key={row.key} orientation="horizontal">

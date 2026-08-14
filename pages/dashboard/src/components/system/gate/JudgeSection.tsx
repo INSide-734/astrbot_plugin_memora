@@ -18,13 +18,15 @@ export interface JudgeSectionProps {
   profile: GateProfileData;
   disabled: boolean;
   onChange: (patch: Partial<GateProfileData>) => void;
+  promptDefault: string;
 }
 
-/** Judge 开关与 prompt 模板；模板非空时校验双占位符与未知占位符。 */
+/** Judge 开关与 prompt 模板；placeholder 展示文件默认，空值 = 使用文件默认。 */
 export function JudgeSection({
   profile,
   disabled,
   onChange,
+  promptDefault,
 }: JudgeSectionProps) {
   const { t } = useI18n();
   const judge = profile.judge;
@@ -33,6 +35,7 @@ export function JudgeSection({
   return (
     <FieldSet className="rounded-lg border p-4">
       <FieldLegend>{t("gate.judge.title")}</FieldLegend>
+      <p className="text-sm text-muted-foreground">{t("gate.help.judge")}</p>
       <FieldGroup>
         <Field orientation="horizontal">
           <FieldContent>
@@ -58,6 +61,7 @@ export function JudgeSection({
             value={judge.prompt_template}
             disabled={disabled}
             rows={6}
+            placeholder={promptDefault || undefined}
             onChange={(event) =>
               onChange({
                 judge: { ...judge, prompt_template: event.currentTarget.value },

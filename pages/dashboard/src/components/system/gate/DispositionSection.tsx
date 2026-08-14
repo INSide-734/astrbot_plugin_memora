@@ -83,6 +83,7 @@ export function DispositionSection({
   return (
     <FieldSet className="rounded-lg border p-4">
       <FieldLegend>{t("gate.disposition.title")}</FieldLegend>
+      <p className="text-sm text-muted-foreground">{t("gate.help.disposition")}</p>
       <FieldGroup>
         <Field>
           <FieldContent>

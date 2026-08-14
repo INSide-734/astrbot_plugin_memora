@@ -10,10 +10,10 @@ import type {
   ConfigSchemaNode,
   ConfigStateData,
   JsonValue,
+  PromptDefaults,
 } from "@/types/config";
 import { configEffectsForChangedPaths } from "@/lib/configRuntimeEffects";
-import { MOCK_GATE_CONFIG } from "./data";
-
+import { MOCK_GATE_CONFIG, MOCK_PROMPT_DEFAULTS } from "./data";
 const PLUGIN_NAME = "astrbot_plugin_memora";
 const INITIAL_REVISION_SEQUENCE = 1;
 const INITIAL_INSTANCE_SEQUENCE = 1;
@@ -60,6 +60,7 @@ export interface MockConfigServerOptions {
   autoCompleteReloadMs?: number;
   hotReload?: boolean;
   providerOptions?: ConfigProviderOptions;
+  promptDefaults?: PromptDefaults;
 }
 
 export interface MockConfigServerSnapshot {
@@ -295,6 +296,9 @@ export function createMockConfigServer(options: MockConfigServerOptions = {}) {
   const providerOptions = cloneJson(
     options.providerOptions ?? DEFAULT_PROVIDER_OPTIONS
   );
+  const promptDefaults = cloneJson(
+    options.promptDefaults ?? MOCK_PROMPT_DEFAULTS
+  );
   let state = makeInitialState();
   let reloadTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -369,11 +373,13 @@ export function createMockConfigServer(options: MockConfigServerOptions = {}) {
             instance_id: state.instanceId,
             changed: true,
             config: cloneJson(state.config),
+            prompt_defaults: cloneJson(promptDefaults),
           }
         : {
             revision: state.revision,
             instance_id: state.instanceId,
             changed: false,
+            prompt_defaults: cloneJson(promptDefaults),
           }
     );
   };

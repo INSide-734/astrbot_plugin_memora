@@ -64,6 +64,11 @@ function state(
     config,
     revision,
     instance_id: instanceId,
+    prompt_defaults: {
+      gate_judge: "默认模板 {claim_text} / {source_text}",
+      group_chat: "",
+      private_chat: "",
+    },
   });
 }
 
@@ -353,5 +358,33 @@ describe("GatePage", () => {
     expect(
       screen.getByRole("button", { name: "Run dry-run" }),
     ).toHaveProperty("disabled", false);
+  });
+
+  it("shows the file-default Judge template as textarea placeholder", async () => {
+    await renderPage();
+
+    const template = await screen.findByRole("textbox", {
+      name: "Prompt template (empty = built-in)",
+    });
+    expect(template).toHaveProperty(
+      "placeholder",
+      "默认模板 {claim_text} / {source_text}",
+    );
+  });
+
+  it("reports unknown placeholders in the Judge template and disables saving", async () => {
+    await renderPage();
+
+    const template = await screen.findByRole("textbox", {
+      name: "Prompt template (empty = built-in)",
+    });
+    fireEvent.change(template, {
+      target: { value: "{claim_text} {source_text} {secret}" },
+    });
+
+    expect(screen.getByText("Unknown placeholders: secret")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Save configuration" }),
+    ).toHaveProperty("disabled", true);
   });
 });

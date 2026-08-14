@@ -332,9 +332,9 @@ const GATE_COPY = {
   "gate.judge.costHint": ["开启后每次复核消耗 LLM 额度", "Enabling consumes LLM quota per review", "Включение расходует квоту LLM на каждую проверку"],
   "gate.judge.template": ["Prompt 模板（空 = 内置）", "Prompt template (empty = built-in)", "Шаблон промпта (пусто = встроенный)"],
   "gate.judge.templateHint": [
-    "必须包含 {claim_text} 与 {source_text} 两个占位符，≤2000 字符",
-    "Must contain {claim_text} and {source_text}; ≤2000 chars",
-    "Должен содержать {claim_text} и {source_text}; ≤2000 символов",
+    "占位符：{claim_text}、{source_text}（必含）、{chat_type}、{topics}、{importance}；≤2000 字符。空 = 使用文件默认模板",
+    "Placeholders: {claim_text}, {source_text} (required), {chat_type}, {topics}, {importance}; ≤2000 chars. Empty = file default template",
+    "Плейсхолдеры: {claim_text}, {source_text} (обязательны), {chat_type}, {topics}, {importance}; ≤2000 символов. Пусто = шаблон из файла",
   ],
   "gate.judge.placeholderError": [
     "模板必须包含 {claim_text} 与 {source_text}",
@@ -453,6 +453,41 @@ const GATE_COPY = {
   "gate.dryrun.quality.low": ["低", "Low", "Низкое"],
   "gate.dryrun.quality.normal": ["正常", "Normal", "Нормальное"],
   "gate.dryrun.none": ["无", "None", "Нет"],
+  "gate.help.checks": [
+    "开关拦截项：数字冲突（真实数值矛盾）、否定极性（声明与来源语义相反）、群聊主体（候选主体不属于对话成员）、低质判定（泛化词/摘要过短）。关闭后对应检查不再产生隔离原因码。",
+    "Checks intercept: numeric conflicts, negation polarity, group-subject mismatches, and low-quality summaries. Disabling a check stops it from producing quarantine reason codes.",
+    "Проверки: числовые конфликты, отрицания, тема группы и низкое качество. Отключение проверки убирает её коды причин карантина.",
+  ],
+  "gate.help.thresholds": [
+    "区间语义：支持分 = max(词元分 × 权重, 序列分 × 权重)；≥ 确定性通过分直接通过，落入 [Judge 支持分, 确定性通过分) 走 Judge 复核，低于 Judge 支持分隔离。Judge 支持分必须不大于确定性通过分。",
+    "Score ranges: support = max(token × weight, sequence × weight). At or above the deterministic pass score the candidate passes; within [judge score, deterministic score) it goes to Judge; below the judge score it is quarantined. Judge score must not exceed the deterministic pass score.",
+    "Диапазоны: поддержка = max(токены × вес, последовательность × вес). Выше детерминированного порога — пропуск, в интервале [порог Judge, детерминированный) — проверка Judge, ниже — карантин. Порог Judge не выше детерминированного.",
+  ],
+  "gate.help.wordlists": [
+    "append 模式与内置词表取并集；replace 模式完全由本列表掌控。同义替换对用于归一化同义表述后再做冲突判定。",
+    "append mode unions with built-ins; replace mode takes full control. Synonym pairs normalize equivalent wording before conflict checks.",
+    "Режим append объединяется со встроенным списком; replace полностью управляет списком. Пары синонимов нормализуют формулировки перед проверкой конфликтов.",
+  ],
+  "gate.help.disposition": [
+    "三处置与优先级：quarantine 隔离待人工复核；discard 不写库直接丢弃；mark_write 写入但默认不召回。生效优先级：规则 force_disposition > 按原因码映射（多原因码取最保守）> 默认处置。",
+    "Disposition priority: rule force_disposition > per-reason-code overrides (most conservative wins on multiple codes) > default disposition. quarantine = manual review; discard = drop without writing; mark_write = written but excluded from recall by default.",
+    "Приоритет: force_disposition правил > сопоставление по кодам причин (при нескольких — самый консервативный) > обработка по умолчанию. quarantine — ручная проверка; discard — отбросить; mark_write — записать, но не извлекать по умолчанию.",
+  ],
+  "gate.help.judge": [
+    "Judge 用于 [0.08, 0.42) 区间候选的 LLM 来源复核：开启或成本许可放行时按请求级额度执行，额度不足 fail-closed 隔离。模板占位符：{claim_text}、{source_text}（必含）、{chat_type}、{topics}、{importance}；claim/source 渲染前按 1200/2400 字符截断。",
+    "Judge runs an LLM source-verification for candidates in the [0.08, 0.42) band. It executes under request-level quota when enabled or cost-allowed; insufficient quota fails closed to quarantine. Placeholders: {claim_text}, {source_text} (required), {chat_type}, {topics}, {importance}; claim/source are truncated to 1200/2400 chars before rendering.",
+    "Judge выполняет LLM-проверку источника для кандидатов в интервале [0.08, 0.42). Работает в рамках квоты запроса; при нехватке квоты — карантин. Плейсхолдеры: {claim_text}, {source_text} (обязательны), {chat_type}, {topics}, {importance}; claim/source обрезаются до 1200/2400 символов.",
+  ],
+  "gate.help.rules": [
+    "六类动作边界：force_disposition 强制处置（allow 仅跳过忠实性与质量判定，不绕过硬校验）；importance_delta 累加后 clamp；set_importance 覆盖全部 delta；add_topics 去重追加（≤5）；set_privacy 只改隐私级别；drop_atoms 跳过原子分类但照常写文档/FTS/图。",
+    "Action bounds: force_disposition sets the disposition (allow only skips fidelity/quality checks, never hard validation); importance_delta accumulates then clamps; set_importance overrides all deltas; add_topics appends deduplicated (≤5); set_privacy only changes privacy level; drop_atoms skips atom classification while documents/FTS/graph are still written.",
+    "Действия: force_disposition задаёт обработку (allow пропускает только проверки достоверности/качества); importance_delta накапливается с clamp; set_importance переопределяет все deltas; add_topics добавляет без дублей (≤5); set_privacy меняет только уровень приватности; drop_atoms пропускает классификацию атомов.",
+  ],
+  "gate.help.dryrun": [
+    "dry-run 复用生产 evaluate：不调 LLM、不写库、不读消息窗口。可显式给 Profile 或按绑定上下文解析；仅回显解析 Profile、确定性检查、命中规则与最终处置，不回显绑定身份。",
+    "Dry-run reuses the production evaluator: no LLM calls, no writes, no message-window reads. Provide an explicit profile or resolve via binding context; the response echoes only the resolved profile, deterministic checks, matched rules, and final disposition.",
+    "Dry-run использует продакшн-оценку: без LLM, без записи, без чтения окна сообщений. Укажите профиль явно или по контексту привязки; ответ содержит только профиль, детерминированные проверки, правила и итоговую обработку.",
+  ],
 } as const satisfies Record<string, readonly [string, string, string]>;
 
 function gateLocaleCopy(index: 0 | 1 | 2): Record<string, string> {
@@ -467,12 +502,34 @@ const GATE_ZH_MAP = gateLocaleCopy(0);
 const GATE_EN_MAP = gateLocaleCopy(1);
 const GATE_RU_MAP = gateLocaleCopy(2);
 
+// Config 页 prompt_templates 区三语言文案（zh/en/ru 三元组）。
+const PROMPT_TEMPLATES_COPY = {
+  "promptTemplates.help.section": ["自定义模板优先于内置文件模板（core/prompts/）；留空 = 使用文件默认，文件缺失时回退硬编码最小提示词。", "Custom templates take priority over the built-in file templates (core/prompts/); leave empty to use the file default, with a hardcoded minimal fallback when the file is missing.", "Пользовательские шаблоны приоритетнее встроенных файлов (core/prompts/); пусто = шаблон из файла, при отсутствии файла — минимальный встроенный."],
+  "promptTemplates.help.templateHint": ["可用占位符：{conversation}（必含）、{current_date}、{chat_type}、{continuity_topics}、{interests}、{emotion_tags}、{emotional_intensity}；未知占位符保存时拒绝。", "Placeholders: {conversation} (required), {current_date}, {chat_type}, {continuity_topics}, {interests}, {emotion_tags}, {emotional_intensity}; unknown placeholders are rejected on save.", "Плейсхолдеры: {conversation} (обязателен), {current_date}, {chat_type}, {continuity_topics}, {interests}, {emotion_tags}, {emotional_intensity}; неизвестные отклоняются при сохранении."],
+  "promptTemplates.error.missingConversation": ["模板必须包含 {conversation} 占位符", "Template must contain {conversation}", "Шаблон должен содержать {conversation}"],
+  "promptTemplates.error.unknownPlaceholders": ["模板包含未知占位符：{0}", "Unknown placeholders: {0}", "Неизвестные плейсхолдеры: {0}"],
+  "promptTemplates.error.unclosedBrace": ["模板包含未闭合或多余的 {} 花括号", "Template contains unclosed or extra {} braces", "Шаблон содержит незакрытые или лишние {} скобки"],
+} as const satisfies Record<string, readonly [string, string, string]>;
+
+function promptTemplatesLocaleCopy(index: 0 | 1 | 2): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(PROMPT_TEMPLATES_COPY).map(
+      ([key, values]) => [key, values[index]] as const,
+    ),
+  );
+}
+
+const PROMPT_TEMPLATES_ZH_MAP = promptTemplatesLocaleCopy(0);
+const PROMPT_TEMPLATES_EN_MAP = promptTemplatesLocaleCopy(1);
+const PROMPT_TEMPLATES_RU_MAP = promptTemplatesLocaleCopy(2);
+
 
 // 完整 i18n 映射（zh-CN），供模拟模式与生产环境回退共用
 const I18N_MAP: Record<string, string> = {
   ...CONFIG_RUNTIME_ZH_MAP,
   ...INJECTION_ZH_MAP,
   ...GATE_ZH_MAP,
+  ...PROMPT_TEMPLATES_ZH_MAP,
   ...EVALUATION_ZH_MAP,
   ...LEARNING_ZH_MAP,
   ...RECALL_ZH_MAP,
@@ -1433,6 +1490,7 @@ const EN_MAP: Record<string, string> = {
   ...CONFIG_RUNTIME_EN_MAP,
   ...INJECTION_EN_MAP,
   ...GATE_EN_MAP,
+  ...PROMPT_TEMPLATES_EN_MAP,
   ...EVALUATION_EN_MAP,
   ...LEARNING_EN_MAP,
   ...RECALL_EN_MAP,
@@ -2270,6 +2328,7 @@ const RU_MAP: Record<string, string> = {
   ...CONFIG_RUNTIME_RU_MAP,
   ...INJECTION_RU_MAP,
   ...GATE_RU_MAP,
+  ...PROMPT_TEMPLATES_RU_MAP,
   ...EVALUATION_RU_MAP,
   ...LEARNING_RU_MAP,
   ...RECALL_RU_MAP,

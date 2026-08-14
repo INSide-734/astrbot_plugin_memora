@@ -77,6 +77,7 @@ function stateSuccess(
       instance_id: instanceId,
       changed: true,
       config,
+      prompt_defaults: { gate_judge: "", group_chat: "", private_chat: "" },
     },
   };
 }
@@ -87,7 +88,12 @@ function stateUnchanged(
 ): ConfigApiResponse<ConfigStateData> {
   return {
     status: "ok",
-    data: { revision, instance_id: instanceId, changed: false },
+    data: {
+      revision,
+      instance_id: instanceId,
+      changed: false,
+      prompt_defaults: { gate_judge: "", group_chat: "", private_chat: "" },
+    },
   };
 }
 

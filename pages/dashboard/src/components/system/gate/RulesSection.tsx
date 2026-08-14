@@ -264,6 +264,7 @@ export function RulesSection({
   return (
     <FieldSet className="rounded-lg border p-4">
       <FieldLegend>{t("gate.rules.title")}</FieldLegend>
+      <p className="text-sm text-muted-foreground">{t("gate.help.rules")}</p>
       <FieldGroup>
         {rules.length === 0 ? (
           <p className="text-sm text-muted-foreground">

@@ -10,6 +10,7 @@ import type {
 } from "@/types/config";
 
 import { createMockConfigServer } from "./configServer";
+import { MOCK_PROMPT_DEFAULTS } from "./data";
 import { handleApiGet, handleApiPost } from "./server";
 
 function successData<T>(response: ConfigApiResponse<T>): T {
@@ -99,6 +100,7 @@ describe("createMockConfigServer", () => {
       revision: initial.revision,
       instance_id: initial.instance_id,
       changed: false,
+      prompt_defaults: MOCK_PROMPT_DEFAULTS,
     });
     expect(
       (fullState(server).config.recall_engine as ConfigObject).top_k
@@ -400,6 +402,7 @@ describe("createMockConfigServer", () => {
       revision: applied.revision,
       instance_id: completed.instanceId,
       changed: false,
+      prompt_defaults: MOCK_PROMPT_DEFAULTS,
     });
   });
 
@@ -439,6 +442,7 @@ describe("mock API config routes", () => {
       revision: state.revision,
       instance_id: state.instance_id,
       changed: false,
+      prompt_defaults: MOCK_PROMPT_DEFAULTS,
     });
 
     const applied = await handleApiPost("page/config/apply", {

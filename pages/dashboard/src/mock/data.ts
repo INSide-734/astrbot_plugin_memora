@@ -690,7 +690,11 @@ export const REVIEW_ACTIONS: Record<string, ReviewAction[]> = {
 // 门禁（quality.gate）样例配置：默认 private/group 两 profile +
 // 两条默认绑定 + 一条示例规则 r1。与后端 GateConfig 默认值同构。
 // ================================================================
-import type { GateConfigData, GateProfileData } from "@/types/config";
+import type {
+  GateConfigData,
+  GateProfileData,
+  PromptDefaults,
+} from "@/types/config";
 
 function mockGateProfile(
   name: string,
@@ -758,4 +762,14 @@ export const MOCK_GATE_CONFIG: GateConfigData = {
     }),
     mockGateProfile("group"),
   ],
+};
+
+/** /config/state prompt_defaults 的 mock 默认内容（与 core/prompts 文件同源缩略）。 */
+export const MOCK_PROMPT_DEFAULTS: PromptDefaults = {
+  gate_judge:
+    '判断候选记忆是否完全由给定来源支持。只输出 JSON：{"supported": true} 或 {"supported": false}。\n候选声明：{claim_text}\n来源片段：{source_text}',
+  group_chat:
+    "# 任务说明\n请以第一人称回顾并总结以下群聊对话，生成符合你人格特色的记忆。\n\n**当前日期时间**: {current_date}\n\n# 对话历史\n{conversation}",
+  private_chat:
+    "# 任务说明\n请以第一人称回顾并总结以下私聊对话，生成符合你人格特色的记忆。\n\n**当前日期时间**: {current_date}\n\n# 对话历史\n{conversation}",
 };

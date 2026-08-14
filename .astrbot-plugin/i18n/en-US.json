@@ -272,7 +272,7 @@
         "enabled": "Enable Judge review",
         "costHint": "Enabling consumes LLM quota per review",
         "template": "Prompt template (empty = built-in)",
-        "templateHint": "Must contain {claim_text} and {source_text}; ≤2000 chars",
+        "templateHint": "Placeholders: {claim_text}, {source_text} (required), {chat_type}, {topics}, {importance}; ≤2000 chars. Empty = file default template",
         "placeholderError": "Template must contain {claim_text} and {source_text}",
         "unknownPlaceholderError": "Unknown placeholders: {0}"
       },
@@ -370,6 +370,15 @@
           "normal": "Normal"
         },
         "none": "None"
+      },
+      "help": {
+        "checks": "Checks intercept: numeric conflicts, negation polarity, group-subject mismatches, and low-quality summaries. Disabling a check stops it from producing quarantine reason codes.",
+        "thresholds": "Score ranges: support = max(token × weight, sequence × weight). At or above the deterministic pass score the candidate passes; within [judge score, deterministic score) it goes to Judge; below the judge score it is quarantined. Judge score must not exceed the deterministic pass score.",
+        "wordlists": "append mode unions with built-ins; replace mode takes full control. Synonym pairs normalize equivalent wording before conflict checks.",
+        "disposition": "Disposition priority: rule force_disposition > per-reason-code overrides (most conservative wins on multiple codes) > default disposition. quarantine = manual review; discard = drop without writing; mark_write = written but excluded from recall by default.",
+        "judge": "Judge runs an LLM source-verification for candidates in the [0.08, 0.42) band. It executes under request-level quota when enabled or cost-allowed; insufficient quota fails closed to quarantine. Placeholders: {claim_text}, {source_text} (required), {chat_type}, {topics}, {importance}; claim/source are truncated to 1200/2400 chars before rendering.",
+        "rules": "Action bounds: force_disposition sets the disposition (allow only skips fidelity/quality checks, never hard validation); importance_delta accumulates then clamps; set_importance overrides all deltas; add_topics appends deduplicated (≤5); set_privacy only changes privacy level; drop_atoms skips atom classification while documents/FTS/graph are still written.",
+        "dryrun": "Dry-run reuses the production evaluator: no LLM calls, no writes, no message-window reads. Provide an explicit profile or resolve via binding context; the response echoes only the resolved profile, deterministic checks, matched rules, and final disposition."
       }
     },
     "injection": {
@@ -1906,6 +1915,17 @@
     },
     "tags": {
       "remove": "Remove tag"
+    },
+    "promptTemplates": {
+      "help": {
+        "section": "Custom templates take priority over the built-in file templates (core/prompts/); leave empty to use the file default, with a hardcoded minimal fallback when the file is missing.",
+        "templateHint": "Placeholders: {conversation} (required), {current_date}, {chat_type}, {continuity_topics}, {interests}, {emotion_tags}, {emotional_intensity}; unknown placeholders are rejected on save."
+      },
+      "error": {
+        "missingConversation": "Template must contain {conversation}",
+        "unknownPlaceholders": "Unknown placeholders: {0}",
+        "unclosedBrace": "Template contains unclosed or extra {} braces"
+      }
     }
   }
 }

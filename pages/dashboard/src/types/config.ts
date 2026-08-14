@@ -60,9 +60,17 @@ export interface ConfigSchemaData {
   capabilities: ConfigCapabilities;
 }
 
+/** 核心提示词文件默认内容（/config/state 的 prompt_defaults 分支）。 */
+export interface PromptDefaults {
+  gate_judge: string;
+  group_chat: string;
+  private_chat: string;
+}
+
 interface ConfigStateBase {
   revision: string;
   instance_id: string;
+  prompt_defaults: PromptDefaults;
 }
 
 export interface ChangedConfigStateData extends ConfigStateBase {
@@ -171,6 +179,7 @@ export interface ConfigSyncResult {
   status: ConfigSyncStatus;
   error: ConfigSyncError | null;
   runtimeEffects: ConfigRuntimeEffects | null;
+  promptDefaults: PromptDefaults | null;
   changeField: (path: string, value: ConfigValue) => void;
   refresh: () => Promise<void>;
   apply: () => Promise<void>;

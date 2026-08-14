@@ -107,6 +107,7 @@ export function DryRunPanel({ config, disabled }: DryRunPanelProps) {
   return (
     <FieldSet className="rounded-lg border p-4">
       <FieldLegend>{t("gate.dryrun.title")}</FieldLegend>
+      <p className="text-sm text-muted-foreground">{t("gate.help.dryrun")}</p>
       <FieldGroup>
         <FieldDescription>{t("gate.dryrun.hint")}</FieldDescription>
         <div className="grid min-w-0 gap-3 sm:grid-cols-2">

@@ -237,6 +237,7 @@ export function WordListsSection({
   return (
     <FieldSet className="rounded-lg border p-4">
       <FieldLegend>{t("gate.wordlists.title")}</FieldLegend>
+      <p className="text-sm text-muted-foreground">{t("gate.help.wordlists")}</p>
       <FieldGroup>
         <ItemListEditor
           id="gate-wordlist-whitelist"

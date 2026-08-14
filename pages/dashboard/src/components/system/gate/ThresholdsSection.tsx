@@ -95,6 +95,7 @@ export function ThresholdsSection({
   return (
     <FieldSet className="rounded-lg border p-4">
       <FieldLegend>{t("gate.thresholds.title")}</FieldLegend>
+      <p className="text-sm text-muted-foreground">{t("gate.help.thresholds")}</p>
       <FieldGroup>
         <RangeRow
           id="gate-threshold-min-deterministic"

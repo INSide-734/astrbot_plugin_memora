@@ -89,6 +89,7 @@ function stateSuccess(
     instance_id: "instance-1",
     changed: true,
     config,
+    prompt_defaults: { gate_judge: "", group_chat: "", private_chat: "" },
   });
 }
 

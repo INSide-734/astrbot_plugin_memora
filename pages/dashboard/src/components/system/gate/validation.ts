@@ -64,6 +64,9 @@ const GATE_PLACEHOLDER_RE = /\{([a-z0-9_]+)\}/g;
 const GATE_ALLOWED_PLACEHOLDERS: Record<string, true> = {
   claim_text: true,
   source_text: true,
+  chat_type: true,
+  topics: true,
+  importance: true,
 };
 
 /** 会话类型选项文案 key（复用既有三语言登记）。 */

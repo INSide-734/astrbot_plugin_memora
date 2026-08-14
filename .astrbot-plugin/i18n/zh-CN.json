@@ -272,7 +272,7 @@
         "enabled": "启用 Judge 复核",
         "costHint": "开启后每次复核消耗 LLM 额度",
         "template": "Prompt 模板（空 = 内置）",
-        "templateHint": "必须包含 {claim_text} 与 {source_text} 两个占位符，≤2000 字符",
+        "templateHint": "占位符：{claim_text}、{source_text}（必含）、{chat_type}、{topics}、{importance}；≤2000 字符。空 = 使用文件默认模板",
         "placeholderError": "模板必须包含 {claim_text} 与 {source_text}",
         "unknownPlaceholderError": "模板包含未知占位符：{0}"
       },
@@ -370,6 +370,15 @@
           "normal": "正常"
         },
         "none": "无"
+      },
+      "help": {
+        "checks": "开关拦截项：数字冲突（真实数值矛盾）、否定极性（声明与来源语义相反）、群聊主体（候选主体不属于对话成员）、低质判定（泛化词/摘要过短）。关闭后对应检查不再产生隔离原因码。",
+        "thresholds": "区间语义：支持分 = max(词元分 × 权重, 序列分 × 权重)；≥ 确定性通过分直接通过，落入 [Judge 支持分, 确定性通过分) 走 Judge 复核，低于 Judge 支持分隔离。Judge 支持分必须不大于确定性通过分。",
+        "wordlists": "append 模式与内置词表取并集；replace 模式完全由本列表掌控。同义替换对用于归一化同义表述后再做冲突判定。",
+        "disposition": "三处置与优先级：quarantine 隔离待人工复核；discard 不写库直接丢弃；mark_write 写入但默认不召回。生效优先级：规则 force_disposition > 按原因码映射（多原因码取最保守）> 默认处置。",
+        "judge": "Judge 用于 [0.08, 0.42) 区间候选的 LLM 来源复核：开启或成本许可放行时按请求级额度执行，额度不足 fail-closed 隔离。模板占位符：{claim_text}、{source_text}（必含）、{chat_type}、{topics}、{importance}；claim/source 渲染前按 1200/2400 字符截断。",
+        "rules": "六类动作边界：force_disposition 强制处置（allow 仅跳过忠实性与质量判定，不绕过硬校验）；importance_delta 累加后 clamp；set_importance 覆盖全部 delta；add_topics 去重追加（≤5）；set_privacy 只改隐私级别；drop_atoms 跳过原子分类但照常写文档/FTS/图。",
+        "dryrun": "dry-run 复用生产 evaluate：不调 LLM、不写库、不读消息窗口。可显式给 Profile 或按绑定上下文解析；仅回显解析 Profile、确定性检查、命中规则与最终处置，不回显绑定身份。"
       }
     },
     "injection": {
@@ -1906,6 +1915,17 @@
     },
     "tags": {
       "remove": "移除标签"
+    },
+    "promptTemplates": {
+      "help": {
+        "section": "自定义模板优先于内置文件模板（core/prompts/）；留空 = 使用文件默认，文件缺失时回退硬编码最小提示词。",
+        "templateHint": "可用占位符：{conversation}（必含）、{current_date}、{chat_type}、{continuity_topics}、{interests}、{emotion_tags}、{emotional_intensity}；未知占位符保存时拒绝。"
+      },
+      "error": {
+        "missingConversation": "模板必须包含 {conversation} 占位符",
+        "unknownPlaceholders": "模板包含未知占位符：{0}",
+        "unclosedBrace": "模板包含未闭合或多余的 {} 花括号"
+      }
     }
   }
 }

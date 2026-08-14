@@ -382,6 +382,7 @@ export function GatePage({ showToast, onDirtyChange }: GatePageProps) {
                   profile={activeProfileData}
                   disabled={controlsDisabled}
                   onChange={changeActiveProfile}
+                  promptDefault={sync.promptDefaults?.gate_judge ?? ""}
                 />
                 <RulesSection
                   profile={activeProfileData}
