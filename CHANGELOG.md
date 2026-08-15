@@ -7,6 +7,10 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+### 修复
+
+- 修复 package-by-feature 迁移后 AstrBot 以 `data.plugins.<插件包>` 加载时，`/memora` 命令组及子命令错误归属到 `data.main` 而无法触发的问题；命令现统一注册到完整插件入口模块。
+
 ## [1.2.1] — 2026-08-15
 
 Memora 1.2.1 更新 Dashboard 与 GitHub Actions 工具链依赖，修复其间接依赖中的安全问题。
