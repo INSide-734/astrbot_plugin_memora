@@ -1,6 +1,6 @@
 """记忆读取 API"""
 
-from typing import Any
+from typing import Any, Final
 
 import aiosqlite
 from astrbot.api import logger
@@ -11,6 +11,68 @@ from ....shared.memory_status import effective_memory_status
 from ....shared.number_utils import clamp_float
 from ....shared.sql import MEMORY_STATUS_SQL
 from .response_utils import error_response
+
+# 记忆列表筛选的公共 WHERE 片段。MEMORY_STATUS_SQL 为模块级常量，
+# 在导入期组装为固定 SQL，执行点只引用预构建语句与绑定参数，
+# 不进行任何动态拼接。
+_MEMORY_LIST_WHERE_SQL: Final = f"""
+    WHERE (
+        :session_id IS NULL
+        OR CASE WHEN json_valid(metadata)
+           THEN json_extract(metadata, '$.session_id') END = :session_id
+    )
+      AND (
+        :status IS NULL
+        OR ({MEMORY_STATUS_SQL}) = :status
+      )
+      AND (
+        :include_mark_write = 1
+        OR COALESCE(
+            CASE WHEN json_valid(metadata)
+            THEN json_extract(metadata, '$.gate_disposition') END,
+            ''
+        ) <> 'mark_write'
+      )
+      AND (
+        :keyword IS NULL
+        OR (
+            :keyword_is_digit = 1
+            AND (
+                CAST(id AS TEXT) = :keyword
+                OR text LIKE :keyword_like COLLATE NOCASE
+            )
+        )
+        OR (
+            :keyword_is_digit = 0
+            AND (
+                text LIKE :keyword_like COLLATE NOCASE
+                OR COALESCE(
+                    CASE WHEN json_valid(metadata)
+                    THEN json_extract(metadata, '$.memory_type') END,
+                    ''
+                ) LIKE :keyword_like COLLATE NOCASE
+            )
+        )
+      )
+"""
+
+_MEMORY_LIST_COUNT_SQL: Final = (
+    "SELECT COUNT(*) AS total\nFROM documents" + _MEMORY_LIST_WHERE_SQL
+)
+
+_MEMORY_LIST_PAGE_SQL: Final = (
+    "SELECT id, doc_id, text, metadata, created_at, updated_at\n"
+    "FROM documents"
+    + _MEMORY_LIST_WHERE_SQL
+    + """
+    ORDER BY COALESCE(
+        CASE WHEN json_valid(metadata)
+        THEN CAST(json_extract(metadata, '$.create_time') AS REAL) END,
+        0
+    ) DESC, id DESC
+    LIMIT :limit OFFSET :offset
+    """
+)
 
 
 class MemoryReadApiMixin:
@@ -57,102 +119,14 @@ class MemoryReadApiMixin:
                 await apply_perf_pragmas(db)
                 db.row_factory = aiosqlite.Row
                 count_cursor = await db.execute(
-                    f"""
-                    SELECT COUNT(*) AS total
-                    FROM documents
-                    WHERE (
-                        :session_id IS NULL
-                        OR CASE WHEN json_valid(metadata)
-                           THEN json_extract(metadata, '$.session_id') END = :session_id
-                    )
-                      AND (
-                        :status IS NULL
-                        OR ({MEMORY_STATUS_SQL}) = :status
-                      )
-                      AND (
-                        :include_mark_write = 1
-                        OR COALESCE(
-                            CASE WHEN json_valid(metadata)
-                            THEN json_extract(metadata, '$.gate_disposition') END,
-                            ''
-                        ) <> 'mark_write'
-                      )
-                      AND (
-                        :keyword IS NULL
-                        OR (
-                            :keyword_is_digit = 1
-                            AND (
-                                CAST(id AS TEXT) = :keyword
-                                OR text LIKE :keyword_like COLLATE NOCASE
-                            )
-                        )
-                        OR (
-                            :keyword_is_digit = 0
-                            AND (
-                                text LIKE :keyword_like COLLATE NOCASE
-                                OR COALESCE(
-                                    CASE WHEN json_valid(metadata)
-                                    THEN json_extract(metadata, '$.memory_type') END,
-                                    ''
-                                ) LIKE :keyword_like COLLATE NOCASE
-                            )
-                        )
-                      )
-                    """,
+                    _MEMORY_LIST_COUNT_SQL,
                     params,
                 )
                 count_row = await count_cursor.fetchone()
                 total = int(count_row["total"]) if count_row else 0
 
                 cursor = await db.execute(
-                    f"""
-                    SELECT id, doc_id, text, metadata, created_at, updated_at
-                    FROM documents
-                    WHERE (
-                        :session_id IS NULL
-                        OR CASE WHEN json_valid(metadata)
-                           THEN json_extract(metadata, '$.session_id') END = :session_id
-                    )
-                      AND (
-                        :status IS NULL
-                        OR ({MEMORY_STATUS_SQL}) = :status
-                      )
-                      AND (
-                        :include_mark_write = 1
-                        OR COALESCE(
-                            CASE WHEN json_valid(metadata)
-                            THEN json_extract(metadata, '$.gate_disposition') END,
-                            ''
-                        ) <> 'mark_write'
-                      )
-                      AND (
-                        :keyword IS NULL
-                        OR (
-                            :keyword_is_digit = 1
-                            AND (
-                                CAST(id AS TEXT) = :keyword
-                                OR text LIKE :keyword_like COLLATE NOCASE
-                            )
-                        )
-                        OR (
-                            :keyword_is_digit = 0
-                            AND (
-                                text LIKE :keyword_like COLLATE NOCASE
-                                OR COALESCE(
-                                    CASE WHEN json_valid(metadata)
-                                    THEN json_extract(metadata, '$.memory_type') END,
-                                    ''
-                                ) LIKE :keyword_like COLLATE NOCASE
-                            )
-                        )
-                      )
-                    ORDER BY COALESCE(
-                        CASE WHEN json_valid(metadata)
-                        THEN CAST(json_extract(metadata, '$.create_time') AS REAL) END,
-                        0
-                    ) DESC, id DESC
-                    LIMIT :limit OFFSET :offset
-                    """,
+                    _MEMORY_LIST_PAGE_SQL,
                     {**params, "limit": page_size, "offset": offset},
                 )
                 rows = await cursor.fetchall()
