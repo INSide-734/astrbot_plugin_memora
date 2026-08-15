@@ -56,7 +56,7 @@ describe("UpdateNotice", () => {
       release: {
         version: "1.1.0",
         tag: "v1.1.0",
-        notes: "Fix runtime update flow",
+        notes: "## Runtime update\n\n- Fix **runtime** update flow\n\n| Scope | Status |\n| --- | --- |\n| Runtime | Fixed |\n\n[Release notes](https://example.com/releases/1.1.0)\n\n<img src=x onerror=alert(1)>",
         runtime_filename: "astrbot_plugin_memora-1.1.0-runtime.zip",
         source: "mirror",
       },
@@ -70,7 +70,13 @@ describe("UpdateNotice", () => {
 
     expect(await screen.findByText("Plugin update available")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "View update details" }));
-    expect(screen.getByText("Fix runtime update flow")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Runtime update", level: 2 })).toBeTruthy();
+    expect(screen.getByRole("listitem").textContent).toContain("Fix runtime update flow");
+    expect(screen.getByRole("cell", { name: "Fixed" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Release notes" }).getAttribute("href")).toBe(
+      "https://example.com/releases/1.1.0",
+    );
+    expect(screen.queryByRole("img")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Ignore this version" }));
 
     await waitFor(() => expect(bridge.apiPost).toHaveBeenCalledWith(
