@@ -7,7 +7,9 @@ from astrbot.api import logger
 from quart import request
 
 from ....features.memory.infrastructure.base import apply_perf_pragmas
+from ....shared.memory_status import effective_memory_status
 from ....shared.number_utils import clamp_float
+from ....shared.sql import MEMORY_STATUS_SQL
 from .response_utils import error_response
 
 
@@ -55,110 +57,98 @@ class MemoryReadApiMixin:
                 await apply_perf_pragmas(db)
                 db.row_factory = aiosqlite.Row
                 count_cursor = await db.execute(
-                    """
-                    SELECT COUNT(*) AS total
-                    FROM documents
-                    WHERE (
-                        :session_id IS NULL
-                        OR CASE WHEN json_valid(metadata)
-                           THEN json_extract(metadata, '$.session_id') END = :session_id
-                    )
-                      AND (
-                        :status IS NULL
-                        OR COALESCE(
-                            CASE WHEN json_valid(metadata)
-                            THEN json_extract(metadata, '$.status') END,
-                            'active'
-                        ) = :status
-                      )
-                      AND (
-                        :include_mark_write = 1
-                        OR COALESCE(
-                            CASE WHEN json_valid(metadata)
-                            THEN json_extract(metadata, '$.gate_disposition') END,
-                            ''
-                        ) <> 'mark_write'
-                      )
-                      AND (
-                        :keyword IS NULL
-                        OR (
-                            :keyword_is_digit = 1
-                            AND (
-                                CAST(id AS TEXT) = :keyword
-                                OR text LIKE :keyword_like COLLATE NOCASE
-                            )
-                        )
-                        OR (
-                            :keyword_is_digit = 0
-                            AND (
-                                text LIKE :keyword_like COLLATE NOCASE
-                                OR COALESCE(
-                                    CASE WHEN json_valid(metadata)
-                                    THEN json_extract(metadata, '$.memory_type') END,
-                                    ''
-                                ) LIKE :keyword_like COLLATE NOCASE
-                            )
-                        )
-                      )
-                    """,
+                    f"SELECT COUNT(*) AS total "
+                    f"FROM documents "
+                    f"WHERE ("
+                    f"    :session_id IS NULL "
+                    f"    OR CASE WHEN json_valid(metadata) "
+                    f"       THEN json_extract(metadata, '$.session_id') END = :session_id"
+                    f") "
+                    f"AND ("
+                    f"    :status IS NULL "
+                    f"    OR ({MEMORY_STATUS_SQL}) = :status"
+                    f") "
+                    f"AND ("
+                    f"    :include_mark_write = 1 "
+                    f"    OR COALESCE("
+                    f"        CASE WHEN json_valid(metadata) "
+                    f"        THEN json_extract(metadata, '$.gate_disposition') END,"
+                    f"        ''"
+                    f"    ) <> 'mark_write'"
+                    f") "
+                    f"AND ("
+                    f"    :keyword IS NULL "
+                    f"    OR ("
+                    f"        :keyword_is_digit = 1 "
+                    f"        AND ("
+                    f"            CAST(id AS TEXT) = :keyword "
+                    f"            OR text LIKE :keyword_like COLLATE NOCASE"
+                    f"        )"
+                    f"    ) "
+                    f"    OR ("
+                    f"        :keyword_is_digit = 0 "
+                    f"        AND ("
+                    f"            text LIKE :keyword_like COLLATE NOCASE "
+                    f"            OR COALESCE("
+                    f"                CASE WHEN json_valid(metadata) "
+                    f"                THEN json_extract(metadata, '$.memory_type') END,"
+                    f"                ''"
+                    f"            ) LIKE :keyword_like COLLATE NOCASE"
+                    f"        )"
+                    f"    )"
+                    f")",
                     params,
                 )
                 count_row = await count_cursor.fetchone()
                 total = int(count_row["total"]) if count_row else 0
 
                 cursor = await db.execute(
-                    """
-                    SELECT id, doc_id, text, metadata, created_at, updated_at
-                    FROM documents
-                    WHERE (
-                        :session_id IS NULL
-                        OR CASE WHEN json_valid(metadata)
-                           THEN json_extract(metadata, '$.session_id') END = :session_id
-                    )
-                      AND (
-                        :status IS NULL
-                        OR COALESCE(
-                            CASE WHEN json_valid(metadata)
-                            THEN json_extract(metadata, '$.status') END,
-                            'active'
-                        ) = :status
-                      )
-                      AND (
-                        :include_mark_write = 1
-                        OR COALESCE(
-                            CASE WHEN json_valid(metadata)
-                            THEN json_extract(metadata, '$.gate_disposition') END,
-                            ''
-                        ) <> 'mark_write'
-                      )
-                      AND (
-                        :keyword IS NULL
-                        OR (
-                            :keyword_is_digit = 1
-                            AND (
-                                CAST(id AS TEXT) = :keyword
-                                OR text LIKE :keyword_like COLLATE NOCASE
-                            )
-                        )
-                        OR (
-                            :keyword_is_digit = 0
-                            AND (
-                                text LIKE :keyword_like COLLATE NOCASE
-                                OR COALESCE(
-                                    CASE WHEN json_valid(metadata)
-                                    THEN json_extract(metadata, '$.memory_type') END,
-                                    ''
-                                ) LIKE :keyword_like COLLATE NOCASE
-                            )
-                        )
-                      )
-                    ORDER BY COALESCE(
-                        CASE WHEN json_valid(metadata)
-                        THEN CAST(json_extract(metadata, '$.create_time') AS REAL) END,
-                        0
-                    ) DESC, id DESC
-                    LIMIT :limit OFFSET :offset
-                    """,
+                    f"SELECT id, doc_id, text, metadata, created_at, updated_at "
+                    f"FROM documents "
+                    f"WHERE ("
+                    f"    :session_id IS NULL "
+                    f"    OR CASE WHEN json_valid(metadata) "
+                    f"       THEN json_extract(metadata, '$.session_id') END = :session_id"
+                    f") "
+                    f"AND ("
+                    f"    :status IS NULL "
+                    f"    OR ({MEMORY_STATUS_SQL}) = :status"
+                    f") "
+                    f"AND ("
+                    f"    :include_mark_write = 1 "
+                    f"    OR COALESCE("
+                    f"        CASE WHEN json_valid(metadata) "
+                    f"        THEN json_extract(metadata, '$.gate_disposition') END,"
+                    f"        ''"
+                    f"    ) <> 'mark_write'"
+                    f") "
+                    f"AND ("
+                    f"    :keyword IS NULL "
+                    f"    OR ("
+                    f"        :keyword_is_digit = 1 "
+                    f"        AND ("
+                    f"            CAST(id AS TEXT) = :keyword "
+                    f"            OR text LIKE :keyword_like COLLATE NOCASE"
+                    f"        )"
+                    f"    ) "
+                    f"    OR ("
+                    f"        :keyword_is_digit = 0 "
+                    f"        AND ("
+                    f"            text LIKE :keyword_like COLLATE NOCASE "
+                    f"            OR COALESCE("
+                    f"                CASE WHEN json_valid(metadata) "
+                    f"                THEN json_extract(metadata, '$.memory_type') END,"
+                    f"                ''"
+                    f"            ) LIKE :keyword_like COLLATE NOCASE"
+                    f"        )"
+                    f"    )"
+                    f") "
+                    f"ORDER BY COALESCE("
+                    f"    CASE WHEN json_valid(metadata) "
+                    f"    THEN CAST(json_extract(metadata, '$.create_time') AS REAL) END,"
+                    f"    0"
+                    f") DESC, id DESC "
+                    f"LIMIT :limit OFFSET :offset",
                     {**params, "limit": page_size, "offset": offset},
                 )
                 rows = await cursor.fetchall()
@@ -190,7 +180,7 @@ class MemoryReadApiMixin:
                     "content": row_text,
                     "summary": metadata.get("canonical_summary") or row_text,
                     "type": metadata.get("memory_type", "GENERAL"),
-                    "status": metadata.get("status", "active"),
+                    "status": effective_memory_status(metadata),
                     "importance": clamp_float(metadata.get("importance"), default=0.5),
                     "metadata": metadata,
                     "created_at": row_created_at,
@@ -255,7 +245,7 @@ class MemoryReadApiMixin:
             "metadata": metadata,
             "memory_type": metadata.get("memory_type", "GENERAL"),
             "importance": clamp_float(metadata.get("importance"), default=0.5),
-            "status": metadata.get("status", "active"),
+            "status": effective_memory_status(metadata),
             "session_id": metadata.get("session_id"),
             "persona_id": metadata.get("persona_id"),
             "key_facts": key_facts if isinstance(key_facts, list) else [],

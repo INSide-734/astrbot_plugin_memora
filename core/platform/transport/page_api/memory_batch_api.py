@@ -1,9 +1,12 @@
 """记忆批量操作 API"""
 
+import time
 from typing import Any
 
 from astrbot.api import logger
 from quart import request
+
+from ....shared.memory_status import set_memory_status
 
 
 def _coerce_importance_value(raw_value: Any) -> float:
@@ -148,6 +151,7 @@ class MemoryBatchApiMixin:
         memory_engine = ready["memory_engine"]
         updated_count = 0
         failed_ids: list[Any] = []
+        status_changed_at = time.time() if field == "status" else 0.0
         for raw_id in memory_ids:
             try:
                 memory_id = self._coerce_memory_id(raw_id)
@@ -158,10 +162,15 @@ class MemoryBatchApiMixin:
                 updates: dict[str, Any] = {}
                 if field == "status":
                     status_value = str(value).strip()
-                    if status_value not in {"active", "archived", "deleted"}:
+                    if status_value not in {"active", "dormant", "archived", "deleted"}:
                         failed_ids.append(raw_id)
                         continue
-                    updates["metadata"] = {"status": status_value}
+                    updates["metadata"] = {}
+                    set_memory_status(
+                        updates["metadata"],
+                        status_value,
+                        status_changed_at=status_changed_at,
+                    )
                 elif field == "importance":
                     try:
                         parsed = _coerce_importance_value(value)
@@ -263,6 +272,7 @@ class MemoryBatchApiMixin:
             return self._error("需要指定 field 和 value")
         if field not in ("status", "importance", "type"):
             return self._error(f"批量更新不支持字段: {field}")
+        status_changed_at = time.time() if field == "status" else 0.0
 
         updated_count = 0
         failed_ids: list[Any] = []
@@ -278,10 +288,15 @@ class MemoryBatchApiMixin:
                 updates: dict[str, Any] = {}
                 if field == "status":
                     status_value = str(value).strip()
-                    if status_value not in {"active", "archived", "deleted"}:
+                    if status_value not in {"active", "dormant", "archived", "deleted"}:
                         failed_ids.append(raw_id)
                         continue
-                    updates["metadata"] = {"status": status_value}
+                    updates["metadata"] = {}
+                    set_memory_status(
+                        updates["metadata"],
+                        status_value,
+                        status_changed_at=status_changed_at,
+                    )
                 elif field == "importance":
                     try:
                         parsed = _coerce_importance_value(value)

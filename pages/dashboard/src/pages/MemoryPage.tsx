@@ -46,6 +46,7 @@ export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: Memor
   // Init label maps with i18n
   STATUS_LABELS.all = t("filter.statusAll");
   STATUS_LABELS.active = t("filter.statusActive");
+  STATUS_LABELS.dormant = t("filter.statusDormant");
   STATUS_LABELS.archived = t("filter.statusArchived");
   STATUS_LABELS.deleted = t("filter.statusDeleted");
   EDIT_FIELD_LABELS.content = t("field.content");
@@ -193,6 +194,7 @@ export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: Memor
 
   const statusVariant = (s: string) => {
     if (s === "active") return "default";
+    if (s === "dormant") return "secondary";
     if (s === "archived") return "secondary";
     if (s === "deleted") return "destructive";
     return "default";
@@ -288,11 +290,12 @@ export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: Memor
           className="max-w-[180px]"
         />
         <Select value={statusFilter} onValueChange={(v) => { setStatusFilter(v ?? "all"); setPage(1); }}>
-          <SelectTrigger><span>{STATUS_LABELS[statusFilter] ?? statusFilter}</span></SelectTrigger>
+          <SelectTrigger aria-label={t("table.status")}><span>{STATUS_LABELS[statusFilter] ?? statusFilter}</span></SelectTrigger>
           <SelectContent>
             <SelectGroup>
               <SelectItem value="all">{t("filter.statusAll")}</SelectItem>
               <SelectItem value="active">{t("filter.statusActive")}</SelectItem>
+              <SelectItem value="dormant">{t("filter.statusDormant")}</SelectItem>
               <SelectItem value="archived">{t("filter.statusArchived")}</SelectItem>
               <SelectItem value="deleted">{t("filter.statusDeleted")}</SelectItem>
             </SelectGroup>

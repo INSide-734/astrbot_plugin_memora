@@ -286,6 +286,36 @@ async def test_atom_insert_rejects_mismatched_parent_source(
 
 
 @pytest.mark.asyncio
+async def test_atom_insert_rejects_inactive_parent_source(tmp_db_path: str) -> None:
+    """canonical 父来源进入休眠后，Atom 写入不得保留新的派生证据。"""
+
+    store = AtomStore(tmp_db_path)
+    await store.initialize()
+    await _create_document(tmp_db_path)
+    async with aiosqlite.connect(tmp_db_path) as db:
+        await db.execute(
+            "UPDATE documents SET metadata=? WHERE id=?",
+            (
+                json.dumps(
+                    {
+                        "scope_key": "private:user-a",
+                        "privacy_level": "confidential",
+                        "memory_status": "dormant",
+                        "status": "dormant",
+                    },
+                    ensure_ascii=False,
+                ),
+                17,
+            ),
+        )
+        await db.commit()
+
+    with pytest.raises(ValueError, match="source_inactive"):
+        await store.insert(_source_bound_atom())
+    assert await store.count_atoms() == 0
+
+
+@pytest.mark.asyncio
 async def test_atom_insert_many_is_atomic_on_parent_source_failure(
     tmp_db_path: str,
 ) -> None:

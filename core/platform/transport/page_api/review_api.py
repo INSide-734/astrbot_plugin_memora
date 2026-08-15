@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import time
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from ....features.learning.domain.models import FeedbackOutcome
 from ....features.memory.infrastructure.base import apply_perf_pragmas
 from ....features.quality import ReviewAction, ReviewDetector, ReviewStore
 from ....features.quality.domain.models import ReviewStatus
+from ....shared.memory_status import set_memory_status
 
 _ACTION_STATUS = {
     "approve": ReviewStatus.APPROVED.value,
@@ -308,10 +310,18 @@ class ReviewApiMixin:
         ).strip()
         if not target_memory_id:
             raise ValueError("target_memory_id required")
+        if self._canonical_memory_id(target_memory_id) == self._canonical_memory_id(
+            source_memory_id
+        ):
+            raise ValueError("source and target memory must differ")
         source = await self._get_engine_memory(memory_engine, source_memory_id)
         target = await self._get_engine_memory(memory_engine, target_memory_id)
         if source is None or target is None:
             raise ValueError("source or target memory not found")
+        source_id = self._canonical_memory_id(self._memory_id(source))
+        target_id = self._canonical_memory_id(self._memory_id(target))
+        if source_id is not None and source_id == target_id:
+            raise ValueError("source and target memory must differ")
 
         target_content = self._memory_content(target)
         source_content = self._memory_content(source)
@@ -457,10 +467,21 @@ class ReviewApiMixin:
         return self._find_replacement_in_memory_items(rows, old_memory_id, new_content)
 
     async def _archive_memory(self, memory_engine: Any, memory_id: str) -> None:
+        """将审核归档动作同步写入生命周期状态及兼容字段。
+
+        参数：
+            memory_engine: 提供记忆更新能力的 canonical 引擎。
+            memory_id: 需要归档的 canonical memory ID。
+
+        异常：
+            ValueError: 引擎未成功持久化归档状态时抛出。
+        """
+        metadata: dict[str, Any] = {}
+        set_memory_status(metadata, "archived", status_changed_at=time.time())
         result = await self._update_memory(
             memory_engine,
             memory_id,
-            {"metadata": {"status": "archived"}},
+            {"metadata": metadata},
         )
         if result is False:
             raise ValueError("memory archive failed")
@@ -539,6 +560,7 @@ class ReviewApiMixin:
         memory_engine: Any,
         limit: int,
     ) -> list[dict[str, Any]]:
+        """读取用于审核检测的有限 canonical memory 列表。"""
         list_memories = getattr(memory_engine, "list_memories", None)
         if callable(list_memories):
             try:
@@ -680,6 +702,27 @@ class ReviewApiMixin:
         else:
             raw = getattr(memory, "id", getattr(memory, "memory_id", None))
         return None if raw is None else str(raw)
+
+    @staticmethod
+    def _canonical_memory_id(memory_id: Any) -> str | None:
+        """将 ASCII 十进制 canonical memory ID 归一为无前导零文本。
+
+        参数：
+            memory_id: Page API 输入或 MemoryEngine 返回的记忆标识。
+
+        返回：
+            空值返回 ``None``；ASCII 十进制整数移除前导零，其他标识保持原文本，
+            以兼容尚未迁移的非整数测试替身。
+        """
+
+        if memory_id is None or isinstance(memory_id, bool):
+            return None
+        raw = str(memory_id).strip()
+        if not raw:
+            return None
+        if raw.isascii() and raw.isdecimal():
+            return raw.lstrip("0") or "0"
+        return raw
 
     @staticmethod
     def _memory_metadata(memory: Any) -> dict[str, Any] | None:

@@ -51,6 +51,7 @@ interface RecentSession {
 interface PreviewStats {
   total_memories: number;
   active_count: number;
+  dormant_count: number;
   archived_count: number;
   deleted_count: number;
   graph_nodes: number;
@@ -90,6 +91,7 @@ function normalizeStats(raw: Record<string, unknown>): PreviewStats {
   return {
     total_memories: numberValue(raw.total_memories),
     active_count: numberValue(raw.active_count ?? status.active),
+    dormant_count: numberValue(raw.dormant_count ?? status.dormant),
     archived_count: numberValue(raw.archived_count ?? status.archived),
     deleted_count: numberValue(raw.deleted_count ?? status.deleted),
     graph_nodes: numberValue(raw.graph_nodes),
@@ -238,6 +240,15 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
     name: `${index}-${index + 1}`,
     count: stats?.importance_distribution[`${index}-${index + 1}`] ?? 0,
   }));
+  const statusItems = [
+    { name: t("preview.active"), count: stats?.active_count ?? 0, colorClass: "bg-primary" },
+    { name: t("preview.dormant"), count: stats?.dormant_count ?? 0, colorClass: "bg-muted-foreground" },
+    { name: t("preview.archived"), count: stats?.archived_count ?? 0, colorClass: "bg-accent-success" },
+    { name: t("preview.deleted"), count: stats?.deleted_count ?? 0, colorClass: "bg-accent-danger" },
+    ...(stats?.status_breakdown.unknown
+      ? [{ name: t("preview.unknown"), count: stats.status_breakdown.unknown, colorClass: "bg-[var(--color-warning)]" }]
+      : []),
+  ];
   const quickLinks: Array<[string, string, LucideIcon]> = [
     ["graph", t("nav.graph"), GitGraph],
     ["memory", t("nav.memory"), ScrollText],
@@ -369,11 +380,7 @@ export function PreviewPage({ showToast }: PreviewPageProps) {
               <Card data-slot="composition-panel" className="min-w-0">
                 <CardHeader><CardTitle><h2>{t("preview.composition")}</h2></CardTitle></CardHeader>
                 <CardContent className="space-y-5">
-                  <section className="space-y-2"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.statusComposition")}</h3><StatusComposition ariaLabel={t("preview.statusChartLabel")} locale={locale} items={[
-                    { name: t("preview.active"), count: stats.active_count, colorClass: "bg-primary" },
-                    { name: t("preview.archived"), count: stats.archived_count, colorClass: "bg-accent-success" },
-                    { name: t("preview.deleted"), count: stats.deleted_count, colorClass: "bg-accent-danger" },
-                  ]} /></section>
+                  <section className="space-y-2"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.statusComposition")}</h3><StatusComposition ariaLabel={t("preview.statusChartLabel")} locale={locale} items={statusItems} /></section>
                   <section className="space-y-2 border-t pt-4"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.atomTypes")}</h3>{atomTypes.length > 0 ? <RankedBars items={atomTypes} ariaLabel={t("preview.atomChartLabel")} locale={locale} /> : <p className="text-xs text-muted-foreground">{t("preview.noAtomData")}</p>}</section>
                   <section className="space-y-2 border-t pt-4"><h3 className="text-xs font-medium text-muted-foreground">{t("preview.importanceDistribution")}</h3><ImportanceDistribution items={importanceItems} ariaLabel={t("preview.importanceChartLabel")} valueLabel={t("preview.memories")} /></section>
                 </CardContent>

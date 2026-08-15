@@ -60,6 +60,7 @@ const ACTIVE_RESTORE_STATUSES = new Set([
 interface SystemStats {
   total_memories?: number;
   active_count?: number;
+  dormant_count?: number;
   archived_count?: number;
   deleted_count?: number;
   graph_nodes?: number;
@@ -655,9 +656,9 @@ export function SystemPage({ showToast }: SystemPageProps) {
         {loading && !stats && <p className="text-center text-sm text-[var(--text-tertiary)]">{t("table.loading")}</p>}
 
         {/* Stat Cards */}
-        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-7">
           {[{ label: t("system.chartTotal"), value: s.total_memories }, { label: t("system.chartActive"), value: s.active_count },
-            { label: t("system.chartArchived"), value: s.archived_count }, { label: t("system.chartDeleted"), value: s.deleted_count },
+            { label: t("system.chartDormant"), value: s.dormant_count }, { label: t("system.chartArchived"), value: s.archived_count }, { label: t("system.chartDeleted"), value: s.deleted_count },
             { label: t("system.chartGraphNodes"), value: s.graph_nodes }, { label: t("system.chartAtoms"), value: s.atom_count }].map((item) => (
               <div key={item.label} className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
               <div className="text-2xl font-bold tabular-nums text-[var(--text-primary)]">{item.value ?? "--"}</div>

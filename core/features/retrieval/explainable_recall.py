@@ -8,6 +8,7 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
+from ...shared.memory_status import effective_memory_status
 from ..injection import InjectionRoutingConfig, InjectionStrategyRouter, RequestSignals
 from .trace_models import (
     FilteredCandidate,
@@ -22,8 +23,6 @@ from .trace_store import RecallTraceStore
 _ALLOWED_RESULT_METADATA_KEYS = {
     "memory_type",
     "importance",
-    "status",
-    "memory_status",
     "source_type",
 }
 
@@ -297,13 +296,14 @@ def _score_contributions(trace_entry: Mapping[str, Any]) -> list[ScoreContributi
 
 
 def _sanitize_result_metadata(result: Any) -> dict[str, Any]:
-    """在内部模型阶段只复制明确允许的标量 metadata。"""
+    """在内部模型阶段只复制允许标量与生效生命周期状态。"""
     source_metadata = _result_metadata(result)
     sanitized: dict[str, Any] = {}
     for key in _ALLOWED_RESULT_METADATA_KEYS:
         value = source_metadata.get(key)
         if isinstance(value, (str, int, float, bool)):
             sanitized[key] = value
+    sanitized["status"] = effective_memory_status(source_metadata)
     return sanitized
 
 

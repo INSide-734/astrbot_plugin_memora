@@ -8,6 +8,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ....shared.memory_status import is_memory_active
 from ...observability.application.memory_write_timing import (
     measure_memory_write_stage,
 )
@@ -29,7 +30,10 @@ class MemoryEngineEvolutionHooksMixin:
         if store is None:
             return
         try:
-            sources = await store.load_sources((int(memory_id),))
+            sources = await store.load_sources(
+                (int(memory_id),),
+                active_only=False,
+            )
             if not sources:
                 return
             await store.invalidate_for_source_revision(
@@ -79,6 +83,16 @@ class MemoryEngineEvolutionHooksMixin:
                         stage="evolution_schedule",
                         status="skipped",
                         reason_code="evolution_gate_mark_write",
+                        task_type="evolution",
+                    )
+                    return
+                if not is_memory_active(metadata):
+                    report_debug_event(
+                        "storage_task",
+                        component="memory_engine",
+                        stage="evolution_schedule",
+                        status="skipped",
+                        reason_code="evolution_source_inactive",
                         task_type="evolution",
                     )
                     return

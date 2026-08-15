@@ -16,6 +16,7 @@ from ....shared.adapter_capabilities import (
     AdapterCapabilityContract,
     AdapterKind,
 )
+from ....shared.memory_status import is_memory_active
 from ....shared.temporal import (
     infer_time_precision,
     parse_datetime,
@@ -264,8 +265,16 @@ class MemoryEvolutionStore(
         memory_ids: Iterable[int],
         *,
         max_content_chars: int = 4_000,
+        active_only: bool = True,
     ) -> list[MemorySourceRef]:
-        """从 canonical documents 读取有限 source 快照，不修改证据平面。"""
+        """从 canonical documents 读取有限 source 快照，不修改证据平面。
+
+        参数:
+            memory_ids: 需要读取的 canonical 整数 ID。
+            max_content_chars: 单个 source 正文的上限字符数。
+            active_only: 为真时跳过休眠、归档、删除等非活跃来源；revision
+                失效路径需要读取非活跃来源的当前 revision 时显式传 ``False``。
+        """
         ids = tuple(dict.fromkeys(int(memory_id) for memory_id in memory_ids))
         if not ids:
             return []
@@ -278,6 +287,8 @@ class MemoryEvolutionStore(
         sources_by_id: dict[int, MemorySourceRef] = {}
         for row in rows:
             metadata = _metadata_dict(row.get("metadata"))
+            if active_only and not is_memory_active(metadata):
+                continue
             revision_token = str(
                 row.get("updated_at") or row.get("created_at") or ""
             ).strip()

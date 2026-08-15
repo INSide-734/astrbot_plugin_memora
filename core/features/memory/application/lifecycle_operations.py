@@ -15,6 +15,7 @@ import time
 
 from astrbot.api import logger
 
+from ....shared.memory_status import effective_memory_status, set_memory_status
 from ....shared.number_utils import clamp_float, safe_float
 from ...decay.application.operations import _normalize_batch_metadata
 from .write_coordinator import ConnectionRegistry, check_db_alive, is_connection_fatal
@@ -86,7 +87,7 @@ class LifecycleOperationsMixin:
                     doc_importance = clamp_float(
                         metadata.get("importance"), default=0.5
                     )
-                    mem_status = metadata.get("memory_status", "active")
+                    mem_status = effective_memory_status(metadata)
                     status_changed_at = safe_float(
                         metadata.get("status_changed_at"), create_time
                     )
@@ -135,7 +136,7 @@ class LifecycleOperationsMixin:
     async def _batch_update_status(
         self, memory_ids: list[int], new_status: str, timestamp: float
     ) -> int:
-        """批量更新 memory_status，并应用情感衰减。"""
+        """批量同步更新生命周期状态和兼容字段，并应用情感衰减。"""
         if not memory_ids or self._db is None:
             return 0
 
@@ -154,8 +155,11 @@ class LifecycleOperationsMixin:
                 )
                 if not isinstance(metadata, dict):
                     metadata = {}
-                metadata["memory_status"] = new_status
-                metadata["status_changed_at"] = timestamp
+                set_memory_status(
+                    metadata,
+                    new_status,
+                    status_changed_at=timestamp,
+                )
 
                 if new_status == "dormant":
                     if "emotion_tags" in metadata:
@@ -168,8 +172,8 @@ class LifecycleOperationsMixin:
                     metadata["emotional_intensity"] = 0.0
 
                 await self._db.execute(
-                    "UPDATE documents SET metadata = ? WHERE id = ?",
-                    (json.dumps(metadata, ensure_ascii=False), mem_id),
+                    "UPDATE documents SET metadata = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(metadata, ensure_ascii=False), timestamp, mem_id),
                 )
                 updated += 1
             except asyncio.CancelledError:
@@ -178,6 +182,8 @@ class LifecycleOperationsMixin:
                 logger.debug(f"[维护] 状态更新失败 (id={mem_id})", exc_info=True)
         if updated:
             await self._db.commit()
+            if self._invalidate_cache:
+                self._invalidate_cache()
         return updated
 
     async def migrate_session_if_needed(self, unified_msg_origin: str) -> None:

@@ -59,9 +59,9 @@ describe("SystemPage", () => {
         return Promise.resolve(ok({
           total_memories: 12,
           active_count: 8,
+          dormant_count: 2,
           archived_count: 3,
           deleted_count: 1,
-          graph_nodes: 7,
           atom_count: 10,
           importance_distribution: { "1": 2, "2": 5 },
           atom_types: { FACTUAL: 4, vendor_type: 6 },
@@ -163,6 +163,8 @@ describe("SystemPage", () => {
     });
 
     expect(await screen.findByText("12")).toBeTruthy();
+    const dormantStatusCard = screen.getByText("Dormant").parentElement;
+    expect(dormantStatusCard?.textContent).toContain("2");
     expect(screen.getByText("Runtime Observability")).toBeTruthy();
     expect(screen.getByText("Recall p95")).toBeTruthy();
     expect(screen.getByText("123.4 ms")).toBeTruthy();

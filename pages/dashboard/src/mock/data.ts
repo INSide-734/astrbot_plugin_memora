@@ -91,7 +91,7 @@ export const INJECTION_DECISIONS: InjectionDecisionDetail[] = Array.from(
 export const MEMORIES = Array.from({ length: 42 }, (_, i) => {
   const id = `mem_${String(i + 1).padStart(4, "0")}`;
   const types = ["episodic", "factual", "preference", "relational", "planned"] as const;
-  const statuses = ["active", "active", "active", "active", "archived", "active", "active", "deleted"] as const;
+  const statuses = ["active", "active", "active", "active", "dormant", "archived", "active", "deleted"] as const;
   const summaries = [
     "用户喜欢在周末去咖啡馆工作，偏好安静的角落位置",
     "讨论了 Python 异步编程的最佳实践，用户对 asyncio 有深入理解",

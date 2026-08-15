@@ -57,6 +57,7 @@ class MemoryEvolutionManager(
     )
     _SOURCE_INVALIDATION_REASONS = frozenset(
         {
+            "source_inactive",
             "source_memory_not_found",
             "source_privacy_mismatch",
             "source_revision_mismatch",

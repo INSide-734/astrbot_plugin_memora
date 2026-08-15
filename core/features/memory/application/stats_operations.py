@@ -21,6 +21,7 @@ from typing import Any, Iterable
 
 from astrbot.api import logger
 
+from ....shared.memory_status import effective_memory_status
 from ....shared.number_utils import clamp_float, safe_float
 from ....shared.sql import (
     MEMORY_FTS_OPTIMIZE_SQL,
@@ -177,7 +178,13 @@ class StatsOperationsMixin:
             stats: dict[str, Any] = {"total_memories": total_count}
 
             session_counts: dict[str, int] = {}
-            status_breakdown = {"active": 0, "archived": 0, "deleted": 0}
+            status_breakdown = {
+                "active": 0,
+                "dormant": 0,
+                "archived": 0,
+                "deleted": 0,
+                "unknown": 0,
+            }
             importance_sum = 0.0
             importance_count = 0
             importance_distribution = {
@@ -223,11 +230,8 @@ class StatsOperationsMixin:
                             session_counts.get(session_id, 0) + 1
                         )
 
-                    status = metadata.get("status", "active")
-                    if status in status_breakdown:
-                        status_breakdown[status] += 1
-                    else:
-                        status_breakdown["active"] += 1
+                    status = effective_memory_status(metadata)
+                    status_breakdown[status] = status_breakdown.get(status, 0) + 1
 
                     importance = metadata.get("importance")
                     if importance is not None:
@@ -289,7 +293,13 @@ class StatsOperationsMixin:
             return {
                 "total_memories": 0,
                 "sessions": {},
-                "status_breakdown": {"active": 0, "archived": 0, "deleted": 0},
+                "status_breakdown": {
+                    "active": 0,
+                    "dormant": 0,
+                    "archived": 0,
+                    "deleted": 0,
+                    "unknown": 0,
+                },
                 "avg_importance": 0.0,
                 "oldest_memory": None,
                 "newest_memory": None,

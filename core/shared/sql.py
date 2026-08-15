@@ -17,6 +17,65 @@ DOCUMENTS_TABLE: Final = "documents"
 MEMORY_FTS_TABLE: Final = "memora_memories_fts"
 SOCIAL_RELATIONS_TABLE: Final = "social_relations"
 
+# canonical memory 生命周期状态按 memory_status → status → active 的兼容优先级解析。
+# Python json.loads() 对重复对象键保留最后一个值；SQLite json_extract() 会返回第一个。
+# 因此顶层字段通过 json_each() 的 JSON 顺序 ID 读取最后一个同名键，以避免
+# 页面 SQL 筛选与 Python 领域判断产生不同状态。仅接受文本字段，并与
+# effective_memory_status() 一样剔除 ASCII 空白、折叠为小写；旧版
+# current/stable 统一归一为 active。状态字段存在但均不合法时返回 unknown，
+# 因此读取方可以 fail-closed。所有 JSON 函数仅在 json_valid() 为真时执行。
+MEMORY_STATUS_SQL: Final = """
+    CASE WHEN json_valid(metadata) THEN
+        COALESCE(
+            CASE WHEN (
+                SELECT type FROM json_each(metadata)
+                WHERE key = 'memory_status' ORDER BY id DESC LIMIT 1
+            ) = 'text' THEN
+                CASE LOWER(TRIM(
+                    (
+                        SELECT value FROM json_each(metadata)
+                        WHERE key = 'memory_status' ORDER BY id DESC LIMIT 1
+                    ),
+                    char(9) || char(10) || char(11) || char(12) || char(13) || ' '
+                ))
+                    WHEN 'current' THEN 'active'
+                    WHEN 'stable' THEN 'active'
+                    WHEN 'active' THEN 'active'
+                    WHEN 'dormant' THEN 'dormant'
+                    WHEN 'archived' THEN 'archived'
+                    WHEN 'deleted' THEN 'deleted'
+                END
+            END,
+            CASE WHEN (
+                SELECT type FROM json_each(metadata)
+                WHERE key = 'status' ORDER BY id DESC LIMIT 1
+            ) = 'text' THEN
+                CASE LOWER(TRIM(
+                    (
+                        SELECT value FROM json_each(metadata)
+                        WHERE key = 'status' ORDER BY id DESC LIMIT 1
+                    ),
+                    char(9) || char(10) || char(11) || char(12) || char(13) || ' '
+                ))
+                    WHEN 'current' THEN 'active'
+                    WHEN 'stable' THEN 'active'
+                    WHEN 'active' THEN 'active'
+                    WHEN 'dormant' THEN 'dormant'
+                    WHEN 'archived' THEN 'archived'
+                    WHEN 'deleted' THEN 'deleted'
+                END
+            END,
+            CASE
+                WHEN EXISTS(
+                    SELECT 1 FROM json_each(metadata)
+                    WHERE key IN ('memory_status', 'status')
+                ) THEN 'unknown'
+                ELSE 'active'
+            END
+        )
+    ELSE 'active' END
+"""
+
 MEMORY_FTS_CREATE_SQL: Final = """
     CREATE VIRTUAL TABLE IF NOT EXISTS memora_memories_fts
     USING fts5(
@@ -92,6 +151,7 @@ __all__ = [
     "MEMORY_FTS_SEARCH_SQL",
     "MEMORY_FTS_SELECT_DISTINCT_DOC_IDS_SQL",
     "MEMORY_FTS_TABLE",
+    "MEMORY_STATUS_SQL",
     "SOCIAL_RELATIONS_TABLE",
     "apply_perf_pragmas",
 ]

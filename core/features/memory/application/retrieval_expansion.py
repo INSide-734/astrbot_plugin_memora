@@ -6,10 +6,12 @@ import asyncio
 import json
 import time
 from collections import Counter
+from collections.abc import Mapping
 from typing import Any
 
 from astrbot.api import logger
 
+from ....shared.memory_status import is_memory_recallable
 from ....shared.number_utils import safe_float
 from ....shared.temporal import canonical_visible_at
 from ...retrieval.rrf_fusion import HybridResult
@@ -112,8 +114,14 @@ class RetrievalExpansionMixin:
                         persona_id,
                     )
                     for lr in linked_via_graph:
-                        if lr.doc_id not in seen_ids and canonical_visible_at(
-                            lr.metadata or {}, reference_time
+                        canonical_metadata = await self._load_graph_candidate_metadata(
+                            lr.doc_id
+                        )
+                        if (
+                            lr.doc_id not in seen_ids
+                            and canonical_metadata is not None
+                            and is_memory_recallable(canonical_metadata)
+                            and canonical_visible_at(canonical_metadata, reference_time)
                         ):
                             lr.final_score *= hop_multiplier
                             seen_ids.add(lr.doc_id)
@@ -144,8 +152,10 @@ class RetrievalExpansionMixin:
                     reference_time=reference_time,
                 )
                 for lr in linked:
-                    if lr.doc_id not in seen_ids and canonical_visible_at(
-                        lr.metadata or {}, reference_time
+                    if (
+                        lr.doc_id not in seen_ids
+                        and is_memory_recallable(lr.metadata or {})
+                        and canonical_visible_at(lr.metadata or {}, reference_time)
                     ):
                         lr.final_score *= hop_multiplier
                         seen_ids.add(lr.doc_id)
@@ -167,6 +177,26 @@ class RetrievalExpansionMixin:
                 f"{len(chained)} 多跳扩展 (max_hops={hops}, decay={decay})"
             )
         return combined
+
+    async def _load_graph_candidate_metadata(
+        self, memory_id: int
+    ) -> dict[str, Any] | None:
+        """从 canonical 存储读取图扩展候选的生命周期 metadata。
+
+        图条目是可重建派生产物，不携带权威生命周期状态；无法重读 canonical
+        记录时 fail-closed，避免休眠、归档或已删除记忆被图路径重新引入。
+        """
+        if self._get_memory is None:
+            return None
+        try:
+            memory = await self._get_memory(memory_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+        if not isinstance(memory, Mapping):
+            return None
+        return _safe_json(memory.get("metadata"))
 
     async def _expand_via_graph_edges(
         self,
@@ -324,4 +354,5 @@ class RetrievalExpansionMixin:
     _config: dict[str, Any]
     _db: Any
     _search_memories: Any
+    _get_memory: Any
     _trigger_registry: dict[str, int]

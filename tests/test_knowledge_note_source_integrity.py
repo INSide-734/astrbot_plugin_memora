@@ -116,6 +116,63 @@ async def test_knowledge_derived_round_trip_and_stale_filter(tmp_db_path: str) -
 
 
 @pytest.mark.asyncio
+async def test_knowledge_derived_source_must_remain_active(tmp_db_path: str) -> None:
+    """休眠 canonical source 不得写入或继续暴露派生知识。"""
+    store = KnowledgeStore(tmp_db_path)
+    await store.init_table()
+    await _create_sources(tmp_db_path, 17)
+    entry = KnowledgeEntry(
+        title="可失效知识",
+        content="来源状态会影响可见性",
+        category=KnowledgeType.FACT,
+        origin=DomainObjectOrigin.DERIVED,
+        provenance=_provenance(17),
+    )
+    entry_id = await store.insert(entry)
+    async with aiosqlite.connect(tmp_db_path) as db:
+        await db.execute(
+            "UPDATE documents SET metadata = ?, updated_at = ? WHERE id = ?",
+            (
+                json.dumps(
+                    {
+                        "scope_key": "private:user-a",
+                        "privacy_level": "confidential",
+                        "memory_status": "dormant",
+                        "status": "dormant",
+                    },
+                    ensure_ascii=False,
+                ),
+                "rev-18",
+                17,
+            ),
+        )
+        await db.commit()
+
+    assert await store.get(entry_id) is None
+    with pytest.raises(ValueError, match="source_inactive"):
+        await store.insert(
+            KnowledgeEntry(
+                title="不可写入知识",
+                content="休眠来源不得创建派生知识",
+                category=KnowledgeType.FACT,
+                origin=DomainObjectOrigin.DERIVED,
+                provenance=DomainProvenance(
+                    DomainObjectOrigin.DERIVED,
+                    (
+                        MemorySourceRef(
+                            17,
+                            "rev-18",
+                            "private:user-a",
+                            "confidential",
+                            datetime(2026, 7, 21, tzinfo=timezone.utc),
+                        ),
+                    ),
+                ),
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_knowledge_supporting_source_removal_preserves_primary(
     tmp_db_path: str,
 ) -> None:
