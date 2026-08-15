@@ -7,6 +7,18 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+## [1.2.3] — 2026-08-16
+
+Memora 1.2.3 修复旧配置中的类人格式化模式迁移，并补充生命周期配置文档说明。
+
+### 修复
+
+- 修复 `human_like_memory.human_like_formatter_mode` 为早期文档宣传过但从未实现的 `llm` 值时配置验证失败并整节按分支降级的问题；旧值现自动迁移为 `rule`，同节其它用户设置不再丢失。
+
+### 文档
+
+- 补充类人格式化模式的合法值与旧 `llm` 配置迁移说明。
+
 ## [1.2.2] — 2026-08-16
 
 Memora 1.2.2 统一 canonical memory 生命周期状态解析并阻断 inactive 来源进入派生读写链，协调 Memory Evolution 派生 SQLite 写入，修复 AstrBot 插件命令注册归属。

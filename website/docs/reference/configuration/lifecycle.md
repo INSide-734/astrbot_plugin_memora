@@ -29,7 +29,7 @@ pageClass: config-reference-page
 | `"human_like_memory.recency_bump_enabled"` | `"bool"` | `true` | - | 近因爆发效应<br><small>0-7天记忆获得1.5倍近因加成，模拟人类近期记忆更鲜明的特点</small> |
 | `"human_like_memory.seasonal_recall_enabled"` | `"bool"` | `true` | - | 季节性召回<br><small>周年/季节性时间点附近的相关记忆获得检索加成</small> |
 | `"human_like_memory.emotion_scoring_mode"` | `"string"` | `"enhanced"` | 可选：`"enhanced"` / `"basic"` / `"disabled"` | 情感加权模式<br><small>enhanced: Jaccard+情绪一致性+强度三维计分; basic: 简单标签重叠; disabled: 关闭情感加权</small> |
-| `"human_like_memory.human_like_formatter_mode"` | `"string"` | `"rule"` | 可选：`"rule"` / `"disabled"` | 类人格式化模式<br><small>rule: 基于规则生成自然语言记忆片段; disabled: 仅返回结构化原始结果。当前没有未经评测的 LLM 格式化模式。</small> |
+| `"human_like_memory.human_like_formatter_mode"` | `"string"` | `"rule"` | 可选：`"rule"` / `"disabled"` | 类人格式化模式<br><small>rule: 基于规则生成自然语言记忆片段; disabled: 仅返回结构化原始结果。当前没有未经评测的 LLM 格式化模式；旧配置中的 `llm` 值会自动迁移为 `rule`。</small> |
 | `"human_like_memory.type_aware_decay_enabled"` | `"bool"` | `true` | - | 类型感知衰减<br><small>不同记忆类型以不同速度衰减: EPISODIC 1.5倍速/ FACTUAL 0.5倍速/ PREFERENCE 0.7倍速/ RELATIONAL 0.6倍速</small> |
 
 ## 记忆演化

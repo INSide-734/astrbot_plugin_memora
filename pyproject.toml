@@ -1,6 +1,6 @@
 [project]
 name = "astrbot-plugin-memora"
-version = "1.2.2"
+version = "1.2.3"
 description = "为 AstrBot 提供完整记忆生命周期的长期记忆插件"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

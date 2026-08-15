@@ -245,7 +245,7 @@ wheels = [
 
 [[package]]
 name = "astrbot-plugin-memora"
-version = "1.2.2"
+version = "1.2.3"
 source = { virtual = "." }
 dependencies = [
     { name = "aiofiles" },
