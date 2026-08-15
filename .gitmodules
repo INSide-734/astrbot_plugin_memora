@@ -1,0 +1,6 @@
+[submodule "tests"]
+	path = tests
+	url = https://github.com/INSide-734/astrbot_plugin_memora-tests.git
+[submodule "pages/dashboard"]
+	path = pages/dashboard
+	url = https://github.com/INSide-734/astrbot_plugin_memora-dashboard.git

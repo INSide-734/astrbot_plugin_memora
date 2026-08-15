@@ -291,26 +291,87 @@ def _list_source_files(repo_root: Path) -> list[Path]:
     return paths
 
 
+def _list_worktree_gitlinks(repo_root: Path) -> list[Path]:
+    """列出当前索引中的子模块路径。"""
+
+    try:
+        completed = subprocess.run(
+            ["git", "ls-files", "--stage", "-z"],
+            cwd=repo_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PackageError(f"无法读取 Git 子模块索引：{repo_root}") from exc
+
+    gitlinks: list[Path] = []
+    for entry in completed.stdout.split(b"\0"):
+        if not entry:
+            continue
+        try:
+            metadata, raw_path = entry.split(b"\t", maxsplit=1)
+            mode = metadata.split(maxsplit=1)[0]
+        except ValueError as exc:
+            raise PackageError("Git 子模块索引格式无效") from exc
+        if mode == b"160000":
+            gitlinks.append(_safe_tar_relative(os.fsdecode(raw_path)))
+    return gitlinks
+
+
+def _copy_worktree_tree(
+    repo_root: Path,
+    staging_root: Path,
+    package_name: str,
+    output_dir: Path,
+    relative_prefix: Path,
+    source_root: Path,
+) -> None:
+    """复制一个仓库工作树，并递归复制其已初始化子模块。"""
+
+    for relative in sorted(_list_source_files(repo_root)):
+        target_relative = relative_prefix / relative
+        if _is_source_excluded(target_relative, output_dir, source_root):
+            continue
+        source = repo_root / relative
+        if source.is_symlink() or not source.is_file():
+            continue
+        _copy_file(source, staging_root, package_name, target_relative)
+
+    for submodule_relative in _list_worktree_gitlinks(repo_root):
+        submodule_root = repo_root / submodule_relative
+        if not submodule_root.is_dir():
+            raise PackageError(
+                f"子模块未初始化：{relative_prefix / submodule_relative}"
+            )
+        _copy_worktree_tree(
+            submodule_root,
+            staging_root,
+            package_name,
+            output_dir,
+            relative_prefix / submodule_relative,
+            source_root,
+        )
+
+
 def copy_worktree_source(
     repo_root: Path,
     staging_root: Path,
     package_name: str,
     output_dir: Path,
 ) -> None:
-    """收集当前工作树中 Git 认定的源码文件，并排除本地环境与生成物。
+    """收集工作树源码，并递归收集已初始化子模块的文件。"""
 
-    文件清单来自 Git 索引与未忽略的未跟踪文件；随后再应用
-    打包级结构排除（如 .vitepress、data/storage 与输出目录）。
-    """
     repo_root = repo_root.resolve()
     output_dir = output_dir.resolve()
-    for relative in sorted(_list_source_files(repo_root)):
-        if _is_source_excluded(relative, output_dir, repo_root):
-            continue
-        source = repo_root / relative
-        if source.is_symlink() or not source.is_file():
-            continue
-        _copy_file(source, staging_root, package_name, relative)
+    _copy_worktree_tree(
+        repo_root,
+        staging_root,
+        package_name,
+        output_dir,
+        Path(),
+        repo_root,
+    )
 
 
 def _safe_tar_relative(name: str) -> Path:
@@ -322,30 +383,62 @@ def _safe_tar_relative(name: str) -> Path:
     return Path(*path.parts)
 
 
-def copy_git_source(
-    repo_root: Path,
-    staging_root: Path,
-    package_name: str,
-) -> None:
-    """从当前 Git HEAD 收集源码，不回退到工作树。"""
+def _list_gitlinks(repo_root: Path, ref: str) -> list[tuple[Path, str]]:
+    """列出指定提交树中的子模块路径及其固定提交。"""
 
     try:
         completed = subprocess.run(
-            ["git", "archive", "--format=tar", "HEAD"],
+            ["git", "ls-tree", "-rz", ref],
             cwd=repo_root,
             check=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
     except (OSError, subprocess.CalledProcessError) as exc:
-        raise PackageError("无法从当前 Git HEAD 生成源码包") from exc
+        raise PackageError(f"无法读取 Git 子模块索引：{repo_root}") from exc
+
+    gitlinks: list[tuple[Path, str]] = []
+    for entry in completed.stdout.split(b"\0"):
+        if not entry:
+            continue
+        try:
+            metadata, raw_path = entry.split(b"\t", maxsplit=1)
+            mode, object_type, object_id = metadata.split(maxsplit=2)
+        except ValueError as exc:
+            raise PackageError("Git 子模块索引格式无效") from exc
+        if mode != b"160000" or object_type != b"commit":
+            continue
+        gitlinks.append((_safe_tar_relative(os.fsdecode(raw_path)), object_id.decode()))
+    return gitlinks
+
+
+def _copy_git_archive(
+    repo_root: Path,
+    ref: str,
+    staging_root: Path,
+    package_name: str,
+    relative_prefix: Path,
+    source_root: Path,
+) -> None:
+    """归档指定提交及其已初始化子模块到源码包暂存目录。"""
+
+    try:
+        completed = subprocess.run(
+            ["git", "archive", "--format=tar", ref],
+            cwd=repo_root,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise PackageError(f"无法归档 Git 提交：{repo_root}@{ref}") from exc
 
     with tarfile.open(fileobj=io.BytesIO(completed.stdout), mode="r:") as archive:
         for member in archive.getmembers():
             if not member.isfile():
                 continue
-            relative = _safe_tar_relative(member.name)
-            if _is_source_excluded(relative, repo_root / "dist", repo_root):
+            relative = relative_prefix / _safe_tar_relative(member.name)
+            if _is_source_excluded(relative, source_root / "dist", source_root):
                 continue
             source = archive.extractfile(member)
             if source is None:
@@ -354,9 +447,42 @@ def copy_git_source(
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(source.read())
 
+    for submodule_relative, submodule_ref in _list_gitlinks(repo_root, ref):
+        submodule_root = repo_root / submodule_relative
+        if not submodule_root.is_dir():
+            raise PackageError(
+                f"子模块未初始化：{relative_prefix / submodule_relative}"
+            )
+        _copy_git_archive(
+            submodule_root,
+            submodule_ref,
+            staging_root,
+            package_name,
+            relative_prefix / submodule_relative,
+            source_root,
+        )
+
+
+def copy_git_source(
+    repo_root: Path,
+    staging_root: Path,
+    package_name: str,
+) -> None:
+    """从当前 Git HEAD 与固定子模块提交收集源码，不回退到工作树。"""
+
+    repo_root = repo_root.resolve()
+    _copy_git_archive(
+        repo_root,
+        "HEAD",
+        staging_root,
+        package_name,
+        Path(),
+        repo_root,
+    )
+
 
 def create_zip(staging_root: Path, output_path: Path) -> None:
-    """按稳定路径顺序创建 ZIP 文件。"""
+    """按稳定路径顺序创建具有固定成员元数据的 ZIP。"""
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     files = sorted(
@@ -371,7 +497,12 @@ def create_zip(staging_root: Path, output_path: Path) -> None:
         strict_timestamps=False,
     ) as archive:
         for source in files:
-            archive.write(source, source.relative_to(staging_root).as_posix())
+            info = zipfile.ZipInfo(source.relative_to(staging_root).as_posix())
+            info.date_time = (1980, 1, 1, 0, 0, 0)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.create_system = 3
+            info.external_attr = 0o100644 << 16
+            archive.writestr(info, source.read_bytes())
 
 
 def _archive_names(archive_path: Path) -> list[str]:

@@ -110,7 +110,11 @@ python scripts/package_plugin.py --mode both --from-git
 
 默认生成可安装的 runtime 包；`--mode source` 生成源码包，`--mode both` 同时生成两种包。runtime 和 both 会在 `pages/dashboard/` 执行现有的 `npm run build`，但不会自动安装 Node 依赖；依赖缺失时命令非零退出并提示先执行 `npm ci`。脚本是开发/发布基础设施，不是生产运行时 API；生成的 ZIP 位于被忽略的 `dist/` 或 `--output-dir` 指定目录，不应提交进仓库。
 
-源码包收集以 Git 索引与 `--exclude-standard` 的忽略语义为准：`.gitignore`、`.git/info/exclude` 与全局排除规则都被尊重；已跟踪普通文件不受忽略规则排除，但仍须通过打包级结构排除（如 `.vitepress`）并存在于工作树；`--mode source`（非 `--from-git`）要求当前目录是可用 Git 仓库。
+源码包收集以主仓 Git 索引为入口，并递归收集已初始化的 `tests/` 与 `pages/dashboard/` 子模块。普通工作树模式读取子模块当前工作树；`--from-git` 模式读取主仓 gitlink 固定的子模块提交，未初始化的子模块会使打包失败，避免生成不完整源码包。
+
+`.gitmodules` 固定两个公开子模块地址；新克隆必须使用 `git clone --recurse-submodules`，已有工作树执行 `git submodule update --init --recursive`。
+
+源码包还遵守 `.gitignore`、`.git/info/exclude` 与全局排除规则；已跟踪普通文件不受忽略规则排除，但仍须通过打包级结构排除（如 `.vitepress`）并存在于工作树。
 
 ### `generate_release_notes.py`
 

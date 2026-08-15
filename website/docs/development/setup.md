@@ -38,12 +38,22 @@ astrbot_plugin_memora/
 
 ## Python 环境
 
-Python 版本和依赖以 `pyproject.toml`、`.python-version` 与 `uv.lock` 为准。新克隆后执行：
+Python 版本和依赖以 `pyproject.toml`、`.python-version` 与 `uv.lock` 为准。新克隆后先初始化测试与 Dashboard 子模块：
 
 ```powershell
+git clone --recurse-submodules https://github.com/INSide-734/astrbot_plugin_memora.git
+Set-Location astrbot_plugin_memora
 uv sync --locked --dev
 uv run --locked pre-commit install --install-hooks
 ```
+
+已有工作树执行：
+
+```powershell
+git submodule update --init --recursive
+```
+
+两个子模块分别维护 Python 测试和 React Dashboard；主仓通过固定提交保持它们与后端契约一致。
 
 ## Dashboard
 

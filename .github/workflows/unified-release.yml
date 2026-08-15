@@ -44,7 +44,8 @@ jobs:
     steps:
       - name: 检出仓库
         uses: actions/checkout@v7
-
+        with:
+          submodules: recursive
       - name: 配置 Python
         uses: actions/setup-python@v7
         with:
@@ -185,6 +186,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          submodules: recursive
 
       - name: 为手动发布创建标签
         if: github.event_name == 'workflow_dispatch'
