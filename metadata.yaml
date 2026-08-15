@@ -10,7 +10,7 @@ desc: |-
   - 提供 Dashboard、管理命令、Agent 工具、诊断、评测、备份恢复与在线更新能力。
 
   安装后请配置可用的 Embedding Provider 与 LLM Provider 并重启 AstrBot；管理员可运行 `/memora status` 检查状态，或运行 `/memora webui` 打开管理面板。完整说明见[项目文档](https://inside-734.github.io/astrbot_plugin_memora/)。
-version: 1.2.1
+version: 1.2.2
 author: INSide-734
 repo: https://github.com/INSide-734/astrbot_plugin_memora
 astrbot_version: ">=4.24.2"
