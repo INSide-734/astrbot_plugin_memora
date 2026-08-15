@@ -7,6 +7,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
+from ....shared.memory_status import effective_memory_status, set_memory_status
 from ....shared.number_utils import clamp_float
 from .history_tracker import HistoryTracker
 from .response_utils import error_response
@@ -178,6 +179,7 @@ class MemoryWriteApiMixin:
         updates: dict[str, Any] = {}
         old_v: Any
         new_v: Any
+        updated_at = time.time()
         if field == "importance":
             try:
                 parsed = _coerce_importance_value(value)
@@ -196,10 +198,15 @@ class MemoryWriteApiMixin:
             if not isinstance(value, str):
                 return self._error("状态必须是字符串")
             status_value = value.strip()
-            if status_value not in {"active", "archived", "deleted"}:
-                return self._error("状态必须是 active、archived 或 deleted")
-            updates["metadata"] = {"status": status_value}
-            old_v = current_metadata.get("status", "active")
+            if status_value not in {"active", "dormant", "archived", "deleted"}:
+                return self._error("状态必须是 active、dormant、archived 或 deleted")
+            updates["metadata"] = {}
+            set_memory_status(
+                updates["metadata"],
+                status_value,
+                status_changed_at=updated_at,
+            )
+            old_v = effective_memory_status(current_metadata)
             new_v = status_value
         elif field == "type":
             try:
@@ -212,7 +219,6 @@ class MemoryWriteApiMixin:
         else:
             return self._error(f"不支持编辑字段: {field}")
 
-        updated_at = time.time()
         updates.setdefault("metadata", {})
         updates["metadata"]["update_history"] = HistoryTracker.append_update_history(
             current_metadata,
@@ -283,6 +289,7 @@ class MemoryWriteApiMixin:
         new_content = str(memory.get("text", ""))
         content_changed = False
         history_items: list[tuple[str, Any, Any]] = []
+        updated_at = time.time()
 
         for field, value in changes.items():
             if field == "content":
@@ -320,11 +327,17 @@ class MemoryWriteApiMixin:
                 if not isinstance(value, str):
                     return self._error("状态必须是字符串")
                 status_value = value.strip()
-                if status_value not in {"active", "archived", "deleted"}:
-                    return self._error("状态必须是 active、archived 或 deleted")
-                final_metadata["status"] = status_value
+                if status_value not in {"active", "dormant", "archived", "deleted"}:
+                    return self._error(
+                        "状态必须是 active、dormant、archived 或 deleted"
+                    )
+                set_memory_status(
+                    final_metadata,
+                    status_value,
+                    status_changed_at=updated_at,
+                )
                 history_items.append(
-                    (field, current_metadata.get("status", "active"), status_value)
+                    (field, effective_memory_status(current_metadata), status_value)
                 )
             else:
                 try:
@@ -336,7 +349,6 @@ class MemoryWriteApiMixin:
                     (field, current_metadata.get("memory_type", "GENERAL"), type_value)
                 )
 
-        updated_at = time.time()
         history_metadata = dict(current_metadata)
         for field, old_value, new_value in history_items:
             history_metadata["update_history"] = HistoryTracker.append_update_history(

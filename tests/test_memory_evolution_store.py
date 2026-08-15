@@ -176,6 +176,45 @@ async def test_projection_bundle_filters_scope_state_and_orders_ties(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_load_sources_excludes_inactive_documents_by_default(tmp_path):
+    """演化证据默认只读取 active canonical 记忆，失效路径可显式读取原 revision。"""
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    async with aiosqlite.connect(store.db_path) as db:
+        await db.execute(
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT, metadata TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        await db.executemany(
+            "INSERT INTO documents (id, text, metadata, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            [
+                (
+                    17,
+                    "活跃证据",
+                    '{"scope_key":"scope","privacy_level":"shared"}',
+                    "2026-07-21T00:00:00+00:00",
+                    "r17",
+                ),
+                (
+                    18,
+                    "休眠证据",
+                    '{"scope_key":"scope","privacy_level":"shared","memory_status":"dormant","status":"dormant"}',
+                    "2026-07-21T00:00:00+00:00",
+                    "r18",
+                ),
+            ],
+        )
+        await db.commit()
+
+    assert [source.memory_id for source in await store.load_sources((17, 18))] == [17]
+    assert [
+        source.memory_id
+        for source in await store.load_sources((17, 18), active_only=False)
+    ] == [17, 18]
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_idempotent_enqueue_and_expired_lease(tmp_path):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()

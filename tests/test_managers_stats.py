@@ -243,8 +243,8 @@ class TestGetStatistics:
             assert dist[f"{i}-{i + 1}"] == 1
 
     @pytest.mark.asyncio
-    async def test_unknown_status_defaults_to_active(self) -> None:
-        """未知 status values map to 'active'."""
+    async def test_unknown_status_is_counted_separately(self) -> None:
+        """未知状态不得伪装为活跃记忆。"""
         ops = self._make_ops()
         docs = [
             {
@@ -257,7 +257,8 @@ class TestGetStatistics:
         ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
         ops._graph_store = None
         stats = await ops.get_statistics()
-        assert stats["status_breakdown"]["active"] == 1
+        assert stats["status_breakdown"]["active"] == 0
+        assert stats["status_breakdown"]["unknown"] == 1
 
     @pytest.mark.asyncio
     async def test_with_graph_store(self) -> None:

@@ -190,6 +190,32 @@ describe("MemoryPage", () => {
     expect(screen.getByText("vendor_type")).toBeTruthy();
   });
 
+  it("renders and filters dormant memories", async () => {
+    bridge.apiGet.mockResolvedValue(ok({
+      items: [{ id: "dormant", summary: "Dormant memory", status: "dormant" }],
+      total: 1,
+    }));
+
+    render(<MemoryPage showToast={showToast} />);
+
+    expect(await screen.findByText("Dormant memory")).toBeTruthy();
+    expect(screen.getByText("Dormant")).toBeTruthy();
+
+    const statusTrigger = screen.getByRole("combobox", { name: "Status" });
+    fireEvent.click(statusTrigger);
+    const dormantOption = await screen.findByRole("option", { name: "Dormant" });
+    fireEvent.pointerDown(dormantOption, { pointerType: "mouse" });
+    fireEvent.click(dormantOption);
+
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenCalledWith("page/memories", {
+        page: "1",
+        page_size: "20",
+        status: "dormant",
+      });
+    });
+  });
+
   it("shows the batch bar, archives selected memories, and refreshes the list", async () => {
     bridge.apiGet.mockResolvedValue(ok({
       items: [

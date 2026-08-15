@@ -612,6 +612,7 @@ function delay(): Promise<void> {
 
 function handleStats(): ApiResponse {
   const active = MEMORIES.filter((m) => m.status === "active").length;
+  const dormant = MEMORIES.filter((m) => m.status === "dormant").length;
   const archived = MEMORIES.filter((m) => m.status === "archived").length;
   const deleted = MEMORIES.filter((m) => m.status === "deleted").length;
 
@@ -645,6 +646,7 @@ function handleStats(): ApiResponse {
   return ok({
     total_memories: MEMORIES.length,
     active_count: active,
+    dormant_count: dormant,
     archived_count: archived,
     deleted_count: deleted,
     graph_nodes: GRAPH_NODES.length,
@@ -654,7 +656,7 @@ function handleStats(): ApiResponse {
     avg_importance: MEMORIES.length > 0
       ? MEMORIES.reduce((sum, memory) => sum + Math.min(1, memory.importance > 1 ? memory.importance / 10 : memory.importance), 0) / MEMORIES.length
       : 0,
-    status_breakdown: { active, archived, deleted },
+    status_breakdown: { active, dormant, archived, deleted, unknown: 0 },
     importance_distribution: importanceDist,
     atom_breakdown: atomTypes,
     recent_sessions: [

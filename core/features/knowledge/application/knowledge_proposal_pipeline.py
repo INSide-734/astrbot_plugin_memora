@@ -14,6 +14,7 @@ from ....shared.contracts import MemorySourceRef
 from ....shared.cost_control import CostControl
 from ....shared.domain_provenance import DomainObjectOrigin, DomainProvenance
 from ....shared.extra_llm_budget import budgeted_extra_llm_call
+from ....shared.memory_status import is_memory_active
 from ..contracts import (
     KnowledgeExtractorPort,
     KnowledgeSourceReaderPort,
@@ -28,7 +29,6 @@ _MAX_TAGS = 16
 _MIN_IMPORTANCE = 0.6
 _MIN_CONFIDENCE = 0.65
 _MIN_STABILITY = 0.6
-_ACTIVE_STATUSES = frozenset({"active", "current", "stable"})
 
 
 class KnowledgeProposalPipeline:
@@ -74,6 +74,11 @@ class KnowledgeProposalPipeline:
         content = str(source.content or "").strip()[:_MAX_CONTENT_CHARS]
         if not content:
             return False
+        memory_metadata = (
+            _metadata_dict(memory.get("metadata"))
+            if isinstance(memory, Mapping)
+            else {}
+        )
 
         async with budgeted_extra_llm_call(
             self._cost_control,
@@ -84,13 +89,16 @@ class KnowledgeProposalPipeline:
             try:
                 extracted = await self._extractor.extract(
                     content,
-                    str(_metadata_dict(memory.get("metadata")).get("memory_type", "")),
+                    str(memory_metadata.get("memory_type", "")),
                 )
             except asyncio.CancelledError:
                 raise
             except Exception:
                 return False
 
+        fresh_memory = await self._get_memory(normalized_id)
+        if not _eligible_memory(fresh_memory):
+            return False
         fresh_sources = await self._source_store.load_sources(
             (normalized_id,), max_content_chars=_MAX_CONTENT_CHARS
         )
@@ -132,14 +140,12 @@ def _eligible_memory(memory: Mapping[str, Any] | None) -> bool:
     explicit_stability = metadata.get("stability", metadata.get("stability_score"))
     stability = _number(explicit_stability)
     if explicit_stability is None:
-        status = str(metadata.get("status", "")).strip().casefold()
-        stability = 1.0 if status in _ACTIVE_STATUSES else 0.0
-    status = str(metadata.get("status", "active")).strip().casefold()
+        stability = 1.0 if is_memory_active(metadata) else 0.0
     return (
         importance >= _MIN_IMPORTANCE
         and confidence >= _MIN_CONFIDENCE
         and stability >= _MIN_STABILITY
-        and status in _ACTIVE_STATUSES
+        and is_memory_active(metadata)
     )
 
 

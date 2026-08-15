@@ -7,7 +7,9 @@ from astrbot.api import logger
 from quart import request
 
 from ....features.memory.infrastructure.base import apply_perf_pragmas
+from ....shared.memory_status import effective_memory_status
 from ....shared.number_utils import clamp_float
+from ....shared.sql import MEMORY_STATUS_SQL
 from .response_utils import error_response
 
 
@@ -55,7 +57,7 @@ class MemoryReadApiMixin:
                 await apply_perf_pragmas(db)
                 db.row_factory = aiosqlite.Row
                 count_cursor = await db.execute(
-                    """
+                    f"""
                     SELECT COUNT(*) AS total
                     FROM documents
                     WHERE (
@@ -65,11 +67,7 @@ class MemoryReadApiMixin:
                     )
                       AND (
                         :status IS NULL
-                        OR COALESCE(
-                            CASE WHEN json_valid(metadata)
-                            THEN json_extract(metadata, '$.status') END,
-                            'active'
-                        ) = :status
+                        OR ({MEMORY_STATUS_SQL}) = :status
                       )
                       AND (
                         :include_mark_write = 1
@@ -107,7 +105,7 @@ class MemoryReadApiMixin:
                 total = int(count_row["total"]) if count_row else 0
 
                 cursor = await db.execute(
-                    """
+                    f"""
                     SELECT id, doc_id, text, metadata, created_at, updated_at
                     FROM documents
                     WHERE (
@@ -117,11 +115,7 @@ class MemoryReadApiMixin:
                     )
                       AND (
                         :status IS NULL
-                        OR COALESCE(
-                            CASE WHEN json_valid(metadata)
-                            THEN json_extract(metadata, '$.status') END,
-                            'active'
-                        ) = :status
+                        OR ({MEMORY_STATUS_SQL}) = :status
                       )
                       AND (
                         :include_mark_write = 1
@@ -190,7 +184,7 @@ class MemoryReadApiMixin:
                     "content": row_text,
                     "summary": metadata.get("canonical_summary") or row_text,
                     "type": metadata.get("memory_type", "GENERAL"),
-                    "status": metadata.get("status", "active"),
+                    "status": effective_memory_status(metadata),
                     "importance": clamp_float(metadata.get("importance"), default=0.5),
                     "metadata": metadata,
                     "created_at": row_created_at,
@@ -255,7 +249,7 @@ class MemoryReadApiMixin:
             "metadata": metadata,
             "memory_type": metadata.get("memory_type", "GENERAL"),
             "importance": clamp_float(metadata.get("importance"), default=0.5),
-            "status": metadata.get("status", "active"),
+            "status": effective_memory_status(metadata),
             "session_id": metadata.get("session_id"),
             "persona_id": metadata.get("persona_id"),
             "key_facts": key_facts if isinstance(key_facts, list) else [],

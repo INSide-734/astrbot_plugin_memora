@@ -7,6 +7,12 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+### 修复
+
+- 统一 canonical memory 的生命周期状态解析：分层遗忘、召回过滤、统计、Page API、自动知识与内置评测均优先使用 `memory_status`，缺失时兼容回退 `status`；状态迁移和手动编辑同步写入两个字段，Dashboard 现可显示、筛选并统计“休眠”记忆。
+- 修复重复 JSON 状态键在 Python 与 SQLite 中分别读取最后值、首值而导致的筛选分歧；演化、Atom 与领域派生写入现一律拒绝 inactive canonical 来源，审核合并也会把数值别名归一为同一 canonical ID，避免自合并归档。
+
+
 ## [1.2.1] — 2026-08-15
 
 Memora 1.2.1 更新 Dashboard 与 GitHub Actions 工具链依赖，修复其间接依赖中的安全问题。

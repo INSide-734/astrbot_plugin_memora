@@ -26,14 +26,15 @@ function statsPayload(total = 20) {
   return {
     total_memories: total,
     active_count: 12,
-    archived_count: 5,
+    dormant_count: 2,
+    archived_count: 3,
     deleted_count: 3,
     graph_nodes: 7,
     graph_edges: 5,
     graph_entries: 4,
     atom_count: 18,
     avg_importance: 0.64,
-    status_breakdown: { active: 12, archived: 5, deleted: 3 },
+    status_breakdown: { active: 12, dormant: 2, archived: 3, deleted: 3 } as Record<string, number>,
     atom_breakdown: { fact: 6, preference: 5, event: 3, relation: 2, summary: 1, other_type: 1 },
     importance_distribution: {
       "0-1": 0, "1-2": 1, "2-3": 1, "3-4": 2, "4-5": 3,
@@ -96,6 +97,10 @@ describe("PreviewPage", () => {
     expect(screen.getByText("group-alpha-with-a-long-identifier")).toBeTruthy();
     expect(screen.getByText("Other")).toBeTruthy();
     expect(screen.getByText(/Updated/)).toBeTruthy();
+    expect(screen.getByText("Dormant")).toBeTruthy();
+    const statusChart = screen.getByRole("img", { name: "Memory status composition" });
+    expect(within(statusChart).getByText("Dormant")).toBeTruthy();
+    expect(within(statusChart).getByText("2")).toBeTruthy();
 
     const growthCard = growthHeading.closest('[data-slot="growth-panel"]');
     if (!growthCard) throw new Error("expected growth card");
@@ -123,6 +128,18 @@ describe("PreviewPage", () => {
     expect(await screen.findByText("Factual memory")).toBeTruthy();
     expect(screen.getByText("vendor_type")).toBeTruthy();
     expect(localeSpy).toHaveBeenCalledWith("en-US");
+  });
+
+  it("shows nonzero unknown statuses as a diagnostic composition segment", async () => {
+    const payload = statsPayload(21);
+    payload.status_breakdown = { ...payload.status_breakdown, unknown: 1 };
+    mockOverview(payload);
+
+    render(<PreviewPage showToast={showToast} />);
+
+    const statusChart = await screen.findByRole("img", { name: "Memory status composition" });
+    expect(within(statusChart).getByText("Unknown")).toBeTruthy();
+    expect(within(statusChart).getByText("1")).toBeTruthy();
   });
 
   it("switches 7, 30 and 90 day ranges without refetching", async () => {
