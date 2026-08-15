@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib
+import json
+import subprocess
 import sys
+import textwrap
 import types
 from pathlib import Path
 
@@ -23,9 +26,8 @@ def test_feature_modules_import_under_astrbot_package_name(monkeypatch):
         """判断模块是否属于本测试需要隔离和恢复的导入树。"""
         return (
             name == "core"
-            or name.startswith("core.")
+            or name.startswith(("core.", plugin_package + "."))
             or name in {"data", "data.plugins", plugin_package}
-            or name.startswith(plugin_package + ".")
         )
 
     saved_modules = {
@@ -44,8 +46,8 @@ def test_feature_modules_import_under_astrbot_package_name(monkeypatch):
     data_package = _namespace_package("data")
     plugins_package = _namespace_package("data.plugins")
     memora_package = _namespace_package(plugin_package, plugin_root)
-    data_package.plugins = plugins_package
-    plugins_package.astrbot_plugin_memora = memora_package
+    data_package.__dict__["plugins"] = plugins_package
+    plugins_package.__dict__["astrbot_plugin_memora"] = memora_package
     sys.modules.update(
         {
             "data": data_package,
@@ -73,4 +75,126 @@ def test_feature_modules_import_under_astrbot_package_name(monkeypatch):
         for module_name in list(sys.modules):
             if belongs_to_isolated_tree(module_name):
                 sys.modules.pop(module_name, None)
-        sys.modules.update(saved_modules)
+        sys.modules |= saved_modules
+
+
+def test_command_endpoints_register_under_plugin_entrypoint() -> None:
+    """验证真实 AstrBot 注册表把命令组及子命令绑定到插件入口。"""
+    plugin_root = Path(__file__).resolve().parent.parent
+    expected_commands = (
+        "status",
+        "health",
+        "diagnostics",
+        "search",
+        "trace",
+        "forget",
+        "rebuild-index",
+        "rebuild-graph",
+        "webui",
+        "summarize",
+        "reset",
+        "cleanup",
+        "update",
+        "help",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent(
+                """
+                import importlib
+                import json
+                import sys
+                import types
+                from pathlib import Path
+
+                from astrbot.core.star.star_handler import star_handlers_registry
+
+                package = "data.plugins.astrbot_plugin_memora"
+                data_package = types.ModuleType("data")
+                data_package.__path__ = []
+                plugins_package = types.ModuleType("data.plugins")
+                plugins_package.__path__ = []
+                plugin_package = types.ModuleType(package)
+                plugin_package.__path__ = [str(Path.cwd())]
+                data_package.__dict__["plugins"] = plugins_package
+                plugins_package.__dict__["astrbot_plugin_memora"] = plugin_package
+                sys.modules.update(
+                    {
+                        "data": data_package,
+                        "data.plugins": plugins_package,
+                        package: plugin_package,
+                    }
+                )
+
+                importlib.import_module(
+                    f"{package}.core.platform.transport.commands.command_endpoints"
+                )
+                handlers = [
+                    handler
+                    for handler in star_handlers_registry
+                    if handler.handler_name == "memora"
+                    or handler.handler_name
+                    in {
+                        "status",
+                        "health",
+                        "diagnostics",
+                        "search",
+                        "trace",
+                        "forget",
+                        "rebuild_index",
+                        "rebuild_graph",
+                        "webui",
+                        "summarize",
+                        "reset",
+                        "cleanup",
+                        "update",
+                        "help",
+                    }
+                ]
+                group_handler = next(
+                    handler for handler in handlers if handler.handler_name == "memora"
+                )
+                group_filter = next(
+                    command_filter
+                    for command_filter in group_handler.event_filters
+                    if type(command_filter).__name__ == "CommandGroupFilter"
+                )
+                print(
+                    "MEMORA_COMMANDS="
+                    + json.dumps(
+                        {
+                            "commands": sorted(
+                                command_filter.command_name
+                                for command_filter in group_filter.sub_command_filters
+                            ),
+                            "group": group_filter.group_name,
+                            "handler_modules": sorted(
+                                {handler.handler_module_path for handler in handlers}
+                            ),
+                        },
+                        sort_keys=True,
+                    )
+                )
+                """
+            ),
+        ],
+        capture_output=True,
+        check=False,
+        cwd=plugin_root,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    snapshots = [
+        line.removeprefix("MEMORA_COMMANDS=")
+        for line in result.stdout.splitlines()
+        if line.startswith("MEMORA_COMMANDS=")
+    ]
+    assert len(snapshots) == 1, result.stdout
+    assert json.loads(snapshots[0]) == {
+        "commands": sorted(expected_commands),
+        "group": "memora",
+        "handler_modules": ["data.plugins.astrbot_plugin_memora.main"],
+    }
