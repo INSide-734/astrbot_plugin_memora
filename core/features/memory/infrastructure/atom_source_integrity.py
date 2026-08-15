@@ -34,6 +34,8 @@ async def validate_atom_parent_sources(
             continue
         if state is None:
             raise ValueError("source_not_found")
+        if not state.is_active:
+            raise ValueError("source_inactive")
         if atom.parent_revision != state.revision_token:
             raise ValueError("source_revision_mismatch")
         if atom.parent_scope_key != state.scope_key:

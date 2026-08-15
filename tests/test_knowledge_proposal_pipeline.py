@@ -199,6 +199,28 @@ async def test_knowledge_proposal_rechecks_revision_before_write() -> None:
 
 
 @pytest.mark.asyncio
+async def test_knowledge_proposal_rechecks_active_status_before_write() -> None:
+    """抽取期间来源转为休眠时不得写入自动知识。"""
+    initial_memory = _memory()
+    dormant_memory = _memory()
+    dormant_memory["metadata"] = {
+        **dormant_memory["metadata"],
+        "memory_status": "dormant",
+        "status": "dormant",
+    }
+    pipeline, extractor, manager, source_store = _pipeline(memory=initial_memory)
+    pipeline._get_memory = AsyncMock(side_effect=[initial_memory, dormant_memory])
+
+    with extra_llm_budget_scope(ExtraLlmBudget(1)):
+        applied = await pipeline.apply_for_memory(17)
+
+    assert applied is False
+    extractor.extract.assert_awaited_once()
+    manager.add_derived_entry.assert_not_awaited()
+    assert source_store.load_sources.await_count == 1
+
+
+@pytest.mark.asyncio
 async def test_knowledge_proposal_propagates_cancellation_and_releases_budget() -> None:
     """Provider 取消必须穿透管线并释放 reservation。"""
 

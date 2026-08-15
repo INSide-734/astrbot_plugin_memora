@@ -6,6 +6,7 @@ import functools
 from datetime import datetime, timezone
 from typing import Iterable
 
+from ....shared.memory_status import is_memory_active
 from ..domain.models import (
     DerivedApplyPlan,
     DerivedState,
@@ -135,6 +136,8 @@ class MemoryEvolutionDerivedMixin:
             if expected_revision and actual_revision != expected_revision:
                 raise ValueError("source_revision_mismatch")
             metadata = _metadata_dict(row.get("metadata"))
+            if not is_memory_active(metadata):
+                raise ValueError("source_inactive")
             actual_scope = str(
                 metadata.get("scope_key")
                 or metadata.get("session_id")

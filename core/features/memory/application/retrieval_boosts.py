@@ -9,6 +9,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ....shared.memory_status import is_memory_recallable
 from ...retrieval.rrf_fusion import HybridResult
 from .human_like_recall import (
     apply_emotion_boost as apply_human_like_emotion_boost,
@@ -62,8 +63,7 @@ class RetrievalBoostsMixin:
         filtered: list[HybridResult] = []
         for r in results:
             metadata = r.metadata or {}
-            mem_status = metadata.get("memory_status", "active")
-            if mem_status in ("dormant", "archived"):
+            if not is_memory_recallable(metadata):
                 continue
             filtered.append(r)
 

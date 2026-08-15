@@ -9,6 +9,7 @@ from typing import Any
 import aiosqlite
 
 from ....shared.domain_provenance import DomainObjectOrigin, DomainProvenance
+from ....shared.memory_status import is_memory_active
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,7 @@ class CanonicalSourceState:
     privacy_level: str | None
     session_id: str | None
     persona_id: str | None
+    is_active: bool
 
 
 async def load_canonical_source_states(
@@ -72,6 +74,7 @@ async def load_canonical_source_states(
                 if metadata.get("persona_id") is not None
                 else None
             ),
+            is_active=is_memory_active(metadata),
         )
     return states
 
@@ -86,6 +89,7 @@ def source_matches_state(
 
     return bool(
         state is not None
+        and state.is_active
         and revision_token == state.revision_token
         and scope_key == state.scope_key
         and privacy_level == state.privacy_level
@@ -106,6 +110,8 @@ async def validate_domain_provenance(
         current = current_by_id.get(source.memory_id)
         if current is None:
             raise ValueError("source_not_found")
+        if not current.is_active:
+            raise ValueError("source_inactive")
         if source.revision_token != current.revision_token:
             raise ValueError("source_revision_mismatch")
         if current.scope_key is None:

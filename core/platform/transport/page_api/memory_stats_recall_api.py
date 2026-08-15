@@ -6,6 +6,8 @@ import time
 from astrbot.api import logger
 from quart import request
 
+from ....shared.memory_status import effective_memory_status
+
 
 def _coerce_count(value, default: int = 0) -> int:
     """将统计值转为非布尔整数，失败时返回默认值。
@@ -17,6 +19,7 @@ def _coerce_count(value, default: int = 0) -> int:
     返回:
         转换后的整数或默认值。
     """
+
     if isinstance(value, bool):
         return default
     try:
@@ -118,14 +121,15 @@ class MemoryStatsRecallApiMixin:
             if not isinstance(stats, dict):
                 stats = {}
 
-            # 扁平化 status_breakdown → 前端期望的独立字段
             breakdown = _normalize_count_map(stats.get("status_breakdown", {}))
             stats.setdefault("active_count", breakdown.get("active", 0))
+            stats.setdefault("dormant_count", breakdown.get("dormant", 0))
             stats.setdefault("archived_count", breakdown.get("archived", 0))
             stats.setdefault("deleted_count", breakdown.get("deleted", 0))
             # 确保前端期望字段至少存在默认值
             for key in (
                 "active_count",
+                "dormant_count",
                 "archived_count",
                 "deleted_count",
                 "graph_nodes",
@@ -291,7 +295,7 @@ class MemoryStatsRecallApiMixin:
                 "persona_id": metadata_source.get("persona_id"),
                 "importance": metadata_source.get("importance", 0.5),
                 "memory_type": metadata_source.get("memory_type", "GENERAL"),
-                "status": metadata_source.get("status", "active"),
+                "status": effective_memory_status(metadata_source),
                 "create_time": metadata_source.get("create_time"),
             }
             metadata.update(score_breakdown)

@@ -18,6 +18,7 @@ from ....features.evaluation import (
 )
 from ....features.evaluation.infrastructure.evaluation_service import EvaluationService
 from ....features.memory.infrastructure.base import apply_perf_pragmas
+from ....shared.sql import MEMORY_STATUS_SQL
 from .response_utils import error_response, ok_response
 
 _CURRENT_MEMORY_DATASET = "current_memories"
@@ -358,11 +359,10 @@ class EvaluationApiMixin:
             await apply_perf_pragmas(db)
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
-                "SELECT id, text, metadata FROM documents "
-                "WHERE TRIM(text) <> '' "
-                "AND COALESCE(CASE WHEN json_valid(metadata) "
-                "THEN json_extract(metadata, '$.status') END, 'active') = 'active' "
-                "ORDER BY id DESC LIMIT ?",
+                f"SELECT id, text, metadata FROM documents "
+                f"WHERE TRIM(text) <> '' "
+                f"AND ({MEMORY_STATUS_SQL}) = 'active' "
+                f"ORDER BY id DESC LIMIT ?",
                 (_CURRENT_MEMORY_CASE_LIMIT,),
             )
             rows = await cursor.fetchall()

@@ -1,7 +1,8 @@
-"""Review Page API tests."""
+"""审核队列 Page API 测试。"""
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -30,14 +31,22 @@ class FakeMemoryEngine:
                 "id": 1,
                 "content": "same durable fact",
                 "text": "same durable fact",
-                "metadata": {"status": "active", "source": "chat"},
+                "metadata": {
+                    "memory_status": "active",
+                    "status": "active",
+                    "source": "chat",
+                },
                 "importance": 0.5,
             },
             "2": {
                 "id": 2,
                 "content": "same durable fact",
                 "text": "same durable fact",
-                "metadata": {"status": "active", "source": "chat"},
+                "metadata": {
+                    "memory_status": "active",
+                    "status": "active",
+                    "source": "chat",
+                },
                 "importance": 0.5,
             },
             "3": {
@@ -279,6 +288,8 @@ async def test_archive_mutates_engine_and_records_action(tmp_path) -> None:
     assert result["data"]["memory_mutated"] is True
     assert result["data"]["new_status"] == "archived"
     assert engine.memories["1"]["metadata"]["status"] == "archived"
+    assert engine.memories["1"]["metadata"]["memory_status"] == "archived"
+    assert engine.memories["1"]["metadata"]["status_changed_at"] >= time.time() - 1
     actions = await store.list_actions("rev-archive")
     assert actions[-1]["action"] == "archived"
 
@@ -498,15 +509,102 @@ async def test_merge_replaces_target_and_archives_source_with_replacement_engine
         engine.memories["10"]["content"] == "old maybe useful fact\nsame durable fact"
     )
     assert engine.memories["2"]["metadata"]["status"] == "archived"
+    assert engine.memories["2"]["metadata"]["memory_status"] == "archived"
     assert (
         "3",
         {"content": "old maybe useful fact\nsame durable fact"},
     ) in engine.update_calls
-    assert ("2", {"metadata": {"status": "archived"}}) in engine.update_calls
+    archived_updates = [
+        updates
+        for memory_id, updates in engine.update_calls
+        if memory_id == "2" and "metadata" in updates
+    ]
+    assert archived_updates
+    assert archived_updates[-1]["metadata"]["memory_status"] == "archived"
+    assert archived_updates[-1]["metadata"]["status"] == "archived"
+    assert isinstance(archived_updates[-1]["metadata"]["status_changed_at"], float)
     actions = await store.list_actions("rev-merge-replace")
     assert actions[-1]["payload"]["source_memory_id"] == "2"
     assert actions[-1]["payload"]["target_memory_id"] == "3"
     assert actions[-1]["payload"]["replacement_target_memory_id"] == "10"
+
+
+@pytest.mark.asyncio
+async def test_merge_rejects_same_source_and_target_memory(tmp_path) -> None:
+    """审核合并不得将 source 自身归档。"""
+    api, engine = _api_with_store(tmp_path)
+    store = await api._get_review_store()
+    await store.upsert_item(
+        ReviewItem(
+            item_id="rev-self-merge",
+            memory_id="1",
+            reasons=[ReviewReason.DUPLICATE],
+            severity=ReviewSeverity.MEDIUM,
+        )
+    )
+    req = _mock_request()
+    req.get_json = AsyncMock(
+        return_value={
+            "review_id": "rev-self-merge",
+            "action": "merge",
+            "payload": {"target_memory_id": "1"},
+        }
+    )
+
+    with patch("core.platform.transport.page_api.review_api.request", req):
+        result = await api.apply_review_action()
+
+    assert result == {
+        "status": "error",
+        "message": "source and target memory must differ",
+    }
+    assert engine.memories["1"]["metadata"]["memory_status"] == "active"
+    assert await store.list_actions("rev-self-merge") == []
+
+
+class _AliasResolvingMemoryEngine(FakeMemoryEngine):
+    """模拟将数值字符串规范化为同一 canonical memory 的引擎。"""
+
+    async def get_memory(self, memory_id):
+        """按整数语义查找记忆，但保留调用方传入的 ID 表示。"""
+
+        memory = self.memories.get(str(int(memory_id)))
+        if memory is None:
+            return None
+        return {**memory, "id": str(memory_id)}
+
+
+@pytest.mark.asyncio
+async def test_merge_rejects_canonical_id_alias_of_source(tmp_path) -> None:
+    """数值别名解析到 source 时不得绕过自合并保护。"""
+    api, engine = _api_with_store(tmp_path, _AliasResolvingMemoryEngine())
+    store = await api._get_review_store()
+    await store.upsert_item(
+        ReviewItem(
+            item_id="rev-alias-self-merge",
+            memory_id="1",
+            reasons=[ReviewReason.DUPLICATE],
+            severity=ReviewSeverity.MEDIUM,
+        )
+    )
+    req = _mock_request()
+    req.get_json = AsyncMock(
+        return_value={
+            "review_id": "rev-alias-self-merge",
+            "action": "merge",
+            "payload": {"target_memory_id": "01"},
+        }
+    )
+
+    with patch("core.platform.transport.page_api.review_api.request", req):
+        result = await api.apply_review_action()
+
+    assert result == {
+        "status": "error",
+        "message": "source and target memory must differ",
+    }
+    assert engine.memories["1"]["metadata"]["memory_status"] == "active"
+    assert await store.list_actions("rev-alias-self-merge") == []
 
 
 @pytest.mark.asyncio

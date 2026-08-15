@@ -392,6 +392,34 @@ async def test_job_revision_stale_before_claim_is_invalidated(manager):
 
 
 @pytest.mark.asyncio
+async def test_dormant_source_invalidates_job_without_generating_proposal(manager):
+    """已休眠的 canonical source 不得进入 worker 的派生 proposal。"""
+
+    from core.features.evolution.domain import JobSpec
+
+    await seed_documents(manager.store, source(17))
+    async with aiosqlite.connect(manager.store.db_path) as db:
+        await db.execute(
+            "UPDATE documents SET metadata=? WHERE id=?",
+            (
+                '{"session_id":"private:user-a","memory_status":"dormant","status":"dormant"}',
+                17,
+            ),
+        )
+        await db.commit()
+    job = await manager.store.enqueue_job(
+        JobSpec("private:user-a", "bucket", (17,), "dormant-source", datetime.now(UTC))
+    )
+
+    assert await manager.run_once() is True
+    stored = await manager.store.get_job(job.job_id)
+
+    assert stored is not None
+    assert stored.state is JobState.INVALIDATED
+    manager.consolidator.propose.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_processing_renews_lease(manager):
     from core.features.evolution.domain import JobSpec
 

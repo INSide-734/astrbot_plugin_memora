@@ -55,6 +55,7 @@ export function MemoryForm({ value, onChange, fieldErrors, formErrors = [], disa
               <SelectTrigger ref={(element) => registerField("status", element)} id="memory-status" aria-label={t("table.status")} aria-invalid={Boolean(statusError)} aria-describedby={statusError?.id}><span>{t(`filter.status${value.status.slice(0, 1).toUpperCase()}${value.status.slice(1)}`)}</span></SelectTrigger>
               <SelectContent><SelectGroup>
                 <SelectItem value="active">{t("filter.statusActive")}</SelectItem>
+                <SelectItem value="dormant">{t("filter.statusDormant")}</SelectItem>
                 <SelectItem value="archived">{t("filter.statusArchived")}</SelectItem>
                 <SelectItem value="deleted">{t("filter.statusDeleted")}</SelectItem>
               </SelectGroup></SelectContent>

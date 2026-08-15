@@ -9,6 +9,8 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
+from ...shared.memory_status import effective_memory_status
+
 _TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 _STAGE_NAMES = frozenset(
     {
@@ -75,7 +77,16 @@ _MEMORY_TYPES = frozenset(
     }
 )
 _MEMORY_STATUSES = frozenset(
-    {"active", "candidate", "deleted", "invalidated", "stale", "unknown"}
+    {
+        "active",
+        "archived",
+        "candidate",
+        "deleted",
+        "dormant",
+        "invalidated",
+        "stale",
+        "unknown",
+    }
 )
 _SOURCE_TYPES = frozenset(
     {"chat", "document", "evolution", "graph", "import", "manual", "unknown"}
@@ -221,19 +232,16 @@ def _sanitize_contributions(value: Any) -> list[dict[str, Any]]:
 
 
 def _sanitize_result_metadata(value: Any) -> dict[str, Any]:
-    """仅保留有限的记忆类型、状态、来源类型和重要性标量。"""
+    """仅保留有限的记忆类型、有效状态、来源类型和重要性标量。"""
     source = _mapping(value)
     sanitized: dict[str, Any] = {}
     memory_type = _safe_enum(source.get("memory_type"), _MEMORY_TYPES)
-    status = _safe_enum(source.get("status"), _MEMORY_STATUSES)
-    memory_status = _safe_enum(source.get("memory_status"), _MEMORY_STATUSES)
+    status = _safe_enum(effective_memory_status(source), _MEMORY_STATUSES)
     source_type = _safe_enum(source.get("source_type"), _SOURCE_TYPES)
     if memory_type:
         sanitized["memory_type"] = memory_type
     if status:
         sanitized["status"] = status
-    if memory_status:
-        sanitized["memory_status"] = memory_status
     if source_type:
         sanitized["source_type"] = source_type
     if "importance" in source:

@@ -10,6 +10,8 @@ export * from "./injection";
 export * from "./navigation";
 export * from "./editing";
 
+export type MemoryStatus = "active" | "dormant" | "archived" | "deleted";
+
 export interface MemoryItem {
   id: string;
   content?: string;
@@ -17,7 +19,7 @@ export interface MemoryItem {
   summary?: string;
   type?: string;
   importance?: number;
-  status?: string;
+  status?: MemoryStatus | string;
   created_at?: string;
   updated_at?: string;
   session_id?: string;

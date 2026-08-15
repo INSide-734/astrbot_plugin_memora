@@ -10,6 +10,7 @@ import pytest
 
 from core.features.retrieval.explainable_recall import capture_explainable_recall
 from core.features.retrieval.trace_models import RecallTrace, TraceResult, TraceStage
+from core.features.retrieval.trace_privacy import sanitize_trace_payload
 from core.features.retrieval.trace_store import RecallTraceStore
 from core.platform.transport.page_api.page_api import PluginPageApi
 from core.shared.recall_strategy import RecallStrategy
@@ -692,6 +693,7 @@ async def test_recall_trace_sanitizes_content_and_sensitive_metadata():
                     metadata={
                         "memory_type": "preference",
                         "importance": 0.8,
+                        "memory_status": "dormant",
                         "status": "active",
                         "create_time": 123.0,
                         "canonical_summary": "摘要" * 200,
@@ -720,7 +722,8 @@ async def test_recall_trace_sanitizes_content_and_sensitive_metadata():
     assert "content_preview" not in result_metadata
     assert result_metadata["memory_type"] == "preference"
     assert result_metadata["importance"] == 0.8
-    assert result_metadata["status"] == "active"
+    assert result_metadata["status"] == "dormant"
+    assert "memory_status" not in result_metadata
     assert result_metadata["source_type"] == "chat"
     assert "create_time" not in result_metadata
     assert "canonical_summary" not in result_metadata
@@ -729,6 +732,13 @@ async def test_recall_trace_sanitizes_content_and_sensitive_metadata():
     assert "raw" not in result_metadata
     assert "source" not in result_metadata
     assert "private" not in result_metadata
+    legacy_trace = sanitize_trace_payload(
+        {
+            "trace_id": "trace-status",
+            "results": [{"metadata": {"memory_status": "dormant", "status": "active"}}],
+        }
+    )
+    assert legacy_trace["results"][0]["metadata"] == {"status": "dormant"}
     assert "request" not in trace["metadata"]
     assert secret_value not in payload_json
 
