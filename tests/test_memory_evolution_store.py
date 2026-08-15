@@ -405,6 +405,118 @@ async def test_derived_writes_are_serialized_on_shared_connection(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_derived_invalidation_waits_for_global_write_transaction(tmp_path):
+    """派生失效必须等待 canonical 写入持有的全局事务锁。"""
+
+    class GateLock:
+        """在派生 Store 取得本地锁后通知测试协程。"""
+
+        def __init__(self) -> None:
+            """初始化本地互斥锁与进入通知。"""
+
+            self._lock = asyncio.Lock()
+            self.entered = asyncio.Event()
+
+        async def __aenter__(self):
+            """取得本地锁并通知派生写入已经开始。"""
+
+            await self._lock.acquire()
+            self.entered.set()
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            """释放本地锁且不抑制异常。"""
+
+            self._lock.release()
+            return False
+
+    from core.features.memory.application.write_coordinator import write_transaction
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    await store.apply_derived_plan(valid_plan())
+    canonical_entered = asyncio.Event()
+    release_canonical = asyncio.Event()
+
+    async def hold_canonical_write() -> None:
+        """持有全局写锁，模拟尚未提交的 canonical 写入。"""
+
+        async def operation() -> None:
+            """通知测试后保持全局写锁直到明确释放。"""
+
+            canonical_entered.set()
+            await release_canonical.wait()
+
+        await write_transaction(operation)
+
+    canonical_task = asyncio.create_task(hold_canonical_write())
+    await canonical_entered.wait()
+    gate = GateLock()
+    cast(Any, store)._write_lock = gate
+    invalidate_task = asyncio.create_task(
+        store.invalidate_for_source_revision(17, "new-r17")
+    )
+    await gate.entered.wait()
+    assert not invalidate_task.done()
+    release_canonical.set()
+    await asyncio.gather(canonical_task, invalidate_task)
+    assert await store.active_relations_for_seeds([17]) == []
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_store_retry_rolls_back_before_reexecuting_operation(tmp_path):
+    """锁冲突重试前必须回滚上次尝试留下的隐式事务。"""
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    connection = store.connection
+    assert connection is not None
+    attempts = 0
+
+    async def operation() -> str:
+        """首个尝试打开事务并触发锁错误，第二次确认事务已清理。"""
+
+        nonlocal attempts
+        attempts += 1
+        await connection.execute("BEGIN IMMEDIATE")
+        if attempts == 1:
+            raise aiosqlite.OperationalError("database is locked")
+        await connection.rollback()
+        return "retried"
+
+    assert await cast(Any, store)._run_serialized_write(operation) == "retried"
+    assert attempts == 2
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_store_write_cancellation_rolls_back_implicit_transaction(tmp_path):
+    """取消派生写入后，持久连接不得保留隐式 SQLite 事务。"""
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    connection = store.connection
+    assert connection is not None
+    transaction_opened = asyncio.Event()
+
+    async def operation() -> None:
+        """打开事务后等待取消，使 rollback 路径可观察。"""
+
+        await connection.execute("BEGIN IMMEDIATE")
+        transaction_opened.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(cast(Any, store)._run_serialized_write(operation))
+    await transaction_opened.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert connection.in_transaction is False
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_relation_query_finds_seed_on_either_endpoint(tmp_path):
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()

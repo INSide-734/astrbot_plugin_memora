@@ -6,7 +6,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from datetime import datetime, timezone
@@ -40,6 +39,7 @@ from .memory_evolution_source_helpers import (
     subject_key_from_metadata,
     topic_keys_from_metadata,
 )
+from .memory_evolution_write_coordinator import MemoryEvolutionWriteCoordinatorMixin
 
 _DERIVED_TABLE_INFO_SQL = {
     "memory_relations": "PRAGMA table_info(memory_relations)",
@@ -96,14 +96,10 @@ class MemoryEvolutionStore(
     MemoryEvolutionCandidateSourceMixin,
     MemoryEvolutionReviewMixin,
     MemoryEvolutionDerivedMixin,
+    MemoryEvolutionWriteCoordinatorMixin,
     BaseStore,
 ):
     """保存 job、relation、projection 和 source mapping 的本地 Store。"""
-
-    def __init__(self, db_path: str) -> None:
-        """初始化派生 Store，并为共享连接建立写操作串行锁。"""
-        super().__init__(db_path)
-        self._write_lock = asyncio.Lock()
 
     adapter_capabilities = AdapterCapabilityContract(
         kind=AdapterKind.PERSISTENT_STORE,
@@ -212,6 +208,7 @@ class MemoryEvolutionStore(
     @_serialized_write
     async def enqueue_job(self, spec: JobSpec) -> MemoryEvolutionJob:
         """按幂等键创建演化任务并返回持久化后的任务。"""
+
         now = datetime.now(timezone.utc)
         job_id = spec.job_id or uuid.uuid4().hex
         await self._execute(
@@ -239,7 +236,10 @@ class MemoryEvolutionStore(
             "SELECT * FROM memory_evolution_jobs WHERE idempotency_key=?",
             (spec.idempotency_key,),
         )
-        return _job(row)
+        job = _job(row)
+        if job is None:
+            raise RuntimeError("演化 job 入队后无法读取")
+        return job
 
     async def get_job(self, job_id: str) -> MemoryEvolutionJob | None:
         """按任务 ID 读取演化任务。"""

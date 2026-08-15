@@ -31,10 +31,9 @@ def _serialized_write(method):
 
     @functools.wraps(method)
     async def wrapper(self, *args, **kwargs):
-        """在共享写锁内执行被包装的异步方法。"""
+        """将派生事务交给 Store 的局部串行与全局重试边界。"""
 
-        async with self._write_lock:
-            return await method(self, *args, **kwargs)
+        return await self._run_serialized_write(lambda: method(self, *args, **kwargs))
 
     return wrapper
 

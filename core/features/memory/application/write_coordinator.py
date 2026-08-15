@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import random
+import weakref
 from collections.abc import AsyncIterator, Callable, Coroutine
 from typing import Any, TypeVar
 
@@ -58,7 +59,9 @@ def _is_retry_eligible(exc: Exception) -> bool:
 
 # ---- 全局写锁 ----
 
-_WRITE_LOCK: asyncio.Lock | None = None
+_WRITE_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Lock] = (
+    weakref.WeakKeyDictionary()
+)
 _WRITE_METRICS: dict[str, Any] = {
     "operations_total": 0,
     "lock_retries_total": 0,
@@ -71,11 +74,19 @@ _WRITE_METRICS: dict[str, Any] = {
 
 
 def _get_write_lock() -> asyncio.Lock:
-    """获取或创建模块级写锁（惰性初始化，确保单线程安全）。"""
-    global _WRITE_LOCK
-    if _WRITE_LOCK is None:
-        _WRITE_LOCK = asyncio.Lock()
-    return _WRITE_LOCK
+    """返回当前事件循环的 SQLite 写锁。
+
+    AstrBot 运行时的 SQLite 写入在同一主事件循环中串行化。测试框架会为
+    独立用例创建并销毁事件循环，因此锁按循环弱引用保存，既不跨循环复用
+    也不会阻止已结束循环被回收。
+    """
+
+    loop = asyncio.get_running_loop()
+    lock = _WRITE_LOCKS.get(loop)
+    if lock is None:
+        lock = asyncio.Lock()
+        _WRITE_LOCKS[loop] = lock
+    return lock
 
 
 def reset_write_metrics_snapshot() -> None:

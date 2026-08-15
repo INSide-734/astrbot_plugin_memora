@@ -11,41 +11,35 @@ from core.features.memory.application.memory_engine import MemoryEngine
 
 
 @pytest.mark.asyncio
-async def test_revision_invalidation_retries_transient_sqlite_lock() -> None:
-    """派生 revision 失效遇到瞬时锁冲突时应重试，而非直接降级。"""
+async def test_revision_invalidation_delegates_retry_to_store() -> None:
+    """失效钩子不得在 Store 已协调重试时再次获取全局写锁。"""
 
     engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
     source = MagicMock(revision_token="revision-17")
     store = MagicMock()
     store.load_sources = AsyncMock(return_value=[source])
-    store.invalidate_for_source_revision = AsyncMock(
-        side_effect=[aiosqlite.OperationalError("database is locked"), 1]
-    )
+    store.invalidate_for_source_revision = AsyncMock(return_value=1)
     engine.memory_evolution_store = store
 
     await engine._invalidate_evolution_after_revision(17)
 
-    assert store.invalidate_for_source_revision.await_count == 2
-    store.invalidate_for_source_revision.assert_awaited_with(17, "revision-17")
+    store.invalidate_for_source_revision.assert_awaited_once_with(17, "revision-17")
 
 
 @pytest.mark.asyncio
-async def test_evolution_schedule_retries_transient_sqlite_lock() -> None:
-    """演化任务入队遇到瞬时锁冲突时应重试，避免遗漏派生调度。"""
+async def test_evolution_schedule_delegates_retry_to_store() -> None:
+    """调度钩子不得在 Store 已协调重试时再次获取全局写锁。"""
 
     engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
     source = MagicMock()
     manager = MagicMock()
     manager.store.load_sources = AsyncMock(return_value=[source])
-    manager.schedule_consider = AsyncMock(
-        side_effect=[aiosqlite.OperationalError("database is locked"), None]
-    )
+    manager.schedule_consider = AsyncMock(return_value=None)
     engine.memory_evolution_manager = manager
 
     await engine._schedule_evolution_after_write(17)
 
-    assert manager.schedule_consider.await_count == 2
-    manager.schedule_consider.assert_awaited_with(source)
+    manager.schedule_consider.assert_awaited_once_with(source)
 
 
 @pytest.mark.asyncio

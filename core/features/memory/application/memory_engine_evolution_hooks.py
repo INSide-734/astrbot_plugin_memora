@@ -17,7 +17,6 @@ from ...observability.infrastructure.debug_reporter import (
 )
 from ...quality.application.gate_disposition_filter import is_mark_write
 from ..domain.revision import memory_revision
-from .write_coordinator import write_with_retry
 
 
 class MemoryEngineEvolutionHooksMixin:
@@ -33,11 +32,9 @@ class MemoryEngineEvolutionHooksMixin:
             sources = await store.load_sources((int(memory_id),))
             if not sources:
                 return
-            await write_with_retry(
-                lambda: store.invalidate_for_source_revision(
-                    int(memory_id),
-                    sources[0].revision_token,
-                )
+            await store.invalidate_for_source_revision(
+                int(memory_id),
+                sources[0].revision_token,
             )
         except asyncio.CancelledError:
             raise
@@ -85,9 +82,7 @@ class MemoryEngineEvolutionHooksMixin:
                         task_type="evolution",
                     )
                     return
-                decision = await write_with_retry(
-                    lambda: manager.schedule_consider(sources[0])
-                )
+                decision = await manager.schedule_consider(sources[0])
                 should_enqueue = getattr(decision, "should_enqueue", False) is True
                 report_debug_event(
                     "storage_task",
