@@ -7,6 +7,10 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+### 修复
+
+- 修复 Memory Evolution 派生 revision 失效在并发 SQLite 写入时触发 `database is locked` 并耗尽重试的问题；派生写入现统一经过写事务协调、失败/取消自动回滚，避免遗留未提交事务或写锁。
+
 ## [1.2.1] — 2026-08-15
 
 Memora 1.2.1 更新 Dashboard 与 GitHub Actions 工具链依赖，修复其间接依赖中的安全问题。
