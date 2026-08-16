@@ -38,6 +38,20 @@ Memora 是 AstrBot 的长期记忆插件，为对话提供记忆提取、混合�
 - 手动总结会分别报告四类处置计数：写入长期记忆、进入复核队列的隔离候选、门禁丢弃与 mark_write 标记写入，不把隔离、丢弃或标记结果伪装成 canonical 写入成功。
 - 提供诊断、评测、备份恢复、索引重建和校验后的在线更新。
 
+## Dashboard
+
+通过 `/memora webui` 打开 Dashboard，集中查看记忆、知识图谱与系统运行状态。
+
+<p align="center">
+  <img src="assets/dashboard/preview.png" alt="Memora 数据预览 Dashboard" width="49%" />
+  <img src="assets/dashboard/graph.png" alt="Memora 知识图谱 Dashboard" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/dashboard/memory.png" alt="Memora 记忆管理 Dashboard" width="49%" />
+  <img src="assets/dashboard/system.png" alt="Memora 系统概览 Dashboard" width="49%" />
+</p>
+
 ## 环境要求
 
 - Python `>=3.12,<3.13`
