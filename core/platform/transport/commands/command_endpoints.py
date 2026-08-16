@@ -1,6 +1,7 @@
 """MemoraPlugin 的命令端点混入类。"""
 
 from collections.abc import AsyncGenerator, Callable
+from functools import partial
 from typing import Any, TypeVar
 
 from astrbot.api.event import AstrMessageEvent, MessageEventResult, filter
@@ -26,14 +27,46 @@ _COMMAND_ENDPOINT_HANDLER_NAMES = frozenset(
         "help",
     }
 )
+_LEGACY_COMMAND_ENDPOINT_MODULES = frozenset(
+    {
+        __name__,
+        "core.platform.transport.commands.command_endpoints",
+        "data.main",
+    }
+)
+_COMMAND_ENDPOINT_OWNER_QUALNAME = "CommandEndpointsMixin"
+
+
+def _is_legacy_memora_command_handler(registered_handler: Any) -> bool:
+    """判断处理器是否为 Memora 历史命令注册。
+
+    ``data.main`` 是旧归属错误留下的裸模块路径，可能被其他插件复用。因此除
+    模块和端点名外，还必须匹配 Memora 命令 mixin 的函数限定名。
+
+    参数:
+        registered_handler: AstrBot 注册表中的处理器元数据。
+
+    返回:
+        仅当处理器可确认属于旧版 Memora 命令端点时返回 ``True``。
+    """
+    handler_name = getattr(registered_handler, "handler_name", None)
+    handler = getattr(registered_handler, "handler", None)
+    raw_handler = handler.func if isinstance(handler, partial) else handler
+    return (
+        getattr(registered_handler, "handler_module_path", None)
+        in _LEGACY_COMMAND_ENDPOINT_MODULES
+        and handler_name in _COMMAND_ENDPOINT_HANDLER_NAMES
+        and getattr(raw_handler, "__qualname__", None)
+        == f"{_COMMAND_ENDPOINT_OWNER_QUALNAME}.{handler_name}"
+    )
 
 
 def _remove_legacy_command_handlers(registry: Any | None = None) -> None:
-    """移除热重载遗留在旧命令模块中的 /memora 处理器。
+    """移除热重载遗留的 /memora 命令处理器。
 
-    AstrBot 仅按插件入口模块卸载 handler，旧版本拆分到 ``core`` 的命令
-    会在热重载后继续留在注册表并与当前入口命令冲突。本函数只按当前模块
-    路径和已知的 /memora 方法名清理这些旧条目。
+    ``core...command_endpoints`` 或 ``data.main``，热重载后会继续留在注册表
+    并与当前入口命令冲突。由于 ``data.main`` 可能被其他插件复用，清理时还会
+    校验 Memora 命令 mixin 的函数限定名。
 
     参数:
         registry: 可选的 AstrBot handler 注册表；省略时使用运行时全局注册表。
@@ -49,11 +82,7 @@ def _remove_legacy_command_handlers(registry: Any | None = None) -> None:
         registry = star_handlers_registry
 
     for registered_handler in list(registry):
-        if (
-            getattr(registered_handler, "handler_module_path", None) == __name__
-            and getattr(registered_handler, "handler_name", None)
-            in _COMMAND_ENDPOINT_HANDLER_NAMES
-        ):
+        if _is_legacy_memora_command_handler(registered_handler):
             registry.remove(registered_handler)
 
 
