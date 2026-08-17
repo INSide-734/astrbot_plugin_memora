@@ -1,14 +1,14 @@
-faiss-cpu>=1.7.0
+faiss-cpu>=1.15.0
 networkx>=3.0
 jieba>=0.42.1
 pytz>=2021.3
 aiofiles>=23.0.0
 aiosqlite>=0.20.0
-numpy>=1.26.0
+numpy>=2.5.2
 pydantic>=2.0.0
 PyYAML>=6.0.0
 quart>=0.19.0
-sqlalchemy>=2.0.0
+sqlalchemy>=2.0.52
 httpx[socks]>=0.28.1
 
 astrbot
