@@ -65,6 +65,24 @@ class JsonParser:
 
             logger.info("[MemoryProcessor] JSON 解析成功")
 
+            raw_memories = data.get("memories")
+            if isinstance(raw_memories, list):
+                first_memory = next(
+                    (item for item in raw_memories if isinstance(item, dict)), None
+                )
+                if first_memory is not None:
+                    for field in (
+                        "summary",
+                        "topics",
+                        "key_facts",
+                        "sentiment",
+                        "importance",
+                    ):
+                        if field not in data and field in first_memory:
+                            data[field] = first_memory[field]
+                    if is_group_chat and "participants" not in data:
+                        data["participants"] = first_memory.get("participants", [])
+
             required_fields = [
                 "summary",
                 "topics",

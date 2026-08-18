@@ -94,13 +94,15 @@ class MemoryGroundingValidator:
         """绑定门禁快照；缺省用内置默认快照（= 当前硬编码行为）。"""
         self._snapshot = snapshot or default_gate_snapshot()
 
-    def prompt_contract(self, message_count: int) -> str:
+    def prompt_contract(self, message_count: int, max_references: int = 8) -> str:
+        """生成要求模型返回受限匿名来源引用的 Prompt 片段。"""
 
         upper = max(0, int(message_count) - 1)
         return (
             "\n\n# 来源证据要求（必须遵守）\n"
             "每行以 [S<n> chars=N] 标出原始消息正文字符数。对每条 memories[] 结果返回 "
-            f"source_refs 数组，每个引用只能使用当前对话中的 S0..S{upper} 标签，并写成 "
+            f"source_refs 数组，每条记忆最多 {max_references} 条 source_refs，每个引用只能使用"
+            f"当前对话中的 S0..S{upper} 标签，并写成 "
             '{"message_index": 0, "start": 0, "end": 12}。'
             "start/end 是该条原始消息正文中的字符区间，左闭右开，必须满足 "
             "0 <= start < end <= chars；引用整条正文时使用 start=0、end=chars。"
@@ -425,9 +427,14 @@ class MemoryGroundingValidator:
         source_text: str,
         referenced_messages: list[Message],
     ) -> str | None:
-        """严格匹配普通数值，仅放行有可靠来源支持的日期规范化。"""
+        """严格匹配普通数值，仅放行可信身份标签与可靠日期规范化。"""
 
-        claim_numbers = cls._canonical_numbers(claim_text)
+        claim_without_identity_labels = claim_text
+        for label in cls._trusted_identity_labels(referenced_messages):
+            claim_without_identity_labels = claim_without_identity_labels.replace(
+                label, ""
+            )
+        claim_numbers = cls._canonical_numbers(claim_without_identity_labels)
         source_numbers = cls._canonical_numbers(source_text)
         supported_date_numbers = supported_claim_date_numbers(
             claim_text,
@@ -437,6 +444,20 @@ class MemoryGroundingValidator:
         if claim_numbers - source_numbers - supported_date_numbers:
             return "grounding_numeric_conflict"
         return None
+
+    @staticmethod
+    def _trusted_identity_labels(messages: list[Message]) -> set[str]:
+        """返回引用消息中由运行时确认的稳定身份标签。"""
+
+        labels: set[str] = set()
+        for message in messages:
+            metadata = message.metadata if isinstance(message.metadata, dict) else {}
+            label = metadata.get("identity_label")
+            if metadata.get("identity_trusted") is True and isinstance(label, str):
+                normalized = label.strip()
+                if normalized:
+                    labels.add(normalized)
+        return labels
 
     @staticmethod
     def _canonical_numbers(text: str) -> set[str]:

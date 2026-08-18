@@ -25,10 +25,10 @@ from ....shared.extra_llm_budget import (
 )
 from ...identity.application.enricher import build_memory_identity_context
 from ...memory.domain.memory_atom import MemoryAtom
-from ...quality.application.gate_runtime import default_gate_snapshot
 from ...quality.domain.gate_config import BUILTIN_GENERIC_TERMS, GateProfile
 from .atom_classifier import classify_atoms
 from .conversation_formatter import ConversationFormatter
+from .gate_context import resolve_reflection_gate
 from .json_parser import JsonParser
 from .llm_client import LLMClient
 from .memory_grounding import GroundingResult, MemoryGroundingValidator
@@ -166,6 +166,13 @@ class MemoryProcessor:
         if not messages:
             raise ValueError("消息列表不能为空")
 
+        profile, gate_enabled = resolve_reflection_gate(
+            self._gate_runtime,
+            is_group_chat=is_group_chat,
+            group_id=group_id,
+            persona_id=persona_id,
+        )
+
         total_started = time.perf_counter()
         stage_started = total_started
         current_stage = "prompt_build"
@@ -193,7 +200,9 @@ class MemoryProcessor:
             emotional_intensity=f"{emotional_intensity:.2f}",
         )
         prompt += identity_context.prompt_constraint()
-        prompt += self.grounding_validator.prompt_contract(len(messages))
+        prompt += self.grounding_validator.prompt_contract(
+            len(messages), profile.references.max_references
+        )
         identity_metadata = identity_context.metadata()
 
         try:
@@ -244,16 +253,6 @@ class MemoryProcessor:
             current_stage = "parse"
             stage_started = time.perf_counter()
             structured_data = self._parse_llm_response(llm_response_text, is_group_chat)
-            # 窗口入口取一次门禁快照并解析 profile，保证窗口内配置一致。
-            gate_snapshot = (
-                self._gate_runtime.snapshot()
-                if self._gate_runtime is not None
-                else default_gate_snapshot()
-            )
-            profile = gate_snapshot.resolve_profile(
-                "group" if is_group_chat else "private", group_id, persona_id
-            )
-            gate_enabled = gate_snapshot.enabled
 
             quality = (
                 "normal"
