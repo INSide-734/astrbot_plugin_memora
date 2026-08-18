@@ -64,40 +64,7 @@ class JsonParser:
                 raise ValueError(f"期望 dict 类型，实际为 {type(data).__name__}")
 
             logger.info("[MemoryProcessor] JSON 解析成功")
-
-            required_fields = [
-                "summary",
-                "topics",
-                "key_facts",
-                "sentiment",
-                "importance",
-            ]
-            if is_group_chat:
-                required_fields.append("participants")
-
-            for field in required_fields:
-                if field not in data:
-                    logger.warning(
-                        f"[MemoryProcessor] LLM 响应缺少字段: {field}, 使用默认值"
-                    )
-                    data[field] = self.quality.get_default_value(field)
-
-            data["summary"] = str(data.get("summary", ""))
-            data["topics"] = self.quality.ensure_list(data.get("topics", []))[:5]
-            data["key_facts"] = self.quality.ensure_list(data.get("key_facts", []))[:5]
-            data["sentiment"] = self.quality.validate_sentiment(
-                data.get("sentiment", "neutral")
-            )
-            data["importance"] = self.quality.validate_importance(
-                data.get("importance", 0.5)
-            )
-
-            if is_group_chat:
-                data["participants"] = self.quality.ensure_list(
-                    data.get("participants", [])
-                )
-
-            return data
+            return self._normalize_parsed_data(data, is_group_chat)
 
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(f"[MemoryProcessor] JSON 解析失败: {e}")
@@ -107,7 +74,7 @@ class JsonParser:
                 data = json.loads(fixed_text)
                 if isinstance(data, dict):
                     logger.info("[MemoryProcessor] JSON 修复后解析成功")
-                    return self.quality.normalize_parsed_data(data, is_group_chat)
+                    return self._normalize_parsed_data(data, is_group_chat)
             except (json.JSONDecodeError, ValueError):
                 logger.debug("[MemoryProcessor] JSON 修复后仍无法解析")
 
@@ -118,6 +85,31 @@ class JsonParser:
                 f"[MemoryProcessor] 解析 LLM 响应时发生异常: {e}", exc_info=True
             )
             return self.quality.get_default_structured_data(is_group_chat)
+
+    def _normalize_parsed_data(
+        self, data: dict[str, Any], is_group_chat: bool
+    ) -> dict[str, Any]:
+        """统一规范直接解析和修复解析得到的兼容结构。"""
+
+        raw_memories = data.get("memories")
+        if isinstance(raw_memories, list):
+            first_memory = next(
+                (item for item in raw_memories if isinstance(item, dict)), None
+            )
+            if first_memory is not None:
+                for field in (
+                    "summary",
+                    "topics",
+                    "key_facts",
+                    "sentiment",
+                    "importance",
+                ):
+                    if field not in data and field in first_memory:
+                        data[field] = first_memory[field]
+                if is_group_chat and "participants" not in data:
+                    data["participants"] = first_memory.get("participants", [])
+
+        return self.quality.normalize_parsed_data(data, is_group_chat)
 
     def _extract_by_regex(self, text: str, is_group_chat: bool) -> dict[str, Any]:
         logger.debug("[MemoryProcessor] 开始使用正则表达式提取结构化数据")
