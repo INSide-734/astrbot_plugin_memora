@@ -59,7 +59,7 @@ _PREVIOUS_WEEKDAY_RE = re.compile(
     re.IGNORECASE,
 )
 _CURRENT_DATE_RE = re.compile(
-    r"\btoday\b|今天|今日|今早|今晨|今晚|中午|上午|下午|早上|晚上|凌晨",
+    r"\btoday\b|今天|今日|今早|今晨|今晚",
     re.IGNORECASE,
 )
 
@@ -188,9 +188,14 @@ def supported_claim_date_numbers(
     supported_dates = set(source_dates)
     supported_years: set[int] = set()
     for anchor in anchors:
-        if not source_dates and _CURRENT_DATE_RE.search(source_text):
-            supported_dates.add(anchor)
         derived_dates, derived_years = _derive_relative_dates(source_text, anchor)
+        if (
+            not source_dates
+            and not derived_dates
+            and not derived_years
+            and _CURRENT_DATE_RE.search(source_text)
+        ):
+            supported_dates.add(anchor)
         supported_dates.update(derived_dates)
         supported_years.update(derived_years)
 
