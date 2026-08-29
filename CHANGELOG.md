@@ -7,6 +7,11 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+### 修复
+
+- 移除 `requirements.txt` 中的 `astrbot` 依赖声明：PyPI 上的 `astrbot` 包是完整 AstrBot 框架本体，AstrBot 的插件依赖补装器会把它装进插件专用目录，与运行中的 AstrBot 本体在同一进程里重复定义 `platform_stats` 等 SQLModel 表，导致 SQLAlchemy 报错并连锁禁用全部 LLM Provider（AstrBot 4.27.4 下直接拒绝启动）。插件现直接使用 AstrBot 运行时提供的 `astrbot` 模块；受影响用户需删除插件目录中被补装器装入的 `astrbot` 副本后重启。
+- `astrbot` 改为仅锁定在 uv 开发环境的 dev 依赖组（`astrbot==4.27.2`），不再出现在任何运行时依赖声明中；相关契约测试同步更新。
+
 ## [1.2.4] — 2026-08-18
 
 Memora 1.2.4 修复反思总结候选因来源引用、旧解析回退和 grounding 数字校验契约不一致而全部进入隔离队列的问题。

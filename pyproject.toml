@@ -17,11 +17,11 @@ dependencies = [
     "quart>=0.19.0",
     "sqlalchemy>=2.0.0",
     "httpx[socks]>=0.28.1",
-    "astrbot",
 ]
 
 [dependency-groups]
 dev = [
+    "astrbot==4.27.2",
     "hypothesis>=6.163.0",
     "pre-commit>=4.6,<5",
     "pyright==1.1.411",
@@ -34,7 +34,6 @@ dev = [
 [tool.uv]
 cache-dir = ".uv-cache"
 package = false
-constraint-dependencies = ["astrbot==4.27.2"]
 
 [tool.ruff]
 target-version = "py312"
