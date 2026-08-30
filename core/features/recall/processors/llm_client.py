@@ -12,6 +12,7 @@ from ....shared.adapter_capabilities import (
     AdapterCapabilityContract,
     AdapterKind,
 )
+from ....shared.summary_llm_limiter import SummaryLlmLimiter
 
 
 class LLMClient:
@@ -28,16 +29,23 @@ class LLMClient:
         ),
     )
 
-    def __init__(self, context=None, llm_provider: Any = None):
-        """初始化 Provider 来源和按实例缓存的冻结 adapter。
+    def __init__(
+        self,
+        context=None,
+        llm_provider: Any = None,
+        limiter: SummaryLlmLimiter | None = None,
+    ):
+        """初始化 Provider 来源、冻结 adapter 和可选物理调用限流器。
 
         参数:
             context: AstrBot 上下文；未提供时只使用显式 Provider。
             llm_provider: Provider 实例或需要动态解析的 Provider ID。
+            limiter: 可选的进程内总结 LLM 并发限流器。
         """
 
         self.context = context
         self._llm_provider = llm_provider
+        self._limiter = limiter
         self._provider_adapter_source: Any = None
         self._provider_adapter: LLMProviderAdapter | None = None
 
@@ -129,6 +137,9 @@ class LLMClient:
     ) -> LLMGenerationResult:
         """调用当前 Provider，并保留明确返回的 token usage。
 
+        每次真实 Provider attempt 都独立取得并释放可选 limiter；重试等待
+        不持有 permit。无 limiter 时保持原有调用路径。
+
         参数:
             prompt: 发送给 Provider 的用户提示。
             system_prompt: 发送给 Provider 的系统约束。
@@ -148,7 +159,10 @@ class LLMClient:
                 adapter = self.get_current_llm_adapter()
                 if adapter is None:
                     raise RuntimeError("LLM Provider 不可用")
-                return await adapter.generate_result(prompt, system_prompt)
+                if self._limiter is None:
+                    return await adapter.generate_result(prompt, system_prompt)
+                async with self._limiter:
+                    return await adapter.generate_result(prompt, system_prompt)
             except asyncio.CancelledError:
                 raise
             except Exception as e:

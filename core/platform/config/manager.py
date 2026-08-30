@@ -119,6 +119,11 @@ class ConfigManager:
         self._load_config()
 
     @property
+    def revision(self) -> str:
+        """返回当前已校验配置快照的稳定修订号。"""
+        return self._revision
+
+    @property
     def runtime_injection_fallback(self) -> bool:
         """返回最近一次读取源配置时是否应用了注入策略运行时降级。"""
         return self._runtime_injection_fallback

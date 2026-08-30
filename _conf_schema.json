@@ -603,6 +603,22 @@
                 "default": 10,
                 "min": 1,
                 "max": 100
+            },
+            "max_parallel_summary_tasks": {
+                "description": "全局活动总结窗口上限",
+                "hint": "限制所有会话同时执行的总结窗口数量。",
+                "type": "int",
+                "default": 4,
+                "min": 1,
+                "max": 16
+            },
+            "max_parallel_summary_tasks_per_session": {
+                "description": "单会话活动总结窗口上限",
+                "hint": "限制同一会话同时执行的总结窗口数量。",
+                "type": "int",
+                "default": 2,
+                "min": 1,
+                "max": 8
             }
         }
     },

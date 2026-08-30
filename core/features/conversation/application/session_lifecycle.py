@@ -3,6 +3,10 @@
 提供会话创建、查询、清理与过期管理能力。
 """
 
+import asyncio
+import inspect
+from typing import TYPE_CHECKING, Any
+
 from astrbot.api import logger
 
 from ....shared.contracts.conversation import Session
@@ -10,6 +14,14 @@ from ....shared.contracts.conversation import Session
 
 class SessionLifecycleMixin:
     """会话的创建、查询、清除与过期清理。"""
+
+    if TYPE_CHECKING:
+        store: Any
+        _cache_lock: asyncio.Lock
+        _cache: Any
+        session_ttl: int
+
+        async def reset_session_metadata(self, session_id: str) -> bool: ...
 
     async def create_or_get_session(
         self, session_id: str, platform: str = "unknown"
@@ -73,29 +85,59 @@ class SessionLifecycleMixin:
         return await self.store.get_recent_sessions(limit)
 
     async def clear_session(self, session_id: str) -> bool:
-        """清空会话历史并持久化重置元数据。
+        """清空会话前取消总结 worker，再由 Store 原子 fence epoch。
 
         Args:
             session_id: 统一会话标识。
 
         Returns:
-            ``True`` 表示消息删除和 metadata reset 请求均已完成。
+            ``True`` 表示消息删除和元数据重置均已完成。
 
         Raises:
-            RuntimeError: metadata reset 未成功，无法确认会话已完整清空。
+            RuntimeError: 原子清理或元数据重置失败。
         """
-        # 删除数据库中的消息
-        await self.store.delete_session_messages(session_id)
+        atomic_clear = getattr(self.store, "clear_session_atomically", None)
+        if callable(atomic_clear):
+            # 先读取旧 epoch，再由 Store 原子 fence；不能先取消 scheduler 后留下窗口。
+            get_epoch = getattr(self.store, "get_summary_epoch", None)
+            epoch: int | None = None
+            if callable(get_epoch):
+                epoch_value = get_epoch(session_id)
+                if inspect.isawaitable(epoch_value):
+                    epoch_value = await epoch_value
+                if isinstance(epoch_value, (tuple, list)) and epoch_value:
+                    epoch = int(epoch_value[0])
 
-        # 清除缓存
+            clear_result = atomic_clear(session_id)
+            if inspect.isawaitable(clear_result):
+                await clear_result
+
+            # Store 已经取消持久任务；这里再取消本地 worker，避免迟到副作用。
+            scheduler = getattr(self, "summary_scheduler", None)
+            cancel_jobs = getattr(scheduler, "cancel_session_jobs", None)
+            if epoch is not None and callable(cancel_jobs):
+                cancelled = cancel_jobs(session_id, epoch)
+                if inspect.isawaitable(cancelled):
+                    await cancelled
+            async with self._cache_lock:
+                self._cache.pop(session_id, None)
+            logger.info(
+                f"[ConversationManager] 已原子清空会话并 fence epoch: {session_id}"
+            )
+            return True
+
+        # 未升级 Store 的兼容路径也先尝试 epoch fence，防止旧 worker 污染新状态。
+        reset_epoch = getattr(self.store, "reset_session_epoch", None)
+        if callable(reset_epoch):
+            fenced = reset_epoch(session_id, "epoch_fenced")
+            if inspect.isawaitable(fenced):
+                await fenced
+        await self.store.delete_session_messages(session_id)
         async with self._cache_lock:
-            if session_id in self._cache:
-                del self._cache[session_id]
-        # 同步重置会话元数据，特别是记忆总结的计数器
+            self._cache.pop(session_id, None)
         metadata_reset = await self.reset_session_metadata(session_id)
         if metadata_reset is not True:
             raise RuntimeError("会话元数据重置未持久化")
-
         logger.info(f"[ConversationManager] 已清空会话并重置记忆上下文: {session_id}")
         return True
 
@@ -106,7 +148,7 @@ class SessionLifecycleMixin:
         Returns:
             清理的会话数量
         """
-        ttl_seconds = max(60, int(self.session_ttl))
+        ttl_seconds = max(60, self.session_ttl)
         deleted_count = await self.store.delete_old_sessions(ttl_seconds=ttl_seconds)
 
         # 清空缓存(可能包含已删除的会话)

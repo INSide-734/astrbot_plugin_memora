@@ -56,12 +56,13 @@ async def store_reflection_candidates(
     end_index: int,
     is_group_chat: bool,
     group_id: str | None = None,
+    gate_snapshot_json: str | None = None,
+    before_side_effect: Callable[[], Awaitable[bool]] | None = None,
     memory_engine: Any,
     memory_quality_gate: Any | None,
     schedule_evolution_after_write: Callable[[int], Awaitable[None]],
 ) -> list[ReflectionStoreResult]:
     """并发执行候选质量门与写入，并返回与输入一一对应的终态。
-
     Args:
         memories: 当前窗口抽取出的候选列表。
         completed_idempotency_keys: 先前重试已完成的候选幂等键。
@@ -71,6 +72,8 @@ async def store_reflection_candidates(
         end_index: 当前来源窗口固定高水位。
         is_group_chat: 当前窗口是否来自群聊。
         group_id: 群聊来源的群组标识，用于门禁 profile 绑定解析。
+        gate_snapshot_json: 入队时固化的门禁配置 JSON。
+        before_side_effect: canonical 或隔离副作用前的 claim fence 回调。
         memory_engine: canonical 记忆引擎。
         memory_quality_gate: 可选的候选质量路由器。
         schedule_evolution_after_write: canonical 写后的兼容演化调度回调。
@@ -98,7 +101,6 @@ async def store_reflection_candidates(
             "end_index": end_index,
             "message_count": end_index - start_index,
         }
-        metadata["source_window"] = source_window
         try:
             if memory_quality_gate is not None:
                 gate_result = await memory_quality_gate.route_candidate(
@@ -109,6 +111,7 @@ async def store_reflection_candidates(
                     is_group_chat=is_group_chat,
                     group_id=group_id,
                     chat_type=("group" if is_group_chat else "private"),
+                    gate_snapshot_json=gate_snapshot_json,
                 )
                 if gate_result.action == "quarantined":
                     return ReflectionStoreResult(
@@ -126,6 +129,8 @@ async def store_reflection_candidates(
                         if gate_result.atoms is not None
                         else memory.get("atoms", [])
                     )
+            if before_side_effect is not None and not await before_side_effect():
+                return ReflectionStoreResult(ReflectionStoreOutcome.FAILED)
             memory_id = await memory_engine.add_memory(
                 content=memory["content"],
                 session_id=session_id,

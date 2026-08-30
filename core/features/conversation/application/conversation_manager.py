@@ -1,6 +1,7 @@
 """会话、消息缓存与 AstrBot 事件适配管理器。"""
 
 import asyncio
+import inspect
 from collections import OrderedDict
 from typing import Any
 
@@ -45,6 +46,7 @@ class ConversationManager(
         self.context_window_size = context_window_size
         self.session_ttl = session_ttl
         self.identity_runtime = identity_runtime
+        self.summary_scheduler: Any | None = None
 
         # LRU缓存: {session_id: (messages, last_access_time)}
         self._cache: OrderedDict = OrderedDict()
@@ -58,7 +60,8 @@ class ConversationManager(
 
     async def close_identity_runtime(self) -> None:
         """兼容旧关闭入口；仅委托显式提供关闭能力的已注入运行时。"""
-
         close = getattr(self.identity_runtime, "close", None)
         if callable(close):
-            await close()
+            result = close()
+            if inspect.isawaitable(result):
+                await result

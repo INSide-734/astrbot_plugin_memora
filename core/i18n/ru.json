@@ -152,6 +152,8 @@
       "provider": "Provider: состояние={status}, попытки={attempts}/{max_attempts}, повтор={retry}",
       "recall": "Поиск памяти: выборок={samples}, среднее={avg} мс, P50={p50} мс, P95={p95} мс",
       "tasks": "Фоновые задачи: отслеживается={tracked}, активных={active}, завершено={completed}, ошибок={failed}, отменено={cancelled}",
+      "summary_tasks": "Задачи сводки: в очереди={queued}, выполняется={running}, ошибок={failed}, заблокировано={blocked}, неизвестно={unknown}, отменено={cancelled}, оставлено={abandoned}, параллелизм={active}/{target}",
+      "summary_results": "Итоги сводки: canonical={canonical}, карантин={quarantine}, отброшено={discard}, помечено для записи={mark_write}, ошибок кандидатов={failed_candidate}, идемпотентно пропущено={skipped_idempotent}",
       "index": "Индекс: валидатор={available}, согласован={consistent}, нужна перестройка={needs_rebuild}, всего={total}, ошибок={errors}",
       "write": "Запись: операций={operations}, повторов блокировки={retries}, ошибок={failures}, критических={fatal}, без повтора={non_retryable}",
       "prometheus": "Prometheus: доступен={available}, коллекторов={collectors}",

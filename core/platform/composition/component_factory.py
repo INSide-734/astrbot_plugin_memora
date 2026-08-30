@@ -54,6 +54,7 @@ from ...features.profiles.infrastructure import ProfileExtractor
 from ...features.quality.application.gate_runtime import (
     GateRuntime,
     build_gate_snapshot,
+    capture_gate_snapshot_json,
 )
 from ...features.quality.application.memory_quality_gate import MemoryQualityGate
 from ...features.quality.domain.gate_config import GateConfig
@@ -61,9 +62,12 @@ from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
 from ...features.recall.processors.memory_processor import MemoryProcessor
+from ...features.reflection.application import SummaryScheduler, TopicBatchPreparer
+from ...features.reflection.domain.summary_models import SummaryWindowContext
 from ...features.retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ...shared.cost_control import CostControlConfig
 from ...shared.errors import ProviderNotReadyError
+from ...shared.summary_llm_limiter import SummaryLlmLimiter
 from ..config.cost_control import build_cost_control_from_config
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..transport.realtime_hub import RealtimeHub
@@ -142,6 +146,9 @@ class ComponentFactory:
             cost_control_section = {}
         cost_control_config = CostControlConfig.model_validate(cost_control_section)
         cost_control = build_cost_control_from_config(cost_control_config)
+        summary_llm_limiter = SummaryLlmLimiter(
+            cost_control.max_reflection_parallel_llm_calls
+        )
         if not embedding_provider:
             raise ProviderNotReadyError("Embedding Provider 未初始化")
         if not llm_provider or not isinstance(llm_provider, Provider):
@@ -344,6 +351,7 @@ class ComponentFactory:
                     "persona_interpretation.enabled", False
                 ),
             },
+            limiter=summary_llm_limiter,
             cost_control=cost_control,
             gate_runtime=gate_runtime,
             topic_embed_fn=topic_embedding_adapter.embed,
@@ -427,6 +435,7 @@ class ComponentFactory:
                 max_tags=int(engine_config.get("notes.max_tags", 10)),
             )
         index_validator = IndexValidator(str(db_path), db)
+        summary_scheduler = None
         derived_rebuild_coordinator = DerivedRebuildCoordinator(
             index_validator,
             memory_engine,
@@ -441,6 +450,7 @@ class ComponentFactory:
                 conversation_manager=conversation_manager,
                 gate_runtime=gate_runtime,
             )
+            conversation_store.quarantine_store = memory_quarantine_store
             logger.info("记忆质量隔离门已初始化")
             await db_setup.auto_rebuild_index_if_needed(
                 index_validator,
@@ -448,11 +458,67 @@ class ComponentFactory:
                 derived_rebuild_coordinator,
             )
 
+            summary_batch_preparer = TopicBatchPreparer(
+                config_manager=self.config_manager,
+                memory_engine=memory_engine,
+                memory_processor=memory_processor,
+                cost_control=cost_control,
+            )
+
+            def startup_context_factory(
+                session_id: str, epoch: int, cursor: int
+            ) -> SummaryWindowContext:
+                """为启动扫描构造当前固定门禁和窗口配置。"""
+                snapshot = gate_runtime.snapshot()
+                return SummaryWindowContext(
+                    session_id=session_id,
+                    session_epoch=epoch,
+                    start_seq=cursor,
+                    end_seq=cursor,
+                    persona_id=None,
+                    chat_type=None,
+                    group_id=None,
+                    scope_id=session_id,
+                    gate_revision=snapshot.revision,
+                    gate_snapshot_json=capture_gate_snapshot_json(gate_runtime),
+                    window_size=max(
+                        2,
+                        int(
+                            self.config_manager.get(
+                                "reflection_engine.summary_trigger_rounds", 10
+                            )
+                        )
+                        * 2,
+                    ),
+                )
+
+            summary_scheduler = SummaryScheduler(
+                cast(Any, conversation_store),
+                memory_processor,
+                memory_quality_gate,
+                cast(Any, memory_engine),
+                summary_batch_preparer,
+                max_parallel_summary_tasks=int(
+                    self.config_manager.get(
+                        "reflection_engine.max_parallel_summary_tasks", 4
+                    )
+                ),
+                max_parallel_summary_tasks_per_session=int(
+                    self.config_manager.get(
+                        "reflection_engine.max_parallel_summary_tasks_per_session", 2
+                    )
+                ),
+                limiter=summary_llm_limiter,
+                startup_context_factory=startup_context_factory,
+            )
+            conversation_manager.summary_scheduler = summary_scheduler
             # 统一重建完成或安全降级后再启动 worker，避免 worker 与全量派生失效
             # 同时修改同一批 relation/projection。
             if memory_evolution_manager.mode != "disabled":
                 await memory_evolution_manager.start()
         except BaseException:
+            if summary_scheduler is not None:
+                await summary_scheduler.close()
             await self._rollback_build_components(
                 None,
                 conversation_store,
@@ -507,6 +573,7 @@ class ComponentFactory:
         try:
             identity_runtime = await self._build_identity_runtime(conversation_manager)
         except BaseException:
+            await summary_scheduler.close()
             await self._rollback_build_components(
                 decay_scheduler,
                 conversation_store,
@@ -523,6 +590,7 @@ class ComponentFactory:
         try:
             injection_components = await self._build_injection_components(db_path)
         except BaseException:
+            await summary_scheduler.close()
             await self._rollback_build_components(
                 decay_scheduler,
                 conversation_store,
@@ -552,6 +620,8 @@ class ComponentFactory:
             "memory_evolution_store": memory_evolution_store,
             "memory_evolution_manager": memory_evolution_manager,
             "realtime_hub": realtime_hub,
+            "summary_scheduler": summary_scheduler,
+            "summary_llm_limiter": summary_llm_limiter,
             **injection_components,
         }
 

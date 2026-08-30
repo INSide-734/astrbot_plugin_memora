@@ -516,6 +516,9 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     memory_quality_gate=getattr(
                         self.initializer, "memory_quality_gate", None
                     ),
+                    summary_scheduler=getattr(
+                        self.initializer, "summary_scheduler", None
+                    ),
                 )
 
             # 创建命令处理器（幂等）
@@ -526,15 +529,15 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     memory_engine=self.initializer.memory_engine,
                     conversation_manager=self.initializer.conversation_manager,
                     index_validator=self.initializer.index_validator,
+                    summary_scheduler=getattr(
+                        self.initializer, "summary_scheduler", None
+                    ),
                     identity_runtime=self.initializer.identity_runtime,
                     memory_processor=self.initializer.memory_processor,
                     memory_quality_gate=getattr(
                         self.initializer, "memory_quality_gate", None
                     ),
                     initialization_status_callback=self._get_initialization_status_message,
-                    summary_window_locker=self.event_handler.summary_window_locker
-                    if self.event_handler
-                    else None,
                     write_guard_cb=self._writes_blocked_by_pending_restore,
                     diagnostics_health_provider=getattr(
                         self.page_api,
@@ -1009,6 +1012,18 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             self.initializer.stop_background_tasks(),
             timeout=STEP_TIMEOUT,
         )
+        stop_summary_scheduler = getattr(
+            self.initializer, "stop_summary_scheduler", None
+        )
+        if callable(stop_summary_scheduler):
+            await _safe_step(
+                "summary_scheduler",
+                "停止记忆总结调度器",
+                stop_summary_scheduler(),
+                timeout=STEP_TIMEOUT,
+            )
+        else:
+            _report_skipped("summary_scheduler", "component_inactive")
 
         # 3. 通知事件处理器停止（如果仍有存储任务在运行）
         if self.event_handler:

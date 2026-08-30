@@ -38,70 +38,83 @@ class MessageStoreMixin(MessageQueryMixin):
         content = Message.content_to_text(message.content)
         now = time.time()
         async with self._write_lock:
-            await self.connection.execute(
-                """
-                INSERT INTO sessions (
-                    session_id, platform, created_at, last_active_at,
-                    message_count, participants, metadata
+            try:
+                await self.connection.execute("BEGIN IMMEDIATE")
+                await self.connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, platform, created_at, last_active_at,
+                        message_count, participants, metadata
+                    )
+                    VALUES (?, ?, ?, ?, 0, '[]', '{}')
+                    ON CONFLICT(session_id) DO NOTHING
+                    """,
+                    (message.session_id, platform, now, message.timestamp),
                 )
-                VALUES (?, ?, ?, ?, 0, '[]', '{}')
-                ON CONFLICT(session_id) DO NOTHING
-                """,
-                (message.session_id, platform, now, message.timestamp),
-            )
-
-            cursor = await self.connection.execute(
-                """
-                INSERT INTO messages (
-                    session_id, role, content, sender_id, sender_name,
-                    group_id, platform, timestamp, metadata
+                seq_cursor = await self.connection.execute(
+                    """
+                    SELECT COALESCE(MAX(message_seq), 0) + 1
+                    FROM messages WHERE session_id = ?
+                    """,
+                    (message.session_id,),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    message.session_id,
-                    message.role,
-                    content,
-                    sender_id,
-                    message.sender_name,
-                    message.group_id,
-                    platform,
-                    message.timestamp,
-                    serialize_to_json(message.metadata),
-                ),
-            )
+                seq_row = await seq_cursor.fetchone()
+                message_seq = int(seq_row[0] if seq_row else 1)
+                cursor = await self.connection.execute(
+                    """
+                    INSERT INTO messages (
+                        session_id, role, content, sender_id, sender_name,
+                        group_id, platform, timestamp, metadata, message_seq
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message.session_id,
+                        message.role,
+                        content,
+                        sender_id,
+                        message.sender_name,
+                        message.group_id,
+                        platform,
+                        message.timestamp,
+                        serialize_to_json(message.metadata),
+                        message_seq,
+                    ),
+                )
 
-            message_id = cursor.lastrowid if cursor.lastrowid else 0
-
-            await self.connection.execute(
-                """
-                UPDATE sessions
-                SET message_count = message_count + 1,
-                    last_active_at = ?,
-                    participants = CASE
-                        WHEN ? = '' THEN participants
-                        WHEN EXISTS (
-                            SELECT 1
-                            FROM json_each(COALESCE(NULLIF(participants, ''), '[]'))
-                            WHERE value = ?
-                        ) THEN participants
-                        ELSE json_insert(
-                            COALESCE(NULLIF(participants, ''), '[]'),
-                            '$[#]',
-                            ?
-                        )
-                    END
-                WHERE session_id = ?
-            """,
-                (
-                    message.timestamp,
-                    sender_id,
-                    sender_id,
-                    sender_id,
-                    message.session_id,
-                ),
-            )
-            await self.connection.commit()
+                message_id = cursor.lastrowid if cursor.lastrowid else 0
+                await self.connection.execute(
+                    """
+                    UPDATE sessions
+                    SET message_count = message_count + 1,
+                        last_active_at = ?,
+                        participants = CASE
+                            WHEN ? = '' THEN participants
+                            WHEN EXISTS (
+                                SELECT 1
+                                FROM json_each(COALESCE(NULLIF(participants, ''), '[]'))
+                                WHERE value = ?
+                            ) THEN participants
+                            ELSE json_insert(
+                                COALESCE(NULLIF(participants, ''), '[]'),
+                                '$[#]',
+                                ?
+                            )
+                        END
+                    WHERE session_id = ?
+                    """,
+                    (
+                        message.timestamp,
+                        sender_id,
+                        sender_id,
+                        sender_id,
+                        message.session_id,
+                    ),
+                )
+                await self.connection.commit()
+            except BaseException:
+                await self.connection.rollback()
+                raise
 
         logger.debug(
             f"[ConversationStore] 添加消息: session={message.session_id}, role={message.role}"
@@ -129,7 +142,7 @@ class MessageStoreMixin(MessageQueryMixin):
                        group_id, platform, timestamp, metadata
                 FROM messages
                 WHERE session_id = ? AND sender_id = ?
-                ORDER BY timestamp DESC
+                ORDER BY message_seq DESC
                 LIMIT ?
             """
             params = (session_id, sender_id, limit)
@@ -140,7 +153,7 @@ class MessageStoreMixin(MessageQueryMixin):
                        group_id, platform, timestamp, metadata
                 FROM messages
                 WHERE session_id = ?
-                ORDER BY timestamp DESC
+                ORDER BY message_seq DESC
                 LIMIT ?
             """
             params = (session_id, limit)
@@ -354,7 +367,6 @@ class MessageStoreMixin(MessageQueryMixin):
                 f"{session_id} ({last_summarized_index} > {actual_count})"
             )
             return 0
-
         safe_delete_count = min(delete_count, last_summarized_index)
         if safe_delete_count <= 0:
             return 0

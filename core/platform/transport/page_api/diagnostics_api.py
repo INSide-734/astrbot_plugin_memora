@@ -1,10 +1,8 @@
 """诊断健康、事件历史和有限恢复动作 API。"""
 
-from __future__ import annotations
-
 import inspect
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
 from quart import request
@@ -16,10 +14,22 @@ from .response_utils import error_response, ok_response
 class DiagnosticsApiMixin:
     """基于现有安全观测摘要提供运行时诊断能力。"""
 
+    if TYPE_CHECKING:
+
+        def _build_recall_summary(self) -> dict[str, Any]: ...
+        def _build_background_task_summary(self) -> dict[str, Any]: ...
+        def _build_provider_summary(self) -> dict[str, Any]: ...
+        def _build_index_summary(self) -> dict[str, Any]: ...
+        def _build_write_coordinator_summary(self) -> dict[str, Any]: ...
+        def _build_anomaly_summary(self) -> dict[str, Any]: ...
+        def _build_learning_summary(self) -> dict[str, Any]: ...
+        def _build_prometheus_summary(self) -> dict[str, Any]: ...
+        async def _build_summary_task_summary(self) -> dict[str, int] | None: ...
+
     async def get_diagnostics_health(self):
         """返回诊断健康评分；失败时只暴露稳定错误码。"""
         try:
-            return ok_response(self._build_diagnostics_health())
+            return ok_response(await self._build_diagnostics_health())
         except Exception as exc:
             logger.error(
                 "[诊断接口] 获取健康摘要失败，异常类型=%s",
@@ -113,7 +123,7 @@ class DiagnosticsApiMixin:
                 return error_response("缺少必填参数 action")
 
             if action == "refresh_metrics":
-                snapshot = self._build_diagnostics_snapshot()
+                snapshot = await self._build_diagnostics_snapshot_with_summary()
                 return ok_response(
                     {
                         "action": action,
@@ -161,12 +171,24 @@ class DiagnosticsApiMixin:
         }
         build_prometheus = getattr(self, "_build_prometheus_summary", None)
         if callable(build_prometheus):
-            snapshot["prometheus"] = build_prometheus()
+            snapshot["prometheus"] = cast(dict[str, Any], build_prometheus())
         return snapshot
 
-    def _build_diagnostics_health(self) -> dict[str, Any]:
-        """对当前诊断快照执行健康评分。"""
+    async def _build_diagnostics_snapshot_with_summary(self) -> dict[str, Any]:
+        """为 Page 诊断补充可选的安全总结任务投影。"""
         snapshot = self._build_diagnostics_snapshot()
+        build_summary = getattr(self, "_build_summary_task_summary", None)
+        if not callable(build_summary):
+            return snapshot
+
+        summary_tasks = await self._maybe_await(build_summary())
+        if summary_tasks is not None:
+            snapshot["summary_tasks"] = summary_tasks
+        return snapshot
+
+    async def _build_diagnostics_health(self) -> dict[str, Any]:
+        """对包含可选总结任务投影的当前诊断快照执行健康评分。"""
+        snapshot = await self._build_diagnostics_snapshot_with_summary()
         return self._score_diagnostics_snapshot(snapshot)
 
     def _score_diagnostics_snapshot(self, snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -243,7 +265,7 @@ class DiagnosticsApiMixin:
         if not isinstance(write, dict):
             return None
         value = write.get("failures_total")
-        if isinstance(value, bool):
+        if value is None or isinstance(value, bool):
             return None
         try:
             return int(value)

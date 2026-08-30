@@ -87,6 +87,8 @@ class PluginInitializer(InitializerReadinessMixin):
         self.injection_decision_recorder: InjectionDecisionRecorder | None = None
         self.memory_evolution_store: Any | None = None
         self.memory_evolution_manager: Any | None = None
+        self.summary_scheduler: Any | None = None
+        self.summary_llm_limiter: Any | None = None
         self.affection_store: Any | None = None
         self.affection_manager: Any | None = None
         self.expression_store: Any | None = None
@@ -296,6 +298,8 @@ class PluginInitializer(InitializerReadinessMixin):
             self.memory_evolution_store = components.get("memory_evolution_store")
             self.memory_evolution_manager = components.get("memory_evolution_manager")
             self.realtime_hub = components.get("realtime_hub")
+            self.summary_scheduler = components.get("summary_scheduler")
+            self.summary_llm_limiter = components.get("summary_llm_limiter")
             owns_injection_components = True
             owns_evolution_components = bool(
                 self.memory_evolution_store or self.memory_evolution_manager
@@ -303,6 +307,9 @@ class PluginInitializer(InitializerReadinessMixin):
             self.prompt_protection = self._create_prompt_protection_service()
             assert self.memory_processor is not None
             self.memory_processor.prompt_protection_service = self.prompt_protection
+            if self.summary_scheduler is not None:
+                await self.summary_scheduler.start()
+                logger.info("SummaryScheduler 已启动")
 
             for capability, instance in (
                 ("database", self.db),
@@ -322,6 +329,7 @@ class PluginInitializer(InitializerReadinessMixin):
                 ("memory_evolution_manager", self.memory_evolution_manager),
                 ("prompt_protection", self.prompt_protection),
                 ("realtime_hub", self.realtime_hub),
+                ("summary_scheduler", self.summary_scheduler),
             ):
                 is_ready = instance is not None
                 report_debug_event(
@@ -415,6 +423,10 @@ class PluginInitializer(InitializerReadinessMixin):
                     reason_code="full_initialization_error",
                     duration_ms=duration_ms,
                 )
+            try:
+                await self.stop_summary_scheduler()
+            except BaseException:
+                logger.error("初始化失败后停止总结调度器失败", exc_info=True)
             try:
                 await self.stop_memory_engine_tasks()
             except BaseException:
@@ -693,13 +705,21 @@ class PluginInitializer(InitializerReadinessMixin):
 
     async def stop_scheduler(self) -> None:
         """依次停止存量回填与衰减调度器。"""
-
         if self.backfill_scheduler:
             await self._safe_step("停止存量回填调度器", self.backfill_scheduler.stop())
             self.backfill_scheduler = None
         if self.decay_scheduler:
             await self._safe_step("停止衰减调度器", self.decay_scheduler.stop())
             self.decay_scheduler = None
+
+    async def stop_summary_scheduler(self) -> None:
+        """停止总结入队、领取循环与持有的 worker。"""
+        scheduler = self.summary_scheduler
+        if scheduler is None:
+            return
+        await scheduler.close()
+        if self.summary_scheduler is scheduler:
+            self.summary_scheduler = None
 
     async def stop_background_tasks(self) -> None:
         """取消尚未结束的 Provider 后台等待任务。"""

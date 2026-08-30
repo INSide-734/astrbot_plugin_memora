@@ -1,6 +1,7 @@
 """ConversationStore 的只读查询与数据完整性操作。"""
 
 import json
+from typing import Any
 
 from astrbot.api import logger
 
@@ -9,6 +10,9 @@ from ....shared.contracts.conversation import Message
 
 class MessageQueryMixin:
     """ConversationStore 的只读查询与数据完整性操作。"""
+
+    connection: Any
+    _write_lock: Any
 
     async def get_message_count(self, session_id: str) -> int:
         """
@@ -165,13 +169,13 @@ class MessageQueryMixin:
         if self.connection is None:
             return []
 
-        # 使用子查询确保按时间升序后再应用 OFFSET/LIMIT
+        # message_seq 在 schema migration 中建立；它不受 timestamp 倒流影响。
         query = """
             SELECT id, session_id, role, content, sender_id, sender_name,
                    group_id, platform, timestamp, metadata
             FROM messages
             WHERE session_id = ?
-            ORDER BY timestamp ASC
+            ORDER BY message_seq ASC
             LIMIT ? OFFSET ?
         """
 

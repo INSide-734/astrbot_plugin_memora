@@ -184,6 +184,8 @@
       "provider": "Provider: 状态={status}，尝试={attempts}/{max_attempts}，重试中={retry}",
       "recall": "召回: 样本={samples}，平均={avg} ms，P50={p50} ms，P95={p95} ms",
       "tasks": "后台任务: 跟踪={tracked}，运行={active}，完成={completed}，失败={failed}，取消={cancelled}",
+      "summary_tasks": "总结任务: 排队={queued}，运行={running}，失败={failed}，阻塞={blocked}，未知={unknown}，取消={cancelled}，放弃={abandoned}，并发={active}/{target}",
+      "summary_results": "总结结果累计: canonical={canonical}，隔离={quarantine}，丢弃={discard}，标记写入={mark_write}，候选失败={failed_candidate}，幂等跳过={skipped_idempotent}",
       "index": "索引: 校验器={available}，一致={consistent}，需重建={needs_rebuild}，最近总数={total}，错误={errors}",
       "write": "写入: 操作={operations}，锁重试={retries}，失败={failures}，致命={fatal}，不可重试={non_retryable}",
       "prometheus": "Prometheus: 可用={available}，采集器={collectors}",

@@ -16,13 +16,12 @@ from ....shared.cost_control import CostControl
 from ...conversation.application.conversation_manager import ConversationManager
 from ...identity.domain.models import ResolvedIdentity
 from ...observability.application import runtime as observability
+from ...quality.application.gate_runtime import capture_gate_snapshot_json
 from ...recall.processors.memory_processor import MemoryProcessor
+from ..domain.summary_models import SummaryWindowContext
 from .continuity import resolve_continuity_session as resolve_continuity_session
-from .reflection_backlog import ReflectionBacklogMixin
 from .reflection_context import ReflectionContextMixin
-from .reflection_storage import ReflectionStorageMixin
 from .reflection_trigger import ReflectionTrigger
-from .topic_batch_preparer import TopicBatchPreparer
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -31,10 +30,8 @@ if TYPE_CHECKING:
     from ....shared.contracts import PromptProtectionPort
 
 
-class ReflectionHandler(
-    ReflectionContextMixin, ReflectionStorageMixin, ReflectionBacklogMixin
-):
-    """在 LLM 响应后执行反思与后台记忆存储。"""
+class ReflectionHandler(ReflectionContextMixin):
+    """在 LLM 响应后执行反思与后台总结入队。"""
 
     def __init__(
         self,
@@ -53,6 +50,7 @@ class ReflectionHandler(
         memory_evolution_manager: Any | None = None,
         memory_quality_gate: Any | None = None,
         cost_control: CostControl | None = None,
+        summary_scheduler: Any | None = None,
     ) -> None:
         """装配响应清洗、反思存储及可选认知组件。"""
 
@@ -71,18 +69,8 @@ class ReflectionHandler(
         self._memory_evolution_manager = memory_evolution_manager
         self._memory_quality_gate = memory_quality_gate
         self._cost_control = cost_control or CostControl()
+        self._summary_scheduler = summary_scheduler
 
-        self._storage_tasks: set[asyncio.Task] = set()
-        self._storage_sessions_inflight: set[str] = set()
-        self._storage_state_lock = asyncio.Lock()
-        self._shutting_down = False
-
-        self._batch_preparer = TopicBatchPreparer(
-            config_manager=config_manager,
-            memory_engine=memory_engine,
-            memory_processor=memory_processor,
-            cost_control=self._cost_control,
-        )
         self._summary_trigger = ReflectionTrigger(
             config_manager=config_manager,
             conversation_manager=conversation_manager,
@@ -91,8 +79,17 @@ class ReflectionHandler(
 
     async def _resolve_persona_id(self, event: AstrMessageEvent) -> str | None:
         """通过处理器拥有的平台上下文解析当前人格标识。"""
-
         return await get_persona_id(self._context, event)
+
+    def _summary_gate_context(self) -> tuple[str, str]:
+        """返回入队任务使用的当前门禁修订号和安全快照 JSON。"""
+        gate_runtime = getattr(self._memory_quality_gate, "gate_runtime", None)
+        gate_revision = ""
+        if gate_runtime is not None:
+            snapshot = gate_runtime.snapshot()
+            gate_revision = str(getattr(snapshot, "revision", "") or "")
+        gate_snapshot_json = capture_gate_snapshot_json(gate_runtime)
+        return gate_revision, gate_snapshot_json
 
     async def handle_memory_reflection(
         self,
@@ -331,47 +328,57 @@ class ReflectionHandler(
             request = await self._summary_trigger.prepare(event, session_id)
             if request is None:
                 return
-
-            if self._shutting_down:
+            scheduler = self._summary_scheduler
+            if scheduler is None:
                 observability.report_debug_event(
                     "reflection_state",
                     component="reflection",
-                    stage="summary_window",
+                    stage="summary_scheduler",
                     status="skipped",
-                    reason_code="shutdown_in_progress",
+                    reason_code="component_unavailable",
                 )
                 return
-
-            if not await self.try_begin_summary_window(session_id):
-                observability.report_debug_event(
-                    "reflection_state",
-                    component="reflection",
-                    stage="summary_window",
-                    status="skipped",
-                    reason_code="storage_task_already_running",
-                )
-                logger.info(f"[{session_id}] 已有记忆总结任务在执行，跳过本次触发")
-                return
-
-            try:
-                task = asyncio.create_task(self._drain_summary_backlog(request))
-            except Exception:
-                self.finish_summary_window(session_id)
-                raise
-
-            self._storage_tasks.add(task)
-            task.add_done_callback(
-                lambda completed, sid=session_id: self._on_storage_task_done(
-                    completed, sid
-                )
+            epoch, cursor = await self._conversation_manager.store.get_summary_epoch(
+                session_id
             )
+            observed_end = await self._conversation_manager.store.get_message_seq_end(
+                session_id
+            )
+            first = request.history_messages[0] if request.history_messages else None
+            group_id = getattr(first, "group_id", None)
+            gate_revision, gate_snapshot_json = self._summary_gate_context()
+            context = SummaryWindowContext(
+                session_id=session_id,
+                session_epoch=epoch,
+                start_seq=cursor,
+                end_seq=cursor,
+                persona_id=request.persona_id,
+                chat_type="group" if group_id else "private",
+                group_id=str(group_id) if group_id else None,
+                scope_id=session_id,
+                triggered_by="automatic",
+                gate_revision=gate_revision,
+                gate_snapshot_json=gate_snapshot_json,
+                window_size=max(
+                    2,
+                    int(
+                        self._config_manager.get(
+                            "reflection_engine.summary_trigger_rounds", 10
+                        )
+                    )
+                    * 2,
+                ),
+            )
+            result = await scheduler.enqueue_automatic(context, observed_end)
             observability.report_debug_event(
                 "reflection_state",
                 component="reflection",
                 stage="reflection",
-                status="completed",
-                reason_code="storage_task_scheduled",
-                count=len(request.history_messages),
+                status="completed" if result.accepted else "skipped",
+                reason_code=str(
+                    getattr(result.reason_code, "value", result.reason_code)
+                ),
+                count=result.queued,
             )
         except asyncio.CancelledError:
             raise
@@ -387,11 +394,6 @@ class ReflectionHandler(
             logger.error("检查或调度记忆反思时发生错误", exc_info=True)
 
     async def shutdown(self) -> None:
-        """关闭反思处理器，并等待所有存储任务完成。"""
+        """标记反思入口停止接收新事件；总结调度器由组合根统一关闭。"""
         self._shutting_down = True
-        if self._storage_tasks:
-            logger.info(f"等待 {len(self._storage_tasks)} 个存储任务完成……")
-            await asyncio.gather(*self._storage_tasks, return_exceptions=True)
-            self._storage_tasks.clear()
-        self._storage_sessions_inflight.clear()
         logger.info("反思处理器已关闭")

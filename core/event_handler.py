@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
@@ -77,6 +78,7 @@ class EventHandler(CognitiveComponentsMixin):
         memory_evolution_manager: Any | None = None,
         memory_quality_gate: Any | None = None,
         identity_runtime: IdentityConversationPort | None = None,
+        summary_scheduler: Any | None = None,
     ) -> None:
         """绑定事件主链依赖，并接收组合根发布的协议身份端口。"""
 
@@ -157,12 +159,8 @@ class EventHandler(CognitiveComponentsMixin):
             memory_evolution_manager=memory_evolution_manager,
             memory_quality_gate=memory_quality_gate,
             cost_control=self._cost_control,
+            summary_scheduler=summary_scheduler,
         )
-
-    @property
-    def summary_window_locker(self) -> ReflectionHandler:
-        """反思流程与命令流程共用的会话级总结提交锁。"""
-        return self._reflection_handler
 
     def _new_extra_llm_budget(self, event: AstrMessageEvent) -> ExtraLlmBudget:
         """为新 AstrBot 请求创建预算并附着到同一事件对象。"""
@@ -664,6 +662,19 @@ class EventHandler(CognitiveComponentsMixin):
 
             overflow_count = actual_count - max_messages
             target_delete = max(overflow_count, cleanup_batch_size)
+            atomic_trim = getattr(self.conversation_manager.store, "trim_if_safe", None)
+            get_epoch = getattr(
+                self.conversation_manager.store, "get_summary_epoch", None
+            )
+            if inspect.iscoroutinefunction(atomic_trim) and inspect.iscoroutinefunction(
+                get_epoch
+            ):
+                epoch, _cursor = await get_epoch(session_id)
+                trim_result = await atomic_trim(session_id, epoch, target_delete)
+                actually_deleted = int(getattr(trim_result, "deleted_count", 0) or 0)
+                if actually_deleted:
+                    await self.conversation_manager.invalidate_cache(session_id)
+                return
             safe_to_delete = min(target_delete, last_summarized_index)
 
             if safe_to_delete <= 0:
