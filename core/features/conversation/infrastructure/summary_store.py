@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
+import json
 import secrets
 import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ....shared.contracts.conversation import Message
+from ....shared.summary_source import source_window_digest
 from ...reflection.domain.summary_models import (
     CandidateIntent,
     ClaimedJob,
@@ -21,10 +24,9 @@ from ...reflection.domain.summary_models import (
     SummaryJobStatus,
     SummaryReasonCode,
     SummaryWindowContext,
-    source_window_digest,
 )
 from .summary_legacy import SummaryLegacyMigrationMixin
-from .summary_store_keys import owned_slot_key, source_guarded
+from .summary_store_keys import owned_slot_key
 from .summary_store_terminal import SummaryStoreTerminalMixin
 
 
@@ -45,6 +47,14 @@ def _row(row: Any, name: str, index: int) -> Any:
 
 def _message(row: Any) -> Message:
     """将内部消息行转换为不含 message_seq 的公开 Message。"""
+    metadata = _row(row, "metadata", 9)
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError as error:
+            raise ValueError("source_metadata_invalid") from error
+    if not isinstance(metadata, dict):
+        raise ValueError("source_metadata_invalid")
     return Message.from_dict(
         {
             "id": _row(row, "id", 0),
@@ -56,7 +66,7 @@ def _message(row: Any) -> Message:
             "group_id": _row(row, "group_id", 6),
             "platform": _row(row, "platform", 7),
             "timestamp": _row(row, "timestamp", 8),
-            "metadata": _row(row, "metadata", 9),
+            "metadata": metadata,
         }
     )
 
@@ -122,13 +132,100 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
         )
         return 1, 0
 
+    @staticmethod
+    def _scope_text(value: object) -> str | None:
+        """校验启动扫描使用的非正文作用域标量。"""
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise RuntimeError("summary_startup_scope_unavailable")
+        normalized = value.strip()
+        if not normalized or len(normalized) > 256:
+            raise RuntimeError("summary_startup_scope_unavailable")
+        return normalized
+
+    async def get_summary_scope(
+        self, session_id: str
+    ) -> tuple[str, str | None, str, str | None]:
+        """从持久消息作用域构造安全的启动总结上下文投影。
+
+        返回 ``(chat_type, group_id, scope_id, persona_id)``。只使用已经
+        持久化的群组列和受限 metadata；作用域证据冲突时拒绝启动扫描，
+        不猜测会话标识。此协调锁仅覆盖当前插件进程。
+        """
+        if self.connection is None:
+            raise RuntimeError("summary_startup_scope_unavailable")
+        session_cursor = await self.connection.execute(
+            "SELECT metadata FROM sessions WHERE session_id=?",
+            (session_id,),
+        )
+        session_row = await session_cursor.fetchone()
+        if session_row is None:
+            raise RuntimeError("summary_startup_scope_unavailable")
+        raw_session_metadata = _row(session_row, "metadata", 0) or "{}"
+        try:
+            session_metadata = json.loads(raw_session_metadata)
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise RuntimeError("summary_startup_scope_unavailable") from error
+        if not isinstance(session_metadata, dict):
+            raise RuntimeError("summary_startup_scope_unavailable")
+
+        persona_values: set[str] = set()
+        declared_chat = self._scope_text(session_metadata.get("chat_type"))
+        declared_group = self._scope_text(session_metadata.get("group_id"))
+        declared_scope = self._scope_text(session_metadata.get("scope_id"))
+        declared_persona = self._scope_text(session_metadata.get("persona_id"))
+        if declared_persona is not None:
+            persona_values.add(declared_persona)
+
+        message_cursor = await self.connection.execute(
+            "SELECT group_id, metadata FROM messages WHERE session_id=?",
+            (session_id,),
+        )
+        group_values: set[str] = set()
+        for row in await message_cursor.fetchall():
+            raw_group = _row(row, "group_id", 0)
+            if raw_group is not None and str(raw_group).strip():
+                group_values.add(str(raw_group).strip())
+            raw_metadata = _row(row, "metadata", 1) or "{}"
+            try:
+                message_metadata = json.loads(raw_metadata)
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                raise RuntimeError("summary_startup_scope_unavailable") from error
+            if not isinstance(message_metadata, dict):
+                raise RuntimeError("summary_startup_scope_unavailable")
+            message_persona = self._scope_text(message_metadata.get("persona_id"))
+            if message_persona is not None:
+                persona_values.add(message_persona)
+
+        if len(group_values) > 1 or len(persona_values) > 1:
+            raise RuntimeError("summary_startup_scope_unavailable")
+        group_id = next(iter(group_values), None)
+        persona_id = next(iter(persona_values), None)
+        if group_id is not None:
+            if (
+                declared_chat == "private"
+                or (declared_group is not None and declared_group != group_id)
+                or (declared_scope is not None and declared_scope != group_id)
+            ):
+                raise RuntimeError("summary_startup_scope_unavailable")
+            return "group", group_id, group_id, persona_id
+
+        if declared_chat == "group" or declared_group is not None:
+            raise RuntimeError("summary_startup_scope_unavailable")
+        if declared_scope is not None and declared_scope != session_id:
+            raise RuntimeError("summary_startup_scope_unavailable")
+        return "private", None, session_id, persona_id
+
     async def plan_existing_frontiers(
         self,
-        context_factory: Callable[[str, int, int], SummaryWindowContext],
+        context_factory: Callable[
+            [str, int, int], SummaryWindowContext | Awaitable[SummaryWindowContext]
+        ],
     ) -> int:
-        """为已有会话按同一 planner 补建启动期总结窗口。"""
+        """为所有已有会话通过同一 frontier planner 补建窗口。"""
         if self.connection is None:
-            raise RuntimeError("数据库连接未初始化")
+            raise RuntimeError("summary_recovery_failed")
         cursor = await self.connection.execute(
             "SELECT session_id FROM sessions WHERE session_id <> '' ORDER BY session_id"
         )
@@ -138,11 +235,24 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
         queued = 0
         for session_id in session_ids:
             epoch, summary_cursor = await self.get_summary_epoch(session_id)
-            observed_end = await self.get_message_seq_end(session_id)
             context = context_factory(session_id, epoch, summary_cursor)
+            if inspect.isawaitable(context):
+                context = await context
             if not isinstance(context, SummaryWindowContext):
-                raise TypeError("启动总结上下文类型不正确")
-            result = await self.plan_and_enqueue_windows(context, observed_end)
+                raise RuntimeError("summary_startup_context_invalid")
+            if (
+                context.session_id != session_id
+                or context.session_epoch != epoch
+                or context.start_seq != summary_cursor
+                or context.end_seq != summary_cursor
+            ):
+                raise RuntimeError("summary_startup_context_invalid")
+            observed_end = await self.get_message_seq_end(session_id)
+            result = await self.plan_and_enqueue_windows(
+                context, observed_end, strict=True
+            )
+            if not isinstance(result, SummaryEnqueueResult):
+                raise RuntimeError("summary_startup_planning_failed")
             queued += result.queued
         return queued
 
@@ -156,50 +266,6 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
         )
         row = await cursor.fetchone()
         return int(row[0] or 0) if row else 0
-
-    @source_guarded
-    async def clear_session_atomically(self, session_id: str) -> int:
-        """在一次 Store 事务中 fence epoch、取消任务并删除会话消息。"""
-        if self.connection is None:
-            raise RuntimeError("数据库连接未初始化")
-        now = self._summary_now()
-        try:
-            async with self._write_lock:
-                await self._begin_summary()
-                epoch, _ = await self._ensure_epoch(session_id, now)
-                await self.connection.execute(
-                    """
-                    UPDATE summary_jobs SET status='cancelled', claim_token=NULL,
-                      lease_until=NULL, reason_code='epoch_fenced', updated_at=?
-                    WHERE session_id=? AND session_epoch=?
-                      AND status NOT IN ('completed','cancelled','abandoned')
-                    """,
-                    (now, session_id, epoch),
-                )
-                deleted = await self.connection.execute(
-                    "DELETE FROM messages WHERE session_id=?", (session_id,)
-                )
-                count = max(0, int(deleted.rowcount))
-                await self.connection.execute(
-                    "UPDATE sessions SET message_count=0, metadata='{}' WHERE session_id=?",
-                    (session_id,),
-                )
-                await self.connection.execute(
-                    """
-                    UPDATE session_epochs SET epoch=?, cursor_seq=0,
-                      pending_summary_json=NULL, tombstoned_at=?, updated_at=?
-                    WHERE session_id=? AND epoch=?
-                    """,
-                    (epoch + 1, now, now, session_id, epoch),
-                )
-                await self.connection.commit()
-                return count
-        except asyncio.CancelledError:
-            await self._rollback_summary()
-            raise
-        except Exception:
-            await self._rollback_summary()
-            raise
 
     async def get_summary_epoch(self, session_id: str) -> tuple[int, int]:
         """读取当前 session epoch 和连续总结游标。"""
@@ -234,8 +300,36 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
         )
         return list(await cursor.fetchall())
 
+    async def _validated_frontier(
+        self, session_id: str, epoch: int, cursor_seq: int
+    ) -> int | None:
+        """验证当前 epoch 的窗口区间连续且没有重叠或缺口。"""
+        cursor = await self.connection.execute(
+            """
+            SELECT start_seq,end_seq
+            FROM summary_jobs
+            WHERE session_id=? AND session_epoch=?
+            ORDER BY start_seq ASC,end_seq ASC,created_at ASC,job_id ASC
+            """,
+            (session_id, epoch),
+        )
+        frontier = cursor_seq
+        for row in await cursor.fetchall():
+            start = int(_row(row, "start_seq", 0))
+            end = int(_row(row, "end_seq", 1))
+            if end <= cursor_seq:
+                continue
+            if start < cursor_seq or start != frontier or end <= start:
+                return None
+            frontier = end
+        return frontier
+
     async def plan_and_enqueue_windows(
-        self, context: SummaryWindowContext, observed_end_seq: int
+        self,
+        context: SummaryWindowContext,
+        observed_end_seq: int,
+        *,
+        strict: bool = False,
     ) -> SummaryEnqueueResult:
         """在一个事务中按 frontier 规划固定窗口并幂等入队。"""
         if (
@@ -257,15 +351,16 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
                     return SummaryEnqueueResult(
                         False, reason_code=SummaryReasonCode.EPOCH_FENCED
                     )
-                frontier_cursor = await self.connection.execute(
-                    """
-                    SELECT COALESCE(MAX(end_seq),?) FROM summary_jobs
-                    WHERE session_id=? AND session_epoch=?
-                    """,
-                    (cursor_seq, context.session_id, epoch),
+                frontier = await self._validated_frontier(
+                    context.session_id, epoch, cursor_seq
                 )
-                frontier_row = await frontier_cursor.fetchone()
-                frontier = max(cursor_seq, int(frontier_row[0] or 0))
+                if frontier is None or frontier > observed_end_seq:
+                    await self._rollback_summary()
+                    if strict:
+                        raise RuntimeError("summary_startup_planning_failed")
+                    return SummaryEnqueueResult(
+                        False, reason_code=SummaryReasonCode.SOURCE_INCOMPLETE
+                    )
                 start = max(frontier, context.start_seq)
                 queued = 0
                 duplicates = 0
@@ -379,8 +474,10 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
         except asyncio.CancelledError:
             await self._rollback_summary()
             raise
-        except Exception:
+        except Exception as error:
             await self._rollback_summary()
+            if strict:
+                raise RuntimeError("summary_startup_planning_failed") from error
             return SummaryEnqueueResult(
                 False, reason_code=SummaryReasonCode.STORE_UNAVAILABLE
             )
@@ -432,7 +529,7 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
 
     async def claim_ready(
         self,
-        now: datetime,
+        now: datetime | float | None,
         scheduler_id: str,
         limit: int,
         *,
@@ -441,19 +538,24 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
         session_order: Sequence[str] | None = None,
         global_limit: int | None = None,
     ) -> list[ClaimedJob]:
-        """按 session 顺序领取 ready 任务并设置 claim fencing。"""
+        """按 Store 时钟域和 session 顺序领取 ready 任务并设置 fencing。"""
         if self.connection is None or limit <= 0:
             return []
-        stamp = _timestamp(now)
+        stamp = self._summary_now() if now is None else _timestamp(now)
         order = {str(item): index for index, item in enumerate(session_order or ())}
         try:
             async with self._write_lock:
                 await self._begin_summary()
                 cursor = await self.connection.execute(
                     """
-                    SELECT * FROM summary_jobs
-                    WHERE status IN ('queued','failed') AND next_attempt_at<=?
-                    ORDER BY start_seq,created_at,job_id
+                    SELECT job.*
+                    FROM summary_jobs AS job
+                    INNER JOIN session_epochs AS epoch
+                      ON epoch.session_id=job.session_id
+                     AND epoch.epoch=job.session_epoch
+                    WHERE job.status IN ('queued','failed')
+                      AND job.next_attempt_at<=?
+                    ORDER BY job.start_seq,job.created_at,job.job_id
                     """,
                     (stamp,),
                 )
@@ -468,10 +570,14 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
                 )
                 active_cursor = await self.connection.execute(
                     """
-                    SELECT session_id,COUNT(*) AS active
-                    FROM summary_jobs
-                    WHERE status='running' AND lease_until IS NOT NULL AND lease_until>?
-                    GROUP BY session_id
+                    SELECT job.session_id,COUNT(*) AS active
+                    FROM summary_jobs AS job
+                    INNER JOIN session_epochs AS epoch
+                      ON epoch.session_id=job.session_id
+                     AND epoch.epoch=job.session_epoch
+                    WHERE job.status='running' AND job.lease_until IS NOT NULL
+                      AND job.lease_until>?
+                    GROUP BY job.session_id
                     """,
                     (stamp,),
                 )
@@ -549,23 +655,37 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
             return []
 
     async def _claim_matches(self, claim: ClaimedJob) -> bool:
-        """检查 claim token、epoch、generation 和 lease 是否仍有效。"""
+        """检查 claim token、来源范围、epoch、generation 和 lease 是否仍有效。"""
         cursor = await self.connection.execute(
             """
-            SELECT 1 FROM summary_jobs WHERE job_id=? AND session_id=? AND session_epoch=?
-              AND status='running' AND claim_token=? AND worker_generation=?
-              AND lease_until IS NOT NULL AND lease_until > ?
+            SELECT 1
+            FROM summary_jobs AS job
+            INNER JOIN session_epochs AS epoch
+              ON epoch.session_id=job.session_id AND epoch.epoch=job.session_epoch
+            WHERE job.job_id=? AND job.session_id=? AND job.session_epoch=?
+              AND job.start_seq=? AND job.end_seq=? AND job.expected_count=?
+              AND job.source_digest=?
+              AND job.status='running' AND job.claim_token=?
+              AND job.worker_generation=? AND job.lease_until IS NOT NULL
+              AND job.lease_until=? AND job.lease_until > ?
             """,
             (
                 claim.job_id,
                 claim.session_id,
                 claim.session_epoch,
+                claim.start_seq,
+                claim.end_seq,
+                claim.expected_count,
+                claim.source_digest,
                 claim.claim_token,
                 claim.worker_generation,
+                claim.lease_until,
                 self._summary_now(),
             ),
         )
-        return await cursor.fetchone() is not None
+        row = await cursor.fetchone()
+        await cursor.close()
+        return row is not None
 
     async def claim_is_active(self, claim: ClaimedJob) -> bool:
         """检查 claim 是否仍可执行外部副作用。"""
@@ -603,8 +723,12 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
                 if not await self._claim_matches(claim):
                     await self._rollback_summary()
                     return False
+                normalized: dict[int, tuple[str, CandidateIntent]] = {}
                 for intent in intents:
-                    if not isinstance(intent, CandidateIntent):
+                    if (
+                        not isinstance(intent, CandidateIntent)
+                        or intent.slot in normalized
+                    ):
                         await self._rollback_summary()
                         return False
                     slot_key = await owned_slot_key(
@@ -613,16 +737,25 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
                         intent.slot,
                         intent.content_digest,
                     )
-                    cursor = await self.connection.execute(
-                        "SELECT slot_key,content_digest FROM summary_job_candidates WHERE job_id=? AND slot=?",
-                        (claim.job_id, intent.slot),
+                    normalized[intent.slot] = (slot_key, intent)
+                ledger_cursor = await self.connection.execute(
+                    "SELECT slot,slot_key,content_digest FROM summary_job_candidates WHERE job_id=?",
+                    (claim.job_id,),
+                )
+                ledger_rows = await ledger_cursor.fetchall()
+                existing = {
+                    int(_row(row, "slot", 0)): (
+                        _row(row, "slot_key", 1),
+                        _row(row, "content_digest", 2),
                     )
-                    row = await cursor.fetchone()
-                    if row is not None:
-                        if (
-                            _row(row, "slot_key", 0),
-                            _row(row, "content_digest", 1),
-                        ) != (slot_key, intent.content_digest):
+                    for row in ledger_rows
+                }
+                if existing and set(existing) != set(normalized):
+                    await self._rollback_summary()
+                    return False
+                for slot, (slot_key, intent) in normalized.items():
+                    if slot in existing:
+                        if existing[slot] != (slot_key, intent.content_digest):
                             await self._rollback_summary()
                             return False
                         continue

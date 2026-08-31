@@ -6,15 +6,23 @@
 import asyncio
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
 
 from ....shared.contracts.conversation import Message
 
+if TYPE_CHECKING:
+    from ....shared.contracts.conversation import Session
+
 
 class RangeAndMetadataMixin:
     """消息范围查询与会话元数据管理。"""
+
+    if TYPE_CHECKING:
+        store: Any
+
+        async def get_session_info(self, session_id: str) -> Session | None: ...
 
     async def get_messages_range(
         self, session_id: str, start_index: int = 0, end_index: int | None = None
@@ -101,6 +109,26 @@ class RangeAndMetadataMixin:
         )
 
         return result
+
+    async def get_messages_seq_range(
+        self,
+        session_id: str,
+        start_seq: int,
+        end_seq: int,
+        *,
+        expected_count: int | None = None,
+    ) -> list[Message]:
+        """通过 Store 读取并校验不可变 message_seq 来源范围。"""
+        reader = getattr(self.store, "get_messages_seq_range", None)
+        if not callable(reader):
+            raise RuntimeError("stable_message_range_unavailable")
+        stable_reader = cast(Any, reader)
+        return await stable_reader(
+            session_id,
+            start_seq,
+            end_seq,
+            expected_count=expected_count,
+        )
 
     async def update_session_metadata(
         self, session_id: str, key: str, value: Any
@@ -207,7 +235,7 @@ class RangeAndMetadataMixin:
         session.metadata = updated_metadata
         logger.debug(
             f"[ConversationManager] 更新会话元数据: {session_id}, "
-            f"字段={sorted(str(key) for key in updates)}"
+            f"字段={sorted(updates)}"
         )
         return True
 

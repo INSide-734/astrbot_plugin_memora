@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import inspect
 from collections.abc import AsyncGenerator
 
 from astrbot.api import logger
@@ -104,11 +105,12 @@ class CommandHandler(
         try:
             if self._write_guard_cb():
                 return "备份恢复已暂存，重启 AstrBot 完成恢复前暂时拒绝写入操作。"
-        except Exception as exc:
+        except Exception as error:
             logger.error(
-                "[CommandHandler] 写入维护状态检查失败: %s", exc, exc_info=True
+                "[CommandHandler] 写入维护状态检查失败，异常类型=%s",
+                error.__class__.__name__,
             )
-            return f"维护状态检查失败: {exc}"
+            return "未接受：reason=write_guard_check_failed"
         return None
 
     async def _enqueue_manual_summary(self, event: AstrMessageEvent) -> str:
@@ -120,20 +122,48 @@ class CommandHandler(
         session_id = str(getattr(event, "unified_msg_origin", "") or "")
         if not session_id:
             return "未接受：reason=empty_session"
-        epoch, cursor = await manager.store.get_summary_epoch(session_id)
-        observed_end = await manager.store.get_message_seq_end(session_id)
+        store = getattr(manager, "store", None)
+        get_epoch = getattr(store, "get_summary_epoch", None)
+        get_end = getattr(store, "get_message_seq_end", None)
+        if not callable(get_epoch) or not callable(get_end):
+            return "未接受：reason=scope_unavailable"
+        epoch_value = get_epoch(session_id)
+        if inspect.isawaitable(epoch_value):
+            epoch_value = await epoch_value
+        if not isinstance(epoch_value, (tuple, list)) or len(epoch_value) < 2:
+            return "未接受：reason=scope_unavailable"
+        epoch, cursor = int(epoch_value[0]), int(epoch_value[1])
+        observed_end = get_end(session_id)
+        if inspect.isawaitable(observed_end):
+            observed_end = await observed_end
+        if isinstance(observed_end, bool) or not isinstance(observed_end, int):
+            return "未接受：reason=scope_unavailable"
+        get_scope = getattr(store, "get_summary_scope", None)
+        if not callable(get_scope):
+            return "未接受：reason=scope_unavailable"
+        scope = get_scope(session_id)
+        if inspect.isawaitable(scope):
+            scope = await scope
+        if not isinstance(scope, (tuple, list)) or len(scope) != 4:
+            return "未接受：reason=scope_unavailable"
+        chat_type, group_id, scope_id, stored_persona = scope
+        if chat_type not in {"private", "group"} or not isinstance(scope_id, str):
+            return "未接受：reason=scope_unavailable"
+        if chat_type == "group" and not isinstance(group_id, str):
+            return "未接受：reason=scope_unavailable"
+        if chat_type == "private" and group_id is not None:
+            return "未接受：reason=scope_unavailable"
+        if not scope_id.strip() or (chat_type == "group" and not str(group_id).strip()):
+            return "未接受：reason=scope_unavailable"
         if observed_end - cursor < 2:
-            return t("summarize.no_new", total=observed_end, index=cursor)
+            return "未接受：reason=no_window"
         from ...context_helpers import get_persona_id
 
-        persona_id = await get_persona_id(self.context, event)
-        message_obj = getattr(event, "message_obj", None)
-        group_id = getattr(message_obj, "group_id", None)
+        persona_id = await get_persona_id(self.context, event) or stored_persona
         gate_runtime = getattr(self._memory_quality_gate, "gate_runtime", None)
         snapshot = gate_runtime.snapshot() if gate_runtime is not None else None
         gate_revision = str(getattr(snapshot, "revision", "") or "")
         gate_snapshot_json = capture_gate_snapshot_json(gate_runtime)
-        chat_type = "group" if group_id else "private"
         context = SummaryWindowContext(
             session_id=session_id,
             session_epoch=epoch,
@@ -141,8 +171,8 @@ class CommandHandler(
             end_seq=cursor,
             persona_id=persona_id,
             chat_type=chat_type,
-            group_id=str(group_id) if group_id else None,
-            scope_id=session_id,
+            group_id=group_id,
+            scope_id=scope_id,
             gate_revision=gate_revision,
             gate_snapshot_json=gate_snapshot_json,
             window_size=max(

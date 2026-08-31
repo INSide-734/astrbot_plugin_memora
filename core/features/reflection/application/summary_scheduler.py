@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import math
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextvars import Context
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -19,6 +19,7 @@ from ..domain.summary_models import (
     SummaryReasonCode,
     SummaryTaskSnapshot,
     SummaryWindowContext,
+    WindowOutcome,
 )
 from .summary_worker import SummaryWorker, SummaryWorkerFailure
 
@@ -49,6 +50,41 @@ def _supports_keyword(call: Callable[..., object], keyword: str) -> bool:
     )
 
 
+def _is_async_callable(call: object) -> bool:
+    """判断依赖是否实现了约定的异步 Store 端口。"""
+    return inspect.iscoroutinefunction(call) or inspect.iscoroutinefunction(
+        getattr(call, "__call__", None)
+    )
+
+
+async def _startup_call(
+    call: object,
+    *args: object,
+    failure_code: str,
+) -> object:
+    """执行启动期 Store 操作，并把异常收敛为固定失败语义。"""
+    if not callable(call):
+        raise RuntimeError(failure_code)
+    try:
+        result = call(*args)
+        if not inspect.isawaitable(result):
+            raise TypeError("startup_store_call_not_awaitable")
+        return await result
+    except asyncio.CancelledError:
+        raise
+    except RuntimeError as error:
+        # Store 已经给出的固定恢复码是可观察契约，不再包一层改变语义。
+        if str(error) in {
+            "summary_recovery_failed",
+            "summary_startup_planning_failed",
+            "summary_scheduler_unavailable",
+        }:
+            raise
+        raise RuntimeError(failure_code) from error
+    except Exception as error:
+        raise RuntimeError(failure_code) from error
+
+
 class SummaryScheduler:
     """统一规划、领取并执行持久化记忆总结窗口。"""
 
@@ -67,7 +103,9 @@ class SummaryScheduler:
         scheduler_id: str | None = None,
         lease_seconds: int = 300,
         retry_poll_seconds: float = 1.0,
-        startup_context_factory: Callable[[str, int, int], SummaryWindowContext]
+        startup_context_factory: Callable[
+            [str, int, int], SummaryWindowContext | Awaitable[SummaryWindowContext]
+        ]
         | None = None,
     ) -> None:
         """绑定窄 Store port、总结流水线和两层并发配置。
@@ -137,27 +175,58 @@ class SummaryScheduler:
         return self._target_parallelism
 
     async def start(self) -> None:
-        """恢复过期 claim 并幂等启动领取循环。"""
+        """严格完成恢复和启动扫描后再发布领取循环。"""
 
         async with self._lifecycle_lock:
             if self._closed or self._loop_task is not None:
                 return
+
+            set_clock = getattr(self._job_store, "set_summary_clock", None)
             claim_ready = getattr(self._job_store, "claim_ready", None)
-            if not inspect.iscoroutinefunction(claim_ready):
-                return
-            recovered = self._job_store.recover_expired_claims(self._now())
-            if inspect.isawaitable(recovered):
-                await recovered
+            recover_claims = getattr(self._job_store, "recover_expired_claims", None)
             migrate_legacy = getattr(self._job_store, "recover_legacy_pending", None)
-            if callable(migrate_legacy):
-                migrated = migrate_legacy()
-                if inspect.isawaitable(migrated):
-                    await migrated
             plan_frontiers = getattr(self._job_store, "plan_existing_frontiers", None)
-            if callable(plan_frontiers) and self._startup_context_factory is not None:
-                planned = plan_frontiers(self._startup_context_factory)
-                if inspect.isawaitable(planned):
-                    await planned
+            if not callable(set_clock) or not _is_async_callable(claim_ready):
+                raise RuntimeError("summary_scheduler_unavailable")
+            if (
+                not all(
+                    callable(method) and _is_async_callable(method)
+                    for method in (recover_claims, migrate_legacy, plan_frontiers)
+                )
+                or self._startup_context_factory is None
+            ):
+                raise RuntimeError("summary_recovery_failed")
+
+            try:
+                set_clock(self._now)
+                recovered = await _startup_call(
+                    recover_claims,
+                    self._now(),
+                    failure_code="summary_recovery_failed",
+                )
+                migrated = await _startup_call(
+                    migrate_legacy,
+                    failure_code="summary_recovery_failed",
+                )
+                planned = await _startup_call(
+                    plan_frontiers,
+                    self._startup_context_factory,
+                    failure_code="summary_recovery_failed",
+                )
+            except asyncio.CancelledError:
+                raise
+            except RuntimeError:
+                self._claiming = False
+                raise
+            except Exception as error:
+                self._claiming = False
+                raise RuntimeError("summary_recovery_failed") from error
+
+            for value in (recovered, migrated, planned):
+                if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                    self._claiming = False
+                    raise RuntimeError("summary_recovery_failed")
+
             self._claiming = True
             coroutine = self._claim_loop()
             try:
@@ -278,15 +347,15 @@ class SummaryScheduler:
         )
 
     async def snapshot(self) -> SummaryTaskSnapshot:
-        """返回 Store 累计计数与调度器 active/target 的统一安全投影。"""
-
+        """返回 Store 全局有效 lease 与调度器目标的安全投影。"""
         try:
             stored = await self._job_store.snapshot()
         except asyncio.CancelledError:
             raise
         except Exception:
             stored = SummaryTaskSnapshot()
-        active = self.active_parallelism
+        local_active = self.active_parallelism
+        active = max(local_active, max(0, int(stored.active_parallelism)))
         target = self._calculate_target(stored, active)
         self._target_parallelism = target
         return replace(
@@ -497,8 +566,22 @@ class SummaryScheduler:
 
         try:
             outcome = await self._worker.execute(claim)
+            if outcome.failed_count > 0 and outcome.unknown_count == 0:
+                await self._try_fail(
+                    claim,
+                    SummaryFailure(
+                        failed_stage=outcome.failed_stage or "candidate_write",
+                        reason_code=SummaryReasonCode.RETRY_SCHEDULED,
+                        exception_type="CandidateWriteFailed",
+                        retryable=True,
+                    ),
+                )
+                return
             try:
-                await self._job_store.commit_window(claim, outcome)
+                committed = await self._job_store.commit_window(claim, outcome)
+                if committed.accepted:
+                    return
+                await self._reconcile_commit_failure(claim, outcome)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -526,6 +609,50 @@ class SummaryScheduler:
                     self._workers.pop(current, None)
                 self._wake_generation += 1
                 self._condition.notify_all()
+
+    async def _reconcile_commit_failure(
+        self, claim: ClaimedJob, outcome: WindowOutcome
+    ) -> bool:
+        """在窗口提交失败后用已有 canonical ID 尝试一次保守收口。"""
+        reconcile = getattr(self._job_store, "reconcile_window", None)
+        if not callable(reconcile):
+            return False
+        mapping: dict[object, object] = {}
+        for intent in getattr(outcome, "candidate_slots", ()):
+            canonical_id = getattr(intent, "canonical_id", None)
+            if (
+                isinstance(canonical_id, int)
+                and not isinstance(canonical_id, bool)
+                and canonical_id > 0
+            ):
+                mapping[getattr(intent, "slot", None)] = canonical_id
+        try:
+            runner = getattr(self._job_store, "run_claim_side_effect", None)
+            if not callable(runner):
+                return False
+
+            async def _reconcile() -> object:
+                """在 claim/source fence 内核对已落地的 canonical owner。"""
+
+                result = reconcile(claim, mapping)
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+
+            recovered = runner(claim, _reconcile)
+            if inspect.isawaitable(recovered):
+                recovered = await recovered
+            status = getattr(getattr(recovered, "status", None), "value", None)
+            if not getattr(recovered, "accepted", False):
+                return False
+            if status in {"completed", "unknown"}:
+                return True
+            retried = await self._job_store.commit_window(claim, outcome)
+            return bool(getattr(retried, "accepted", False))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
 
     async def _try_fail(
         self,

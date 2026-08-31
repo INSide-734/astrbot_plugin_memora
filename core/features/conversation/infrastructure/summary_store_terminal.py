@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
-import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ...reflection.domain.summary_models import (
+    CandidateDisposition,
     CandidateIntent,
     CandidateLedgerStatus,
     ClaimedJob,
@@ -19,21 +19,21 @@ from ...reflection.domain.summary_models import (
     SummaryFailure,
     SummaryJobStatus,
     SummaryReasonCode,
-    SummaryTaskSnapshot,
     TrimResult,
     WindowOutcome,
     retry_delay_seconds,
 )
-from .summary_store_keys import owned_slot_key, source_guarded
+from .summary_store_keys import owned_slot_key, source_epoch_guarded, source_guarded
+from .summary_store_reconcile import SummaryStoreReconcileMixin
+from .summary_store_snapshot import SummaryStoreSnapshotMixin
 
 _REASON_VALUES = {item.value for item in SummaryReasonCode}
-_COUNTERS = (
-    "canonical_total",
-    "quarantine_total",
-    "discard_total",
-    "mark_write_total",
-    "failed_candidate_total",
-    "skipped_idempotent_total",
+_CANONICAL_ID_DISPOSITIONS = frozenset(
+    {
+        CandidateDisposition.CANONICAL,
+        CandidateDisposition.MARK_WRITE,
+        CandidateDisposition.SKIPPED_IDEMPOTENT,
+    }
 )
 
 
@@ -46,9 +46,9 @@ def _row(row: Any, name: str, index: int) -> Any:
 
 
 def _timestamp(value: datetime | float | None = None) -> float:
-    """把可控时间值转换为非负 Unix 秒。"""
+    """把显式传入的时刻转换为非负 Unix 秒；缺省由 Store 调用方提供。"""
     if value is None:
-        return max(0.0, time.time())
+        raise ValueError("summary_clock_required")
     return max(0.0, value.timestamp() if isinstance(value, datetime) else float(value))
 
 
@@ -89,7 +89,7 @@ def _valid_outcome(outcome: WindowOutcome) -> bool:
     return not outcome.can_advance or (unknown == 0 and outcome.failed_count == 0)
 
 
-class SummaryStoreTerminalMixin:
+class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshotMixin):
     """提供总结任务的 CAS 终态、恢复和 trim 保护。"""
 
     if TYPE_CHECKING:
@@ -133,29 +133,73 @@ class SummaryStoreTerminalMixin:
                         SummaryJobStatus.UNKNOWN,
                         reason_code=SummaryReasonCode.INVALID_ACTION,
                     )
-                if outcome.unknown_count:
+                if outcome.unknown_count or (
+                    not outcome.can_advance and outcome.failed_count == 0
+                ):
                     status = SummaryJobStatus.UNKNOWN
                 elif outcome.can_advance:
                     status = SummaryJobStatus.COMPLETED
                 else:
                     status = SummaryJobStatus.FAILED
+                ledger_cursor = await self.connection.execute(
+                    "SELECT slot,slot_key,content_digest,status,canonical_id FROM summary_job_candidates WHERE job_id=?",
+                    (claim.job_id,),
+                )
+                ledger = {
+                    int(_row(row, "slot", 0)): (
+                        _row(row, "slot_key", 1),
+                        _row(row, "content_digest", 2),
+                        str(_row(row, "status", 3)),
+                        _row(row, "canonical_id", 4),
+                    )
+                    for row in await ledger_cursor.fetchall()
+                }
+                intents: dict[int, tuple[str, CandidateIntent]] = {}
                 for intent in outcome.candidate_slots:
-                    if not isinstance(intent, CandidateIntent):
-                        await self._rollback_summary()
-                        return CompletionResult(
-                            False,
-                            SummaryJobStatus.UNKNOWN,
-                            reason_code=SummaryReasonCode.INVALID_SLOT,
-                        )
+                    if (
+                        not isinstance(intent, CandidateIntent)
+                        or intent.slot in intents
+                    ):
+                        return await self._mark_unknown_claim(claim, now)
                     slot_key = await owned_slot_key(
                         self.connection,
                         claim.job_id,
                         intent.slot,
                         intent.content_digest,
                     )
+                    intents[intent.slot] = (slot_key, intent)
+                if set(ledger) != set(intents):
+                    return await self._mark_unknown_claim(claim, now)
+                for slot, (slot_key, intent) in intents.items():
+                    existing = ledger[slot]
+                    requires_canonical_id = (
+                        intent.disposition in _CANONICAL_ID_DISPOSITIONS
+                    )
+                    mapping_inconsistent = (
+                        (requires_canonical_id and intent.canonical_id is None)
+                        or (
+                            not requires_canonical_id
+                            and intent.canonical_id is not None
+                        )
+                        or (
+                            existing[3] is not None
+                            and existing[3] != intent.canonical_id
+                        )
+                    )
+                    if (
+                        existing[0] != slot_key
+                        or existing[1] != intent.content_digest
+                        or (
+                            existing[2] == CandidateLedgerStatus.UNKNOWN.value
+                            and intent.status is not CandidateLedgerStatus.UNKNOWN
+                        )
+                        or mapping_inconsistent
+                    ):
+                        return await self._mark_unknown_claim(claim, now)
+                for slot, (slot_key, intent) in intents.items():
                     updated = await self.connection.execute(
                         """
-                        UPDATE summary_job_candidates SET disposition=?,status=?,canonical_id=?,updated_at=?
+                        UPDATE summary_job_candidates SET disposition=?,status=?,canonical_id=COALESCE(?,canonical_id),updated_at=?
                         WHERE job_id=? AND slot=? AND slot_key=? AND content_digest=?
                         """,
                         (
@@ -171,18 +215,13 @@ class SummaryStoreTerminalMixin:
                             intent.canonical_id,
                             now,
                             claim.job_id,
-                            intent.slot,
+                            slot,
                             slot_key,
                             intent.content_digest,
                         ),
                     )
                     if updated.rowcount != 1:
-                        await self._rollback_summary()
-                        return CompletionResult(
-                            False,
-                            SummaryJobStatus.UNKNOWN,
-                            reason_code=SummaryReasonCode.INVALID_SLOT,
-                        )
+                        return await self._mark_unknown_claim(claim, now)
                 updated = await self.connection.execute(
                     """
                     UPDATE summary_jobs SET status=?,reason_code=?,failed_stage=?,lease_until=NULL,
@@ -315,7 +354,8 @@ class SummaryStoreTerminalMixin:
                 SummaryJobStatus.UNKNOWN,
                 reason_code=SummaryReasonCode.STORE_UNAVAILABLE,
             )
-        now = _timestamp(now)
+        # 未显式传入时间时必须读取 Store 注入时钟，不能退回进程 wall clock。
+        stamp = self._summary_now() if now is None else _timestamp(now)
         try:
             async with self._write_lock:
                 await self._begin_summary()
@@ -329,18 +369,18 @@ class SummaryStoreTerminalMixin:
                 if failure.cancelled:
                     status, next_at, reason = (
                         SummaryJobStatus.CANCELLED,
-                        now,
+                        stamp,
                         SummaryReasonCode.CANCELLED,
                     )
                 elif not failure.retryable or claim.attempt_count >= 3:
                     status, next_at, reason = (
                         SummaryJobStatus.BLOCKED,
-                        now,
+                        stamp,
                         SummaryReasonCode.RETRY_EXHAUSTED,
                     )
                 else:
                     status = SummaryJobStatus.FAILED
-                    next_at = now + retry_delay_seconds(claim.attempt_count)
+                    next_at = stamp + retry_delay_seconds(claim.attempt_count)
                     reason = SummaryReasonCode.RETRY_SCHEDULED
                 updated = await self.connection.execute(
                     """
@@ -359,7 +399,7 @@ class SummaryStoreTerminalMixin:
                         reason.value,
                         failure.exception_type,
                         int(bool(failure.cancelled)),
-                        now,
+                        stamp,
                         claim.job_id,
                         claim.session_id,
                         claim.session_epoch,
@@ -374,8 +414,7 @@ class SummaryStoreTerminalMixin:
                         SummaryJobStatus.UNKNOWN,
                         reason_code=SummaryReasonCode.CLAIM_LOST,
                     )
-                # 失败/取消可能与已完成的相邻窗口乱序到达，统一重算安全 projection。
-                await self._advance_cursor(claim.session_id, claim.session_epoch, now)
+                await self._advance_cursor(claim.session_id, claim.session_epoch, stamp)
                 await self.connection.commit()
                 return RetryResult(True, status, claim.attempt_count, next_at, reason)
         except asyncio.CancelledError:
@@ -404,7 +443,7 @@ class SummaryStoreTerminalMixin:
             if reason_code in _REASON_VALUES
             else SummaryReasonCode.UNKNOWN.value
         )
-        stamp = _timestamp(now)
+        stamp = self._summary_now() if now is None else _timestamp(now)
         try:
             async with self._write_lock:
                 await self._begin_summary()
@@ -442,17 +481,39 @@ class SummaryStoreTerminalMixin:
             return False
 
     async def recover_expired_claims(self, now: datetime) -> int:
-        """回收过期 lease，并清空旧 token。"""
+        """回收过期 lease，并同步受影响会话的 cursor/pending projection。"""
         if self.connection is None:
             return 0
         stamp = _timestamp(now)
         try:
             async with self._write_lock:
                 await self._begin_summary()
+                affected_cursor = await self.connection.execute(
+                    """
+                    SELECT DISTINCT session_id, session_epoch
+                    FROM summary_jobs
+                    WHERE status='running' AND lease_until IS NOT NULL AND lease_until<=?
+                    """,
+                    (stamp,),
+                )
+                affected = [
+                    (
+                        str(_row(row, "session_id", 0)),
+                        int(_row(row, "session_epoch", 1)),
+                    )
+                    for row in await affected_cursor.fetchall()
+                ]
                 cursor = await self.connection.execute(
-                    "UPDATE summary_jobs SET status='queued',lease_until=NULL,claim_token=NULL,worker_generation=worker_generation+1,reason_code='lease_expired',updated_at=? WHERE status='running' AND lease_until IS NOT NULL AND lease_until<?",
+                    """
+                    UPDATE summary_jobs SET status='queued',lease_until=NULL,
+                      claim_token=NULL,worker_generation=worker_generation+1,
+                      reason_code='lease_expired',updated_at=?
+                    WHERE status='running' AND lease_until IS NOT NULL AND lease_until<=?
+                    """,
                     (stamp, stamp),
                 )
+                for session_id, epoch in affected:
+                    await self._advance_cursor(session_id, epoch, stamp)
                 await self.connection.commit()
                 return max(0, int(cursor.rowcount))
         except asyncio.CancelledError:
@@ -489,6 +550,7 @@ class SummaryStoreTerminalMixin:
             await self._rollback_summary()
             return 0
 
+    @source_epoch_guarded
     async def reset_session_epoch(
         self, session_id: str, reason_code: str
     ) -> EpochResult:
@@ -532,23 +594,33 @@ class SummaryStoreTerminalMixin:
                 False, 1, reason_code=SummaryReasonCode.STORE_UNAVAILABLE
             )
 
-    async def has_trim_blocker(self, session_id: str, epoch: int) -> bool:
-        """检查任务、candidate ledger 或隔离候选是否阻止 trim。"""
-        if self.connection is None:
-            return True
+    async def _has_quarantine_trim_blocker(self, session_id: str) -> bool:
+        """在 Store 事务外检查隔离候选是否仍依赖原始来源。"""
         quarantine_store = getattr(self, "quarantine_store", None)
         pending_check = getattr(quarantine_store, "has_pending_for_session", None)
-        if callable(pending_check):
-            try:
-                pending = pending_check(session_id)
-                if inspect.isawaitable(pending):
-                    pending = await pending
-                if pending:
-                    return True
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                return True
+        if not callable(pending_check):
+            return False
+        try:
+            pending = pending_check(session_id)
+            if inspect.isawaitable(pending):
+                pending = await pending
+            return bool(pending)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return True
+
+    async def has_trim_blocker(
+        self, session_id: str, epoch: int, *, include_quarantine: bool = True
+    ) -> bool:
+        """检查任务、candidate ledger 或隔离候选是否阻止 trim。
+
+        Store 事务内调用时关闭隔离检查；外部调用保留完整的跨库检查。
+        """
+        if self.connection is None:
+            return True
+        if include_quarantine and await self._has_quarantine_trim_blocker(session_id):
+            return True
         cursor = await self.connection.execute(
             """
             SELECT 1 FROM summary_jobs
@@ -578,16 +650,89 @@ class SummaryStoreTerminalMixin:
             return True
         cursor = await self.connection.execute(
             """
-            SELECT 1 FROM summary_job_candidates c
-            JOIN summary_jobs j ON j.job_id=c.job_id
+            SELECT 1
+            FROM summary_jobs j
+            JOIN summary_job_candidates c ON c.job_id=j.job_id
             WHERE j.session_id=? AND j.session_epoch=?
-              AND c.status IN ('planned','writing','unknown')
+              AND c.status IN ('planned','writing','failed','unknown')
+            LIMIT 1
+            """,
+            (session_id, epoch),
+        )
+        if await cursor.fetchone() is not None:
+            return True
+        # completed/abandoned 任务也必须保留完整、互相一致的 ledger 证据；
+        # 只检查开放状态会让损坏的终态来源被误删。
+        cursor = await self.connection.execute(
+            """
+            SELECT 1
+            FROM summary_jobs AS j
+            JOIN summary_job_candidates AS c ON c.job_id=j.job_id
+            WHERE j.session_id=? AND j.session_epoch=?
+              AND j.status IN ('completed','abandoned')
+              AND (
+                c.status NOT IN ('committed','failed')
+                OR c.disposition IS NULL
+                OR (c.disposition IN ('canonical','mark_write','skipped_idempotent')
+                    AND (c.status <> 'committed' OR c.canonical_id IS NULL))
+                OR (c.disposition IN ('quarantined','discard')
+                    AND (c.status <> 'committed' OR c.canonical_id IS NOT NULL))
+                OR (c.disposition='failed' AND c.status <> 'failed')
+              )
+            LIMIT 1
+            """,
+            (session_id, epoch),
+        )
+        if await cursor.fetchone() is not None:
+            return True
+        # completed/abandoned 任务必须存在候选 ledger；空 ledger 证据不完整。
+        cursor = await self.connection.execute(
+            """
+            SELECT 1
+            FROM summary_jobs AS j
+            WHERE j.session_id=? AND j.session_epoch=?
+              AND j.status IN ('completed','abandoned')
+              AND NOT EXISTS (
+                SELECT 1 FROM summary_job_candidates AS c WHERE c.job_id=j.job_id
+              )
+            LIMIT 1
+            """,
+            (session_id, epoch),
+        )
+        if await cursor.fetchone() is not None:
+            return True
+        # 终态任务的计数必须与 ledger 的每种处置逐项相等，避免漏 slot。
+        cursor = await self.connection.execute(
+            """
+            SELECT 1
+            FROM summary_jobs AS j
+            LEFT JOIN summary_job_candidates AS c ON c.job_id=j.job_id
+            WHERE j.session_id=? AND j.session_epoch=?
+              AND j.status IN ('completed','abandoned')
+            GROUP BY j.job_id
+            HAVING COUNT(c.slot) != (
+                       j.canonical_count + j.quarantine_count + j.discard_count
+                       + j.mark_write_count + j.failed_count + j.skipped_count
+                   )
+                OR SUM(CASE WHEN c.disposition='canonical' THEN 1 ELSE 0 END)
+                   != j.canonical_count
+                OR SUM(CASE WHEN c.disposition='quarantined' THEN 1 ELSE 0 END)
+                   != j.quarantine_count
+                OR SUM(CASE WHEN c.disposition='discard' THEN 1 ELSE 0 END)
+                   != j.discard_count
+                OR SUM(CASE WHEN c.disposition='mark_write' THEN 1 ELSE 0 END)
+                   != j.mark_write_count
+                OR SUM(CASE WHEN c.disposition='failed' THEN 1 ELSE 0 END)
+                   != j.failed_count
+                OR SUM(CASE WHEN c.disposition='skipped_idempotent' THEN 1 ELSE 0 END)
+                   != j.skipped_count
             LIMIT 1
             """,
             (session_id, epoch),
         )
         return await cursor.fetchone() is not None
 
+    @source_epoch_guarded
     @source_guarded
     async def trim_if_safe(
         self, session_id: str, epoch: int, delete_count: int
@@ -595,10 +740,14 @@ class SummaryStoreTerminalMixin:
         """在单一事务内检查 blocker、删除最旧消息并调整 cursor。"""
         if self.connection is None or delete_count <= 0:
             return TrimResult(False, reason_code=SummaryReasonCode.TRIM_BLOCKED)
+        if await self._has_quarantine_trim_blocker(session_id):
+            return TrimResult(False, reason_code=SummaryReasonCode.TRIM_BLOCKED)
         try:
             async with self._write_lock:
                 await self._begin_summary()
-                if await self.has_trim_blocker(session_id, epoch):
+                if await self.has_trim_blocker(
+                    session_id, epoch, include_quarantine=False
+                ):
                     await self._rollback_summary()
                     return TrimResult(False, reason_code=SummaryReasonCode.TRIM_BLOCKED)
                 cursor = await self.connection.execute(
@@ -643,44 +792,6 @@ class SummaryStoreTerminalMixin:
         except Exception:
             await self._rollback_summary()
             return TrimResult(False, reason_code=SummaryReasonCode.TRIM_BLOCKED)
-
-    async def snapshot(self) -> SummaryTaskSnapshot:
-        """返回仅包含 allowlist 标量的任务快照。"""
-        if self.connection is None:
-            return SummaryTaskSnapshot()
-        cursor = await self.connection.execute(
-            "SELECT status,COUNT(*) AS count FROM summary_jobs GROUP BY status",
-            (),
-        )
-        counts = {
-            str(_row(row, "status", 0)): int(_row(row, "count", 1) or 0)
-            for row in await cursor.fetchall()
-        }
-        totals: dict[str, int] = {}
-        for counter in _COUNTERS:
-            value_cursor = await self.connection.execute(
-                "SELECT value FROM summary_task_counters WHERE counter_name=?",
-                (counter,),
-            )
-            row = await value_cursor.fetchone()
-            totals[counter] = int(_row(row, "value", 0) or 0) if row else 0
-        return SummaryTaskSnapshot(
-            queued=counts.get("queued", 0),
-            running=counts.get("running", 0),
-            failed=counts.get("failed", 0),
-            blocked=counts.get("blocked", 0),
-            unknown=counts.get("unknown", 0),
-            cancelled=counts.get("cancelled", 0),
-            abandoned=counts.get("abandoned", 0),
-            active_parallelism=counts.get("running", 0),
-            target_parallelism=counts.get("queued", 0),
-            canonical_total=totals["canonical_total"],
-            quarantine_total=totals["quarantine_total"],
-            discard_total=totals["discard_total"],
-            mark_write_total=totals["mark_write_total"],
-            failed_candidate_total=totals["failed_candidate_total"],
-            skipped_idempotent_total=totals["skipped_idempotent_total"],
-        )
 
 
 __all__ = ["SummaryStoreTerminalMixin"]

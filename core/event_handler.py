@@ -331,7 +331,9 @@ class EventHandler(CognitiveComponentsMixin):
                 budget = self._new_extra_llm_budget(event)
                 try:
                     with extra_llm_budget_scope(budget):
-                        await self._reflection_handler.maybe_schedule_summary(event)
+                        await self._reflection_handler.maybe_schedule_summary(
+                            event, identity=identity
+                        )
                 finally:
                     self._clear_extra_llm_budget(event, budget)
 
@@ -652,68 +654,27 @@ class EventHandler(CognitiveComponentsMixin):
             if actual_count <= max_messages:
                 return
 
-            last_summarized_index = (
-                await self.conversation_manager.get_session_metadata(
-                    session_id,
-                    "last_summarized_index",
-                    0,
-                )
-            )
-
             overflow_count = actual_count - max_messages
             target_delete = max(overflow_count, cleanup_batch_size)
             atomic_trim = getattr(self.conversation_manager.store, "trim_if_safe", None)
             get_epoch = getattr(
                 self.conversation_manager.store, "get_summary_epoch", None
             )
-            if inspect.iscoroutinefunction(atomic_trim) and inspect.iscoroutinefunction(
-                get_epoch
-            ):
-                epoch, _cursor = await get_epoch(session_id)
-                trim_result = await atomic_trim(session_id, epoch, target_delete)
-                actually_deleted = int(getattr(trim_result, "deleted_count", 0) or 0)
-                if actually_deleted:
-                    await self.conversation_manager.invalidate_cache(session_id)
+            if not callable(atomic_trim) or not callable(get_epoch):
+                logger.warning("消息来源修剪不可用，已拒绝删除以保护未收口总结来源")
                 return
-            safe_to_delete = min(target_delete, last_summarized_index)
-
-            if safe_to_delete <= 0:
-                logger.debug(
-                    f"[{session_id}] 无可删除消息: "
-                    f"溢出={overflow_count}, 批量={cleanup_batch_size}, "
-                    f"目标删除={target_delete}, 已总结={last_summarized_index}"
-                )
+            epoch_value = get_epoch(session_id)
+            if inspect.isawaitable(epoch_value):
+                epoch_value = await epoch_value
+            if not isinstance(epoch_value, (tuple, list)) or not epoch_value:
+                logger.warning("总结 epoch 不可用，已拒绝消息来源修剪")
                 return
-
-            logger.info(
-                f"[{session_id}] 开始清理已总结消息: "
-                f"总数={actual_count}, 上限={max_messages}, "
-                f"溢出={overflow_count}, 批量={cleanup_batch_size}, "
-                f"目标删除={target_delete}, 已总结={last_summarized_index}, "
-                f"实际删除={safe_to_delete}"
-            )
-
-            actually_deleted = (
-                await self.conversation_manager.store.trim_session_messages(
-                    session_id,
-                    safe_to_delete,
-                )
-            )
-
-            new_actual_count = max(0, actual_count - actually_deleted)
-            new_summarized_index = await self.conversation_manager.get_session_metadata(
-                session_id,
-                "last_summarized_index",
-                max(0, last_summarized_index - actually_deleted),
-            )
-
-            await self.conversation_manager.invalidate_cache(session_id)
-
-            logger.info(
-                f"[{session_id}] 消息清理完成: "
-                f"删除={actually_deleted}条, 剩余={new_actual_count}条, "
-                f"总结索引: {last_summarized_index} -> {new_summarized_index}"
-            )
+            trim_result = atomic_trim(session_id, int(epoch_value[0]), target_delete)
+            if inspect.isawaitable(trim_result):
+                trim_result = await trim_result
+            actually_deleted = int(getattr(trim_result, "deleted_count", 0) or 0)
+            if actually_deleted:
+                await self.conversation_manager.invalidate_cache(session_id)
 
         except Exception as e:
             logger.error(f"[{session_id}] 删除旧消息失败: {e}", exc_info=True)

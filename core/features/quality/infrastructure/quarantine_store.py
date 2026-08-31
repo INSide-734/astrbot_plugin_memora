@@ -393,6 +393,15 @@ class MemoryQuarantineStore:
     async def _transition(
         self,
         candidate_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """在进程内来源协调锁下执行候选状态转换。"""
+        async with self.source_guard():
+            return await self._transition_unlocked(candidate_id, **kwargs)
+
+    async def _transition_unlocked(
+        self,
+        candidate_id: str,
         *,
         expected_revision: int,
         allowed_statuses: set[str],

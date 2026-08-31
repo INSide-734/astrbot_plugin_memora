@@ -1,5 +1,6 @@
 """反思 feature 的纯领域约束。"""
 
+from ....shared.summary_source import source_window_digest
 from .config import (
     LegacyBackfillConfig,
     ReflectionEngineConfig,
@@ -35,7 +36,6 @@ from .summary_models import (
     WindowOutcome,
     retry_delay_seconds,
     sanitize_summary_task_snapshot,
-    source_window_digest,
 )
 from .summary_ports import SummaryJobStorePort
 

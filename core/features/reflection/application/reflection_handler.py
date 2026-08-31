@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
 from astrbot.api.platform import MessageType
@@ -14,14 +15,13 @@ from ....platform.context_helpers import get_persona_id
 from ....shared.contracts import ReflectionWritePort
 from ....shared.cost_control import CostControl
 from ...conversation.application.conversation_manager import ConversationManager
-from ...identity.domain.models import ResolvedIdentity
+from ...identity.domain.models import IdentityTrust, ResolvedIdentity
 from ...observability.application import runtime as observability
 from ...quality.application.gate_runtime import capture_gate_snapshot_json
 from ...recall.processors.memory_processor import MemoryProcessor
 from ..domain.summary_models import SummaryWindowContext
 from .continuity import resolve_continuity_session as resolve_continuity_session
 from .reflection_context import ReflectionContextMixin
-from .reflection_trigger import ReflectionTrigger
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
@@ -70,12 +70,6 @@ class ReflectionHandler(ReflectionContextMixin):
         self._memory_quality_gate = memory_quality_gate
         self._cost_control = cost_control or CostControl()
         self._summary_scheduler = summary_scheduler
-
-        self._summary_trigger = ReflectionTrigger(
-            config_manager=config_manager,
-            conversation_manager=conversation_manager,
-            persona_resolver=self._resolve_persona_id,
-        )
 
     async def _resolve_persona_id(self, event: AstrMessageEvent) -> str | None:
         """通过处理器拥有的平台上下文解析当前人格标识。"""
@@ -181,8 +175,7 @@ class ReflectionHandler(ReflectionContextMixin):
             return
 
         try:
-            logger.debug(f"[反思处理] 获取到 unified_msg_origin: {session_id}")
-
+            logger.debug("[反思处理] 开始处理响应后的稳定消息")
             if not session_id:
                 observability.report_debug_event(
                     "reflection_state",
@@ -202,13 +195,11 @@ class ReflectionHandler(ReflectionContextMixin):
                     status="skipped",
                     reason_code="write_blocked",
                 )
-                logger.warning(f"[{session_id}] 备份恢复待应用，跳过 LLM 回复写入")
+                logger.warning("备份恢复待应用，跳过 LLM 回复写入")
                 return
 
             if "Error:" in session_id or "error:" in session_id.lower():
-                logger.warning(
-                    f"[{session_id}] 检测到异常的会话 ID，这可能导致记忆总结异常。"
-                )
+                logger.warning("检测到异常会话标识，跳过总结相关处理")
 
             if not response_text or not response_text.strip():
                 observability.report_debug_event(
@@ -218,7 +209,7 @@ class ReflectionHandler(ReflectionContextMixin):
                     status="skipped",
                     reason_code="empty_response_after_sanitization",
                 )
-                logger.warning(f"[{session_id}] 模型回复经安全清洗后为空，跳过记录")
+                logger.warning("模型回复经安全清洗后为空，跳过记录")
                 return
             error_indicators = [
                 "api error",
@@ -239,9 +230,7 @@ class ReflectionHandler(ReflectionContextMixin):
                     status="skipped",
                     reason_code="provider_error_response",
                 )
-                logger.debug(
-                    f"[{session_id}] 检测到错误响应，跳过记录: {response_text[:50]}..."
-                )
+                logger.debug("检测到 Provider 错误响应，跳过记录")
                 return
 
             await self._conversation_manager.add_message_from_event(
@@ -259,13 +248,13 @@ class ReflectionHandler(ReflectionContextMixin):
                 reason_code="assistant_response_persisted",
                 count=1,
             )
-            logger.debug(f"[反思处理] [{session_id}] 已添加助手响应消息")
+            logger.debug("[反思处理] 助手响应消息已持久化")
 
             is_group = event.get_message_type() == MessageType.GROUP_MESSAGE
             if not is_group:
                 await self._enforce_limit_cb(session_id)
 
-            await self.maybe_schedule_summary(event)
+            await self.maybe_schedule_summary(event, identity=identity)
 
         except asyncio.CancelledError:
             observability.report_debug_event(
@@ -285,9 +274,17 @@ class ReflectionHandler(ReflectionContextMixin):
                 status="failed",
                 reason_code="reflection_error",
             )
-            logger.error(f"处理 on_llm_response 钩子时发生错误：{e}", exc_info=True)
+            logger.error(
+                "处理 on_llm_response 钩子时发生错误，异常类型=%s",
+                e.__class__.__name__,
+            )
 
-    async def maybe_schedule_summary(self, event: AstrMessageEvent) -> None:
+    async def maybe_schedule_summary(
+        self,
+        event: AstrMessageEvent,
+        *,
+        identity: ResolvedIdentity | None = None,
+    ) -> None:
         """检查当前会话阈值，并在可用时调度后台记忆反思。
 
         该入口同时服务于普通群消息捕获和 LLM assistant 响应。普通可恢复
@@ -325,9 +322,6 @@ class ReflectionHandler(ReflectionContextMixin):
             return
 
         try:
-            request = await self._summary_trigger.prepare(event, session_id)
-            if request is None:
-                return
             scheduler = self._summary_scheduler
             if scheduler is None:
                 observability.report_debug_event(
@@ -338,24 +332,50 @@ class ReflectionHandler(ReflectionContextMixin):
                     reason_code="component_unavailable",
                 )
                 return
-            epoch, cursor = await self._conversation_manager.store.get_summary_epoch(
-                session_id
-            )
-            observed_end = await self._conversation_manager.store.get_message_seq_end(
-                session_id
-            )
-            first = request.history_messages[0] if request.history_messages else None
-            group_id = getattr(first, "group_id", None)
+            store = self._conversation_manager.store
+            get_scope = cast(Any, getattr(store, "get_summary_scope", None))
+            get_epoch = cast(Any, getattr(store, "get_summary_epoch", None))
+            get_end = cast(Any, getattr(store, "get_message_seq_end", None))
+            if not all(callable(method) for method in (get_scope, get_epoch, get_end)):
+                return
+            scope = get_scope(session_id)
+            if inspect.isawaitable(scope):
+                scope = await scope
+            if not isinstance(scope, tuple) or len(scope) != 4:
+                return
+            chat_type, group_id, scope_id, stored_persona = scope
+            if identity is not None:
+                if identity.trust_status in {
+                    IdentityTrust.CONFLICT,
+                    IdentityTrust.INVALID,
+                }:
+                    return
+                if identity.scope_type == "group" and identity.scope_id != group_id:
+                    return
+                if identity.scope_type == "private" and group_id is not None:
+                    return
+            epoch_value = get_epoch(session_id)
+            if inspect.isawaitable(epoch_value):
+                epoch_value = await epoch_value
+            if not isinstance(epoch_value, (tuple, list)) or len(epoch_value) < 2:
+                return
+            epoch, cursor = int(epoch_value[0]), int(epoch_value[1])
+            observed_end = get_end(session_id)
+            if inspect.isawaitable(observed_end):
+                observed_end = await observed_end
+            if isinstance(observed_end, bool) or not isinstance(observed_end, int):
+                return
+            persona_id = await self._resolve_persona_id(event)
             gate_revision, gate_snapshot_json = self._summary_gate_context()
             context = SummaryWindowContext(
                 session_id=session_id,
                 session_epoch=epoch,
                 start_seq=cursor,
                 end_seq=cursor,
-                persona_id=request.persona_id,
-                chat_type="group" if group_id else "private",
-                group_id=str(group_id) if group_id else None,
-                scope_id=session_id,
+                persona_id=persona_id or stored_persona,
+                chat_type=chat_type,
+                group_id=group_id,
+                scope_id=scope_id,
                 triggered_by="automatic",
                 gate_revision=gate_revision,
                 gate_snapshot_json=gate_snapshot_json,
@@ -391,7 +411,10 @@ class ReflectionHandler(ReflectionContextMixin):
                 status="failed",
                 reason_code="reflection_error",
             )
-            logger.error("检查或调度记忆反思时发生错误", exc_info=True)
+            logger.error(
+                "检查或调度记忆反思时发生错误，异常类型=%s",
+                exception.__class__.__name__,
+            )
 
     async def shutdown(self) -> None:
         """标记反思入口停止接收新事件；总结调度器由组合根统一关闭。"""

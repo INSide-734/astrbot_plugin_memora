@@ -7,8 +7,10 @@ import asyncio
 import inspect
 import json
 import time
+from collections.abc import Callable, Sequence
+from contextlib import AbstractAsyncContextManager
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import aiosqlite
 from astrbot.api import logger
@@ -18,7 +20,6 @@ from ....shared.sql import apply_perf_pragmas
 from .message_store import MessageStoreMixin
 from .summary_schema import migrate_conversation_schema
 from .summary_store import SummaryStoreMixin
-from .summary_store_keys import source_guarded
 
 
 class ConversationStore(SummaryStoreMixin, MessageStoreMixin):
@@ -312,17 +313,16 @@ class ConversationStore(SummaryStoreMixin, MessageStoreMixin):
             if row["session_id"]
         ]
 
-    @source_guarded
     async def delete_old_sessions(
         self, days: int = 30, ttl_seconds: int | None = None
     ) -> int:
-        """原子 fence 过期会话并删除其消息；隔离候选存在时保留来源。"""
+        """在统一来源 fence 内取消任务并删除过期会话消息。"""
         effective_ttl_seconds = (
-            int(ttl_seconds) if ttl_seconds is not None else int(days * 24 * 60 * 60)
+            ttl_seconds if ttl_seconds is not None else days * 24 * 60 * 60
         )
         if effective_ttl_seconds <= 0:
             effective_ttl_seconds = 60
-        cutoff_time = time.time() - effective_ttl_seconds
+        cutoff_time = self._summary_now() - effective_ttl_seconds
         if self.connection is None:
             return 0
 
@@ -332,84 +332,93 @@ class ConversationStore(SummaryStoreMixin, MessageStoreMixin):
                 (cutoff_time,),
             )
             candidate_ids = [str(row["session_id"]) for row in await cursor.fetchall()]
-        protected: set[str] = set()
-        pending_check: Any = getattr(
-            self.quarantine_store, "has_pending_for_session", None
+        lock_many = cast(
+            Callable[[Sequence[str]], AbstractAsyncContextManager[None]],
+            self._summary_source_locks_for,
         )
-        if callable(pending_check):
-            for session_id in candidate_ids:
-                result: Any = pending_check(session_id)
-                if inspect.isawaitable(result):
-                    result = await result
-                if result:
-                    protected.add(session_id)
+        async with lock_many(candidate_ids):
+            async with self._summary_quarantine_guard():
+                protected: set[str] = set()
+                pending_check: Any = getattr(
+                    self.quarantine_store, "has_pending_for_session", None
+                )
+                if callable(pending_check):
+                    for session_id in candidate_ids:
+                        result: Any = pending_check(session_id)
+                        if inspect.isawaitable(result):
+                            result = await result
+                        if result:
+                            protected.add(session_id)
 
-        async with self._write_lock:
-            try:
-                await self.connection.execute("BEGIN IMMEDIATE")
-                cursor = await self.connection.execute(
-                    "SELECT session_id FROM sessions WHERE last_active_at < ?",
-                    (cutoff_time,),
-                )
-                session_ids = [
-                    str(row["session_id"])
-                    for row in await cursor.fetchall()
-                    if str(row["session_id"]) not in protected
-                ]
-                if not session_ids:
-                    await self.connection.commit()
-                    return 0
-                session_params = {"session_ids_json": json.dumps(session_ids)}
-                now = time.time()
-                await self.connection.execute(
-                    """
-                    INSERT INTO session_epochs(session_id,epoch,cursor_seq,pending_summary_json,tombstoned_at,updated_at)
-                    SELECT value,1,0,NULL,NULL,:now
-                    FROM json_each(:session_ids_json)
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM session_epochs WHERE session_id=value
-                    )
-                    """,
-                    {"session_ids_json": json.dumps(session_ids), "now": now},
-                )
-                await self.connection.execute(
-                    """
-                    UPDATE summary_jobs SET status='cancelled', claim_token=NULL,
-                      lease_until=NULL, reason_code='epoch_fenced', updated_at=:now
-                    WHERE session_id IN (SELECT value FROM json_each(:session_ids_json))
-                      AND status NOT IN ('completed','cancelled','abandoned')
-                    """,
-                    {**session_params, "now": now},
-                )
-                await self.connection.execute(
-                    """
-                    UPDATE session_epochs SET epoch=epoch+1, cursor_seq=0,
-                      pending_summary_json=NULL, tombstoned_at=:now, updated_at=:now
-                    WHERE session_id IN (SELECT value FROM json_each(:session_ids_json))
-                    """,
-                    {**session_params, "now": now},
-                )
-                await self.connection.execute(
-                    """
-                    DELETE FROM messages
-                    WHERE session_id IN (SELECT value FROM json_each(:session_ids_json))
-                    """,
-                    session_params,
-                )
-                await self.connection.execute(
-                    """
-                    DELETE FROM sessions
-                    WHERE session_id IN (SELECT value FROM json_each(:session_ids_json))
-                    """,
-                    session_params,
-                )
-                await self.connection.commit()
-            except asyncio.CancelledError:
-                await self.connection.rollback()
-                raise
-            except BaseException:
-                await self.connection.rollback()
-                raise
+                async with self._write_lock:
+                    try:
+                        await self.connection.execute("BEGIN IMMEDIATE")
+                        cursor = await self.connection.execute(
+                            "SELECT session_id FROM sessions WHERE last_active_at < ?",
+                            (cutoff_time,),
+                        )
+                        session_ids = [
+                            str(row["session_id"])
+                            for row in await cursor.fetchall()
+                            if str(row["session_id"]) not in protected
+                        ]
+                        if not session_ids:
+                            await self.connection.commit()
+                            return 0
+                        session_params = {"session_ids_json": json.dumps(session_ids)}
+                        now = self._summary_now()
+                        await self.connection.execute(
+                            """
+                            INSERT INTO session_epochs(
+                                session_id,epoch,cursor_seq,pending_summary_json,
+                                tombstoned_at,updated_at
+                            )
+                            SELECT value,1,0,NULL,NULL,:now
+                            FROM json_each(:session_ids_json)
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM session_epochs WHERE session_id=value
+                            )
+                            """,
+                            {"session_ids_json": json.dumps(session_ids), "now": now},
+                        )
+                        await self.connection.execute(
+                            """
+                            UPDATE summary_jobs SET status='cancelled', claim_token=NULL,
+                              lease_until=NULL, reason_code='epoch_fenced', updated_at=:now
+                            WHERE session_id IN (SELECT value FROM json_each(:session_ids_json))
+                              AND status NOT IN ('completed','cancelled','abandoned')
+                            """,
+                            {**session_params, "now": now},
+                        )
+                        await self.connection.execute(
+                            """
+                            UPDATE session_epochs SET epoch=epoch+1, cursor_seq=0,
+                              pending_summary_json=NULL, tombstoned_at=:now, updated_at=:now
+                            WHERE session_id IN (SELECT value FROM json_each(:session_ids_json))
+                            """,
+                            {**session_params, "now": now},
+                        )
+                        await self.connection.execute(
+                            """
+                            DELETE FROM messages
+                            WHERE session_id IN (SELECT value FROM json_each(:session_ids_json))
+                            """,
+                            session_params,
+                        )
+                        await self.connection.execute(
+                            """
+                            DELETE FROM sessions
+                            WHERE session_id IN (SELECT value FROM json_each(:session_ids_json))
+                            """,
+                            session_params,
+                        )
+                        await self.connection.commit()
+                    except asyncio.CancelledError:
+                        await self.connection.rollback()
+                        raise
+                    except BaseException:
+                        await self.connection.rollback()
+                        raise
 
         logger.info(
             f"[ConversationStore] 删除了 {len(session_ids)} 个过期会话 "

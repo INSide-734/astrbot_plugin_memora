@@ -58,4 +58,26 @@ def source_guarded(
     return guarded
 
 
-__all__ = ["ensure_summary_secret", "owned_slot_key", "source_guarded"]
+def source_epoch_guarded(
+    method: Callable[..., Awaitable[Any]],
+) -> Callable[..., Awaitable[Any]]:
+    """在会话来源锁内串行化 reset、trim 与 claim 外部副作用。"""
+
+    @wraps(method)
+    async def guarded(self: Any, *args: Any, **kwargs: Any) -> Any:
+        session_id = kwargs.get("session_id") or (args[0] if args else None)
+        lock_factory = getattr(self, "_summary_source_lock_for", None)
+        if not isinstance(session_id, str) or not callable(lock_factory):
+            return await method(self, *args, **kwargs)
+        async with cast(Any, lock_factory(session_id)):
+            return await method(self, *args, **kwargs)
+
+    return guarded
+
+
+__all__ = [
+    "ensure_summary_secret",
+    "owned_slot_key",
+    "source_epoch_guarded",
+    "source_guarded",
+]

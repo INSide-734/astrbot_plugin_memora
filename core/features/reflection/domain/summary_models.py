@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass, fields
 from enum import Enum
 from typing import Any
 
 from ....shared.contracts.conversation import Message
+from ....shared.summary_source import source_window_digest
 
 _MAX_TEXT_LENGTH = 256
 _MAX_GATE_JSON_BYTES = 65_536
@@ -192,9 +192,18 @@ class SummaryWindowContext:
         object.__setattr__(self, "expected_count", expected)
         object.__setattr__(self, "source_digest", digest)
         object.__setattr__(self, "persona_id", _text(self.persona_id, "persona_id"))
-        object.__setattr__(self, "chat_type", _text(self.chat_type, "chat_type"))
-        object.__setattr__(self, "group_id", _text(self.group_id, "group_id"))
-        object.__setattr__(self, "scope_id", _text(self.scope_id, "scope_id"))
+        chat_type = _text(self.chat_type, "chat_type")
+        group_id = _text(self.group_id, "group_id")
+        scope_id = _text(self.scope_id, "scope_id")
+        if chat_type not in {None, "private", "group"}:
+            raise ValueError("chat_type 必须是 private 或 group")
+        if chat_type == "group" and not group_id:
+            raise ValueError("group chat 必须绑定 group_id")
+        if chat_type == "private" and group_id is not None:
+            raise ValueError("private chat 不得绑定 group_id")
+        object.__setattr__(self, "chat_type", chat_type)
+        object.__setattr__(self, "group_id", group_id)
+        object.__setattr__(self, "scope_id", scope_id)
         object.__setattr__(self, "triggered_by", triggered)
         object.__setattr__(self, "gate_revision", revision)
         object.__setattr__(
@@ -344,29 +353,6 @@ class ClaimedJob:
     def __getattr__(self, name: str) -> Any:
         """兼容 scheduler 直接读取任务字段，同时不复制可变状态。"""
         return getattr(self.job, name)
-
-
-def source_window_digest(
-    messages: Sequence[Message], message_seqs: Sequence[int]
-) -> str:
-    """按内部序号和完整持久消息形状计算稳定 SHA-256 摘要。"""
-    if len(messages) != len(message_seqs):
-        raise ValueError("消息与 message_seq 数量不一致")
-    digest = hashlib.sha256()
-    for message, message_seq in zip(messages, message_seqs, strict=True):
-        if not isinstance(message, Message):
-            raise TypeError("source window 只能包含 Message")
-        payload = (message_seq, message.to_dict())
-        encoded = json.dumps(
-            payload,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
-        digest.update(len(encoded).to_bytes(8, "big"))
-        digest.update(encoded)
-    return digest.hexdigest()
 
 
 @dataclass(frozen=True, slots=True)

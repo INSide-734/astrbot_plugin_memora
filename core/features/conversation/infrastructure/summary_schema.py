@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
-SUMMARY_SCHEMA_VERSION = 1
+SUMMARY_SCHEMA_VERSION = 2
+_MIGRATION_ID = "summary_schema_v2"
 
 _SUMMARY_STATUSES = (
     "queued",
@@ -119,32 +121,175 @@ async def _ensure_base_schema(connection: Any) -> None:
 
 
 async def _backfill_message_sequences(connection: Any) -> None:
-    """只为缺失或非法序号的历史消息按 timestamp、id 一次性回填。"""
+    """仅为缺失或非法序号填补空洞，绝不重写已有合法序号。"""
     cursor = await connection.execute(
         """
-        SELECT id, session_id
+        SELECT id, session_id, timestamp, message_seq
         FROM messages
-        WHERE message_seq IS NULL OR message_seq < 1
         ORDER BY session_id ASC, timestamp ASC, id ASC
         """
     )
-    rows = await cursor.fetchall()
-    next_seq: dict[str, int] = {}
-    for row in rows:
-        session_id = str(row["session_id"] if hasattr(row, "keys") else row[1])
+    grouped: dict[str, list[tuple[int, object]]] = {}
+    for row in await cursor.fetchall():
         message_id = int(row["id"] if hasattr(row, "keys") else row[0])
-        if session_id not in next_seq:
-            existing = await connection.execute(
-                "SELECT COALESCE(MAX(message_seq), 0) FROM messages WHERE session_id = ? AND message_seq >= 1",
-                (session_id,),
+        session_id = str(row["session_id"] if hasattr(row, "keys") else row[1])
+        raw_seq = row["message_seq"] if hasattr(row, "keys") else row[3]
+        grouped.setdefault(session_id, []).append((message_id, raw_seq))
+
+    for messages in grouped.values():
+        valid_rows = [
+            (index, raw_seq)
+            for index, (_, raw_seq) in enumerate(messages)
+            if isinstance(raw_seq, int)
+            and not isinstance(raw_seq, bool)
+            and raw_seq >= 1
+        ]
+        base = valid_rows[0][1] - valid_rows[0][0] if valid_rows else 1
+        if base < 1 or any(raw_seq != base + index for index, raw_seq in valid_rows):
+            raise RuntimeError("message_seq_source_invalid")
+        for index, (message_id, raw_seq) in enumerate(messages):
+            if (
+                isinstance(raw_seq, int)
+                and not isinstance(raw_seq, bool)
+                and raw_seq >= 1
+            ):
+                continue
+            await connection.execute(
+                "UPDATE messages SET message_seq = ? WHERE id = ? "
+                "AND (message_seq IS NULL OR typeof(message_seq) <> 'integer' "
+                "OR message_seq < 1)",
+                (base + index, message_id),
             )
-            value = await existing.fetchone()
-            next_seq[session_id] = int(value[0] if value else 0)
-        next_seq[session_id] += 1
-        await connection.execute(
-            "UPDATE messages SET message_seq = ? WHERE id = ? AND (message_seq IS NULL OR message_seq < 1)",
-            (next_seq[session_id], message_id),
+
+
+async def _validate_schema_shape(connection: Any) -> None:
+    """拒绝已存在但半缺的表；不可安全猜测列语义时 fail-closed。"""
+    required = {
+        "sessions": {
+            "session_id",
+            "platform",
+            "created_at",
+            "last_active_at",
+            "message_count",
+            "participants",
+            "metadata",
+        },
+        "messages": {
+            "id",
+            "session_id",
+            "role",
+            "content",
+            "sender_id",
+            "sender_name",
+            "group_id",
+            "platform",
+            "timestamp",
+            "metadata",
+            "message_seq",
+        },
+        "session_epochs": {
+            "session_id",
+            "epoch",
+            "cursor_seq",
+            "pending_summary_json",
+            "tombstoned_at",
+            "updated_at",
+        },
+        "summary_jobs": {
+            "job_id",
+            "session_id",
+            "session_epoch",
+            "start_seq",
+            "end_seq",
+            "expected_count",
+            "source_digest",
+            "persona_id",
+            "chat_type",
+            "group_id",
+            "scope_id",
+            "gate_revision",
+            "gate_snapshot_json",
+            "triggered_by",
+            "status",
+            "attempt_count",
+            "next_attempt_at",
+            "claim_token",
+            "lease_until",
+            "worker_generation",
+            "failed_stage",
+            "reason_code",
+            "exception_type",
+            "canonical_count",
+            "quarantine_count",
+            "discard_count",
+            "mark_write_count",
+            "failed_count",
+            "skipped_count",
+            "created_at",
+            "updated_at",
+        },
+        "summary_job_candidates": {
+            "job_id",
+            "slot",
+            "slot_key",
+            "content_digest",
+            "disposition",
+            "status",
+            "canonical_id",
+            "updated_at",
+        },
+        "summary_task_counters": {"counter_name", "value"},
+        "summary_store_meta": {"meta_key", "meta_value"},
+    }
+    for table, columns in required.items():
+        actual = await _columns(connection, table)
+        if not columns <= actual:
+            raise RuntimeError("summary_schema_incomplete")
+
+
+async def _validate_data_integrity(connection: Any) -> None:
+    """校验来源连续性、任务约束和 epoch 区间；失败不发布半迁移库。"""
+    cursor = await connection.execute(
+        "SELECT session_id,message_seq FROM messages ORDER BY session_id,message_seq"
+    )
+    expected_session: str | None = None
+    expected_seq: int | None = None
+    for row in await cursor.fetchall():
+        session_id = str(row["session_id"] if hasattr(row, "keys") else row[0])
+        raw_seq = row["message_seq"] if hasattr(row, "keys") else row[1]
+        if isinstance(raw_seq, bool) or not isinstance(raw_seq, int) or raw_seq < 1:
+            raise RuntimeError("message_seq_source_invalid")
+        if session_id != expected_session:
+            expected_session = session_id
+            expected_seq = raw_seq
+        elif raw_seq != expected_seq:
+            raise RuntimeError("message_seq_source_invalid")
+        assert expected_seq is not None
+        expected_seq += 1
+    cursor = await connection.execute(
+        """
+        SELECT 1 FROM summary_jobs a JOIN summary_jobs b
+          ON a.session_id=b.session_id AND a.session_epoch=b.session_epoch
+         AND a.job_id < b.job_id AND a.start_seq < b.end_seq AND b.start_seq < a.end_seq
+        LIMIT 1
+        """
+    )
+    if await cursor.fetchone() is not None:
+        raise RuntimeError("summary_job_overlap")
+    cursor = await connection.execute(
+        """
+        SELECT 1 FROM summary_jobs
+        WHERE end_seq <= start_seq OR expected_count != end_seq-start_seq
+           OR start_seq < 0 OR source_digest IS NULL OR length(source_digest)=0
+           OR status NOT IN ({statuses}) OR reason_code NOT IN ({reasons})
+        LIMIT 1
+        """.format(
+            statuses=_quoted_values(_SUMMARY_STATUSES),
+            reasons=_quoted_values(_REASON_CODES),
         )
+    )
+    if await cursor.fetchone() is not None:
+        raise RuntimeError("summary_job_row_invalid")
 
 
 async def _ensure_summary_tables(connection: Any) -> None:
@@ -259,11 +404,10 @@ async def _ensure_indexes(connection: Any) -> None:
     for statement in statements:
         await connection.execute(statement)
 
-    # 生产写入会显式分配序号；旧的直接 SQL 写入若省略该列，则在插入后
-    # 以当前会话最大值补齐，避免升级后遗留调用制造无序来源。只有 NULL
-    # 旧值允许被补齐，已有合法序号仍由不可变触发器保护。
+    # 生产写入会显式分配序号；直接 SQL 写入若省略该列仍由兼容触发器补齐。
     await connection.execute("DROP TRIGGER IF EXISTS messages_seq_required")
     await connection.execute("DROP TRIGGER IF EXISTS messages_seq_assign")
+    await connection.execute("DROP TRIGGER IF EXISTS messages_seq_validate_insert")
     await connection.execute("DROP TRIGGER IF EXISTS messages_seq_immutable")
     await connection.execute(
         """
@@ -272,6 +416,18 @@ async def _ensure_indexes(connection: Any) -> None:
         WHEN OLD.message_seq IS NOT NULL
              AND OLD.message_seq IS NOT NEW.message_seq
         BEGIN SELECT RAISE(ABORT, 'message_seq_immutable'); END
+        """
+    )
+    await connection.execute(
+        """
+        CREATE TRIGGER messages_seq_validate_insert
+        BEFORE INSERT ON messages
+        WHEN NEW.message_seq IS NOT NULL
+         AND NEW.message_seq IS NOT (
+             SELECT COALESCE(MAX(message_seq), 0) + 1
+             FROM messages WHERE session_id = NEW.session_id
+         )
+        BEGIN SELECT RAISE(ABORT, 'message_seq_not_next'); END
         """
     )
     await connection.execute(
@@ -293,7 +449,7 @@ async def _ensure_indexes(connection: Any) -> None:
 
 
 async def migrate_conversation_schema(connection: Any) -> None:
-    """在一个立即事务中创建或升级 conversations.db，失败即回滚。"""
+    """执行可回滚的版本化迁移；半缺或来源不连续时拒绝启动。"""
     try:
         await connection.execute("BEGIN IMMEDIATE")
         cursor = await connection.execute("PRAGMA user_version")
@@ -304,7 +460,21 @@ async def migrate_conversation_schema(connection: Any) -> None:
         await _ensure_base_schema(connection)
         await _backfill_message_sequences(connection)
         await _ensure_summary_tables(connection)
+        await _validate_schema_shape(connection)
+        await _validate_data_integrity(connection)
         await _ensure_indexes(connection)
+        await connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS summary_schema_migrations (
+                migration_id TEXT PRIMARY KEY,
+                applied_at REAL NOT NULL CHECK(applied_at >= 0)
+            )
+            """
+        )
+        await connection.execute(
+            "INSERT OR IGNORE INTO summary_schema_migrations(migration_id,applied_at) VALUES (?,?)",
+            (_MIGRATION_ID, max(0.0, time.time())),
+        )
         await connection.execute(f"PRAGMA user_version = {SUMMARY_SCHEMA_VERSION}")
         await connection.commit()
     except BaseException:

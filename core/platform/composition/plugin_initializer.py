@@ -46,6 +46,10 @@ from .identity_lifecycle import close_identity_runtime_after_failure
 from .provider_loader import ProviderLoader
 from .provider_waiter import ProviderWaiter
 from .readiness import InitializerReadinessMixin
+from .shutdown_lifecycle import (
+    close_initializer_injection_components,
+    close_initializer_memory_evolution_components,
+)
 
 
 class PluginInitializer(InitializerReadinessMixin):
@@ -242,6 +246,7 @@ class PluginInitializer(InitializerReadinessMixin):
         current_stage = "component_build"
         owns_injection_components = False
         owns_evolution_components = False
+        summary_scheduler = None
         report_debug_event(
             "plugin_initialized",
             component="initializer",
@@ -298,17 +303,23 @@ class PluginInitializer(InitializerReadinessMixin):
             self.memory_evolution_store = components.get("memory_evolution_store")
             self.memory_evolution_manager = components.get("memory_evolution_manager")
             self.realtime_hub = components.get("realtime_hub")
-            self.summary_scheduler = components.get("summary_scheduler")
+            summary_scheduler = components.get("summary_scheduler")
+            self.summary_scheduler = None
             self.summary_llm_limiter = components.get("summary_llm_limiter")
             owns_injection_components = True
             owns_evolution_components = bool(
                 self.memory_evolution_store or self.memory_evolution_manager
             )
+            if summary_scheduler is None:
+                raise InitializationError("总结调度器未初始化")
             self.prompt_protection = self._create_prompt_protection_service()
             assert self.memory_processor is not None
             self.memory_processor.prompt_protection_service = self.prompt_protection
-            if self.summary_scheduler is not None:
-                await self.summary_scheduler.start()
+            if summary_scheduler is not None:
+                await summary_scheduler.start()
+                self.summary_scheduler = summary_scheduler
+                if self.conversation_manager is not None:
+                    self.conversation_manager.summary_scheduler = summary_scheduler
                 logger.info("SummaryScheduler 已启动")
 
             for capability, instance in (
@@ -424,19 +435,22 @@ class PluginInitializer(InitializerReadinessMixin):
                     duration_ms=duration_ms,
                 )
             try:
-                await self.stop_summary_scheduler()
-            except BaseException:
+                if self.summary_scheduler is not None:
+                    await self.stop_summary_scheduler()
+                elif summary_scheduler is not None:
+                    await summary_scheduler.close()
+            except Exception:
                 logger.error("初始化失败后停止总结调度器失败", exc_info=True)
             try:
                 await self.stop_memory_engine_tasks()
-            except BaseException:
+            except Exception:
                 logger.error(
                     "初始化失败后收敛记忆引擎后台任务失败",
                     exc_info=True,
                 )
             try:
                 await self.close_realtime_hub()
-            except BaseException:
+            except Exception:
                 logger.error(
                     "初始化失败后关闭实时事件 Hub 失败",
                     exc_info=True,
@@ -444,7 +458,7 @@ class PluginInitializer(InitializerReadinessMixin):
             if owns_evolution_components:
                 try:
                     await self.close_memory_evolution_components()
-                except BaseException:
+                except Exception:
                     logger.error(
                         "初始化失败后关闭记忆演化组件失败",
                         exc_info=True,
@@ -452,7 +466,7 @@ class PluginInitializer(InitializerReadinessMixin):
             if owns_injection_components:
                 try:
                     await self.close_injection_components()
-                except BaseException:
+                except Exception:
                     logger.error(
                         "初始化失败后关闭注入决策组件失败",
                         exc_info=True,
@@ -699,9 +713,11 @@ class PluginInitializer(InitializerReadinessMixin):
             await asyncio.wait_for(coro, timeout=timeout)
             logger.info(f"关停步骤 '{label}' 完成")
         except asyncio.TimeoutError:
-            logger.warning(f"关停步骤 '{label}' 超时 ({timeout}s)，跳过")
+            logger.warning(f"关停步骤 '{label}' 超时 ({timeout}s)")
+            raise
         except Exception as e:
             logger.error(f"关停步骤 '{label}' 失败: {e}")
+            raise
 
     async def stop_scheduler(self) -> None:
         """依次停止存量回填与衰减调度器。"""
@@ -720,6 +736,12 @@ class PluginInitializer(InitializerReadinessMixin):
         await scheduler.close()
         if self.summary_scheduler is scheduler:
             self.summary_scheduler = None
+        manager = self.conversation_manager
+        if (
+            manager is not None
+            and getattr(manager, "summary_scheduler", None) is scheduler
+        ):
+            manager.summary_scheduler = None
 
     async def stop_background_tasks(self) -> None:
         """取消尚未结束的 Provider 后台等待任务。"""
@@ -748,62 +770,14 @@ class PluginInitializer(InitializerReadinessMixin):
             self.realtime_hub = None
 
     async def close_injection_components(self) -> None:
-        """按记录器后存储的顺序幂等关闭注入观测组件。"""
+        """关闭注入观测组件并保留原有幂等错误语义。"""
 
-        async with self._injection_close_lock:
-            first_error: BaseException | None = None
-            recorder = self.injection_decision_recorder
-            if recorder is not None:
-                try:
-                    await recorder.close(timeout=5.0)
-                except BaseException as exc:
-                    first_error = exc
-                else:
-                    if self.injection_decision_recorder is recorder:
-                        self.injection_decision_recorder = None
-
-            store = self.injection_decision_store
-            if store is not None:
-                try:
-                    await store.close()
-                except BaseException as exc:
-                    if first_error is None:
-                        first_error = exc
-                else:
-                    if self.injection_decision_store is store:
-                        self.injection_decision_store = None
-
-            if first_error is not None:
-                raise first_error
+        await close_initializer_injection_components(self)
 
     async def close_memory_evolution_components(self) -> None:
-        """按 manager 后 Store 的顺序关闭记忆演化组件。"""
+        """关闭记忆演化组件并保留原有幂等错误语义。"""
 
-        async with self._evolution_close_lock:
-            first_error: BaseException | None = None
-            manager = self.memory_evolution_manager
-            if manager is not None:
-                try:
-                    await manager.stop()
-                except BaseException as exc:
-                    first_error = exc
-                else:
-                    if self.memory_evolution_manager is manager:
-                        self.memory_evolution_manager = None
-
-            store = self.memory_evolution_store
-            if store is not None:
-                try:
-                    await store.close()
-                except BaseException as exc:
-                    if first_error is None:
-                        first_error = exc
-                else:
-                    if self.memory_evolution_store is store:
-                        self.memory_evolution_store = None
-
-            if first_error is not None:
-                raise first_error
+        await close_initializer_memory_evolution_components(self)
 
     async def close_extension_components(self) -> None:
         """关闭可选认知组件及组合根拥有的身份运行时。"""

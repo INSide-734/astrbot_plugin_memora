@@ -7,9 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .application import (
-        ExtraLlmBudgetDenied,
-        ReflectionTrigger,
-        ReflectionWindowRequest,
         TopicBatchPreparer,
         build_reflection_idempotency_key,
         fit_batches_to_extra_llm_budget,
@@ -29,10 +26,7 @@ __all__ = [
     "ReflectionStoreOutcome",
     "ReflectionStoreResult",
     "ReflectionStoreSummary",
-    "ReflectionTrigger",
-    "ReflectionWindowRequest",
     "TopicBatchPreparer",
-    "ExtraLlmBudgetDenied",
     "build_reflection_idempotency_key",
     "fit_batches_to_extra_llm_budget",
     "process_reflection_batches",
@@ -44,9 +38,6 @@ __all__ = [
 
 _APPLICATION_EXPORTS = frozenset(
     {
-        "ExtraLlmBudgetDenied",
-        "ReflectionTrigger",
-        "ReflectionWindowRequest",
         "TopicBatchPreparer",
         "build_reflection_idempotency_key",
         "fit_batches_to_extra_llm_budget",

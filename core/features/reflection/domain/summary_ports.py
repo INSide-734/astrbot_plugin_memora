@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Protocol
 
@@ -31,20 +31,27 @@ class SummaryJobStorePort(Protocol):
         ...
 
     async def plan_existing_frontiers(
-        self, context_factory: Callable[[str, int, int], SummaryWindowContext]
+        self,
+        context_factory: Callable[
+            [str, int, int], SummaryWindowContext | Awaitable[SummaryWindowContext]
+        ],
     ) -> int:
         """为已有会话按同一 planner 补建启动期总结窗口。"""
         ...
 
     async def plan_and_enqueue_windows(
-        self, context: SummaryWindowContext, observed_end_seq: int
+        self,
+        context: SummaryWindowContext,
+        observed_end_seq: int,
+        *,
+        strict: bool = False,
     ) -> SummaryEnqueueResult:
         """原子规划固定窗口并幂等入队。"""
         ...
 
     async def claim_ready(
         self,
-        now: datetime,
+        now: datetime | None,
         scheduler_id: str,
         limit: int,
         *,
@@ -53,7 +60,7 @@ class SummaryJobStorePort(Protocol):
         session_order: Sequence[str] | None = None,
         global_limit: int | None = None,
     ) -> list[ClaimedJob]:
-        """按 session 顺序并在全局容量内领取 ready 任务。"""
+        """按 Store 时钟和 session 顺序领取 ready 任务。"""
         ...
 
     async def read_claimed_window(self, claim: ClaimedJob) -> SourceWindow:
@@ -68,6 +75,22 @@ class SummaryJobStorePort(Protocol):
         self, claim: ClaimedJob, intents: Sequence[CandidateIntent]
     ) -> bool:
         """在候选 canonical 副作用前原子登记 slot intent。"""
+        ...
+
+    async def reconcile_window(
+        self,
+        claim: ClaimedJob,
+        slot_to_canonical_id: Mapping[object, object],
+    ) -> CompletionResult:
+        """以 claim fencing 和不透明 slot 映射收口跨库 canonical 副作用。"""
+        ...
+
+    async def run_claim_side_effect(
+        self,
+        claim: ClaimedJob,
+        operation: Callable[[], Awaitable[object]],
+    ) -> object:
+        """在 epoch/source fence 内执行外部副作用，不持有 SQLite 事务。"""
         ...
 
     async def commit_window(

@@ -10,6 +10,8 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
+from ....shared.summary_source import source_window_digest
+from ...quality.application.gate_runtime import gate_snapshot_from_json
 from ..domain.storage_outcomes import ReflectionStoreOutcome, ReflectionStoreResult
 from ..domain.summary_models import (
     CandidateDisposition,
@@ -17,14 +19,28 @@ from ..domain.summary_models import (
     CandidateLedgerStatus,
     ClaimedJob,
     SourceWindow,
-    SummaryFailure,
     SummaryReasonCode,
     WindowOutcome,
-    source_window_digest,
 )
 from .candidate_writer import (
     build_reflection_idempotency_key,
     store_reflection_candidates,
+)
+from .summary_worker_reconcile import SummaryWorkerReconcileMixin
+from .summary_worker_support import (
+    FixedQualityGate as _FixedQualityGate,
+)
+from .summary_worker_support import (
+    SummaryWorkerFailure,
+)
+from .summary_worker_support import (
+    canonical_hook_already_owned as _canonical_hook_already_owned,
+)
+from .summary_worker_support import (
+    fixed_quality_key as _fixed_quality_key,
+)
+from .summary_worker_support import (
+    supports_keyword as _supports_keyword,
 )
 
 if TYPE_CHECKING:
@@ -46,75 +62,14 @@ _RESULT_DISPOSITIONS = {
 _STORE_SLOT_PLACEHOLDER = "store-owned"
 
 
-class SummaryWorkerFailure(RuntimeError):
-    """携带固定失败分类，不保存异常正文。"""
-
-    def __init__(
-        self,
-        failed_stage: str,
-        reason_code: SummaryReasonCode,
-        *,
-        retryable: bool,
-        exception_type: str = "",
-    ) -> None:
-        """保存 worker 可提交的固定失败字段。"""
-
-        super().__init__(reason_code.value)
-        self.failed_stage = failed_stage
-        self.reason_code = reason_code
-        self.retryable = retryable
-        self.exception_type = exception_type
-
-    def to_failure(self) -> SummaryFailure:
-        """转换为不含异常正文的持久化失败 DTO。"""
-
-        return SummaryFailure(
-            failed_stage=self.failed_stage,
-            reason_code=self.reason_code,
-            exception_type=self.exception_type,
-            retryable=self.retryable,
-        )
+def _claim_fence(claim: ClaimedJob) -> str:
+    """根据 claim 的 epoch、generation 和 token 生成不透明来源 fence。"""
+    return hashlib.sha256(
+        f"{claim.session_epoch}:{claim.worker_generation}:{claim.claim_token}".encode()
+    ).hexdigest()
 
 
-def _supports_keyword(call: Callable[..., object], keyword: str) -> bool:
-    """判断分阶段接入的协作 API 是否显式接受固定快照参数。"""
-
-    try:
-        parameters = inspect.signature(call).parameters.values()
-    except (TypeError, ValueError):
-        return False
-    return any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD or parameter.name == keyword
-        for parameter in parameters
-    )
-
-
-async def _canonical_hook_already_owned(_memory_id: int) -> None:
-    """保持候选写入器调用形状；演化由 MemoryEngine 写后钩子唯一调度。"""
-
-
-class _FixedQualityGate:
-    """向现有 candidate writer 回放同一固定快照下的门禁结果。"""
-
-    def __init__(self, results: Mapping[int, object]) -> None:
-        """按候选对象身份保存已验证的闭集门禁结果。"""
-
-        self._results = dict(results)
-
-    async def route_candidate(
-        self,
-        candidate: dict[str, Any],
-        **_context: object,
-    ) -> object:
-        """返回预先求值的门禁结果；候选重写或重排时立即失败。"""
-
-        result = self._results.get(id(candidate))
-        if result is None:
-            raise RuntimeError("fixed_gate_result_missing")
-        return result
-
-
-class SummaryWorker:
+class SummaryWorker(SummaryWorkerReconcileMixin):
     """执行单个 claim，并只返回 Store 可原子收口的 WindowOutcome。"""
 
     def __init__(
@@ -176,11 +131,21 @@ class SummaryWorker:
                 stage="candidate_intent",
                 reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
             )
-        completed_keys = await self._find_completed_keys(candidates)
+        completed_canonical_ids = await self._find_completed_keys(candidates)
+
+        owner_reconciled = await self._reconcile_discovered_owners(
+            claim, candidates, intents, completed_canonical_ids
+        )
+        if not owner_reconciled:
+            return self._unknown_outcome(
+                intents,
+                stage="candidate_reconcile",
+                reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
+            )
         fixed_quality_gate, gate_reason = await self._route_quality(
             claim,
             candidates,
-            completed_keys,
+            completed_canonical_ids,
             snapshot_payload,
         )
         if gate_reason is not None:
@@ -192,15 +157,23 @@ class SummaryWorker:
         try:
             results = await store_reflection_candidates(
                 candidates,
-                completed_idempotency_keys=completed_keys,
+                completed_idempotency_keys=completed_canonical_ids,
                 session_id=claim.session_id,
                 persona_id=claim.persona_id,
                 start_index=claim.start_seq,
                 end_index=claim.end_seq,
-                is_group_chat=is_group_chat,
+                is_group_chat=self._is_group_chat(claim),
                 group_id=claim.group_id,
+                scope_id=claim.scope_id,
+                session_epoch=claim.session_epoch,
+                worker_generation=claim.worker_generation,
+                source_digest=claim.source_digest,
+                claim_fence=_claim_fence(claim),
                 gate_snapshot_json=claim.gate_snapshot_json,
                 before_side_effect=lambda: self._claim_is_active(claim),
+                run_claim_side_effect=lambda operation: self.run_claim_side_effect(
+                    claim, operation
+                ),
                 memory_engine=self._memory_engine,
                 memory_quality_gate=fixed_quality_gate,
                 schedule_evolution_after_write=_canonical_hook_already_owned,
@@ -215,16 +188,21 @@ class SummaryWorker:
                 stage="candidate_write",
                 reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
             )
-        return self._build_outcome(intents, results)
+        expected_snapshots = tuple(map(_fixed_quality_key, candidates))
+        return self._build_outcome(
+            intents,
+            results,
+            expected_idempotency_keys=expected_snapshots,
+        )
 
     async def _route_quality(
         self,
         claim: ClaimedJob,
         candidates: Sequence[dict[str, Any]],
-        completed_keys: set[str],
+        completed_keys: Mapping[str, int],
         snapshot_payload: Mapping[str, object],
     ) -> tuple[object | None, SummaryReasonCode | None]:
-        """用同一固化快照预求值质量门，并拒绝闭集外 action。"""
+        """用同一固化快照预求值质量门，并拒绝候选快照变化。"""
         gate = self._quality_gate
         if gate is None:
             return None, None
@@ -238,12 +216,22 @@ class SummaryWorker:
             "session_id": claim.session_id,
             "start_index": claim.start_seq,
             "end_index": claim.end_seq,
+            "start_seq": claim.start_seq,
+            "end_seq": claim.end_seq,
             "message_count": claim.expected_count,
+            "scope_id": claim.scope_id,
+            "session_epoch": claim.session_epoch,
+            "source_digest": claim.source_digest,
+            "worker_generation": claim.worker_generation,
+            "source_fence": _claim_fence(claim),
         }
-        results: dict[int, object] = {}
+        results: dict[tuple[str, str], object] = {}
         for candidate in candidates:
-            key = str(candidate.get("metadata", {}).get("idempotency_key") or "")
-            if key in completed_keys:
+            try:
+                snapshot_key = _fixed_quality_key(candidate)
+            except (TypeError, ValueError):
+                return None, SummaryReasonCode.LEDGER_UNRESOLVED
+            if snapshot_key[0] in completed_keys:
                 continue
             if not await self._claim_is_active(claim):
                 raise SummaryWorkerFailure(
@@ -252,16 +240,22 @@ class SummaryWorker:
                     retryable=False,
                 )
             try:
-                result = await gate.route_candidate(
-                    candidate,
-                    session_id=claim.session_id,
-                    persona_id=claim.persona_id,
-                    source_window=source_window,
-                    is_group_chat=self._is_group_chat(claim),
-                    group_id=claim.group_id,
-                    chat_type=claim.chat_type,
-                    **snapshot_kwargs,
-                )
+
+                async def _route_candidate() -> object:
+                    """在同一 claim/source fence 内执行质量门和隔离写入。"""
+                    return await gate.route_candidate(
+                        candidate,
+                        session_id=claim.session_id,
+                        persona_id=claim.persona_id,
+                        source_window=source_window,
+                        is_group_chat=self._is_group_chat(claim),
+                        group_id=claim.group_id,
+                        scope_id=claim.scope_id,
+                        chat_type=claim.chat_type,
+                        **snapshot_kwargs,
+                    )
+
+                result = await self.run_claim_side_effect(claim, _route_candidate)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -273,7 +267,12 @@ class SummaryWorker:
                 "mark_write",
             }:
                 return None, SummaryReasonCode.INVALID_ACTION
-            results[id(candidate)] = result
+            try:
+                if _fixed_quality_key(candidate) != snapshot_key:
+                    return None, SummaryReasonCode.LEDGER_UNRESOLVED
+            except (TypeError, ValueError):
+                return None, SummaryReasonCode.LEDGER_UNRESOLVED
+            results[snapshot_key] = result
         return _FixedQualityGate(results), None
 
     async def _read_source(self, claim: ClaimedJob) -> SourceWindow:
@@ -325,7 +324,7 @@ class SummaryWorker:
 
     @staticmethod
     def _snapshot_payload(claim: ClaimedJob) -> Mapping[str, object]:
-        """解析 job 固化的有界 JSON 对象；不可恢复时阻塞窗口。"""
+        """解析并核对 job 固化的可恢复 GateSnapshot。"""
         try:
             payload = json.loads(claim.gate_snapshot_json)
         except (TypeError, json.JSONDecodeError) as error:
@@ -342,12 +341,38 @@ class SummaryWorker:
                 retryable=False,
                 exception_type="MissingSnapshot",
             )
-        if not {"enabled", "default_profile", "profiles", "bindings"} <= set(payload):
+        if not {
+            "enabled",
+            "default_profile",
+            "profiles",
+            "bindings",
+            "revision",
+        } <= set(payload):
             raise SummaryWorkerFailure(
                 "gate_snapshot",
                 SummaryReasonCode.BLOCKED,
                 retryable=False,
                 exception_type="IncompleteSnapshot",
+            )
+        revision = payload.get("revision")
+        if (
+            not isinstance(revision, str)
+            or not revision.strip()
+            or revision != claim.gate_revision
+        ):
+            raise SummaryWorkerFailure(
+                "gate_snapshot",
+                SummaryReasonCode.BLOCKED,
+                retryable=False,
+                exception_type="SnapshotRevisionMismatch",
+            )
+        snapshot = gate_snapshot_from_json(claim.gate_snapshot_json)
+        if snapshot is None or snapshot.revision != claim.gate_revision:
+            raise SummaryWorkerFailure(
+                "gate_snapshot",
+                SummaryReasonCode.BLOCKED,
+                retryable=False,
+                exception_type="SnapshotUnrecoverable",
             )
         return payload
 
@@ -475,6 +500,10 @@ class SummaryWorker:
                     retryable=False,
                     exception_type="TypeError",
                 )
+            metadata["source_epoch"] = claim.session_epoch
+            metadata["source_digest"] = claim.source_digest
+            metadata["source_fence_generation"] = claim.worker_generation
+            metadata["source_fence"] = _claim_fence(claim)
             raw_batch_index = metadata.get("batch_index", 0) or 0
             if isinstance(raw_batch_index, bool):
                 raise SummaryWorkerFailure(
@@ -500,6 +529,7 @@ class SummaryWorker:
                 )
             idempotency_key = build_reflection_idempotency_key(
                 session_id=claim.session_id,
+                session_epoch=claim.session_epoch,
                 start_index=claim.start_seq,
                 end_index=claim.end_seq,
                 batch_index=batch_index,
@@ -522,8 +552,8 @@ class SummaryWorker:
     async def _find_completed_keys(
         self,
         candidates: Sequence[dict[str, Any]],
-    ) -> set[str]:
-        """用 canonical 幂等索引识别崩溃后已写成功的候选，避免重复写。"""
+    ) -> dict[str, int]:
+        """用 canonical 幂等索引识别崩溃后已写成功的候选及其 ID。"""
 
         finder = getattr(
             self._memory_engine,
@@ -531,14 +561,18 @@ class SummaryWorker:
             None,
         )
         if not callable(finder):
-            return set()
+            return {}
         finder_call = cast(Callable[[str], Awaitable[int | None]], finder)
-        completed: set[str] = set()
+        completed: dict[str, int] = {}
         try:
             for candidate in candidates:
                 key = str(candidate["metadata"]["idempotency_key"])
-                if await finder_call(key) is not None:
-                    completed.add(key)
+                owner = await finder_call(key)
+                if owner is None:
+                    continue
+                if isinstance(owner, bool) or not isinstance(owner, int) or owner <= 0:
+                    raise ValueError("canonical_owner_invalid")
+                completed[key] = owner
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -554,8 +588,10 @@ class SummaryWorker:
         self,
         intents: Sequence[CandidateIntent],
         results: Sequence[ReflectionStoreResult],
+        *,
+        expected_idempotency_keys: Sequence[tuple[str, str]] | None = None,
     ) -> WindowOutcome:
-        """穷举候选动作并把未知动作收敛为不可推进的 unknown。"""
+        """映射候选写入结果及 canonical ID，并将不一致收敛为 unknown。"""
 
         if len(results) != len(intents):
             return self._unknown_outcome(
@@ -563,21 +599,97 @@ class SummaryWorker:
                 stage="candidate_write",
                 reason_code=SummaryReasonCode.INVALID_SLOT,
             )
+        if expected_idempotency_keys is not None and len(
+            expected_idempotency_keys
+        ) != len(intents):
+            return self._unknown_outcome(
+                intents,
+                stage="candidate_reconcile",
+                reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
+            )
         counts = {disposition: 0 for disposition in CandidateDisposition}
         final_intents: list[CandidateIntent] = []
         unknown_count = 0
-        for intent, result in zip(intents, results, strict=True):
+        ledger_unresolved = False
+        required_ids = {
+            CandidateDisposition.CANONICAL,
+            CandidateDisposition.MARK_WRITE,
+            CandidateDisposition.SKIPPED_IDEMPOTENT,
+        }
+        for index, (intent, result) in enumerate(zip(intents, results, strict=True)):
             disposition = (
                 _RESULT_DISPOSITIONS.get(result.outcome)
                 if isinstance(result, ReflectionStoreResult)
                 else None
             )
-            if disposition is None:
+            expected_key = (
+                expected_idempotency_keys[index][0]
+                if expected_idempotency_keys is not None
+                else None
+            )
+            expected_digest = (
+                expected_idempotency_keys[index][1]
+                if expected_idempotency_keys is not None
+                else None
+            )
+            canonical_id = (
+                result.canonical_id
+                if isinstance(result, ReflectionStoreResult)
+                else None
+            )
+            valid_id = (
+                canonical_id is not None
+                and not isinstance(canonical_id, bool)
+                and isinstance(canonical_id, int)
+                and canonical_id > 0
+            )
+            valid = disposition is not None
+            mapping_inconsistent = False
+            if expected_digest is not None and expected_digest != intent.content_digest:
+                valid = mapping_inconsistent = True
+            if (
+                disposition is not None
+                and expected_key is not None
+                and disposition is not CandidateDisposition.FAILED
+                and (
+                    not isinstance(result, ReflectionStoreResult)
+                    or result.idempotency_key != expected_key
+                )
+            ):
+                valid = False
+                mapping_inconsistent = True
+            if (
+                disposition is CandidateDisposition.FAILED
+                and expected_key is not None
+                and isinstance(result, ReflectionStoreResult)
+                and result.idempotency_key
+                and result.idempotency_key != expected_key
+            ):
+                valid = False
+                mapping_inconsistent = True
+            if disposition in required_ids:
+                if not valid_id:
+                    valid = False
+                    mapping_inconsistent = True
+            elif valid and canonical_id is not None:
+                valid = False
+                mapping_inconsistent = True
+            if valid and intent.canonical_id is not None:
+                if canonical_id != intent.canonical_id:
+                    valid = False
+                    mapping_inconsistent = True
+            ledger_unresolved = ledger_unresolved or mapping_inconsistent
+            if not valid:
                 unknown_count += 1
                 final_intents.append(
-                    replace(intent, status=CandidateLedgerStatus.UNKNOWN)
+                    replace(
+                        intent,
+                        disposition=None,
+                        status=CandidateLedgerStatus.UNKNOWN,
+                    )
                 )
                 continue
+            assert disposition is not None
             counts[disposition] += 1
             final_intents.append(
                 replace(
@@ -588,6 +700,7 @@ class SummaryWorker:
                         if disposition is CandidateDisposition.FAILED
                         else CandidateLedgerStatus.COMMITTED
                     ),
+                    canonical_id=canonical_id,
                 )
             )
         failed_count = counts[CandidateDisposition.FAILED]
@@ -596,9 +709,13 @@ class SummaryWorker:
             SummaryReasonCode.COMPLETED
             if can_advance
             else (
-                SummaryReasonCode.INVALID_ACTION
-                if unknown_count
-                else SummaryReasonCode.UNKNOWN
+                SummaryReasonCode.LEDGER_UNRESOLVED
+                if ledger_unresolved
+                else (
+                    SummaryReasonCode.INVALID_ACTION
+                    if unknown_count
+                    else SummaryReasonCode.UNKNOWN
+                )
             )
         )
         return WindowOutcome(
@@ -626,7 +743,7 @@ class SummaryWorker:
 
         return WindowOutcome(
             can_advance=False,
-            unknown_count=max(1, len(intents)),
+            unknown_count=len(intents),
             candidate_slots=tuple(
                 replace(intent, status=CandidateLedgerStatus.UNKNOWN)
                 for intent in intents
