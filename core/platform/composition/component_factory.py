@@ -61,6 +61,7 @@ from ...features.quality.domain.gate_config import GateConfig
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
+from ...features.recall.processors.llm_client import LLMClient
 from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...features.reflection.application import SummaryScheduler, TopicBatchPreparer
 from ...features.reflection.domain.summary_models import SummaryWindowContext
@@ -78,18 +79,18 @@ from .engine_runtime_config import build_engine_runtime_config
 class ComponentFactory:
     """创建并初始化所有核心组件"""
 
-    def __init__(self, context, config_manager, data_dir: str):
-        """保存共享上下文、已解析配置和插件数据目录。
-
-        参数:
-            context: AstrBot 运行时上下文。
-            config_manager: 已完成默认合并和校验的配置管理器。
-            data_dir: Memora 持久化数据目录。
-        """
-
+    def __init__(
+        self,
+        context,
+        config_manager,
+        data_dir: str,
+        backup_manager: BackupManager | None = None,
+    ):
+        """保存上下文、配置、数据目录和唯一备份管理器。"""
         self.context = context
         self.config_manager = config_manager
         self.data_dir = data_dir
+        self.backup_manager = backup_manager
 
     async def build_all(
         self,
@@ -231,7 +232,7 @@ class ComponentFactory:
                 ),
             )
 
-        backup_manager = BackupManager(self.data_dir)
+        backup_manager = self.backup_manager or BackupManager(self.data_dir)
 
         stopwords_dir = data_dir_path / "stopwords"
         stopwords_dir.mkdir(parents=True, exist_ok=True)
@@ -362,6 +363,10 @@ class ComponentFactory:
             gate_runtime=gate_runtime,
             topic_embed_fn=topic_embedding_adapter.embed,
         )
+        auxiliary_llm_client = LLMClient(
+            self.context,
+            llm_provider=llm_id if llm_id else None,
+        )
         logger.info("MemoryProcessor 已初始化")
 
         memory_quarantine_store = MemoryQuarantineStore(
@@ -371,7 +376,7 @@ class ComponentFactory:
 
         memory_evolution_gate = MemoryEvolutionGate(evolution_config)
         memory_evolution_consolidator = MemoryConsolidator(
-            memory_processor.llm_client.call_llm_with_retry,
+            auxiliary_llm_client.call_llm_with_retry,
             evolution_config,
         )
         memory_evolution_candidate_generator = MemoryEvolutionCandidateGenerator(
@@ -413,7 +418,7 @@ class ComponentFactory:
                 profile_manager=memory_engine.profile_manager,
                 source_store=memory_evolution_store,
                 get_memory=memory_engine.get_memory,
-                extractor=ProfileExtractor(memory_processor.llm_client),
+                extractor=ProfileExtractor(auxiliary_llm_client),
                 cost_control=cost_control,
                 min_tag_confidence=float(
                     engine_config.get("user_profile.min_tag_confidence", 0.1)
@@ -424,7 +429,7 @@ class ComponentFactory:
                 knowledge_manager=memory_engine.knowledge_manager,
                 source_store=memory_evolution_store,
                 get_memory=memory_engine.get_memory,
-                extractor=KnowledgeExtractor(memory_processor.llm_client),
+                extractor=KnowledgeExtractor(auxiliary_llm_client),
                 cost_control=cost_control,
                 expire_days=int(engine_config.get("knowledge_base.expire_days", 365)),
             )
@@ -434,7 +439,7 @@ class ComponentFactory:
                 note_manager=memory_engine.note_manager,
                 source_store=memory_evolution_store,
                 generator=NoteGenerator(
-                    memory_processor.llm_client,
+                    auxiliary_llm_client,
                     min_length=note_min_length,
                 ),
                 cost_control=cost_control,
@@ -458,6 +463,12 @@ class ComponentFactory:
         )
         conversation_store.quarantine_store = memory_quarantine_store
         logger.info("记忆质量隔离门已初始化")
+        memory_engine.set_summary_source_validator(
+            conversation_store.summary_source_fence_is_active
+        )
+        conversation_store.set_summary_canonical_owner_lookup(
+            memory_engine.find_memory_id_by_idempotency_key
+        )
         await db_setup.auto_rebuild_index_if_needed(
             index_validator,
             memory_engine,
@@ -742,15 +753,22 @@ class ComponentFactory:
                 "injection_decision_recorder": decision_recorder,
             }
         except BaseException:
+            cancellation: asyncio.CancelledError | None = None
             try:
                 if decision_recorder is not None:
                     await decision_recorder.close(timeout=5.0)
+            except asyncio.CancelledError as error:
+                cancellation = error
             except BaseException:
                 logger.error("关闭注入决策记录器失败")
             try:
                 await decision_store.close()
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
             except BaseException:
                 logger.error("关闭注入决策存储失败")
+            if cancellation is not None:
+                raise cancellation
             raise
 
     def _build_engine_config(

@@ -295,9 +295,9 @@ class CommandEndpointsMixin:
     @memora.command("summarize")
     @_bind_to_plugin_entrypoint
     async def summarize(
-        self, event: AstrMessageEvent
+        self, event: AstrMessageEvent, action: str = ""
     ) -> AsyncGenerator[MessageEventResult, None]:
-        """[管理员] 立即触发当前会话的记忆总结"""
+        """[管理员] 入队当前会话总结，或确认跳过不可恢复窗口。"""
         ready, message = await self._ensure_plugin_ready()
         if not ready:
             yield event.plain_result(message)
@@ -307,7 +307,7 @@ class CommandEndpointsMixin:
             yield event.plain_result(self._command_handler_not_ready_message())
             return
 
-        async for message in self.command_handler.handle_summarize(event):
+        async for message in self.command_handler.handle_summarize(event, action):
             yield message
 
     @permission_type(PermissionType.ADMIN)

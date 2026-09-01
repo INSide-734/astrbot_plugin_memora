@@ -58,8 +58,10 @@ class MemoryEngineCRUDMixin(
         importance: float = 0.5,
         metadata: dict[str, Any] | None = None,
         atoms: list | None = None,
+        *,
+        summary_source_staged: bool = False,
     ) -> int:
-        """执行一次尚未按幂等键存在性过滤的 canonical 写入。"""
+        """执行尚未按幂等键过滤的 canonical 写入。"""
 
         if not content or not content.strip():
             raise ValueError("记忆内容不能为空")
@@ -207,6 +209,8 @@ class MemoryEngineCRUDMixin(
                 op_id, "completed", status="completed", memory_id=doc_id
             )
         self._retrieval.invalidate_cache()
+        if summary_source_staged:
+            return doc_id
         self._create_tracked_task(self._retrieval.apply_interference(doc_id, content))
         self._create_tracked_task(self._retrieval.extract_triggers(content, doc_id))
         sse = getattr(self, "sse", None)

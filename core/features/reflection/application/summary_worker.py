@@ -39,9 +39,7 @@ from .summary_worker_support import (
 from .summary_worker_support import (
     fixed_quality_key as _fixed_quality_key,
 )
-from .summary_worker_support import (
-    supports_keyword as _supports_keyword,
-)
+from .summary_worker_validation import SummaryWorkerValidationMixin
 
 if TYPE_CHECKING:
     from ....shared.contracts import ReflectionWritePort
@@ -69,7 +67,7 @@ def _claim_fence(claim: ClaimedJob) -> str:
     ).hexdigest()
 
 
-class SummaryWorker(SummaryWorkerReconcileMixin):
+class SummaryWorker(SummaryWorkerReconcileMixin, SummaryWorkerValidationMixin):
     """执行单个 claim，并只返回 Store 可原子收口的 WindowOutcome。"""
 
     def __init__(
@@ -142,6 +140,12 @@ class SummaryWorker(SummaryWorkerReconcileMixin):
                 stage="candidate_reconcile",
                 reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
             )
+        if not await self._begin_candidate_writes(claim, intents):
+            return self._unknown_outcome(
+                intents,
+                stage="candidate_intent",
+                reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
+            )
         fixed_quality_gate, gate_reason = await self._route_quality(
             claim,
             candidates,
@@ -169,6 +173,8 @@ class SummaryWorker(SummaryWorkerReconcileMixin):
                 worker_generation=claim.worker_generation,
                 source_digest=claim.source_digest,
                 claim_fence=_claim_fence(claim),
+                job_id=claim.job_id,
+                claim_token=claim.claim_token,
                 gate_snapshot_json=claim.gate_snapshot_json,
                 before_side_effect=lambda: self._claim_is_active(claim),
                 run_claim_side_effect=lambda operation: self.run_claim_side_effect(
@@ -194,6 +200,27 @@ class SummaryWorker(SummaryWorkerReconcileMixin):
             results,
             expected_idempotency_keys=expected_snapshots,
         )
+
+    async def _begin_candidate_writes(
+        self, claim: ClaimedJob, intents: Sequence[CandidateIntent]
+    ) -> bool:
+        """在任何质量门或 canonical 副作用前持久化所有候选 writing 状态。"""
+
+        begin_write = getattr(self._job_store, "begin_candidate_write", None)
+        if not callable(begin_write):
+            return False
+        for intent in intents:
+            try:
+                begun = begin_write(claim, intent)
+                if inspect.isawaitable(begun):
+                    begun = await begun
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                return False
+            if begun is not True:
+                return False
+        return True
 
     async def _route_quality(
         self,
@@ -544,6 +571,7 @@ class SummaryWorker(SummaryWorkerReconcileMixin):
                 CandidateIntent(
                     slot=slot,
                     content_digest=content_digest,
+                    idempotency_key=idempotency_key,
                     slot_key=_STORE_SLOT_PLACEHOLDER,
                 )
             )
@@ -646,7 +674,8 @@ class SummaryWorker(SummaryWorkerReconcileMixin):
             valid = disposition is not None
             mapping_inconsistent = False
             if expected_digest is not None and expected_digest != intent.content_digest:
-                valid = mapping_inconsistent = True
+                valid = False
+                mapping_inconsistent = True
             if (
                 disposition is not None
                 and expected_key is not None
@@ -751,50 +780,6 @@ class SummaryWorker(SummaryWorkerReconcileMixin):
             failed_stage=stage,
             reason_code=reason_code,
         )
-
-    @staticmethod
-    def _fixed_snapshot_kwargs(
-        call: Callable[..., object],
-        claim: ClaimedJob,
-        payload: Mapping[str, object],
-        *,
-        required: bool,
-    ) -> dict[str, Any]:
-        """向已完成快照接入的 API 传递同一 job 快照，否则保守阻塞。"""
-
-        fixed = bool(claim.gate_revision or payload)
-        if _supports_keyword(call, "gate_snapshot_json"):
-            kwargs: dict[str, Any] = {
-                "gate_snapshot_json": claim.gate_snapshot_json,
-            }
-            if _supports_keyword(call, "gate_revision"):
-                kwargs["gate_revision"] = claim.gate_revision
-            return kwargs
-        if _supports_keyword(call, "gate_snapshot"):
-            kwargs = {"gate_snapshot": payload}
-            if _supports_keyword(call, "gate_revision"):
-                kwargs["gate_revision"] = claim.gate_revision
-            return kwargs
-        if fixed and required:
-            raise SummaryWorkerFailure(
-                "gate_snapshot",
-                SummaryReasonCode.BLOCKED,
-                retryable=False,
-                exception_type="SnapshotAdapterUnavailable",
-            )
-        return {}
-
-    @staticmethod
-    def _is_group_chat(claim: ClaimedJob) -> bool:
-        """只使用已固化 chat_type/group_id 判定群聊，不猜测 session 标识。"""
-
-        if claim.chat_type not in (None, "", "private", "group"):
-            raise SummaryWorkerFailure(
-                "identity_scope",
-                SummaryReasonCode.BLOCKED,
-                retryable=False,
-            )
-        return claim.chat_type == "group" or bool(claim.group_id)
 
 
 __all__ = ["SummaryWorker", "SummaryWorkerFailure"]

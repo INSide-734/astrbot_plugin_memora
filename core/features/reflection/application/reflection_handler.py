@@ -47,7 +47,6 @@ class ReflectionHandler(ReflectionContextMixin):
         relation_manager: Any | None = None,
         prompt_protection_service: PromptProtectionPort | None = None,
         write_guard_cb: Any | None = None,
-        memory_evolution_manager: Any | None = None,
         memory_quality_gate: Any | None = None,
         cost_control: CostControl | None = None,
         summary_scheduler: Any | None = None,
@@ -66,7 +65,6 @@ class ReflectionHandler(ReflectionContextMixin):
         self._relation_manager = relation_manager
         self._prompt_protection = prompt_protection_service
         self._write_guard_cb = write_guard_cb
-        self._memory_evolution_manager = memory_evolution_manager
         self._memory_quality_gate = memory_quality_gate
         self._cost_control = cost_control or CostControl()
         self._summary_scheduler = summary_scheduler

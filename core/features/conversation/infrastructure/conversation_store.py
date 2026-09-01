@@ -7,7 +7,7 @@ import asyncio
 import inspect
 import json
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any, cast
@@ -314,9 +314,12 @@ class ConversationStore(SummaryStoreMixin, MessageStoreMixin):
         ]
 
     async def delete_old_sessions(
-        self, days: int = 30, ttl_seconds: int | None = None
+        self,
+        days: int = 30,
+        ttl_seconds: int | None = None,
+        cancel_jobs_cb: Callable[[str, int], Awaitable[object] | object] | None = None,
     ) -> int:
-        """在统一来源 fence 内取消任务并删除过期会话消息。"""
+        """在统一来源 fence 内取消任务、递增 epoch 并删除过期会话。"""
         effective_ttl_seconds = (
             ttl_seconds if ttl_seconds is not None else days * 24 * 60 * 60
         )
@@ -326,6 +329,7 @@ class ConversationStore(SummaryStoreMixin, MessageStoreMixin):
         if self.connection is None:
             return 0
 
+        fenced_epochs: list[tuple[str, int]] = []
         async with self._write_lock:
             cursor = await self.connection.execute(
                 "SELECT session_id FROM sessions WHERE last_active_at < ?",
@@ -381,6 +385,19 @@ class ConversationStore(SummaryStoreMixin, MessageStoreMixin):
                             """,
                             {"session_ids_json": json.dumps(session_ids), "now": now},
                         )
+                        epoch_cursor = await self.connection.execute(
+                            """
+                            SELECT session_id,epoch FROM session_epochs
+                            WHERE session_id IN (
+                              SELECT value FROM json_each(:session_ids_json)
+                            )
+                            """,
+                            session_params,
+                        )
+                        fenced_epochs = [
+                            (str(row["session_id"]), int(row["epoch"]))
+                            for row in await epoch_cursor.fetchall()
+                        ]
                         await self.connection.execute(
                             """
                             UPDATE summary_jobs SET status='cancelled', claim_token=NULL,
@@ -420,6 +437,19 @@ class ConversationStore(SummaryStoreMixin, MessageStoreMixin):
                         await self.connection.rollback()
                         raise
 
+        if callable(cancel_jobs_cb):
+            for session_id, epoch in fenced_epochs:
+                try:
+                    cancelled = cancel_jobs_cb(session_id, epoch)
+                    if inspect.isawaitable(cancelled):
+                        await cancelled
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.error(
+                        "取消过期会话总结 worker 失败，异常类型=%s",
+                        error.__class__.__name__,
+                    )
         logger.info(
             f"[ConversationStore] 删除了 {len(session_ids)} 个过期会话 "
             f"(超过 {effective_ttl_seconds} 秒)"

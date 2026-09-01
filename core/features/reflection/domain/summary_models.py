@@ -77,6 +77,7 @@ class SummaryReasonCode(str, Enum):
     TRIM_BLOCKED = "trim_blocked"
     LEGACY_PENDING = "legacy_pending"
     LEGACY_PENDING_INVALID = "legacy_pending_invalid"
+    ABANDONED_CONFIRMED = "abandoned_confirmed"
     COMPLETED = "completed"
 
 
@@ -240,6 +241,7 @@ class SummaryJob:
     failed_stage: str | None = None
     reason_code: SummaryReasonCode = SummaryReasonCode.UNKNOWN
     exception_type: str | None = None
+    operator_action: str | None = None
     canonical_count: int = 0
     quarantine_count: int = 0
     discard_count: int = 0
@@ -309,6 +311,9 @@ class SummaryJob:
                 "lease_until",
                 _nonnegative_number(self.lease_until, "lease_until"),
             )
+        object.__setattr__(
+            self, "operator_action", _text(self.operator_action, "operator_action")
+        )
         for name in ("created_at", "updated_at"):
             object.__setattr__(
                 self, name, _nonnegative_number(getattr(self, name), name)
@@ -402,7 +407,8 @@ class CandidateIntent:
 
     slot: int
     content_digest: str
-    slot_key: str
+    idempotency_key: str = ""
+    slot_key: str = ""
     disposition: CandidateDisposition | None = None
     status: CandidateLedgerStatus = CandidateLedgerStatus.PLANNED
     canonical_id: int | None = None
@@ -421,8 +427,9 @@ class CandidateIntent:
             )
         if not isinstance(self.status, CandidateLedgerStatus):
             object.__setattr__(self, "status", CandidateLedgerStatus(str(self.status)))
-        slot_key = _text(self.slot_key, "slot_key", optional=False)
-        assert slot_key is not None
+        idempotency_key = _text(self.idempotency_key, "idempotency_key") or ""
+        object.__setattr__(self, "idempotency_key", idempotency_key)
+        slot_key = _text(self.slot_key, "slot_key") or ""
         object.__setattr__(self, "slot_key", slot_key)
         if self.canonical_id is not None:
             object.__setattr__(

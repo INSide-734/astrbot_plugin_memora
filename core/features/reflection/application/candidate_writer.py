@@ -9,6 +9,7 @@ from typing import Any, cast
 
 from astrbot.api import logger
 
+from ....shared.summary_source_fence import SummarySourceFence
 from ..domain.storage_outcomes import ReflectionStoreOutcome, ReflectionStoreResult
 from .continuity import record_continuity_topics
 
@@ -63,6 +64,8 @@ async def store_reflection_candidates(
     source_digest: str | None = None,
     worker_generation: int | None = None,
     claim_fence: str | None = None,
+    claim_token: str | None = None,
+    job_id: str | None = None,
     gate_snapshot_json: str | None = None,
     before_side_effect: Callable[[], Awaitable[bool]] | None = None,
     run_claim_side_effect: Callable[
@@ -192,6 +195,7 @@ async def store_reflection_candidates(
         if claim_fence:
             source_window["source_fence"] = str(claim_fence)
         try:
+            is_mark_write = False
             quality_gate = memory_quality_gate
             if quality_gate is not None:
 
@@ -227,6 +231,7 @@ async def store_reflection_candidates(
                         idempotency_key,
                     )
                 if gate_result.action == "mark_write":
+                    is_mark_write = True
                     metadata["gate_disposition"] = "mark_write"
                     memory["atoms"] = (
                         gate_result.atoms
@@ -239,19 +244,40 @@ async def store_reflection_candidates(
                     idempotency_key,
                 )
 
-            is_mark_write = metadata.get("gate_disposition") == "mark_write"
-
             async def _write_canonical() -> int:
                 """在来源 fence 内执行 canonical 写入和其后处理。"""
 
-                value = await memory_engine.add_memory(
-                    content=memory["content"],
-                    session_id=session_id,
-                    persona_id=persona_id,
-                    importance=memory["importance"],
-                    metadata=metadata,
-                    atoms=memory.get("atoms", []),
-                )
+                source_fence = None
+                if job_id is not None or claim_token is not None:
+                    if (
+                        job_id is None
+                        or claim_token is None
+                        or source_digest is None
+                        or worker_generation is None
+                    ):
+                        raise ValueError("summary_source_fence_incomplete")
+                    source_fence = SummarySourceFence(
+                        job_id=job_id,
+                        session_id=session_id,
+                        session_epoch=session_epoch,
+                        start_seq=start_index,
+                        end_seq=end_index,
+                        expected_count=end_index - start_index,
+                        source_digest=source_digest,
+                        worker_generation=worker_generation,
+                        claim_token=claim_token,
+                    )
+                write_kwargs: dict[str, Any] = {
+                    "content": memory["content"],
+                    "session_id": session_id,
+                    "persona_id": persona_id,
+                    "importance": memory["importance"],
+                    "metadata": metadata,
+                    "atoms": memory.get("atoms", []),
+                }
+                if source_fence is not None:
+                    write_kwargs["source_fence"] = source_fence
+                value = await memory_engine.add_memory(**write_kwargs)
                 if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                     raise ValueError("canonical_owner_invalid")
                 try:

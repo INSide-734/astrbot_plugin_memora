@@ -1,8 +1,6 @@
 """ConversationStore 的消息存储操作。"""
 
-import inspect
 import time
-from typing import Any, cast
 
 from astrbot.api import logger
 
@@ -54,10 +52,12 @@ class MessageStoreMixin(MessageQueryMixin):
                 )
                 seq_cursor = await self.connection.execute(
                     """
-                    SELECT COALESCE(MAX(message_seq), 0) + 1
-                    FROM messages WHERE session_id = ?
+                    SELECT MAX(
+                      COALESCE((SELECT MAX(message_seq) FROM messages WHERE session_id=?),0),
+                      COALESCE((SELECT cursor_seq FROM session_epochs WHERE session_id=?),0)
+                    ) + 1
                     """,
-                    (message.session_id,),
+                    (message.session_id, message.session_id),
                 )
                 seq_row = await seq_cursor.fetchone()
                 message_seq = int(seq_row[0] if seq_row else 1)
@@ -316,37 +316,3 @@ class MessageStoreMixin(MessageQueryMixin):
         if session_id:
             return "AND session_id = ?", (session_id,)
         return "AND platform = ? AND group_id IS NULL", (private_platform or "",)
-
-    async def trim_session_messages(
-        self,
-        session_id: str,
-        delete_count: int,
-    ) -> int:
-        """兼容旧调用，但唯一委托 Store 原子 trim fence。"""
-        if self.connection is None or delete_count <= 0:
-            return 0
-        trim = cast(Any, getattr(self, "trim_if_safe", None))
-        get_epoch = cast(Any, getattr(self, "get_summary_epoch", None))
-        if not callable(trim) or not callable(get_epoch):
-            return 0
-        epoch_value = get_epoch(session_id)
-        if inspect.isawaitable(epoch_value):
-            epoch_value = await epoch_value
-        if not isinstance(epoch_value, (tuple, list)) or not epoch_value:
-            return 0
-        result = trim(session_id, int(epoch_value[0]), int(delete_count))
-        if inspect.isawaitable(result):
-            result = await result
-        return max(0, int(getattr(result, "deleted_count", 0) or 0))
-
-    async def delete_session_messages(self, session_id: str) -> int:
-        """删除会话消息时只使用 epoch/source 原子 fence。"""
-        if self.connection is None:
-            return 0
-        atomic_clear = cast(Any, getattr(self, "clear_session_atomically", None))
-        if not callable(atomic_clear):
-            return 0
-        result = atomic_clear(session_id)
-        if inspect.isawaitable(result):
-            result = await result
-        return max(0, int(cast(Any, result) or 0))

@@ -1,6 +1,6 @@
 # 备份、恢复与完整性事务
 
-**最后核对：** 2026-08-14  
+**最后核对：** 2026-08-31
 **导航：** [项目根级](../../../AGENTS.md) / [`core`](../../AGENTS.md) / [`features`](../AGENTS.md) / `backup`
 
 ## 职责边界
@@ -18,9 +18,10 @@
 
 ```mermaid
 flowchart LR
-    A[manual/scheduled/version/pre-migration] --> B[固定文件规格]
+    A[manual/scheduled/version/pre-migration] --> Q[暂停 SummaryScheduler]
+    Q --> B[固定文件规格]
     B --> C[SQLite Online Backup / regular copy]
-    C --> D[manifest + SHA256 + quick_check]
+    C --> D[backup_epoch + summary schema + manifest 校验]
     D --> E[ready backup]
     E --> F[restore plan staged]
     F --> G[pre_restore snapshot]
@@ -34,8 +35,8 @@ flowchart LR
 
 1. `memora.db` 是 canonical；`conversations.db`、状态/队列是 operational；FAISS/graph/index 是 derived。角色决定恢复策略，不能把派生文件当新的权威。
 2. SQLite 统一使用 Online Backup API 并执行 quick_check；普通文件复制前后检查 regular file、路径边界和 SHA-256。临时文件必须同目录原子替换。
-3. manifest 记录文件角色、大小、digest、quick check 和版本/插件来源；只在全部必需文件验证通过后发布 `ready`，禁止半成品备份进入可选列表。
-4. HMAC 方案（含 `feedback_store_metadata` 表）的反馈学习 `feedback_signals.db` 与 `.hmac.key` 必须成对备份/恢复；缺一、权限错误或 fingerprint mismatch 必须 fail closed。HMAC 方案引入前的旧版单库（无 metadata 表、无 key）允许以单库形态备份/恢复，恢复后由反馈 Store 初始化补建 key；孤立 key 始终 fail closed。
+3. manifest 记录文件角色、大小、digest、quick check、版本/插件来源、opaque `backup_epoch` 与安全 `summary_state`（schema version/job count）；只在全部必需文件验证通过后发布 `ready`，禁止半成品备份进入可选列表。
+4. 运行时备份必须先暂停 SummaryScheduler 的入队、领取和 worker，快照完成或失败后都恢复启动扫描；startup/pre-migration 尚未发布 scheduler 时保持普通备份路径。HMAC 方案（含 `feedback_store_metadata` 表）的反馈学习 `feedback_signals.db` 与 `.hmac.key` 必须成对备份/恢复；缺一、权限错误或 fingerprint mismatch 必须 fail closed。HMAC 方案引入前的旧版单库允许以单库形态备份/恢复，孤立 key 始终 fail closed。
 5. 恢复计划保存在 `.restore/<operation_id>/restore_plan.json` 等事务目录；只接受固定文件名/模式，拒绝绝对路径、分隔符、`..`、符号链接和未声明文件。
 6. 恢复在初始化器发布 provider/engine/page/command 前应用；manifest、checksum、quick_check、quarantine canonical 引用或原子替换任一失败都必须进入失败/回滚状态。
 7. 每个文件保存 moved/installed/validated progress；部分安装也能按逆序回滚。rollback 失败时保留 `rollback_pending`，不能伪造成功。

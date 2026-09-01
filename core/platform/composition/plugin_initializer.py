@@ -47,8 +47,10 @@ from .provider_loader import ProviderLoader
 from .provider_waiter import ProviderWaiter
 from .readiness import InitializerReadinessMixin
 from .shutdown_lifecycle import (
+    close_initializer_core_components_after_failure,
     close_initializer_injection_components,
     close_initializer_memory_evolution_components,
+    stop_initializer_summary_scheduler,
 )
 
 
@@ -59,18 +61,18 @@ class PluginInitializer(InitializerReadinessMixin):
     SHUTDOWN_STEP_TIMEOUT: float = 8.0
     TASK_CANCEL_TIMEOUT: float = 3.0
 
-    def __init__(self, context: Context, config_manager: ConfigManager, data_dir: str):
-        """初始化插件共享组件的占位引用和质量评分器。
-
-        参数:
-            context: AstrBot 运行时上下文。
-            config_manager: 已加载的插件配置管理器。
-            data_dir: 插件持久化数据目录。
-        """
-
+    def __init__(
+        self,
+        context: Context,
+        config_manager: ConfigManager,
+        data_dir: str,
+        backup_manager: Any | None = None,
+    ):
+        """初始化插件共享组件的占位引用和质量评分器。"""
         self.context = context
         self.config_manager = config_manager
         self.data_dir = data_dir
+        self.backup_manager = backup_manager
         # AstrBot 4.27.2 未公开 EmbeddingProvider 类型，能力由下游适配器验证。
         self.embedding_provider: Any | None = None
         self.llm_provider: Provider | None = None
@@ -93,6 +95,7 @@ class PluginInitializer(InitializerReadinessMixin):
         self.memory_evolution_manager: Any | None = None
         self.summary_scheduler: Any | None = None
         self.summary_llm_limiter: Any | None = None
+        self.backup_manager: Any | None = None
         self.affection_store: Any | None = None
         self.affection_manager: Any | None = None
         self.expression_store: Any | None = None
@@ -115,7 +118,12 @@ class PluginInitializer(InitializerReadinessMixin):
         self._provider_waiter = ProviderWaiter(max_attempts=60)
         self._faiss_checker = FaissChecker()
         self._db_setup = DatabaseSetup(config_manager)
-        self._component_factory = ComponentFactory(context, config_manager, data_dir)
+        self._component_factory = ComponentFactory(
+            context,
+            config_manager,
+            data_dir,
+            backup_manager=backup_manager,
+        )
 
         # 重试回调：Provider 后台重试结束后提交唯一终态
         self._provider_waiter.on_terminal_callback = self._on_providers_ready
@@ -306,6 +314,7 @@ class PluginInitializer(InitializerReadinessMixin):
             summary_scheduler = components.get("summary_scheduler")
             self.summary_scheduler = None
             self.summary_llm_limiter = components.get("summary_llm_limiter")
+            self.backup_manager = components.get("backup_manager")
             owns_injection_components = True
             owns_evolution_components = bool(
                 self.memory_evolution_store or self.memory_evolution_manager
@@ -320,6 +329,11 @@ class PluginInitializer(InitializerReadinessMixin):
                 self.summary_scheduler = summary_scheduler
                 if self.conversation_manager is not None:
                     self.conversation_manager.summary_scheduler = summary_scheduler
+                bind_backup = getattr(
+                    self.backup_manager, "bind_summary_scheduler", None
+                )
+                if callable(bind_backup):
+                    bind_backup(summary_scheduler)
                 logger.info("SummaryScheduler 已启动")
 
             for capability, instance in (
@@ -472,6 +486,10 @@ class PluginInitializer(InitializerReadinessMixin):
                         exc_info=True,
                     )
             await close_identity_runtime_after_failure(self.identity_runtime)
+            try:
+                await close_initializer_core_components_after_failure(self)
+            except BaseException:
+                logger.error("初始化失败后关闭核心组件失败", exc_info=True)
             if isinstance(e, asyncio.CancelledError):
                 raise
             if not isinstance(e, Exception):
@@ -730,18 +748,7 @@ class PluginInitializer(InitializerReadinessMixin):
 
     async def stop_summary_scheduler(self) -> None:
         """停止总结入队、领取循环与持有的 worker。"""
-        scheduler = self.summary_scheduler
-        if scheduler is None:
-            return
-        await scheduler.close()
-        if self.summary_scheduler is scheduler:
-            self.summary_scheduler = None
-        manager = self.conversation_manager
-        if (
-            manager is not None
-            and getattr(manager, "summary_scheduler", None) is scheduler
-        ):
-            manager.summary_scheduler = None
+        await stop_initializer_summary_scheduler(self)
 
     async def stop_background_tasks(self) -> None:
         """取消尚未结束的 Provider 后台等待任务。"""
@@ -791,6 +798,3 @@ class PluginInitializer(InitializerReadinessMixin):
         identity_runtime = self.identity_runtime
         if identity_runtime is not None:
             await self._safe_step("关闭协议身份运行时", identity_runtime.close())
-
-
-__all__ = ["PluginInitializer"]

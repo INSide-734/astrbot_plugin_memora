@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import inspect
 import json
-import secrets
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
@@ -16,17 +15,16 @@ from typing import TYPE_CHECKING, Any
 from ....shared.contracts.conversation import Message
 from ....shared.summary_source import source_window_digest
 from ...reflection.domain.summary_models import (
-    CandidateIntent,
     ClaimedJob,
     SourceWindow,
     SummaryEnqueueResult,
-    SummaryJob,
     SummaryJobStatus,
     SummaryReasonCode,
     SummaryWindowContext,
 )
 from .summary_legacy import SummaryLegacyMigrationMixin
-from .summary_store_keys import owned_slot_key
+from .summary_store_claim import SummaryStoreClaimMixin
+from .summary_store_startup import SummaryStoreStartupMixin
 from .summary_store_terminal import SummaryStoreTerminalMixin
 
 
@@ -78,7 +76,12 @@ def _rows_digest(rows: Sequence[Any]) -> str:
     return source_window_digest(messages, seqs)
 
 
-class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
+class SummaryStoreMixin(
+    SummaryLegacyMigrationMixin,
+    SummaryStoreClaimMixin,
+    SummaryStoreStartupMixin,
+    SummaryStoreTerminalMixin,
+):
     """为 ConversationStore 增加总结任务 Store port 实现。"""
 
     connection: Any
@@ -257,12 +260,17 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
         return queued
 
     async def get_message_seq_end(self, session_id: str) -> int:
-        """返回指定会话当前最大的稳定 message_seq。"""
+        """返回消息和连续总结 cursor 共同定义的稳定高水位。"""
         if self.connection is None:
             raise RuntimeError("数据库连接未初始化")
         cursor = await self.connection.execute(
-            "SELECT COALESCE(MAX(message_seq), 0) FROM messages WHERE session_id=?",
-            (session_id,),
+            """
+            SELECT MAX(
+              COALESCE((SELECT MAX(message_seq) FROM messages WHERE session_id=?),0),
+              COALESCE((SELECT cursor_seq FROM session_epochs WHERE session_id=?),0)
+            )
+            """,
+            (session_id, session_id),
         )
         row = await cursor.fetchone()
         return int(row[0] or 0) if row else 0
@@ -364,6 +372,7 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
                 start = max(frontier, context.start_seq)
                 queued = 0
                 duplicates = 0
+                blocked = False
                 if start >= observed_end_seq:
                     duplicate_cursor = await self.connection.execute(
                         """
@@ -411,6 +420,7 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
                         reason = SummaryReasonCode.QUEUED.value
                         queued += 1
                     else:
+                        blocked = True
                         digest = hashlib.sha256(
                             f"incomplete:{context.session_id}:{start_seq}:{end_seq}".encode()
                         ).hexdigest()
@@ -458,7 +468,7 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
                 await self._advance_cursor(context.session_id, epoch, now)
                 await self.connection.commit()
                 return SummaryEnqueueResult(
-                    bool(queued or duplicates),
+                    bool(queued or duplicates or blocked),
                     queued=queued,
                     duplicates=duplicates,
                     active_parallelism=active,
@@ -468,6 +478,8 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
                         if queued
                         else SummaryReasonCode.DUPLICATE
                         if duplicates
+                        else SummaryReasonCode.SOURCE_INCOMPLETE
+                        if blocked
                         else SummaryReasonCode.NO_WINDOW
                     ),
                 )
@@ -490,209 +502,6 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
         )
         return int((await cursor.fetchone())[0] or 0)
 
-    async def _job(self, row: Any) -> SummaryJob:
-        """将 summary_jobs 行映射为安全 DTO。"""
-        return SummaryJob(
-            job_id=str(_row(row, "job_id", 0)),
-            session_id=str(_row(row, "session_id", 1)),
-            session_epoch=int(_row(row, "session_epoch", 2)),
-            start_seq=int(_row(row, "start_seq", 3)),
-            end_seq=int(_row(row, "end_seq", 4)),
-            expected_count=int(_row(row, "expected_count", 5)),
-            source_digest=str(_row(row, "source_digest", 6)),
-            status=SummaryJobStatus(str(_row(row, "status", 14))),
-            persona_id=_row(row, "persona_id", 7),
-            chat_type=_row(row, "chat_type", 8),
-            group_id=_row(row, "group_id", 9),
-            scope_id=_row(row, "scope_id", 10),
-            gate_revision=str(_row(row, "gate_revision", 11) or ""),
-            gate_snapshot_json=str(_row(row, "gate_snapshot_json", 12) or "{}"),
-            triggered_by=str(_row(row, "triggered_by", 13)),
-            attempt_count=int(_row(row, "attempt_count", 15) or 0),
-            next_attempt_at=float(_row(row, "next_attempt_at", 16) or 0),
-            lease_until=_row(row, "lease_until", 17),
-            worker_generation=int(_row(row, "worker_generation", 18) or 0),
-            failed_stage=_row(row, "failed_stage", 19),
-            reason_code=SummaryReasonCode(
-                str(_row(row, "reason_code", 20) or "unknown")
-            ),
-            exception_type=_row(row, "exception_type", 21),
-            canonical_count=int(_row(row, "canonical_count", 22) or 0),
-            quarantine_count=int(_row(row, "quarantine_count", 23) or 0),
-            discard_count=int(_row(row, "discard_count", 24) or 0),
-            mark_write_count=int(_row(row, "mark_write_count", 25) or 0),
-            failed_count=int(_row(row, "failed_count", 26) or 0),
-            skipped_count=int(_row(row, "skipped_count", 27) or 0),
-            created_at=float(_row(row, "created_at", 28) or 0),
-            updated_at=float(_row(row, "updated_at", 29) or 0),
-        )
-
-    async def claim_ready(
-        self,
-        now: datetime | float | None,
-        scheduler_id: str,
-        limit: int,
-        *,
-        max_parallel_per_session: int = 1,
-        lease_seconds: int = 120,
-        session_order: Sequence[str] | None = None,
-        global_limit: int | None = None,
-    ) -> list[ClaimedJob]:
-        """按 Store 时钟域和 session 顺序领取 ready 任务并设置 fencing。"""
-        if self.connection is None or limit <= 0:
-            return []
-        stamp = self._summary_now() if now is None else _timestamp(now)
-        order = {str(item): index for index, item in enumerate(session_order or ())}
-        try:
-            async with self._write_lock:
-                await self._begin_summary()
-                cursor = await self.connection.execute(
-                    """
-                    SELECT job.*
-                    FROM summary_jobs AS job
-                    INNER JOIN session_epochs AS epoch
-                      ON epoch.session_id=job.session_id
-                     AND epoch.epoch=job.session_epoch
-                    WHERE job.status IN ('queued','failed')
-                      AND job.next_attempt_at<=?
-                    ORDER BY job.start_seq,job.created_at,job.job_id
-                    """,
-                    (stamp,),
-                )
-                rows = list(await cursor.fetchall())
-                rows.sort(
-                    key=lambda item: (
-                        order.get(str(_row(item, "session_id", 1)), len(order)),
-                        int(_row(item, "start_seq", 3)),
-                        float(_row(item, "created_at", 28) or 0),
-                        str(_row(item, "job_id", 0)),
-                    )
-                )
-                active_cursor = await self.connection.execute(
-                    """
-                    SELECT job.session_id,COUNT(*) AS active
-                    FROM summary_jobs AS job
-                    INNER JOIN session_epochs AS epoch
-                      ON epoch.session_id=job.session_id
-                     AND epoch.epoch=job.session_epoch
-                    WHERE job.status='running' AND job.lease_until IS NOT NULL
-                      AND job.lease_until>?
-                    GROUP BY job.session_id
-                    """,
-                    (stamp,),
-                )
-                active = {
-                    str(_row(item, "session_id", 0)): int(_row(item, "active", 1) or 0)
-                    for item in await active_cursor.fetchall()
-                }
-                available_global = (
-                    None
-                    if global_limit is None
-                    else max(0, int(global_limit) - sum(active.values()))
-                )
-                claims: list[ClaimedJob] = []
-                claimed_sessions: set[str] = set()
-                for item in rows:
-                    if len(claims) >= limit or (
-                        available_global is not None and len(claims) >= available_global
-                    ):
-                        break
-                    session_id = str(_row(item, "session_id", 1))
-                    if session_id in claimed_sessions:
-                        continue
-                    if active.get(session_id, 0) >= max(
-                        1, int(max_parallel_per_session)
-                    ):
-                        continue
-                    job_id = str(_row(item, "job_id", 0))
-                    token = secrets.token_urlsafe(24)
-                    generation = int(_row(item, "worker_generation", 18) or 0) + 1
-                    lease_until = stamp + max(1, int(lease_seconds))
-                    updated = await self.connection.execute(
-                        """
-                        UPDATE summary_jobs SET status='running',attempt_count=attempt_count+1,
-                          claim_token=?,lease_until=?,worker_generation=?,updated_at=?
-                        WHERE job_id=? AND session_id=? AND session_epoch=?
-                          AND status IN ('queued','failed') AND next_attempt_at<=?
-                        """,
-                        (
-                            token,
-                            lease_until,
-                            generation,
-                            stamp,
-                            job_id,
-                            session_id,
-                            int(_row(item, "session_epoch", 2)),
-                            stamp,
-                        ),
-                    )
-                    if updated.rowcount != 1:
-                        continue
-                    refreshed = await self.connection.execute(
-                        "SELECT * FROM summary_jobs WHERE job_id=?", (job_id,)
-                    )
-                    fresh = await refreshed.fetchone()
-                    if fresh is None:
-                        continue
-                    claims.append(
-                        ClaimedJob(
-                            await self._job(fresh),
-                            token,
-                            scheduler_id,
-                            lease_until,
-                            generation,
-                        )
-                    )
-                    claimed_sessions.add(session_id)
-                    active[session_id] = active.get(session_id, 0) + 1
-                await self.connection.commit()
-                return claims
-        except asyncio.CancelledError:
-            await self._rollback_summary()
-            raise
-        except Exception:
-            await self._rollback_summary()
-            return []
-
-    async def _claim_matches(self, claim: ClaimedJob) -> bool:
-        """检查 claim token、来源范围、epoch、generation 和 lease 是否仍有效。"""
-        cursor = await self.connection.execute(
-            """
-            SELECT 1
-            FROM summary_jobs AS job
-            INNER JOIN session_epochs AS epoch
-              ON epoch.session_id=job.session_id AND epoch.epoch=job.session_epoch
-            WHERE job.job_id=? AND job.session_id=? AND job.session_epoch=?
-              AND job.start_seq=? AND job.end_seq=? AND job.expected_count=?
-              AND job.source_digest=?
-              AND job.status='running' AND job.claim_token=?
-              AND job.worker_generation=? AND job.lease_until IS NOT NULL
-              AND job.lease_until=? AND job.lease_until > ?
-            """,
-            (
-                claim.job_id,
-                claim.session_id,
-                claim.session_epoch,
-                claim.start_seq,
-                claim.end_seq,
-                claim.expected_count,
-                claim.source_digest,
-                claim.claim_token,
-                claim.worker_generation,
-                claim.lease_until,
-                self._summary_now(),
-            ),
-        )
-        row = await cursor.fetchone()
-        await cursor.close()
-        return row is not None
-
-    async def claim_is_active(self, claim: ClaimedJob) -> bool:
-        """检查 claim 是否仍可执行外部副作用。"""
-        if self.connection is None:
-            return False
-        return await self._claim_matches(claim)
-
     async def read_claimed_window(self, claim: ClaimedJob) -> SourceWindow:
         """读取当前 claim 的来源并严格验证摘要。"""
         if self.connection is None or not await self._claim_matches(claim):
@@ -709,81 +518,6 @@ class SummaryStoreMixin(SummaryLegacyMigrationMixin, SummaryStoreTerminalMixin):
             messages=messages,
             message_seqs=seqs,
         )
-
-    async def begin_candidate_intents(
-        self, claim: ClaimedJob, intents: Sequence[CandidateIntent]
-    ) -> bool:
-        """保存候选 slot intent，并拒绝同 slot 摘要变化。"""
-        if self.connection is None:
-            return False
-        now = self._summary_now()
-        try:
-            async with self._write_lock:
-                await self._begin_summary()
-                if not await self._claim_matches(claim):
-                    await self._rollback_summary()
-                    return False
-                normalized: dict[int, tuple[str, CandidateIntent]] = {}
-                for intent in intents:
-                    if (
-                        not isinstance(intent, CandidateIntent)
-                        or intent.slot in normalized
-                    ):
-                        await self._rollback_summary()
-                        return False
-                    slot_key = await owned_slot_key(
-                        self.connection,
-                        claim.job_id,
-                        intent.slot,
-                        intent.content_digest,
-                    )
-                    normalized[intent.slot] = (slot_key, intent)
-                ledger_cursor = await self.connection.execute(
-                    "SELECT slot,slot_key,content_digest FROM summary_job_candidates WHERE job_id=?",
-                    (claim.job_id,),
-                )
-                ledger_rows = await ledger_cursor.fetchall()
-                existing = {
-                    int(_row(row, "slot", 0)): (
-                        _row(row, "slot_key", 1),
-                        _row(row, "content_digest", 2),
-                    )
-                    for row in ledger_rows
-                }
-                if existing and set(existing) != set(normalized):
-                    await self._rollback_summary()
-                    return False
-                for slot, (slot_key, intent) in normalized.items():
-                    if slot in existing:
-                        if existing[slot] != (slot_key, intent.content_digest):
-                            await self._rollback_summary()
-                            return False
-                        continue
-                    await self.connection.execute(
-                        """
-                        INSERT INTO summary_job_candidates
-                          (job_id,slot,slot_key,content_digest,disposition,status,canonical_id,updated_at)
-                        VALUES (?,?,?,?,?,?,?,?)
-                        """,
-                        (
-                            claim.job_id,
-                            intent.slot,
-                            slot_key,
-                            intent.content_digest,
-                            intent.disposition.value if intent.disposition else None,
-                            intent.status.value,
-                            intent.canonical_id,
-                            now,
-                        ),
-                    )
-                await self.connection.commit()
-                return True
-        except asyncio.CancelledError:
-            await self._rollback_summary()
-            raise
-        except Exception:
-            await self._rollback_summary()
-            return False
 
 
 __all__ = ["SummaryStoreMixin"]

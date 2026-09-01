@@ -1,7 +1,7 @@
-"""为反思存储准备按话题切分的消息批次。
+"""为持久化 SummaryWorker 准备按话题切分的消息批次。
 
-该应用服务承接 ``ReflectionHandler._prepare_message_batches`` 的话题批次准备，
-保持处理器只负责编排反思窗口。
+该应用服务只处理已由 claim 固定的来源窗口；worker 会把结果重新合并为
+唯一基础总结批次，后台任务不继承请求级 ExtraLlmBudget。
 """
 
 from __future__ import annotations

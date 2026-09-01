@@ -1,6 +1,6 @@
 # 响应后记忆反思
 
-**最后核对：** 2026-08-14  
+**最后核对：** 2026-08-31
 **导航：** [项目根级](../../../AGENTS.md) / [`core`](../../AGENTS.md) / [`features`](../AGENTS.md) / `reflection`
 
 ## 职责边界
@@ -10,7 +10,6 @@
 - `application/reflection_handler.py` 是事件清洗与自动入队适配器；由顶层事件处理链构造并持有。
 - `application/summary_scheduler.py` 负责固定窗口调度、round-robin claim、worker 生命周期与失败恢复。
 - `application/summary_worker.py` 只读取 claim 固化来源，调用现有 Processor/质量门，并返回 `WindowOutcome`。
-- `reflection_trigger.py` 计算自动入队阈值和身份上下文。
 - `topic_batch_preparer.py` 只处理 C/D 预分批；A/B/Hybrid 后置分段属于 [`recall/processors/AGENTS.md`](../recall/processors/AGENTS.md)。
 - `llm_budget.py` 保证在线请求级额外批次额度；持久化总结任务不继承 `ExtraLlmBudget`。
 - `candidate_writer.py` 执行幂等候选写入和质量路由；`MemoryEngine` 是 canonical 写后演化唯一 owner。
@@ -21,21 +20,20 @@
 
 ```mermaid
 flowchart LR
-    A[LLM 响应后事件] --> B[ReflectionTrigger]
-    B --> C[稳定消息窗口]
-    C --> D[TopicBatchPreparer]
-    D --> E[额外 LLM 预算适配]
-    E --> F[MemoryProcessor]
-    F --> G[候选幂等键]
-    G --> H[MemoryQualityGate]
-    H -->|allow| I[MemoryEngine canonical 写入]
-    H -->|quarantine| J[质量隔离库]
-    I --> K[连续性话题/演化调度]
-    J --> L[互斥结果汇总]
+    A[LLM 响应后事件] --> B[ReflectionHandler]
+    B --> C[SummaryScheduler]
+    C --> D[(conversations.db jobs)]
+    D --> E[SummaryWorker]
+    E --> F[TopicBatchPreparer]
+    F --> G[MemoryProcessor]
+    G --> H[候选幂等键]
+    H --> I[MemoryQualityGate]
+    I -->|allow/mark_write| J[MemoryEngine canonical]
+    I -->|quarantine| K[质量隔离库]
+    I -->|discard| L[候选 ledger]
+    J --> L
     K --> L
-    L --> M{存在 failed?}
-    M -->|是| N[保留 pending_summary]
-    M -->|否| O[提交总结游标并续跑积压]
+    L --> M[Store 原子提交窗口与连续 cursor]
 ```
 
 ## 关键不变量
@@ -58,7 +56,7 @@ flowchart LR
 
 - 修改窗口/游标语义：同步 SummaryJobStorePort 的 message_seq、epoch、frontier、pending projection、恢复和 trim 原子接口。
 - 修改话题策略：同步 reflection 配置模型、`TopicBatchPreparer`、processors 中对应策略与生产 wiring。
-- 修改候选终态或计数：同步命令结果、观测字段、pending 提交规则和 storage outcome 测试。
+- 修改候选终态或计数：同步命令 ack、诊断累计字段、任务 pending projection 和 storage outcome 测试。
 - 修改质量路由：同步 [`quality/AGENTS.md`](../quality/AGENTS.md)、quarantine 恢复与 candidate writer。
 - 修改公开导出：保持根包惰性，并更新 `tests/test_reflection_feature_contracts.py`。
 
@@ -66,7 +64,7 @@ flowchart LR
 
 ```bash
 python -m pytest -q tests/test_reflection_feature_contracts.py
-python -m pytest -q tests/test_ambient_reflection_trigger.py tests/test_reflection_feature_contracts.py
+python -m pytest -q tests/test_summary_enqueue_entry.py tests/test_reflection_feature_contracts.py
 python -m pytest -q tests/test_reflection_candidate_writer.py tests/test_reflection_storage_outcomes.py
 python -m pytest -q tests/test_handlers.py -k reflection
 ```

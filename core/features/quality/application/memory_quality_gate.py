@@ -82,74 +82,20 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
         async with lock:
             yield
 
-    @staticmethod
-    def _has_stable_source(candidate: dict[str, Any]) -> bool:
-        """判断候选是否携带新总结链的序号、epoch 或摘要证据。"""
-        source_window = candidate.get("source_window")
-        return isinstance(source_window, dict) and any(
-            key in source_window
-            for key in ("session_epoch", "source_digest", "start_seq", "end_seq")
-        )
-
     async def _read_approval_source(
         self, claimed: dict[str, Any]
     ) -> tuple[dict[str, Any], list[Any]]:
-        """读取批准候选来源；现代总结候选必须验证序号、epoch 与摘要。"""
+        """读取批准候选的稳定序号来源并验证 epoch 与摘要。"""
+
         source_window = claimed.get("source_window")
         if not isinstance(source_window, dict):
             raise ValueError("source_window_invalid")
         session_id = claimed.get("session_id")
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("source_window_invalid")
-        if not self._has_stable_source(claimed):
-            start_index = source_window.get("start_index")
-            end_index = source_window.get("end_index")
-            if (
-                isinstance(start_index, bool)
-                or not isinstance(start_index, int)
-                or isinstance(end_index, bool)
-                or not isinstance(end_index, int)
-                or end_index <= start_index
-            ):
-                raise ValueError("source_window_invalid")
-            expected_count = source_window.get("message_count")
-            if expected_count is None:
-                expected_count = end_index - start_index
-            if (
-                isinstance(expected_count, bool)
-                or not isinstance(expected_count, int)
-                or expected_count != end_index - start_index
-            ):
-                raise ValueError("source_window_invalid")
-            manager_reader = getattr(
-                self.conversation_manager, "get_messages_range", None
-            )
-            if callable(manager_reader):
-                messages = manager_reader(
-                    session_id,
-                    start_index=start_index,
-                    end_index=end_index,
-                )
-            else:
-                reader = getattr(self._conversation_store(), "get_messages_range", None)
-                if not callable(reader):
-                    raise RuntimeError("stable_message_range_unavailable")
-                messages = reader(
-                    session_id,
-                    offset=start_index,
-                    limit=expected_count,
-                )
-            if inspect.isawaitable(messages):
-                messages = await messages
-            if (
-                not isinstance(messages, (list, tuple))
-                or len(messages) != expected_count
-            ):
-                raise ValueError("source_window_invalid")
-            return source_window, list(messages)
-
         if source_window.get("session_id") not in (None, session_id):
             raise ValueError("source_window_invalid")
+
         start_seq = source_window.get("start_seq")
         end_seq = source_window.get("end_seq")
         if source_window.get(
@@ -169,6 +115,8 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
             expected_count = source_window.get("expected_count")
         epoch = source_window.get("session_epoch")
         digest = source_window.get("source_digest")
+        generation = source_window.get("worker_generation")
+        source_fence = source_window.get("source_fence")
         if (
             isinstance(start_seq, bool)
             or not isinstance(start_seq, int)
@@ -183,6 +131,11 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
             or epoch <= 0
             or not isinstance(digest, str)
             or not digest.strip()
+            or isinstance(generation, bool)
+            or not isinstance(generation, int)
+            or generation <= 0
+            or not isinstance(source_fence, str)
+            or not source_fence.strip()
         ):
             raise ValueError("source_window_invalid")
 
@@ -232,11 +185,8 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
     async def _repair_source_guard(
         self, candidate: dict[str, Any]
     ) -> AsyncGenerator[bool, None]:
-        """为现代候选持有来源锁；旧候选保持既有修复入口。"""
-        modern = self._has_stable_source(candidate)
-        if not modern:
-            yield False
-            return
+        """为批准和修复持有稳定来源锁，并在锁内重读来源证据。"""
+
         session_id = candidate.get("session_id")
         if not isinstance(session_id, str) or not session_id:
             raise ValueError("source_window_invalid")
@@ -451,16 +401,13 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                     validated,
                 )
 
-            if self._has_stable_source(claimed):
-                async with self._source_guard(claimed_session_id):
-                    (
-                        source_window,
-                        messages,
-                        metadata,
-                        validation,
-                    ) = await _validate_source()
-            else:
-                source_window, messages, metadata, validation = await _validate_source()
+            async with self._source_guard(claimed_session_id):
+                (
+                    source_window,
+                    messages,
+                    metadata,
+                    validation,
+                ) = await _validate_source()
         except asyncio.CancelledError:
             await self.store.block_approval(
                 candidate_id,
@@ -528,6 +475,14 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                 ),
             )
 
+        metadata.update(
+            {
+                "source_epoch": source_window["session_epoch"],
+                "source_digest": source_window["source_digest"],
+                "source_fence_generation": source_window["worker_generation"],
+                "source_fence": source_window["source_fence"],
+            }
+        )
         metadata["grounding_status"] = "grounded"
         metadata["grounding_reason_codes"] = list(validation.reason_codes)
         metadata["source_evidence"] = validation.evidence
@@ -561,10 +516,9 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
             raise
         canonical_started = False
         try:
-            async with self._repair_source_guard(claimed) as modern_source:
-                # Judge/Atom 阶段可能耗时；现代候选写入前再次核对来源。
-                if modern_source:
-                    await self._read_approval_source(claimed)
+            async with self._repair_source_guard(claimed):
+                # Judge/Atom 阶段可能耗时；写入前必须再次核对稳定来源。
+                await self._read_approval_source(claimed)
                 canonical_started = True
                 try:
                     canonical_memory_id = await self.memory_engine.add_memory(
@@ -643,7 +597,7 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
             raise ValueError("quarantine_status_conflict")
         if int(current["revision"]) != int(expected_revision):
             raise ValueError("quarantine_revision_conflict")
-        async with self._repair_source_guard(current) as modern_source:
+        async with self._repair_source_guard(current):
             canonical = await self.memory_engine.get_memory(int(canonical_memory_id))
             if canonical is None:
                 raise ValueError("quarantine_canonical_not_found")
@@ -657,21 +611,20 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                     metadata = None
             if not isinstance(metadata, dict):
                 raise ValueError("quarantine_canonical_status_invalid")
-            if modern_source:
-                source_window = current["source_window"]
-                for field, source_field in (
-                    ("source_epoch", "session_epoch"),
-                    ("source_digest", "source_digest"),
-                    ("source_fence_generation", "worker_generation"),
-                    ("source_fence", "source_fence"),
+            source_window = current["source_window"]
+            for field, source_field in (
+                ("source_epoch", "session_epoch"),
+                ("source_digest", "source_digest"),
+                ("source_fence_generation", "worker_generation"),
+                ("source_fence", "source_fence"),
+            ):
+                expected = source_window.get(source_field)
+                if (
+                    not isinstance(expected, (str, int))
+                    or isinstance(expected, bool)
+                    or metadata.get(field) != expected
                 ):
-                    expected = source_window.get(source_field)
-                    if (
-                        not isinstance(expected, (str, int))
-                        or isinstance(expected, bool)
-                        or metadata.get(field) != expected
-                    ):
-                        raise ValueError("quarantine_source_correlation_invalid")
+                    raise ValueError("quarantine_source_correlation_invalid")
             canonical_token_hash = metadata.get("_quarantine_approval_token_hash")
             stored_token_hash = current.get("approval_token_hash")
             if (

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any
 
-SUMMARY_SCHEMA_VERSION = 2
-_MIGRATION_ID = "summary_schema_v2"
+SUMMARY_SCHEMA_VERSION = 4
+_MIGRATION_ID = "summary_schema_v4"
 
 _SUMMARY_STATUSES = (
     "queued",
@@ -53,6 +54,7 @@ _REASON_CODES = (
     "legacy_pending",
     "legacy_pending_invalid",
     "completed",
+    "abandoned_confirmed",
 )
 
 
@@ -121,7 +123,7 @@ async def _ensure_base_schema(connection: Any) -> None:
 
 
 async def _backfill_message_sequences(connection: Any) -> None:
-    """仅为缺失或非法序号填补空洞，绝不重写已有合法序号。"""
+    """首次迁移按时间回填；已有序号只验证连续性，绝不按时间重排。"""
     cursor = await connection.execute(
         """
         SELECT id, session_id, timestamp, message_seq
@@ -136,7 +138,19 @@ async def _backfill_message_sequences(connection: Any) -> None:
         raw_seq = row["message_seq"] if hasattr(row, "keys") else row[3]
         grouped.setdefault(session_id, []).append((message_id, raw_seq))
 
-    for messages in grouped.values():
+    epoch_cursors: dict[str, int] = {}
+    if "cursor_seq" in await _columns(connection, "session_epochs"):
+        epoch_cursor = await connection.execute(
+            "SELECT session_id,cursor_seq FROM session_epochs"
+        )
+        epoch_cursors = {
+            str(row["session_id"] if hasattr(row, "keys") else row[0]): int(
+                (row["cursor_seq"] if hasattr(row, "keys") else row[1]) or 0
+            )
+            for row in await epoch_cursor.fetchall()
+        }
+
+    for session_id, messages in grouped.items():
         valid_rows = [
             (index, raw_seq)
             for index, (_, raw_seq) in enumerate(messages)
@@ -144,8 +158,24 @@ async def _backfill_message_sequences(connection: Any) -> None:
             and not isinstance(raw_seq, bool)
             and raw_seq >= 1
         ]
+        if len(valid_rows) == len(messages):
+            sequences = sorted(int(raw_seq) for _, raw_seq in valid_rows)
+            if (
+                any(
+                    sequence != sequences[0] + index
+                    for index, sequence in enumerate(sequences)
+                )
+                or sequences[0] > epoch_cursors.get(session_id, 0) + 1
+            ):
+                raise RuntimeError("message_seq_source_invalid")
+            continue
+
         base = valid_rows[0][1] - valid_rows[0][0] if valid_rows else 1
-        if base < 1 or any(raw_seq != base + index for index, raw_seq in valid_rows):
+        if (
+            base < 1
+            or base > epoch_cursors.get(session_id, 0) + 1
+            or any(raw_seq != base + index for index, raw_seq in valid_rows)
+        ):
             raise RuntimeError("message_seq_source_invalid")
         for index, (message_id, raw_seq) in enumerate(messages):
             if (
@@ -210,7 +240,6 @@ async def _validate_schema_shape(connection: Any) -> None:
             "gate_revision",
             "gate_snapshot_json",
             "triggered_by",
-            "status",
             "attempt_count",
             "next_attempt_at",
             "claim_token",
@@ -219,6 +248,7 @@ async def _validate_schema_shape(connection: Any) -> None:
             "failed_stage",
             "reason_code",
             "exception_type",
+            "operator_action",
             "canonical_count",
             "quarantine_count",
             "discard_count",
@@ -233,6 +263,7 @@ async def _validate_schema_shape(connection: Any) -> None:
             "slot",
             "slot_key",
             "content_digest",
+            "idempotency_key",
             "disposition",
             "status",
             "canonical_id",
@@ -344,6 +375,9 @@ async def _ensure_summary_tables(connection: Any) -> None:
             skipped_count INTEGER NOT NULL DEFAULT 0 CHECK(skipped_count >= 0),
             created_at REAL NOT NULL CHECK(created_at >= 0),
             updated_at REAL NOT NULL CHECK(updated_at >= 0),
+            operator_action TEXT CHECK(
+                operator_action IS NULL OR length(operator_action) BETWEEN 1 AND 64
+            ),
             UNIQUE(session_id, session_epoch, start_seq, end_seq)
         )
         """,
@@ -353,6 +387,7 @@ async def _ensure_summary_tables(connection: Any) -> None:
             slot INTEGER NOT NULL CHECK(slot >= 0),
             slot_key TEXT NOT NULL CHECK(length(slot_key) BETWEEN 1 AND 128),
             content_digest TEXT NOT NULL CHECK(length(content_digest) BETWEEN 1 AND 128),
+            idempotency_key TEXT NOT NULL DEFAULT '' CHECK(length(idempotency_key) <= 256),
             disposition TEXT CHECK(disposition IS NULL OR disposition IN ({dispositions})),
             status TEXT NOT NULL CHECK(status IN ({candidate_statuses})),
             canonical_id INTEGER CHECK(canonical_id IS NULL OR canonical_id > 0),
@@ -391,6 +426,80 @@ async def _ensure_summary_tables(connection: Any) -> None:
         )
 
 
+async def _ensure_summary_extensions(connection: Any) -> None:
+    """为已有总结表补齐操作审计和候选幂等字段。"""
+    job_columns = await _columns(connection, "summary_jobs")
+    if "operator_action" not in job_columns:
+        await connection.execute(
+            "ALTER TABLE summary_jobs ADD COLUMN operator_action TEXT CHECK("
+            "operator_action IS NULL OR length(operator_action) BETWEEN 1 AND 64)"
+        )
+    candidate_columns = await _columns(connection, "summary_job_candidates")
+    if "idempotency_key" not in candidate_columns:
+        await connection.execute(
+            "ALTER TABLE summary_job_candidates ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT '' CHECK(length(idempotency_key) <= 256)"
+        )
+
+
+async def _migrate_legacy_summary_cursors(connection: Any) -> None:
+    """把旧 metadata 游标迁移到唯一的 session epoch 状态。"""
+    cursor = await connection.execute(
+        "SELECT session_id,metadata FROM sessions WHERE metadata IS NOT NULL"
+    )
+    rows = await cursor.fetchall()
+    now = max(0.0, time.time())
+    for row in rows:
+        session_id = str(row["session_id"] if hasattr(row, "keys") else row[0])
+        raw_metadata = row["metadata"] if hasattr(row, "keys") else row[1]
+        try:
+            metadata = json.loads(raw_metadata or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        pending = metadata.get("pending_summary")
+        legacy_cursor = metadata.get("last_summarized_index", 0)
+        if (
+            isinstance(legacy_cursor, bool)
+            or not isinstance(legacy_cursor, int)
+            or legacy_cursor < 0
+        ):
+            continue
+        max_cursor = await connection.execute(
+            "SELECT COALESCE(MAX(message_seq),0) FROM messages WHERE session_id=?",
+            (session_id,),
+        )
+        max_row = await max_cursor.fetchone()
+        max_seq = int(max_row[0] or 0) if max_row else 0
+        if legacy_cursor > max_seq:
+            raise RuntimeError("summary_legacy_cursor_invalid")
+        await connection.execute(
+            """
+            INSERT INTO session_epochs(
+                session_id,epoch,cursor_seq,pending_summary_json,tombstoned_at,updated_at
+            ) VALUES (?,?,?,?,?,?)
+            ON CONFLICT(session_id) DO UPDATE SET
+                cursor_seq=CASE
+                    WHEN session_epochs.epoch=1 AND session_epochs.cursor_seq=0
+                    THEN excluded.cursor_seq
+                    ELSE session_epochs.cursor_seq
+                END,
+                updated_at=CASE
+                    WHEN session_epochs.epoch=1 AND session_epochs.cursor_seq=0
+                    THEN excluded.updated_at
+                    ELSE session_epochs.updated_at
+                END
+            """,
+            (session_id, 1, legacy_cursor, None, None, now),
+        )
+        if not isinstance(pending, dict):
+            metadata.pop("last_summarized_index", None)
+            await connection.execute(
+                "UPDATE sessions SET metadata=? WHERE session_id=?",
+                (json.dumps(metadata, ensure_ascii=False), session_id),
+            )
+
+
 async def _ensure_indexes(connection: Any) -> None:
     """创建消息序号、任务 ready/lease、候选和不可变序号约束。"""
     statements = (
@@ -424,8 +533,10 @@ async def _ensure_indexes(connection: Any) -> None:
         BEFORE INSERT ON messages
         WHEN NEW.message_seq IS NOT NULL
          AND NEW.message_seq IS NOT (
-             SELECT COALESCE(MAX(message_seq), 0) + 1
-             FROM messages WHERE session_id = NEW.session_id
+             SELECT MAX(
+               COALESCE((SELECT MAX(message_seq) FROM messages WHERE session_id=NEW.session_id),0),
+               COALESCE((SELECT cursor_seq FROM session_epochs WHERE session_id=NEW.session_id),0)
+             ) + 1
          )
         BEGIN SELECT RAISE(ABORT, 'message_seq_not_next'); END
         """
@@ -438,10 +549,11 @@ async def _ensure_indexes(connection: Any) -> None:
         BEGIN
             UPDATE messages
             SET message_seq = (
-                SELECT COALESCE(MAX(message_seq), 0)
-                FROM messages
-                WHERE session_id = NEW.session_id AND id <> NEW.id
-            ) + 1
+                SELECT MAX(
+                  COALESCE((SELECT MAX(message_seq) FROM messages WHERE session_id=NEW.session_id AND id<>NEW.id),0),
+                  COALESCE((SELECT cursor_seq FROM session_epochs WHERE session_id=NEW.session_id),0)
+                ) + 1
+            )
             WHERE id = NEW.id;
         END
         """
@@ -460,6 +572,8 @@ async def migrate_conversation_schema(connection: Any) -> None:
         await _ensure_base_schema(connection)
         await _backfill_message_sequences(connection)
         await _ensure_summary_tables(connection)
+        await _ensure_summary_extensions(connection)
+        await _migrate_legacy_summary_cursors(connection)
         await _validate_schema_shape(connection)
         await _validate_data_integrity(connection)
         await _ensure_indexes(connection)

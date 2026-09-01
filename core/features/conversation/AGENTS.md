@@ -22,7 +22,7 @@ flowchart LR
     C --> D[Message]
     D --> E[ConversationManager cache]
     E --> F[ConversationStore sessions/messages]
-    F --> G[ReflectionTrigger / processors]
+    F --> G[SummaryScheduler / processors]
     E --> H[范围查询与上下文窗口]
 ```
 
@@ -32,7 +32,7 @@ flowchart LR
 2. 用户消息遇到 identity `CONFLICT`/`INVALID` 时拒绝写入；trusted 身份使用 canonical user ID/稳定 label，anonymous 只在有 conversation sender evidence 时写入。
 3. 群聊判断优先可信 identity scope，再回退 `MessageType.GROUP_MESSAGE`；group_id 必须与当前 scope 一致，不可把空值当全局。
 4. `ConversationStore` 连接未初始化时写操作显式失败/安全返回；消息写入、session upsert、计数和 participants 更新在同一事务与 `_write_lock` 内完成。
-5. JSON participants/metadata 解析失败不能回显原文；查询范围以真实消息数为准。`trim_session_messages()` 只能删除已经总结的最旧消息。
+5. JSON participants/metadata 解析失败不能回显原文；固定来源范围必须按 `message_seq` 连续验证。来源删除只允许经 `trim_if_safe()` 在任务、ledger 和 quarantine 均已收口时执行。
 6. LRU cache 受 `_cache_lock` 保护，容量、context window 和 TTL 有界；关闭时不创建新 I/O 或后台任务。
 7. conversation feature 不把正文写入日志；消息、sender/group/session/persona、participants 均为敏感数据。
 8. `asyncio.CancelledError` 穿透 Store、cache 和事件适配；失败事务必须 rollback，不得留下锁或半提交计数。
@@ -45,7 +45,7 @@ EventHandler/reflection → ConversationManager → Store；identity runtime 通
 
 - 改 session/message 字段：同步 SQLite schema/index、JSON mapper、迁移、API/导出和范围查询。
 - 改身份适配：同步 identity contract、事件 adapter、会话同步、pipeline identity 集成测试。
-- 改缓存/窗口：同步 ReflectionTrigger、trim 规则、TTL/容量配置和并发测试。
+- 改缓存/窗口：同步 SummaryScheduler、`session_epochs`、trim 规则、TTL/容量配置和并发测试。
 - 改事件提取/去重：同步全群捕获、self message 排除、sender/group scope 和 event handler。
 - 改公共模型：保持 shared conversation contract 唯一 owner，不能在 feature 内复制 dataclass。
 

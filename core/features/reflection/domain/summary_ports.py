@@ -58,6 +58,7 @@ class SummaryJobStorePort(Protocol):
         max_parallel_per_session: int = 1,
         lease_seconds: int = 120,
         session_order: Sequence[str] | None = None,
+        round_robin_after: str | None = None,
         global_limit: int | None = None,
     ) -> list[ClaimedJob]:
         """按 Store 时钟和 session 顺序领取 ready 任务。"""
@@ -93,6 +94,16 @@ class SummaryJobStorePort(Protocol):
         """在 epoch/source fence 内执行外部副作用，不持有 SQLite 事务。"""
         ...
 
+    async def renew_claim(
+        self,
+        claim: ClaimedJob,
+        lease_seconds: int,
+        *,
+        now: datetime | float | None = None,
+    ) -> bool:
+        """在 token、epoch 和 generation fencing 下续租运行中的任务。"""
+        ...
+
     async def commit_window(
         self, claim: ClaimedJob, outcome: WindowOutcome
     ) -> CompletionResult:
@@ -123,6 +134,10 @@ class SummaryJobStorePort(Protocol):
         self, session_id: str, epoch: int, reason_code: SummaryReasonCode
     ) -> int:
         """fence 指定 session epoch 的非终态任务。"""
+        ...
+
+    async def confirm_abandon_session_jobs(self, session_id: str, epoch: int) -> int:
+        """在管理员确认后将无 canonical 证据的阻塞任务标记为 abandoned。"""
         ...
 
     async def recover_expired_claims(self, now: datetime) -> int:

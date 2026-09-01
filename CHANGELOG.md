@@ -6,6 +6,11 @@ Memora 的所有重要变更都记录在此文件中。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
+### 改进
+
+- 自动反思、手动总结、旧 pending 恢复和启动扫描统一为 `conversations.db` 中的可恢复固定窗口任务；新增稳定 `message_seq`、session epoch、claim/lease/CAS、候选 ledger、连续 cursor、公平两层并发与共享物理 LLM 限流。
+- `/memora summarize` 改为即时入队确认，不再在命令协程内等待 Provider 或直接写 canonical；新增显式 `confirm-abandon` 管理确认，仅允许跳过无 canonical 副作用证据的阻塞窗口。
+
 
 ### 修复
 

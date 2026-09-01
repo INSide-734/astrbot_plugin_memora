@@ -21,6 +21,7 @@ from ..domain.summary_models import (
     SummaryWindowContext,
     WindowOutcome,
 )
+from .summary_scheduler_lease import SummarySchedulerLeaseMixin
 from .summary_worker import SummaryWorker, SummaryWorkerFailure
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ async def _startup_call(
         raise RuntimeError(failure_code) from error
 
 
-class SummaryScheduler:
+class SummaryScheduler(SummarySchedulerLeaseMixin):
     """统一规划、领取并执行持久化记忆总结窗口。"""
 
     def __init__(
@@ -186,16 +187,36 @@ class SummaryScheduler:
             recover_claims = getattr(self._job_store, "recover_expired_claims", None)
             migrate_legacy = getattr(self._job_store, "recover_legacy_pending", None)
             plan_frontiers = getattr(self._job_store, "plan_existing_frontiers", None)
+            reconcile_candidates = getattr(
+                self._job_store, "reconcile_startup_candidates", None
+            )
             if not callable(set_clock) or not _is_async_callable(claim_ready):
+                self._accepting_enqueues = False
                 raise RuntimeError("summary_scheduler_unavailable")
             if (
                 not all(
                     callable(method) and _is_async_callable(method)
-                    for method in (recover_claims, migrate_legacy, plan_frontiers)
+                    for method in (
+                        recover_claims,
+                        migrate_legacy,
+                        reconcile_candidates,
+                        plan_frontiers,
+                    )
                 )
                 or self._startup_context_factory is None
             ):
+                self._accepting_enqueues = False
                 raise RuntimeError("summary_recovery_failed")
+
+            startup_factory = self._startup_context_factory
+            assert startup_factory is not None
+
+            async def startup_context(
+                session_id: str, epoch: int, cursor: int
+            ) -> SummaryWindowContext | Awaitable[SummaryWindowContext]:
+                """登记启动扫描会话并委托原始上下文工厂。"""
+                self._known_sessions.add(session_id)
+                return startup_factory(session_id, epoch, cursor)
 
             try:
                 set_clock(self._now)
@@ -204,27 +225,36 @@ class SummaryScheduler:
                     self._now(),
                     failure_code="summary_recovery_failed",
                 )
+                reconciled = await _startup_call(
+                    reconcile_candidates,
+                    failure_code="summary_recovery_failed",
+                )
                 migrated = await _startup_call(
                     migrate_legacy,
                     failure_code="summary_recovery_failed",
                 )
                 planned = await _startup_call(
                     plan_frontiers,
-                    self._startup_context_factory,
+                    startup_context,
                     failure_code="summary_recovery_failed",
                 )
             except asyncio.CancelledError:
+                self._claiming = False
+                self._accepting_enqueues = False
                 raise
             except RuntimeError:
                 self._claiming = False
+                self._accepting_enqueues = False
                 raise
             except Exception as error:
                 self._claiming = False
+                self._accepting_enqueues = False
                 raise RuntimeError("summary_recovery_failed") from error
 
-            for value in (recovered, migrated, planned):
+            for value in (recovered, migrated, reconciled, planned):
                 if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                     self._claiming = False
+                    self._accepting_enqueues = False
                     raise RuntimeError("summary_recovery_failed")
 
             self._claiming = True
@@ -238,16 +268,48 @@ class SummaryScheduler:
             except Exception:
                 coroutine.close()
                 self._claiming = False
+                self._accepting_enqueues = False
                 raise
         await self.notify()
 
     async def close(self) -> None:
-        """停止入队和领取，取消 worker，并对已有 token 尽力执行 CAS requeue。"""
+        """永久停止入队、领取和 worker，并尽力 CAS requeue。"""
+        await self._stop(permanent=True)
 
+    async def pause(self) -> None:
+        """临时停止入队和 worker，供跨数据库一致快照使用。"""
+        await self._stop(permanent=False)
+
+    async def resume(self) -> None:
+        """从临时暂停恢复启动扫描和领取循环。"""
         async with self._lifecycle_lock:
-            if self._closed and self._loop_task is None and not self._workers:
+            if self._closed:
                 return
-            self._closed = True
+            self._accepting_enqueues = True
+        try:
+            await self.start()
+        except BaseException:
+            async with self._lifecycle_lock:
+                self._accepting_enqueues = False
+                self._claiming = False
+            raise
+
+    async def _stop(self, *, permanent: bool) -> None:
+        """收敛领取循环和 worker；永久关闭时同时设置 closed fence。"""
+        async with self._lifecycle_lock:
+            if (
+                permanent
+                and self._closed
+                and self._loop_task is None
+                and not self._workers
+            ):
+                return
+            if not permanent and self._loop_task is None and not self._workers:
+                self._accepting_enqueues = False
+                self._claiming = False
+                return
+            if permanent:
+                self._closed = True
             self._accepting_enqueues = False
             self._claiming = False
             loop_task = self._loop_task
@@ -319,6 +381,21 @@ class SummaryScheduler:
         await self.notify()
         return max(0, int(cancelled))
 
+    async def confirm_abandon_session_jobs(self, session_id: str, epoch: int) -> int:
+        """转发管理员确认的阻塞任务收口，并唤醒连续游标。"""
+        if self._closed:
+            return 0
+        abandon = getattr(self._job_store, "confirm_abandon_session_jobs", None)
+        if not callable(abandon):
+            return 0
+        result = abandon(session_id, epoch)
+        if inspect.isawaitable(result):
+            result = await result
+        await self.notify()
+        if isinstance(result, bool) or not isinstance(result, int):
+            return 0
+        return max(0, result)
+
     async def enqueue_automatic(
         self,
         context: SummaryWindowContext,
@@ -380,17 +457,23 @@ class SummaryScheduler:
 
         async with self._condition:
             self._known_sessions.add(context.session_id)
-        if self._closed or not self._accepting_enqueues:
-            return await self._local_enqueue_result(SummaryReasonCode.CANCELLED)
+        blocked = False
         try:
-            result = await self._job_store.plan_and_enqueue_windows(
-                context,
-                observed_end_seq,
-            )
+            async with self._lifecycle_lock:
+                if self._closed or not self._accepting_enqueues:
+                    blocked = True
+                    result = None
+                else:
+                    result = await self._job_store.plan_and_enqueue_windows(
+                        context,
+                        observed_end_seq,
+                    )
         except asyncio.CancelledError:
             raise
         except Exception:
             return await self._local_enqueue_result(SummaryReasonCode.STORE_UNAVAILABLE)
+        if blocked or result is None:
+            return await self._local_enqueue_result(SummaryReasonCode.CANCELLED)
         await self.notify()
         snapshot = await self.snapshot()
         return replace(
@@ -414,26 +497,30 @@ class SummaryScheduler:
 
     async def _claim_loop(self) -> None:
         """使用 condition 和有界 timer 持续填充可用 worker 槽位。"""
-        while self._claiming:
-            async with self._condition:
-                generation = self._wake_generation
-            try:
-                recovered = self._job_store.recover_expired_claims(self._now())
-                if inspect.isawaitable(recovered):
-                    await recovered
-                started = await self._claim_once()
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                self._claiming = False
-                raise
-            if started:
-                continue
-            await self._wait_for_wake(generation)
+        try:
+            while self._claiming:
+                async with self._condition:
+                    generation = self._wake_generation
+                try:
+                    recovered = self._job_store.recover_expired_claims(self._now())
+                    if inspect.isawaitable(recovered):
+                        await recovered
+                    started = await self._claim_once()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    await self._wait_for_wake(generation)
+                    continue
+                if started:
+                    continue
+                await self._wait_for_wake(generation)
+        finally:
+            current = asyncio.current_task()
+            if current is not None and self._loop_task is current:
+                self._loop_task = None
 
     async def _claim_once(self) -> int:
         """领取一个确定性 round-robin 批次并只为可用槽位创建任务。"""
-
         async with self._condition:
             if not self._claiming:
                 return 0
@@ -445,6 +532,7 @@ class SummaryScheduler:
             "max_parallel_per_session": self._max_parallel_per_session,
             "lease_seconds": max(1, int(self._lease_seconds)),
             "session_order": self._session_order(),
+            "round_robin_after": self._round_robin_cursor,
         }
         if _supports_keyword(claim_ready, "global_limit"):
             claim_kwargs["global_limit"] = self._max_parallel
@@ -565,18 +653,7 @@ class SummaryScheduler:
         """执行一个 claim；取消 requeue，普通失败写固定失败 DTO。"""
 
         try:
-            outcome = await self._worker.execute(claim)
-            if outcome.failed_count > 0 and outcome.unknown_count == 0:
-                await self._try_fail(
-                    claim,
-                    SummaryFailure(
-                        failed_stage=outcome.failed_stage or "candidate_write",
-                        reason_code=SummaryReasonCode.RETRY_SCHEDULED,
-                        exception_type="CandidateWriteFailed",
-                        retryable=True,
-                    ),
-                )
-                return
+            outcome = await self._execute_with_heartbeat(claim)
             try:
                 committed = await self._job_store.commit_window(claim, outcome)
                 if committed.accepted:
@@ -720,6 +797,3 @@ class SummaryScheduler:
         if not math.isfinite(timestamp) or timestamp < 0:
             raise ValueError("总结调度时钟必须返回非负有限时间")
         return datetime.fromtimestamp(timestamp, timezone.utc)
-
-
-__all__ = ["SummaryScheduler"]

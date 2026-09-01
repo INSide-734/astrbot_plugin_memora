@@ -169,6 +169,7 @@ class SummaryLegacyMigrationMixin:
                     )
                     if await existing.fetchone() is not None:
                         metadata.pop("pending_summary", None)
+                        metadata.pop("last_summarized_index", None)
                         await self.connection.execute(
                             "UPDATE sessions SET metadata=? WHERE session_id=?",
                             (json.dumps(metadata, ensure_ascii=False), session_id),
@@ -270,6 +271,7 @@ class SummaryLegacyMigrationMixin:
                         ),
                     )
                     metadata.pop("pending_summary", None)
+                    metadata.pop("last_summarized_index", None)
                     await self.connection.execute(
                         "UPDATE sessions SET metadata=? WHERE session_id=?",
                         (json.dumps(metadata, ensure_ascii=False), session_id),

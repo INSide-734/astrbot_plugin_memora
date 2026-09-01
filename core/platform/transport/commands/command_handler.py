@@ -198,6 +198,35 @@ class CommandHandler(
         )
         return f"未接受：reason={reason}"
 
+    async def _confirm_abandon_summary(self, event: AstrMessageEvent) -> str:
+        """管理员确认当前会话无 canonical 证据的阻塞窗口可跳过。"""
+        manager = self.conversation_manager
+        scheduler = self._summary_scheduler
+        if manager is None or scheduler is None:
+            return self._component_not_ready_message("总结调度器", "/memora summarize")
+        session_id = str(getattr(event, "unified_msg_origin", "") or "")
+        if not session_id:
+            return "未接受：reason=empty_session"
+        get_epoch = getattr(getattr(manager, "store", None), "get_summary_epoch", None)
+        confirm = getattr(scheduler, "confirm_abandon_session_jobs", None)
+        if not callable(get_epoch) or not callable(confirm):
+            return "未接受：reason=summary_recovery_unavailable"
+        epoch_value = get_epoch(session_id)
+        if inspect.isawaitable(epoch_value):
+            epoch_value = await epoch_value
+        if not isinstance(epoch_value, (tuple, list)) or not epoch_value:
+            return "未接受：reason=summary_recovery_unavailable"
+        confirmed = confirm(session_id, int(epoch_value[0]))
+        if inspect.isawaitable(confirmed):
+            confirmed = await confirmed
+        if (
+            isinstance(confirmed, bool)
+            or not isinstance(confirmed, int)
+            or confirmed < 1
+        ):
+            return "未接受：reason=no_abandonable_window"
+        return f"已确认：abandoned={confirmed}"
+
     async def _yield_if_writes_blocked(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -206,9 +235,9 @@ class CommandHandler(
             yield event.plain_result(message)
 
     async def handle_summarize(
-        self, event: AstrMessageEvent
+        self, event: AstrMessageEvent, action: str = ""
     ) -> AsyncGenerator[MessageEventResult, None]:
-        """立即提交手动总结入队请求并返回安全确认。"""
+        """立即入队总结，或显式确认跳过不可恢复的阻塞窗口。"""
         blocked_message = self._maintenance_write_guard_message()
         if blocked_message:
             yield event.plain_result(blocked_message)
@@ -218,16 +247,24 @@ class CommandHandler(
                 self._component_not_ready_message("总结调度器", "/memora summarize")
             )
             return
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action not in {"", "confirm-abandon"}:
+            yield event.plain_result("未接受：reason=invalid_summarize_action")
+            return
         try:
-            message = await self._enqueue_manual_summary(event)
+            message = (
+                await self._confirm_abandon_summary(event)
+                if normalized_action == "confirm-abandon"
+                else await self._enqueue_manual_summary(event)
+            )
         except asyncio.CancelledError:
             raise
         except Exception as error:
             logger.error(
-                "手动总结入队失败，异常类型=%s",
+                "手动总结操作失败，异常类型=%s",
                 error.__class__.__name__,
             )
-            message = "未接受：reason=enqueue_failed"
+            message = "未接受：reason=summary_action_failed"
         yield event.plain_result(message)
 
     @staticmethod

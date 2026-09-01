@@ -166,9 +166,9 @@ uv run --locked pre-commit run --files path/to/file.py path/to/config.toml
 
 以下命令由 `core/command_endpoints.py` 注册；修改命令名或行为时，必须同步 README、CHANGELOG、测试与本页：
 
-`/memora status`、`/memora health`、`/memora diagnostics`、`/memora search <query> [k] [true|false]`、`/memora trace <query> [k]`、`/memora forget <id>`、`/memora rebuild-index`、`/memora rebuild-graph`、`/memora webui`、`/memora summarize`、`/memora reset`、`/memora cleanup`、`/memora update [check|download|apply]`、`/memora help`。
+`/memora status`、`/memora health`、`/memora diagnostics`、`/memora search <query> [k] [true|false]`、`/memora trace <query> [k]`、`/memora forget <id>`、`/memora rebuild-index`、`/memora rebuild-graph`、`/memora webui`、`/memora summarize [confirm-abandon]`、`/memora reset`、`/memora cleanup`、`/memora update [check|download|apply]`、`/memora help`。
 
-`/memora summarize` 必须分别反馈 canonical 写入数与 quarantine 数；隔离候选不得伪装成长期记忆写入成功，真实写入失败仍保留 `pending_summary` 且不推进窗口。
+`/memora summarize` 只返回持久化窗口的即时入队确认；最终 canonical、quarantine、discard、mark_write 和失败累计通过安全诊断快照观察。`confirm-abandon` 仅在管理员明确确认数据丢失时跳过当前 epoch 中无 canonical 证据的 blocked/unknown 窗口。
 
 ## 验证入口
 

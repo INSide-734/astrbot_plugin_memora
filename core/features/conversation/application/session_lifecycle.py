@@ -97,61 +97,46 @@ class SessionLifecycleMixin:
             RuntimeError: 原子清理或元数据重置失败。
         """
         atomic_clear = getattr(self.store, "clear_session_atomically", None)
-        if callable(atomic_clear):
-            # 先读取旧 epoch，再由 Store 原子 fence；不能先取消 scheduler 后留下窗口。
-            get_epoch = getattr(self.store, "get_summary_epoch", None)
-            epoch: int | None = None
-            if callable(get_epoch):
-                epoch_value = get_epoch(session_id)
-                if inspect.isawaitable(epoch_value):
-                    epoch_value = await epoch_value
-                if isinstance(epoch_value, (tuple, list)) and epoch_value:
-                    epoch = int(epoch_value[0])
+        if not callable(atomic_clear):
+            raise RuntimeError("summary_epoch_fence_unavailable")
 
-            clear_result = atomic_clear(session_id)
-            if inspect.isawaitable(clear_result):
-                await clear_result
+        get_epoch = getattr(self.store, "get_summary_epoch", None)
+        if not callable(get_epoch):
+            raise RuntimeError("summary_epoch_unavailable")
+        epoch_value = get_epoch(session_id)
+        if inspect.isawaitable(epoch_value):
+            epoch_value = await epoch_value
+        if not isinstance(epoch_value, (tuple, list)) or not epoch_value:
+            raise RuntimeError("summary_epoch_unavailable")
+        epoch = int(epoch_value[0])
 
-            # Store 已经取消持久任务；这里再取消本地 worker，避免迟到副作用。
-            scheduler = getattr(self, "summary_scheduler", None)
-            cancel_jobs = getattr(scheduler, "cancel_session_jobs", None)
-            if epoch is not None and callable(cancel_jobs):
-                cancelled = cancel_jobs(session_id, epoch)
-                if inspect.isawaitable(cancelled):
-                    await cancelled
-            async with self._cache_lock:
-                self._cache.pop(session_id, None)
-            logger.info(
-                f"[ConversationManager] 已原子清空会话并 fence epoch: {session_id}"
-            )
-            return True
+        clear_result = atomic_clear(session_id)
+        if inspect.isawaitable(clear_result):
+            await clear_result
 
-        # 未升级 Store 的兼容路径也先尝试 epoch fence，防止旧 worker 污染新状态。
-        reset_epoch = getattr(self.store, "reset_session_epoch", None)
-        if callable(reset_epoch):
-            fenced = reset_epoch(session_id, "epoch_fenced")
-            if inspect.isawaitable(fenced):
-                await fenced
-        await self.store.delete_session_messages(session_id)
+        # Store 已经取消持久任务；这里再取消本地 worker，避免迟到副作用。
+        scheduler = getattr(self, "summary_scheduler", None)
+        cancel_jobs = getattr(scheduler, "cancel_session_jobs", None)
+        if callable(cancel_jobs):
+            cancelled = cancel_jobs(session_id, epoch)
+            if inspect.isawaitable(cancelled):
+                await cancelled
         async with self._cache_lock:
             self._cache.pop(session_id, None)
-        metadata_reset = await self.reset_session_metadata(session_id)
-        if metadata_reset is not True:
-            raise RuntimeError("会话元数据重置未持久化")
-        logger.info(f"[ConversationManager] 已清空会话并重置记忆上下文: {session_id}")
+        logger.info(f"[ConversationManager] 已原子清空会话并 fence epoch: {session_id}")
         return True
 
     async def cleanup_expired_sessions(self) -> int:
-        """
-        清理过期会话
-
-        Returns:
-            清理的会话数量
-        """
+        """清理过期会话，并在 epoch fence 后取消对应本地 worker。"""
         ttl_seconds = max(60, self.session_ttl)
-        deleted_count = await self.store.delete_old_sessions(ttl_seconds=ttl_seconds)
+        scheduler = getattr(self, "summary_scheduler", None)
+        cancel_jobs = getattr(scheduler, "cancel_session_jobs", None)
+        kwargs: dict[str, Any] = {"ttl_seconds": ttl_seconds}
+        if callable(cancel_jobs):
+            kwargs["cancel_jobs_cb"] = cancel_jobs
+        deleted_count = await self.store.delete_old_sessions(**kwargs)
 
-        # 清空缓存(可能包含已删除的会话)
+        # 清空缓存（可能包含已删除的会话）。
         async with self._cache_lock:
             self._cache.clear()
 

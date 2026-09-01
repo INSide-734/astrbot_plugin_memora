@@ -32,6 +32,7 @@ from .features.observability.infrastructure.debug_reporter import (
 from .features.recall.application.injection_cleaner import InjectionCleaner
 from .features.recall.application.recall_handler import RecallHandler
 from .features.recall.application.recall_observability import RecallTimingContext
+from .features.recall.processors.llm_client import LLMClient
 from .features.recall.processors.memory_processor import MemoryProcessor
 from .features.reflection.application.reflection_handler import ReflectionHandler
 from .platform.config.cost_control import build_cost_control_from_config
@@ -75,7 +76,6 @@ class EventHandler(CognitiveComponentsMixin):
         perf_tracker: Any | None = None,
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
-        memory_evolution_manager: Any | None = None,
         memory_quality_gate: Any | None = None,
         identity_runtime: IdentityConversationPort | None = None,
         summary_scheduler: Any | None = None,
@@ -94,7 +94,6 @@ class EventHandler(CognitiveComponentsMixin):
         self._write_guard_cb = write_guard_cb
         self._injection_recorder = injection_recorder
         self._memory_tool_available = memory_tool_available
-        self._memory_evolution_manager = memory_evolution_manager
         configured_cost_control = getattr(memory_engine, "cost_control", None)
         cost_control_section = config_manager.get_section("cost_control")
         if not isinstance(cost_control_section, dict):
@@ -116,6 +115,11 @@ class EventHandler(CognitiveComponentsMixin):
         self._injection_adapter = InjectionAdapter()
         self._maintenance_tasks: set[asyncio.Task] = set()
 
+        llm_id = config_manager.get("provider_settings.llm_provider_id")
+        self._query_rewrite_llm_client = LLMClient(
+            context,
+            llm_provider=llm_id if llm_id else None,
+        )
         self._recall_handler = RecallHandler(
             context=context,
             config_manager=config_manager,
@@ -137,7 +141,7 @@ class EventHandler(CognitiveComponentsMixin):
                 else None
             ),
             query_rewrite_llm_caller=partial(
-                memory_processor.llm_client.call_llm_with_retry,
+                self._query_rewrite_llm_client.call_llm_with_retry,
                 system_prompt="只解析记忆查询意图并返回要求的 JSON。",
                 max_retries=1,
             ),
@@ -156,7 +160,6 @@ class EventHandler(CognitiveComponentsMixin):
             relation_manager=relation_manager,
             prompt_protection_service=prompt_protection_service,
             write_guard_cb=write_guard_cb,
-            memory_evolution_manager=memory_evolution_manager,
             memory_quality_gate=memory_quality_gate,
             cost_control=self._cost_control,
             summary_scheduler=summary_scheduler,

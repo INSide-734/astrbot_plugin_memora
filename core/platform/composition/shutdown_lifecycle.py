@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -67,6 +68,63 @@ async def close_initializer_memory_evolution_components(initializer: Any) -> Non
 
         if first_error is not None:
             raise first_error
+
+
+async def close_initializer_core_components_after_failure(initializer: Any) -> None:
+    """初始化失败时继续关闭所有已发布的核心资源，并返回首个错误。"""
+    first_error: BaseException | None = None
+    try:
+        await close_prompt_protection(initializer)
+    except BaseException as error:
+        first_error = error
+
+    conversation_manager = getattr(initializer, "conversation_manager", None)
+    conversation_store = getattr(conversation_manager, "store", None)
+    steps = (
+        ("backfill_scheduler", initializer.backfill_scheduler, "stop"),
+        ("decay_scheduler", initializer.decay_scheduler, "stop"),
+        ("memory_engine", initializer.memory_engine, "close"),
+        ("graph_db", initializer.graph_db, "close"),
+        ("db", initializer.db, "close"),
+        ("conversation_manager", conversation_store, "close"),
+    )
+    closed_ids: set[int] = set()
+    for attribute, component, method_name in steps:
+        if component is None or id(component) in closed_ids:
+            continue
+        closed_ids.add(id(component))
+        method = getattr(component, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+        except BaseException as error:
+            if first_error is None:
+                first_error = error
+        else:
+            if attribute == "conversation_manager":
+                if initializer.conversation_manager is conversation_manager:
+                    initializer.conversation_manager = None
+            elif getattr(initializer, attribute, None) is component:
+                setattr(initializer, attribute, None)
+
+    if first_error is not None:
+        raise first_error
+
+
+async def stop_initializer_summary_scheduler(initializer: Any) -> None:
+    """停止总结调度器，并移除初始化器与会话管理器引用。"""
+    scheduler = initializer.summary_scheduler
+    if scheduler is None:
+        return
+    await scheduler.close()
+    if initializer.summary_scheduler is scheduler:
+        initializer.summary_scheduler = None
+    manager = initializer.conversation_manager
+    if manager is not None and getattr(manager, "summary_scheduler", None) is scheduler:
+        manager.summary_scheduler = None
 
 
 async def stop_runtime_producers(
@@ -161,4 +219,10 @@ async def stop_runtime_producers(
     )
 
 
-__all__ = ["stop_runtime_producers"]
+__all__ = [
+    "close_initializer_core_components_after_failure",
+    "close_initializer_injection_components",
+    "close_initializer_memory_evolution_components",
+    "stop_initializer_summary_scheduler",
+    "stop_runtime_producers",
+]

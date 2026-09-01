@@ -41,7 +41,7 @@ flowchart LR
 | `rebuild-graph` | `handle_rebuild_graph` | 写保护后重建图索引，报告 rebuilt/skipped |
 | `reset` | `handle_reset` | 写保护后清除当前 session 的 Memora 会话上下文 |
 | `cleanup [preview|exec]` | `handle_cleanup` | 默认 preview 映射 `dry_run=True`；只有大小写不敏感的 `exec` 真正写 AstrBot 历史 |
-| `summarize` | `CommandHandler.handle_summarize` | 写保护与会话窗口锁后处理未总结消息，分别反馈 canonical 写入与 quarantine 数量 |
+| `summarize [confirm-abandon]` | `CommandHandler.handle_summarize` | 默认即时入队固定窗口；显式确认时仅跳过当前 epoch 中无 canonical 证据的 blocked/unknown 窗口 |
 | `help` | `CommandHandler.handle_help` | 返回 i18n 帮助文本 |
 
 `core/commands/__init__.py` 是空包标记；mixin 由 `CommandHandler` 直接导入，不存在包级公共重导出契约。
@@ -71,10 +71,11 @@ flowchart LR
 `handle_summarize()`：
 
 1. 写保护、就绪和会话校验后构造固定窗口上下文。
-2. 跳过自动阈值，但只能调用共享 `SummaryScheduler.enqueue_manual()` 追加固定分区。
+2. 默认跳过自动阈值，但只能调用共享 `SummaryScheduler.enqueue_manual()` 追加固定分区。
 3. 调度器立即返回 `queued/duplicates/active/target` 安全确认，不等待 Processor、Provider、canonical 写入或最终候选计数。
-4. 调度器持久化 `message_seq`、GateSnapshot、epoch 和 candidate ledger；worker 完成后才由 Store 原子推进连续 cursor/pending projection。
-5. 无新窗口、写保护、调度器不可用和入队失败分别返回固定 reason code，不显示 session/job ID、正文、source evidence、候选计数或异常正文。
+4. `confirm-abandon` 是显式管理员数据丢失确认；只按当前 session epoch 收口无 canonical ID/处置证据的 blocked/unknown 窗口，并记录 `operator_action=admin_confirmed`。
+5. 调度器持久化 `message_seq`、GateSnapshot、epoch 和 candidate ledger；worker 完成后才由 Store 原子推进连续 cursor/pending projection。
+6. 无新窗口、写保护、调度器不可用和入队失败分别返回固定 reason code，不显示 session/job ID、正文、source evidence、候选计数或异常正文。
 
 诊断和最终结果通过统一 `SummaryTaskSnapshot` 观察；canonical/quarantine/discard/mark_write/failed 计数不由命令协程直接计算。
 

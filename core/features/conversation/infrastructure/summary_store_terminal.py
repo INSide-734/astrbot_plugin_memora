@@ -23,7 +23,9 @@ from ...reflection.domain.summary_models import (
     WindowOutcome,
     retry_delay_seconds,
 )
+from .summary_store_abandon import SummaryStoreAbandonMixin
 from .summary_store_keys import owned_slot_key, source_epoch_guarded, source_guarded
+from .summary_store_outcomes import valid_window_outcome
 from .summary_store_reconcile import SummaryStoreReconcileMixin
 from .summary_store_snapshot import SummaryStoreSnapshotMixin
 
@@ -52,44 +54,9 @@ def _timestamp(value: datetime | float | None = None) -> float:
     return max(0.0, value.timestamp() if isinstance(value, datetime) else float(value))
 
 
-def _valid_outcome(outcome: WindowOutcome) -> bool:
-    """确保收口计数、候选动作和 ledger 状态彼此一致。"""
-    if not isinstance(outcome, WindowOutcome):
-        return False
-    expected = {
-        "canonical": outcome.canonical_count,
-        "quarantined": outcome.quarantine_count,
-        "discard": outcome.discard_count,
-        "mark_write": outcome.mark_write_count,
-        "failed": outcome.failed_count,
-        "skipped_idempotent": outcome.skipped_idempotent_count,
-    }
-    actual = {key: 0 for key in expected}
-    unknown = 0
-    for intent in outcome.candidate_slots:
-        if not isinstance(intent, CandidateIntent):
-            return False
-        if intent.status is CandidateLedgerStatus.UNKNOWN:
-            if intent.disposition is not None:
-                return False
-            unknown += 1
-            continue
-        if intent.status is CandidateLedgerStatus.FAILED:
-            if intent.disposition is not None and intent.disposition.value != "failed":
-                return False
-        elif intent.status is not CandidateLedgerStatus.COMMITTED:
-            return False
-        if intent.disposition is None or intent.disposition.value not in actual:
-            return False
-        actual[intent.disposition.value] += 1
-    if unknown != outcome.unknown_count:
-        return False
-    if any(actual[key] != value for key, value in expected.items()):
-        return False
-    return not outcome.can_advance or (unknown == 0 and outcome.failed_count == 0)
-
-
-class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshotMixin):
+class SummaryStoreTerminalMixin(
+    SummaryStoreAbandonMixin, SummaryStoreReconcileMixin, SummaryStoreSnapshotMixin
+):
     """提供总结任务的 CAS 终态、恢复和 trim 保护。"""
 
     if TYPE_CHECKING:
@@ -126,7 +93,7 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
                         SummaryJobStatus.UNKNOWN,
                         reason_code=SummaryReasonCode.CLAIM_LOST,
                     )
-                if not _valid_outcome(outcome):
+                if not valid_window_outcome(outcome):
                     await self._rollback_summary()
                     return CompletionResult(
                         False,
@@ -141,16 +108,27 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
                     status = SummaryJobStatus.COMPLETED
                 else:
                     status = SummaryJobStatus.FAILED
+                final_reason = outcome.reason_code.value
+                next_at: float | None = None
+                if status is SummaryJobStatus.FAILED:
+                    if claim.attempt_count >= 3:
+                        status = SummaryJobStatus.BLOCKED
+                        final_reason = SummaryReasonCode.RETRY_EXHAUSTED.value
+                    else:
+                        final_reason = SummaryReasonCode.RETRY_SCHEDULED.value
+                        next_at = now + retry_delay_seconds(claim.attempt_count)
                 ledger_cursor = await self.connection.execute(
-                    "SELECT slot,slot_key,content_digest,status,canonical_id FROM summary_job_candidates WHERE job_id=?",
+                    "SELECT slot,slot_key,content_digest,idempotency_key,status,canonical_id "
+                    "FROM summary_job_candidates WHERE job_id=?",
                     (claim.job_id,),
                 )
                 ledger = {
                     int(_row(row, "slot", 0)): (
                         _row(row, "slot_key", 1),
                         _row(row, "content_digest", 2),
-                        str(_row(row, "status", 3)),
-                        _row(row, "canonical_id", 4),
+                        str(_row(row, "idempotency_key", 3) or ""),
+                        str(_row(row, "status", 4)),
+                        _row(row, "canonical_id", 5),
                     )
                     for row in await ledger_cursor.fetchall()
                 }
@@ -182,15 +160,16 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
                             and intent.canonical_id is not None
                         )
                         or (
-                            existing[3] is not None
-                            and existing[3] != intent.canonical_id
+                            existing[4] is not None
+                            and existing[4] != intent.canonical_id
                         )
                     )
                     if (
                         existing[0] != slot_key
                         or existing[1] != intent.content_digest
+                        or existing[2] != intent.idempotency_key
                         or (
-                            existing[2] == CandidateLedgerStatus.UNKNOWN.value
+                            existing[3] == CandidateLedgerStatus.UNKNOWN.value
                             and intent.status is not CandidateLedgerStatus.UNKNOWN
                         )
                         or mapping_inconsistent
@@ -199,8 +178,10 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
                 for slot, (slot_key, intent) in intents.items():
                     updated = await self.connection.execute(
                         """
-                        UPDATE summary_job_candidates SET disposition=?,status=?,canonical_id=COALESCE(?,canonical_id),updated_at=?
+                        UPDATE summary_job_candidates
+                        SET disposition=?,status=?,canonical_id=COALESCE(?,canonical_id),updated_at=?
                         WHERE job_id=? AND slot=? AND slot_key=? AND content_digest=?
+                          AND idempotency_key=?
                         """,
                         (
                             intent.disposition.value if intent.disposition else None,
@@ -218,21 +199,23 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
                             slot,
                             slot_key,
                             intent.content_digest,
+                            intent.idempotency_key,
                         ),
                     )
                     if updated.rowcount != 1:
                         return await self._mark_unknown_claim(claim, now)
                 updated = await self.connection.execute(
                     """
-                    UPDATE summary_jobs SET status=?,reason_code=?,failed_stage=?,lease_until=NULL,
-                      claim_token=NULL,canonical_count=?,quarantine_count=?,discard_count=?,
-                      mark_write_count=?,failed_count=?,skipped_count=?,updated_at=?
+                    UPDATE summary_jobs SET status=?,reason_code=?,next_attempt_at=COALESCE(?,next_attempt_at),
+                      failed_stage=?,lease_until=NULL,claim_token=NULL,canonical_count=?,quarantine_count=?,
+                      discard_count=?,mark_write_count=?,failed_count=?,skipped_count=?,updated_at=?
                     WHERE job_id=? AND session_id=? AND session_epoch=? AND status='running'
                       AND claim_token=? AND worker_generation=?
                     """,
                     (
                         status.value,
-                        outcome.reason_code.value,
+                        final_reason,
+                        next_at,
                         outcome.failed_stage,
                         outcome.canonical_count,
                         outcome.quarantine_count,
@@ -255,24 +238,27 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
                         SummaryJobStatus.UNKNOWN,
                         reason_code=SummaryReasonCode.CLAIM_LOST,
                     )
-                for counter, increment in {
-                    "canonical_total": outcome.canonical_count,
-                    "quarantine_total": outcome.quarantine_count,
-                    "discard_total": outcome.discard_count,
-                    "mark_write_total": outcome.mark_write_count,
-                    "failed_candidate_total": outcome.failed_count,
-                    "skipped_idempotent_total": outcome.skipped_idempotent_count,
-                }.items():
-                    if increment:
-                        await self.connection.execute(
-                            "UPDATE summary_task_counters SET value=value+? WHERE counter_name=?",
-                            (increment, counter),
-                        )
+                if status is SummaryJobStatus.COMPLETED:
+                    for counter, increment in {
+                        "canonical_total": outcome.canonical_count,
+                        "quarantine_total": outcome.quarantine_count,
+                        "discard_total": outcome.discard_count,
+                        "mark_write_total": outcome.mark_write_count,
+                        "failed_candidate_total": outcome.failed_count,
+                        "skipped_idempotent_total": outcome.skipped_idempotent_count,
+                    }.items():
+                        if increment:
+                            await self.connection.execute(
+                                "UPDATE summary_task_counters SET value=value+? WHERE counter_name=?",
+                                (increment, counter),
+                            )
                 cursor = await self._advance_cursor(
                     claim.session_id, claim.session_epoch, now
                 )
                 await self.connection.commit()
-                return CompletionResult(True, status, cursor, outcome.reason_code)
+                return CompletionResult(
+                    True, status, cursor, SummaryReasonCode(final_reason)
+                )
         except asyncio.CancelledError:
             await self._rollback_summary()
             raise
@@ -428,6 +414,49 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
                 reason_code=SummaryReasonCode.UNKNOWN,
             )
 
+    async def renew_claim(
+        self,
+        claim: ClaimedJob,
+        lease_seconds: int,
+        *,
+        now: datetime | float | None = None,
+    ) -> bool:
+        """仅为仍持有当前 token 的 running claim 延长租约。"""
+
+        if self.connection is None or lease_seconds <= 0:
+            return False
+        stamp = self._summary_now() if now is None else _timestamp(now)
+        try:
+            async with self._write_lock:
+                await self._begin_summary()
+                updated = await self.connection.execute(
+                    """
+                    UPDATE summary_jobs SET lease_until=?,updated_at=?
+                    WHERE job_id=? AND session_id=? AND session_epoch=?
+                      AND status='running' AND claim_token=?
+                      AND worker_generation=? AND lease_until IS NOT NULL
+                      AND lease_until>?
+                    """,
+                    (
+                        stamp + max(1, int(lease_seconds)),
+                        stamp,
+                        claim.job_id,
+                        claim.session_id,
+                        claim.session_epoch,
+                        claim.claim_token,
+                        claim.worker_generation,
+                        stamp,
+                    ),
+                )
+                await self.connection.commit()
+                return updated.rowcount == 1
+        except asyncio.CancelledError:
+            await self._rollback_summary()
+            raise
+        except Exception:
+            await self._rollback_summary()
+            return False
+
     async def requeue_claim(
         self,
         claim: ClaimedJob,
@@ -505,9 +534,12 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
                 ]
                 cursor = await self.connection.execute(
                     """
-                    UPDATE summary_jobs SET status='queued',lease_until=NULL,
-                      claim_token=NULL,worker_generation=worker_generation+1,
-                      reason_code='lease_expired',updated_at=?
+                    UPDATE summary_jobs SET
+                      status=CASE WHEN attempt_count >= 3 THEN 'blocked' ELSE 'queued' END,
+                      lease_until=NULL,claim_token=NULL,worker_generation=worker_generation+1,
+                      reason_code=CASE WHEN attempt_count >= 3 THEN 'retry_exhausted' ELSE 'lease_expired' END,
+                      failed_stage=CASE WHEN attempt_count >= 3 THEN 'lease_recovery' ELSE failed_stage END,
+                      updated_at=?
                     WHERE status='running' AND lease_until IS NOT NULL AND lease_until<=?
                     """,
                     (stamp, stamp),
@@ -654,6 +686,7 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
             FROM summary_jobs j
             JOIN summary_job_candidates c ON c.job_id=j.job_id
             WHERE j.session_id=? AND j.session_epoch=?
+              AND j.status NOT IN ('completed','abandoned')
               AND c.status IN ('planned','writing','failed','unknown')
             LIMIT 1
             """,
@@ -685,13 +718,17 @@ class SummaryStoreTerminalMixin(SummaryStoreReconcileMixin, SummaryStoreSnapshot
         )
         if await cursor.fetchone() is not None:
             return True
-        # completed/abandoned 任务必须存在候选 ledger；空 ledger 证据不完整。
+        # 有候选结果的终态任务必须保留完整 ledger；空候选窗口无需伪造 slot。
         cursor = await self.connection.execute(
             """
             SELECT 1
             FROM summary_jobs AS j
             WHERE j.session_id=? AND j.session_epoch=?
               AND j.status IN ('completed','abandoned')
+              AND (
+                  j.canonical_count + j.quarantine_count + j.discard_count
+                  + j.mark_write_count + j.failed_count + j.skipped_count
+              ) > 0
               AND NOT EXISTS (
                 SELECT 1 FROM summary_job_candidates AS c WHERE c.job_id=j.job_id
               )

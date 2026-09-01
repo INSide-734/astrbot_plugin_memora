@@ -19,6 +19,9 @@ _MEMORY_STATUS_WRITE_VALUES: Final = frozenset(
         MEMORY_STATUS_DELETED,
     }
 )
+_SUMMARY_SOURCE_ORPHAN: Final = "summary_source_orphan"
+
+
 _ACTIVE_MEMORY_STATUS_ALIASES: Final = frozenset({"current", "stable"})
 _STATUS_ASCII_WHITESPACE: Final = " \t\n\r\v\f"
 _ASCII_UPPER_TO_LOWER: Final = str.maketrans(
@@ -81,11 +84,17 @@ def is_memory_recallable(metadata: Mapping[str, Any] | None) -> bool:
         metadata: canonical memory 的 metadata 映射。
 
     返回：
-        仅 ``active`` 与其旧版别名可召回；休眠、归档、已删除及未知状态均返回
-        ``False``。
+        仅 ``active`` 与其旧版别名可召回；总结来源已失效的 orphan、休眠、
+        归档、已删除及未知状态均返回 ``False``。
     """
 
-    return effective_memory_status(metadata) == MEMORY_STATUS_ACTIVE
+    return bool(
+        effective_memory_status(metadata) == MEMORY_STATUS_ACTIVE
+        and not (
+            isinstance(metadata, Mapping)
+            and metadata.get(_SUMMARY_SOURCE_ORPHAN) is True
+        )
+    )
 
 
 def is_memory_active(metadata: Mapping[str, Any] | None) -> bool:
@@ -95,11 +104,11 @@ def is_memory_active(metadata: Mapping[str, Any] | None) -> bool:
         metadata: canonical memory 的 metadata 映射。
 
     返回：
-        ``active`` 及旧版 ``current``、``stable`` 返回 ``True``；其余状态返回
-        ``False``，避免从休眠、归档或未知来源生成派生知识。
+        ``active`` 且不是总结来源 orphan 时返回 ``True``；其余状态返回
+        ``False``，避免从失效来源生成派生知识。
     """
 
-    return effective_memory_status(metadata) == MEMORY_STATUS_ACTIVE
+    return is_memory_recallable(metadata)
 
 
 def set_memory_status(
