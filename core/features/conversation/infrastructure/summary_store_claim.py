@@ -269,7 +269,7 @@ class SummaryStoreClaimMixin:
               AND job.source_digest=?
               AND job.status='running' AND job.claim_token=?
               AND job.worker_generation=? AND job.lease_until IS NOT NULL
-              AND job.lease_until=? AND job.lease_until > ?
+              AND job.lease_until > ?
             """,
             (
                 claim.job_id,
@@ -281,7 +281,6 @@ class SummaryStoreClaimMixin:
                 claim.source_digest,
                 claim.claim_token,
                 claim.worker_generation,
-                claim.lease_until,
                 self._summary_now(),
             ),
         )

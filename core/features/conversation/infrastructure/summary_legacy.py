@@ -41,6 +41,12 @@ class SummaryLegacyMigrationMixin:
         """由组合 Store 提供稳定 message_seq 来源读取入口。"""
         ...
 
+    async def get_summary_scope(
+        self, session_id: str
+    ) -> tuple[str, str | None, str, str | None]:
+        """由组合 Store 从持久会话与消息重建可信总结作用域。"""
+        ...
+
     @staticmethod
     def _legacy_row_value(row: Any, name: str, index: int) -> Any:
         """兼容 SQLite Row 与测试替身的列读取。"""
@@ -198,21 +204,36 @@ class SummaryLegacyMigrationMixin:
                     gate_revision = self._legacy_text(pending.get("gate_revision")) or (
                         snapshot_data[1] if snapshot_data else ""
                     )
-                    persona_id = self._legacy_text(pending.get("persona_id"))
-                    chat_type = self._legacy_text(pending.get("chat_type"))
-                    group_id = self._legacy_text(pending.get("group_id"))
-                    scope_id = self._legacy_text(pending.get("scope_id"))
-                    scope_valid = chat_type in {None, "private", "group"}
-                    scope_valid = scope_valid and not (
-                        chat_type == "group" and not group_id
-                    )
-                    scope_valid = scope_valid and not (
-                        chat_type == "private" and group_id is not None
-                    )
-                    if chat_type == "group" and scope_id is None:
-                        scope_id = group_id
-                    if chat_type == "private" and scope_id is None:
-                        scope_id = session_id
+                    declared_persona = self._legacy_text(pending.get("persona_id"))
+                    declared_chat = self._legacy_text(pending.get("chat_type"))
+                    declared_group = self._legacy_text(pending.get("group_id"))
+                    declared_scope = self._legacy_text(pending.get("scope_id"))
+                    try:
+                        (
+                            chat_type,
+                            group_id,
+                            scope_id,
+                            stored_persona,
+                        ) = await self.get_summary_scope(session_id)
+                        scope_valid = all(
+                            declared is None or declared == actual
+                            for declared, actual in (
+                                (declared_chat, chat_type),
+                                (declared_group, group_id),
+                                (declared_scope, scope_id),
+                            )
+                        ) and not (
+                            declared_persona is not None
+                            and stored_persona is not None
+                            and declared_persona != stored_persona
+                        )
+                        persona_id = declared_persona or stored_persona
+                    except (RuntimeError, TypeError, ValueError):
+                        persona_id = None
+                        chat_type = None
+                        group_id = None
+                        scope_id = None
+                        scope_valid = False
                     try:
                         messages = tuple(
                             self._legacy_message(item) for item in source_rows
@@ -223,6 +244,7 @@ class SummaryLegacyMigrationMixin:
                         )
                         complete = (
                             range_valid
+                            and scope_valid
                             and snapshot_data is not None
                             and len(messages) == end - start
                             and seqs == tuple(range(start + 1, end + 1))

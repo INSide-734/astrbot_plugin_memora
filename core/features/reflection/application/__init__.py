@@ -5,11 +5,6 @@ from .candidate_writer import (
     store_reflection_candidates,
 )
 from .continuity import record_continuity_topics, resolve_continuity_session
-from .llm_budget import (
-    ExtraLlmBudgetDenied,
-    fit_batches_to_extra_llm_budget,
-    process_reflection_batches,
-)
 from .summary_scheduler import SummaryScheduler
 from .summary_worker import SummaryWorker, SummaryWorkerFailure
 from .topic_batch_preparer import TopicBatchPreparer
@@ -19,9 +14,6 @@ __all__ = [
     "SummaryWorker",
     "SummaryWorkerFailure",
     "build_reflection_idempotency_key",
-    "ExtraLlmBudgetDenied",
-    "fit_batches_to_extra_llm_budget",
-    "process_reflection_batches",
     "record_continuity_topics",
     "resolve_continuity_session",
     "store_reflection_candidates",

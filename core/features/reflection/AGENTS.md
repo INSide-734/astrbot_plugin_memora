@@ -11,7 +11,7 @@
 - `application/summary_scheduler.py` 负责固定窗口调度、round-robin claim、worker 生命周期与失败恢复。
 - `application/summary_worker.py` 只读取 claim 固化来源，调用现有 Processor/质量门，并返回 `WindowOutcome`。
 - `topic_batch_preparer.py` 只处理 C/D 预分批；A/B/Hybrid 后置分段属于 [`recall/processors/AGENTS.md`](../recall/processors/AGENTS.md)。
-- `llm_budget.py` 保证在线请求级额外批次额度；持久化总结任务不继承 `ExtraLlmBudget`。
+- 后台任务不继承 `ExtraLlmBudget`；物理 Provider attempt 统一由 Processor 的共享 `SummaryLlmLimiter` 限流。
 - `candidate_writer.py` 执行幂等候选写入和质量路由；`MemoryEngine` 是 canonical 写后演化唯一 owner。
 - `domain/summary_models.py` 与 `summary_ports.py` 定义不可变任务 DTO、闭集状态、安全投影和 Store 窄端口。
 

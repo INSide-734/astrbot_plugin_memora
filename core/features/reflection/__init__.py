@@ -9,8 +9,6 @@ if TYPE_CHECKING:
     from .application import (
         TopicBatchPreparer,
         build_reflection_idempotency_key,
-        fit_batches_to_extra_llm_budget,
-        process_reflection_batches,
         record_continuity_topics,
         resolve_continuity_session,
         store_reflection_candidates,
@@ -28,8 +26,6 @@ __all__ = [
     "ReflectionStoreSummary",
     "TopicBatchPreparer",
     "build_reflection_idempotency_key",
-    "fit_batches_to_extra_llm_budget",
-    "process_reflection_batches",
     "record_continuity_topics",
     "resolve_continuity_session",
     "store_reflection_candidates",
@@ -40,8 +36,6 @@ _APPLICATION_EXPORTS = frozenset(
     {
         "TopicBatchPreparer",
         "build_reflection_idempotency_key",
-        "fit_batches_to_extra_llm_budget",
-        "process_reflection_batches",
         "record_continuity_topics",
         "resolve_continuity_session",
         "store_reflection_candidates",

@@ -359,6 +359,29 @@ class SummaryStoreMixin(
                     return SummaryEnqueueResult(
                         False, reason_code=SummaryReasonCode.EPOCH_FENCED
                     )
+                if context.triggered_by == "manual":
+                    blocker_cursor = await self.connection.execute(
+                        """
+                        SELECT status FROM summary_jobs
+                        WHERE session_id=? AND session_epoch=?
+                          AND status IN ('blocked','unknown')
+                        ORDER BY CASE status WHEN 'unknown' THEN 0 ELSE 1 END
+                        LIMIT 1
+                        """,
+                        (context.session_id, epoch),
+                    )
+                    blocker = await blocker_cursor.fetchone()
+                    if blocker is not None:
+                        await self._rollback_summary()
+                        status = str(_row(blocker, "status", 0))
+                        return SummaryEnqueueResult(
+                            False,
+                            reason_code=(
+                                SummaryReasonCode.UNKNOWN
+                                if status == SummaryJobStatus.UNKNOWN.value
+                                else SummaryReasonCode.BLOCKED
+                            ),
+                        )
                 frontier = await self._validated_frontier(
                     context.session_id, epoch, cursor_seq
                 )
