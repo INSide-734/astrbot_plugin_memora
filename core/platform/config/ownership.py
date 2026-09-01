@@ -83,7 +83,7 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "reflection_engine": _ownership(
         "reflection_engine",
         ConfigOwnershipKind.RUNTIME,
-        "core.features.reflection.application.reflection_handler",
+        "core.features.reflection.application.summary_scheduler",
     ),
     "graph_memory": _ownership(
         "graph_memory",

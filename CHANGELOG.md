@@ -6,6 +6,30 @@ Memora 的所有重要变更都记录在此文件中。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
+### 改进
+
+- 自动反思、手动总结、旧 pending 恢复和启动扫描统一为 `conversations.db` 中的可恢复固定窗口任务；新增稳定 `message_seq`、session epoch、claim/lease/CAS、候选 ledger、连续 cursor、公平两层并发与共享物理 LLM 限流。
+- `/memora summarize` 改为即时入队确认，不再在命令协程内等待 Provider 或直接写 canonical；新增显式 `confirm-abandon` 管理确认，仅允许跳过无 canonical 副作用证据的阻塞窗口。
+- 总结窗口恢复现严格校验持久化 session/message scope；legacy pending 无法证明私聊或群聊边界时进入 `blocked`，不再以空作用域执行。手动总结遇到当前 epoch 的 `blocked/unknown` 窗口时返回固定拒绝原因，避免继续堆积无法推进的任务。
+- 改进总结任务 lease 心跳续租后的 claim fencing：续租不再因内存中的旧 `lease_until` 误判 claim 失效；补充真实 SQLite、跨会话并发、Provider retry permit、日志及备份投影隐私 canary 验收。
+- 新增 `reflection_engine.max_parallel_summary_tasks`（默认 `4`，范围 `1–16`）和 `reflection_engine.max_parallel_summary_tasks_per_session`（默认 `2`，范围 `1–8`）配置；`cost_control.max_reflection_parallel_llm_calls` 继续作为物理 Provider 并发上限。
+- 总结失败采用有界退避与 dead-letter/blocked 保护；source digest、claim fence、session epoch、worker generation 或跨库 candidate ledger 无法核对时进入 `unknown`/人工恢复状态，禁止推进游标、重复写入 canonical 或提前 trim 来源消息。
+- reset、TTL 清理和同名会话重建均递增 session epoch；迟到 worker 对旧 epoch 的提交安全无效。来源消息仅在连续完成前缀、隔离候选和 candidate ledger 全部收口后才允许 trim。
+
+### 破坏性变更
+
+- 删除未被生产调用的 reflection 局部 Semaphore 批次 API（`process_reflection_batches`、`fit_batches_to_extra_llm_budget` 及 `ExtraLlmBudgetDenied`）和对应包级导出；后台总结统一使用共享 `SummaryLlmLimiter`，在线额外 LLM 预算仍由 `ExtraLlmBudget` 管理。
+
+### 测试
+
+- 将总结持久化测试拆分为迁移与运行时持久化文件；新增 scope fail-closed、续租 fencing、手动阻塞拒绝、跨 session 并发、重试限流和备份隐私覆盖，相关文件均通过 Ruff、pre-commit、LSP 与精确回归。
+- 补充固定窗口 frontier/重叠拒绝、同会话乱序完成后的连续 cursor、双 Store claim winner、reset/TTL epoch fencing、GateSnapshot 重试一致性及 canonical 写后崩溃恢复验收。
+
+### 升级说明
+
+- 升级时会自动迁移 `conversations.db` 至总结调度 schema version `4`，并为历史消息回填不可变 `message_seq`；迁移失败、来源序号不连续或数据库版本高于当前版本时拒绝发布总结运行时，避免丢失或重复处理消息。
+- 历史 `pending_summary` 会幂等转换为持久化任务；无法证明完整 session/message scope 的旧 pending 保留为 `blocked`，需要管理员显式使用 `confirm-abandon` 才能跳过。
+
 
 ### 修复
 

@@ -1,5 +1,6 @@
 """反思 feature 的纯领域约束。"""
 
+from ....shared.summary_source import source_window_digest
 from .config import (
     LegacyBackfillConfig,
     ReflectionEngineConfig,
@@ -14,16 +15,61 @@ from .storage_outcomes import (
     ReflectionStoreSummary,
     summarize_store_results,
 )
+from .summary_models import (
+    CandidateDisposition,
+    CandidateIntent,
+    CandidateLedgerStatus,
+    ClaimedJob,
+    CompletionResult,
+    EpochResult,
+    RetryResult,
+    SourceWindow,
+    SummaryEnqueueResult,
+    SummaryFailure,
+    SummaryJob,
+    SummaryJobStatus,
+    SummaryReasonCode,
+    SummaryTaskSnapshot,
+    SummaryWindowContext,
+    TrimResult,
+    WindowFailure,
+    WindowOutcome,
+    retry_delay_seconds,
+    sanitize_summary_task_snapshot,
+)
+from .summary_ports import SummaryJobStorePort
 
 __all__ = [
+    "CandidateDisposition",
+    "CandidateIntent",
+    "CandidateLedgerStatus",
+    "ClaimedJob",
+    "CompletionResult",
+    "EpochResult",
     "LegacyBackfillConfig",
     "ReflectionEngineConfig",
     "ReflectionStoreOutcome",
     "ReflectionStoreResult",
     "ReflectionStoreSummary",
+    "RetryResult",
+    "SourceWindow",
     "StrategyBConfig",
     "StrategyCConfig",
     "StrategyDConfig",
+    "SummaryEnqueueResult",
+    "SummaryFailure",
+    "SummaryJob",
+    "SummaryJobStatus",
+    "SummaryJobStorePort",
+    "SummaryReasonCode",
+    "SummaryTaskSnapshot",
+    "SummaryWindowContext",
     "TopicSegmentationConfig",
+    "TrimResult",
+    "WindowFailure",
+    "WindowOutcome",
+    "retry_delay_seconds",
+    "sanitize_summary_task_snapshot",
+    "source_window_digest",
     "summarize_store_results",
 ]

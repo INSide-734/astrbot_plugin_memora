@@ -152,6 +152,8 @@
       "provider": "Provider: status={status}, attempts={attempts}/{max_attempts}, retrying={retry}",
       "recall": "Recall: samples={samples}, average={avg} ms, P50={p50} ms, P95={p95} ms",
       "tasks": "Background tasks: tracked={tracked}, active={active}, completed={completed}, failed={failed}, cancelled={cancelled}",
+      "summary_tasks": "Summary tasks: queued={queued}, running={running}, failed={failed}, blocked={blocked}, unknown={unknown}, cancelled={cancelled}, abandoned={abandoned}, parallelism={active}/{target}",
+      "summary_results": "Summary outcomes: canonical={canonical}, quarantined={quarantine}, discarded={discard}, mark-write={mark_write}, candidate failures={failed_candidate}, idempotent skips={skipped_idempotent}",
       "index": "Index: validator={available}, consistent={consistent}, rebuild needed={needs_rebuild}, last total={total}, errors={errors}",
       "write": "Write: operations={operations}, lock retries={retries}, failures={failures}, fatal={fatal}, non-retryable={non_retryable}",
       "prometheus": "Prometheus: available={available}, collectors={collectors}",

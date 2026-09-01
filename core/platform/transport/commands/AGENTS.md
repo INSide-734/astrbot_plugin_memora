@@ -21,7 +21,7 @@ flowchart LR
     Q --> ENGINE[MemoryEngine]
     M --> STORE[ConversationManager / IndexValidator]
     D --> PROVIDERS[Diagnostics / Metrics / Trace 窄提供器]
-    CH --> PROC[MemoryProcessor / SummaryWindowLocker]
+    CH --> SCHEDULER[SummaryScheduler enqueue port]
 ```
 
 ## 权限与端点契约
@@ -41,7 +41,7 @@ flowchart LR
 | `rebuild-graph` | `handle_rebuild_graph` | 写保护后重建图索引，报告 rebuilt/skipped |
 | `reset` | `handle_reset` | 写保护后清除当前 session 的 Memora 会话上下文 |
 | `cleanup [preview|exec]` | `handle_cleanup` | 默认 preview 映射 `dry_run=True`；只有大小写不敏感的 `exec` 真正写 AstrBot 历史 |
-| `summarize` | `CommandHandler.handle_summarize` | 写保护与会话窗口锁后处理未总结消息，分别反馈 canonical 写入与 quarantine 数量 |
+| `summarize [confirm-abandon]` | `CommandHandler.handle_summarize` | 默认即时入队固定窗口；显式确认时仅跳过当前 epoch 中无 canonical 证据的 blocked/unknown 窗口 |
 | `help` | `CommandHandler.handle_help` | 返回 i18n 帮助文本 |
 
 `core/commands/__init__.py` 是空包标记；mixin 由 `CommandHandler` 直接导入，不存在包级公共重导出契约。
@@ -70,15 +70,14 @@ flowchart LR
 
 `handle_summarize()`：
 
-1. 写保护后按 session 尝试 `SummaryWindowLocker`；同 session 已有任务则退出。
-2. 从实际消息数与 `last_summarized_index` 计算窗口，少于 2 条不处理。
-3. 读取窗口、解析 persona/group，调用 `MemoryProcessor.process_conversation()`。
-4. 每条记忆写入 `source_window`（含 `triggered_by=manual`）。
-5. quarantine 只计为已安全处理，不计入 canonical 写入、重要性或主题；canonical 写入失败时记录 `pending_summary` 并不推进窗口。
-6. 全部候选安全处理后更新 `last_summarized_index`、清空 pending，并分别反馈 canonical 与 quarantine 数量；反馈进度使用真实消息索引。
-7. `finally` 释放窗口锁。
+1. 写保护、就绪和会话校验后构造固定窗口上下文。
+2. 默认跳过自动阈值，但只能调用共享 `SummaryScheduler.enqueue_manual()` 追加固定分区。
+3. 调度器立即返回 `queued/duplicates/active/target` 安全确认，不等待 Processor、Provider、canonical 写入或最终候选计数。
+4. `confirm-abandon` 是显式管理员数据丢失确认；只按当前 session epoch 收口无 canonical ID/处置证据的 blocked/unknown 窗口，并记录 `operator_action=admin_confirmed`。
+5. 调度器持久化 `message_seq`、GateSnapshot、epoch 和 candidate ledger；worker 完成后才由 Store 原子推进连续 cursor/pending projection。
+6. 无新窗口、写保护、调度器不可用和入队失败分别返回固定 reason code，不显示 session/job ID、正文、source evidence、候选计数或异常正文。
 
-这保证“部分写入”不会假装整个窗口已提交，隔离候选也不会伪装成长期记忆；但已成功写入的前缀可能存在，后续补偿逻辑必须尊重 `pending_summary`。
+诊断和最终结果通过统一 `SummaryTaskSnapshot` 观察；canonical/quarantine/discard/mark_write/failed 计数不由命令协程直接计算。
 
 ## 写保护与安全边界
 

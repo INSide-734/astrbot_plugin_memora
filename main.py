@@ -31,6 +31,7 @@ from .core.platform.composition.reload_lifecycle import (
 from .core.platform.composition.reload_lifecycle import (
     schedule_learning_reload as schedule_learning_reload_callback,
 )
+from .core.platform.composition.runtime_handlers import publish_runtime_handlers
 from .core.platform.composition.shutdown_lifecycle import stop_runtime_producers
 from .core.platform.config.manager import ConfigManager
 from .core.platform.feature_delegation import FeatureDelegation
@@ -105,7 +106,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
         i18n_init(self.astrbot_config.get("bot_language", "zh"))
 
         # 初始化插件初始化器
-        self.initializer = PluginInitializer(context, self.config_manager, data_dir)
+        self.initializer = PluginInitializer(
+            context,
+            self.config_manager,
+            data_dir,
+            backup_manager=self._backup_manager,
+        )
         self._backfill_scheduler = None  # 初始化完成后再赋值
 
         # 事件处理器和命令处理器（初始化后创建）
@@ -460,100 +466,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 logger.error("插件初始化不完整：部分核心组件未能初始化")
                 return False
 
-            # 创建事件处理器（幂等）
-            if not self.event_handler:
-                try:
-                    self._register_agent_tools_if_needed()
-                except Exception:
-                    self._llm_tools_registered = False
-                    observability.report_debug_event(
-                        "plugin_initialized",
-                        component="plugin",
-                        stage="runtime_publish",
-                        status="degraded",
-                        reason_code="agent_tools_unavailable",
-                        capability="agent_tools",
-                    )
-                    logger.error(
-                        "智能体工具注册失败，将使用直接记忆召回",
-                        exc_info=True,
-                    )
-                memory_tool_available = bool(
-                    self._llm_tools_registered
-                    and self.config_manager.get("agent_tools.enable_recall_tool", True)
-                )
-                self.event_handler = EventHandler(
-                    context=self.context,
-                    config_manager=self.config_manager,
-                    memory_engine=self.initializer.memory_engine,  # type: ignore[arg-type]
-                    memory_processor=self.initializer.memory_processor,  # type: ignore[arg-type]
-                    conversation_manager=self.initializer.conversation_manager,  # type: ignore[arg-type]
-                    identity_runtime=self.initializer.identity_runtime,
-                    jargon_filter=getattr(self.initializer, "jargon_filter", None),
-                    jargon_miner=getattr(self.initializer, "jargon_miner", None),
-                    jargon_query_service=getattr(
-                        self.initializer, "jargon_query_service", None
-                    ),
-                    affection_manager=getattr(
-                        self.initializer, "affection_manager", None
-                    ),
-                    expression_learner=getattr(
-                        self.initializer, "expression_learner", None
-                    ),
-                    relation_manager=getattr(
-                        self.initializer, "relation_manager", None
-                    ),
-                    prompt_protection_service=getattr(
-                        self.initializer, "prompt_protection", None
-                    ),
-                    write_guard_cb=self._writes_blocked_by_pending_restore,
-                    perf_tracker=self._perf_tracker,
-                    injection_recorder=self.initializer.injection_decision_recorder,
-                    memory_tool_available=memory_tool_available,
-                    memory_evolution_manager=getattr(
-                        self.initializer, "memory_evolution_manager", None
-                    ),
-                    memory_quality_gate=getattr(
-                        self.initializer, "memory_quality_gate", None
-                    ),
-                )
-
-            # 创建命令处理器（幂等）
-            if not self.command_handler:
-                self.command_handler = CommandHandler(
-                    context=self.context,
-                    config_manager=self.config_manager,
-                    memory_engine=self.initializer.memory_engine,
-                    conversation_manager=self.initializer.conversation_manager,
-                    index_validator=self.initializer.index_validator,
-                    identity_runtime=self.initializer.identity_runtime,
-                    memory_processor=self.initializer.memory_processor,
-                    memory_quality_gate=getattr(
-                        self.initializer, "memory_quality_gate", None
-                    ),
-                    initialization_status_callback=self._get_initialization_status_message,
-                    summary_window_locker=self.event_handler.summary_window_locker
-                    if self.event_handler
-                    else None,
-                    write_guard_cb=self._writes_blocked_by_pending_restore,
-                    diagnostics_health_provider=getattr(
-                        self.page_api,
-                        "get_diagnostics_health",
-                        None,
-                    ),
-                    diagnostics_metrics_provider=getattr(
-                        self.page_api,
-                        "get_metrics_summary",
-                        None,
-                    ),
-                    recall_trace_provider=getattr(
-                        self.page_api,
-                        "test_recall_with_trace_payload",
-                        None,
-                    ),
-                    update_manager=self._update_manager,
-                    update_installer=self._update_installer,
-                )
+            publish_runtime_handlers(self)
 
         observability.report_debug_event(
             "plugin_initialized",
@@ -1009,6 +922,18 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             self.initializer.stop_background_tasks(),
             timeout=STEP_TIMEOUT,
         )
+        stop_summary_scheduler = getattr(
+            self.initializer, "stop_summary_scheduler", None
+        )
+        if callable(stop_summary_scheduler):
+            await _safe_step(
+                "summary_scheduler",
+                "停止记忆总结调度器",
+                stop_summary_scheduler(),
+                timeout=STEP_TIMEOUT,
+            )
+        else:
+            _report_skipped("summary_scheduler", "component_inactive")
 
         # 3. 通知事件处理器停止（如果仍有存储任务在运行）
         if self.event_handler:

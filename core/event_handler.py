@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import time
 from functools import partial
 from typing import TYPE_CHECKING, Any, cast
@@ -31,6 +32,7 @@ from .features.observability.infrastructure.debug_reporter import (
 from .features.recall.application.injection_cleaner import InjectionCleaner
 from .features.recall.application.recall_handler import RecallHandler
 from .features.recall.application.recall_observability import RecallTimingContext
+from .features.recall.processors.llm_client import LLMClient
 from .features.recall.processors.memory_processor import MemoryProcessor
 from .features.reflection.application.reflection_handler import ReflectionHandler
 from .platform.config.cost_control import build_cost_control_from_config
@@ -74,9 +76,9 @@ class EventHandler(CognitiveComponentsMixin):
         perf_tracker: Any | None = None,
         injection_recorder: InjectionDecisionRecorder | None = None,
         memory_tool_available: bool = False,
-        memory_evolution_manager: Any | None = None,
         memory_quality_gate: Any | None = None,
         identity_runtime: IdentityConversationPort | None = None,
+        summary_scheduler: Any | None = None,
     ) -> None:
         """绑定事件主链依赖，并接收组合根发布的协议身份端口。"""
 
@@ -92,7 +94,6 @@ class EventHandler(CognitiveComponentsMixin):
         self._write_guard_cb = write_guard_cb
         self._injection_recorder = injection_recorder
         self._memory_tool_available = memory_tool_available
-        self._memory_evolution_manager = memory_evolution_manager
         configured_cost_control = getattr(memory_engine, "cost_control", None)
         cost_control_section = config_manager.get_section("cost_control")
         if not isinstance(cost_control_section, dict):
@@ -114,6 +115,11 @@ class EventHandler(CognitiveComponentsMixin):
         self._injection_adapter = InjectionAdapter()
         self._maintenance_tasks: set[asyncio.Task] = set()
 
+        llm_id = config_manager.get("provider_settings.llm_provider_id")
+        self._query_rewrite_llm_client = LLMClient(
+            context,
+            llm_provider=llm_id if llm_id else None,
+        )
         self._recall_handler = RecallHandler(
             context=context,
             config_manager=config_manager,
@@ -135,7 +141,7 @@ class EventHandler(CognitiveComponentsMixin):
                 else None
             ),
             query_rewrite_llm_caller=partial(
-                memory_processor.llm_client.call_llm_with_retry,
+                self._query_rewrite_llm_client.call_llm_with_retry,
                 system_prompt="只解析记忆查询意图并返回要求的 JSON。",
                 max_retries=1,
             ),
@@ -154,15 +160,10 @@ class EventHandler(CognitiveComponentsMixin):
             relation_manager=relation_manager,
             prompt_protection_service=prompt_protection_service,
             write_guard_cb=write_guard_cb,
-            memory_evolution_manager=memory_evolution_manager,
             memory_quality_gate=memory_quality_gate,
             cost_control=self._cost_control,
+            summary_scheduler=summary_scheduler,
         )
-
-    @property
-    def summary_window_locker(self) -> ReflectionHandler:
-        """反思流程与命令流程共用的会话级总结提交锁。"""
-        return self._reflection_handler
 
     def _new_extra_llm_budget(self, event: AstrMessageEvent) -> ExtraLlmBudget:
         """为新 AstrBot 请求创建预算并附着到同一事件对象。"""
@@ -333,7 +334,9 @@ class EventHandler(CognitiveComponentsMixin):
                 budget = self._new_extra_llm_budget(event)
                 try:
                     with extra_llm_budget_scope(budget):
-                        await self._reflection_handler.maybe_schedule_summary(event)
+                        await self._reflection_handler.maybe_schedule_summary(
+                            event, identity=identity
+                        )
                 finally:
                     self._clear_extra_llm_budget(event, budget)
 
@@ -654,55 +657,27 @@ class EventHandler(CognitiveComponentsMixin):
             if actual_count <= max_messages:
                 return
 
-            last_summarized_index = (
-                await self.conversation_manager.get_session_metadata(
-                    session_id,
-                    "last_summarized_index",
-                    0,
-                )
-            )
-
             overflow_count = actual_count - max_messages
             target_delete = max(overflow_count, cleanup_batch_size)
-            safe_to_delete = min(target_delete, last_summarized_index)
-
-            if safe_to_delete <= 0:
-                logger.debug(
-                    f"[{session_id}] 无可删除消息: "
-                    f"溢出={overflow_count}, 批量={cleanup_batch_size}, "
-                    f"目标删除={target_delete}, 已总结={last_summarized_index}"
-                )
+            atomic_trim = getattr(self.conversation_manager.store, "trim_if_safe", None)
+            get_epoch = getattr(
+                self.conversation_manager.store, "get_summary_epoch", None
+            )
+            if not callable(atomic_trim) or not callable(get_epoch):
+                logger.warning("消息来源修剪不可用，已拒绝删除以保护未收口总结来源")
                 return
-
-            logger.info(
-                f"[{session_id}] 开始清理已总结消息: "
-                f"总数={actual_count}, 上限={max_messages}, "
-                f"溢出={overflow_count}, 批量={cleanup_batch_size}, "
-                f"目标删除={target_delete}, 已总结={last_summarized_index}, "
-                f"实际删除={safe_to_delete}"
-            )
-
-            actually_deleted = (
-                await self.conversation_manager.store.trim_session_messages(
-                    session_id,
-                    safe_to_delete,
-                )
-            )
-
-            new_actual_count = max(0, actual_count - actually_deleted)
-            new_summarized_index = await self.conversation_manager.get_session_metadata(
-                session_id,
-                "last_summarized_index",
-                max(0, last_summarized_index - actually_deleted),
-            )
-
-            await self.conversation_manager.invalidate_cache(session_id)
-
-            logger.info(
-                f"[{session_id}] 消息清理完成: "
-                f"删除={actually_deleted}条, 剩余={new_actual_count}条, "
-                f"总结索引: {last_summarized_index} -> {new_summarized_index}"
-            )
+            epoch_value = get_epoch(session_id)
+            if inspect.isawaitable(epoch_value):
+                epoch_value = await epoch_value
+            if not isinstance(epoch_value, (tuple, list)) or not epoch_value:
+                logger.warning("总结 epoch 不可用，已拒绝消息来源修剪")
+                return
+            trim_result = atomic_trim(session_id, int(epoch_value[0]), target_delete)
+            if inspect.isawaitable(trim_result):
+                trim_result = await trim_result
+            actually_deleted = int(getattr(trim_result, "deleted_count", 0) or 0)
+            if actually_deleted:
+                await self.conversation_manager.invalidate_cache(session_id)
 
         except Exception as e:
             logger.error(f"[{session_id}] 删除旧消息失败: {e}", exc_info=True)

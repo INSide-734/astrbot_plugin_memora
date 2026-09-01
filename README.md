@@ -35,7 +35,7 @@ Memora 是 AstrBot 的长期记忆插件，为对话提供记忆提取、混合�
 - 可选记忆再巩固只在召回时生成 pending 候选，人工确认后按来源 revision CAS 应用并可回滚，默认关闭、不自动改写 canonical。
 - 可选自主学习从统一可信反馈生成 shadow 参数候选并等待人工 CAS 发布，默认关闭、不自动修改生产检索权重。
 - 提供 Dashboard、管理命令、Agent 工具与 Page API。
-- 手动总结会分别报告四类处置计数：写入长期记忆、进入复核队列的隔离候选、门禁丢弃与 mark_write 标记写入，不把隔离、丢弃或标记结果伪装成 canonical 写入成功。
+- 自动与手动总结统一进入可恢复的 SQLite 窗口任务；`/memora summarize` 立即返回排队、重复和并发计数，最终 canonical、quarantine、discard 与 mark_write 累计通过诊断查看。
 - 提供诊断、评测、备份恢复、索引重建和校验后的在线更新。
 
 ## Dashboard

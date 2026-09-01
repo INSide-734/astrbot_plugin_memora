@@ -12,6 +12,9 @@ from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from astrbot.api.platform import MessageType
 
+from ....features.reflection.domain.summary_models import (
+    sanitize_summary_task_snapshot,
+)
 from ....platform.resources.i18n_backend import t
 
 DiagnosticProvider = Callable[..., Awaitable[Mapping[str, Any]]]
@@ -242,51 +245,81 @@ class DiagnosticCommandMixin:
         index = cls._safe_mapping(payload.get("index"))
         write = cls._safe_mapping(payload.get("write_coordinator"))
         prometheus = cls._safe_mapping(payload.get("prometheus"))
+        summary_value = payload.get("summary_tasks")
+        summary_tasks: dict[str, int] | None = None
+        if summary_value is not None:
+            try:
+                summary_tasks = sanitize_summary_task_snapshot(summary_value).to_dict()
+            except Exception:
+                summary_tasks = sanitize_summary_task_snapshot(None).to_dict()
 
-        return "\n".join(
-            [
-                t("command_diagnostics.snapshot.header"),
-                cls._format_snapshot_provider(provider),
-                t(
-                    "command_diagnostics.snapshot.recall",
-                    samples=cls._safe_int(recall.get("sample_count")),
-                    avg=cls._number_text(recall.get("avg_total_ms")),
-                    p50=cls._number_text(recall.get("p50_total_ms")),
-                    p95=cls._number_text(recall.get("p95_total_ms")),
-                ),
-                t(
-                    "command_diagnostics.snapshot.tasks",
-                    tracked=cls._safe_int(tasks.get("tracked")),
-                    active=cls._safe_int(tasks.get("active")),
-                    completed=cls._safe_int(tasks.get("completed")),
-                    failed=cls._safe_int(tasks.get("failed")),
-                    cancelled=cls._safe_int(tasks.get("cancelled")),
-                ),
-                t(
-                    "command_diagnostics.snapshot.index",
-                    available=cls._bool_text(index.get("validator_available")),
-                    consistent=cls._bool_text(index.get("last_check_consistent")),
-                    needs_rebuild=cls._bool_text(index.get("last_check_needs_rebuild")),
-                    total=cls._safe_int(index.get("last_rebuild_total")),
-                    errors=cls._safe_int(index.get("last_rebuild_errors")),
-                ),
-                t(
-                    "command_diagnostics.snapshot.write",
-                    operations=cls._safe_int(write.get("operations_total")),
-                    retries=cls._safe_int(write.get("lock_retries_total")),
-                    failures=cls._safe_int(write.get("failures_total")),
-                    fatal=cls._safe_int(write.get("fatal_failures_total")),
-                    non_retryable=cls._safe_int(
-                        write.get("non_retryable_failures_total")
+        lines = [
+            t("command_diagnostics.snapshot.header"),
+            cls._format_snapshot_provider(provider),
+            t(
+                "command_diagnostics.snapshot.recall",
+                samples=cls._safe_int(recall.get("sample_count")),
+                avg=cls._number_text(recall.get("avg_total_ms")),
+                p50=cls._number_text(recall.get("p50_total_ms")),
+                p95=cls._number_text(recall.get("p95_total_ms")),
+            ),
+            t(
+                "command_diagnostics.snapshot.tasks",
+                tracked=cls._safe_int(tasks.get("tracked")),
+                active=cls._safe_int(tasks.get("active")),
+                completed=cls._safe_int(tasks.get("completed")),
+                failed=cls._safe_int(tasks.get("failed")),
+                cancelled=cls._safe_int(tasks.get("cancelled")),
+            ),
+            t(
+                "command_diagnostics.snapshot.index",
+                available=cls._bool_text(index.get("validator_available")),
+                consistent=cls._bool_text(index.get("last_check_consistent")),
+                needs_rebuild=cls._bool_text(index.get("last_check_needs_rebuild")),
+                total=cls._safe_int(index.get("last_rebuild_total")),
+                errors=cls._safe_int(index.get("last_rebuild_errors")),
+            ),
+            t(
+                "command_diagnostics.snapshot.write",
+                operations=cls._safe_int(write.get("operations_total")),
+                retries=cls._safe_int(write.get("lock_retries_total")),
+                failures=cls._safe_int(write.get("failures_total")),
+                fatal=cls._safe_int(write.get("fatal_failures_total")),
+                non_retryable=cls._safe_int(write.get("non_retryable_failures_total")),
+            ),
+            t(
+                "command_diagnostics.snapshot.prometheus",
+                available=cls._bool_text(prometheus.get("available")),
+                collectors=cls._safe_int(prometheus.get("collector_count")),
+            ),
+        ]
+        if summary_tasks is not None:
+            lines.extend(
+                [
+                    t(
+                        "command_diagnostics.snapshot.summary_tasks",
+                        queued=summary_tasks["queued"],
+                        running=summary_tasks["running"],
+                        failed=summary_tasks["failed"],
+                        blocked=summary_tasks["blocked"],
+                        unknown=summary_tasks["unknown"],
+                        cancelled=summary_tasks["cancelled"],
+                        abandoned=summary_tasks["abandoned"],
+                        active=summary_tasks["active_parallelism"],
+                        target=summary_tasks["target_parallelism"],
                     ),
-                ),
-                t(
-                    "command_diagnostics.snapshot.prometheus",
-                    available=cls._bool_text(prometheus.get("available")),
-                    collectors=cls._safe_int(prometheus.get("collector_count")),
-                ),
-            ]
-        )
+                    t(
+                        "command_diagnostics.snapshot.summary_results",
+                        canonical=summary_tasks["canonical_total"],
+                        quarantine=summary_tasks["quarantine_total"],
+                        discard=summary_tasks["discard_total"],
+                        mark_write=summary_tasks["mark_write_total"],
+                        failed_candidate=summary_tasks["failed_candidate_total"],
+                        skipped_idempotent=summary_tasks["skipped_idempotent_total"],
+                    ),
+                ]
+            )
+        return "\n".join(lines)
 
     @classmethod
     def _format_snapshot_provider(cls, provider: Mapping[str, Any]) -> str:

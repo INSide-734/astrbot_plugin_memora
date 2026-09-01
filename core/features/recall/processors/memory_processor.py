@@ -23,6 +23,7 @@ from ....shared.extra_llm_budget import (
     budgeted_extra_llm_call,
     current_extra_llm_budget,
 )
+from ....shared.summary_llm_limiter import SummaryLlmLimiter
 from ...identity.application.enricher import build_memory_identity_context
 from ...memory.domain.memory_atom import MemoryAtom
 from ...quality.domain.gate_config import BUILTIN_GENERIC_TERMS, GateProfile
@@ -72,6 +73,7 @@ class MemoryProcessor:
         | None = None,
         topic_embed_fn: Callable[[list[str]], Awaitable[list[list[float]]]]
         | None = None,
+        limiter: SummaryLlmLimiter | None = None,
     ):
         """初始化结构化抽取、话题分段、质量校验与存储格式协作对象。
 
@@ -83,13 +85,14 @@ class MemoryProcessor:
             gate_runtime: 门禁运行时；缺省时使用内置默认快照。
             grounding_judge: 可选的来源可信度 Judge。
             topic_embed_fn: 策略 B 使用的批量 Embedding 入口。
+            limiter: 可选的进程内总结 LLM 并发限流器，仅转发给 LLMClient。
         """
 
         self.context = context
         self.config = config or {}
         self.cost_control = cost_control or CostControl()
         self._gate_runtime = gate_runtime
-        self.llm_client = LLMClient(context, llm_provider)
+        self.llm_client = LLMClient(context, llm_provider, limiter=limiter)
         # core 包内 prompts 目录（core/prompts）：本文件位于 core/features/recall/processors，
         # parents[3] 即 core 包根，规避按相对层级推算目录的漂移。
         prompt_dir = Path(__file__).resolve().parents[3] / "prompts"
@@ -157,6 +160,7 @@ class MemoryProcessor:
         continuity_context: str | None = None,
         llm_max_retries: int = 3,
         group_id: str | None = None,
+        gate_snapshot_json: str | None = None,
     ) -> list[dict[str, Any]]:
         """处理对话批次并生成结构化记忆（可能返回多条独立话题记忆）。
 
@@ -165,12 +169,12 @@ class MemoryProcessor:
         """
         if not messages:
             raise ValueError("消息列表不能为空")
-
         profile, gate_enabled = resolve_reflection_gate(
             self._gate_runtime,
             is_group_chat=is_group_chat,
             group_id=group_id,
             persona_id=persona_id,
+            gate_snapshot_json=gate_snapshot_json,
         )
 
         total_started = time.perf_counter()

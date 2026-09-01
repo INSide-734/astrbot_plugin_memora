@@ -1,6 +1,5 @@
 """ConversationStore 的消息存储操作。"""
 
-import json
 import time
 
 from astrbot.api import logger
@@ -38,70 +37,97 @@ class MessageStoreMixin(MessageQueryMixin):
         content = Message.content_to_text(message.content)
         now = time.time()
         async with self._write_lock:
-            await self.connection.execute(
-                """
-                INSERT INTO sessions (
-                    session_id, platform, created_at, last_active_at,
-                    message_count, participants, metadata
+            try:
+                await self.connection.execute("BEGIN IMMEDIATE")
+                await self.connection.execute(
+                    """
+                    INSERT INTO sessions (
+                        session_id, platform, created_at, last_active_at,
+                        message_count, participants, metadata
+                    )
+                    VALUES (?, ?, ?, ?, 0, '[]', '{}')
+                    ON CONFLICT(session_id) DO NOTHING
+                    """,
+                    (message.session_id, platform, now, message.timestamp),
                 )
-                VALUES (?, ?, ?, ?, 0, '[]', '{}')
-                ON CONFLICT(session_id) DO NOTHING
-                """,
-                (message.session_id, platform, now, message.timestamp),
-            )
-
-            cursor = await self.connection.execute(
-                """
-                INSERT INTO messages (
-                    session_id, role, content, sender_id, sender_name,
-                    group_id, platform, timestamp, metadata
+                seq_cursor = await self.connection.execute(
+                    """
+                    SELECT MAX(
+                      COALESCE((SELECT MAX(message_seq) FROM messages WHERE session_id=?),0),
+                      COALESCE((SELECT cursor_seq FROM session_epochs WHERE session_id=?),0)
+                    ) + 1
+                    """,
+                    (message.session_id, message.session_id),
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-                (
-                    message.session_id,
-                    message.role,
-                    content,
-                    sender_id,
-                    message.sender_name,
-                    message.group_id,
-                    platform,
-                    message.timestamp,
-                    serialize_to_json(message.metadata),
-                ),
-            )
+                seq_row = await seq_cursor.fetchone()
+                message_seq = int(seq_row[0] if seq_row else 1)
+                cursor = await self.connection.execute(
+                    """
+                    INSERT INTO messages (
+                        session_id, role, content, sender_id, sender_name,
+                        group_id, platform, timestamp, metadata, message_seq
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message.session_id,
+                        message.role,
+                        content,
+                        sender_id,
+                        message.sender_name,
+                        message.group_id,
+                        platform,
+                        message.timestamp,
+                        serialize_to_json(message.metadata),
+                        message_seq,
+                    ),
+                )
 
-            message_id = cursor.lastrowid if cursor.lastrowid else 0
-
-            await self.connection.execute(
-                """
-                UPDATE sessions
-                SET message_count = message_count + 1,
-                    last_active_at = ?,
-                    participants = CASE
-                        WHEN ? = '' THEN participants
-                        WHEN EXISTS (
-                            SELECT 1
-                            FROM json_each(COALESCE(NULLIF(participants, ''), '[]'))
-                            WHERE value = ?
-                        ) THEN participants
-                        ELSE json_insert(
-                            COALESCE(NULLIF(participants, ''), '[]'),
-                            '$[#]',
-                            ?
-                        )
-                    END
-                WHERE session_id = ?
-            """,
-                (
-                    message.timestamp,
-                    sender_id,
-                    sender_id,
-                    sender_id,
-                    message.session_id,
-                ),
-            )
-            await self.connection.commit()
+                message_id = cursor.lastrowid if cursor.lastrowid else 0
+                await self.connection.execute(
+                    """
+                    UPDATE sessions
+                    SET message_count = message_count + 1,
+                        last_active_at = ?,
+                        metadata = CASE
+                            WHEN json_valid(metadata) THEN json_set(
+                                metadata,
+                                '$.chat_type', ?,
+                                '$.group_id', ?,
+                                '$.scope_id', ?
+                            )
+                            ELSE metadata
+                        END,
+                        participants = CASE
+                            WHEN ? = '' THEN participants
+                            WHEN EXISTS (
+                                SELECT 1
+                                FROM json_each(COALESCE(NULLIF(participants, ''), '[]'))
+                                WHERE value = ?
+                            ) THEN participants
+                            ELSE json_insert(
+                                COALESCE(NULLIF(participants, ''), '[]'),
+                                '$[#]',
+                                ?
+                            )
+                        END
+                    WHERE session_id = ?
+                    """,
+                    (
+                        message.timestamp,
+                        "group" if message.group_id else "private",
+                        message.group_id,
+                        message.group_id or message.session_id,
+                        sender_id,
+                        sender_id,
+                        sender_id,
+                        message.session_id,
+                    ),
+                )
+                await self.connection.commit()
+            except BaseException:
+                await self.connection.rollback()
+                raise
 
         logger.debug(
             f"[ConversationStore] 添加消息: session={message.session_id}, role={message.role}"
@@ -129,7 +155,7 @@ class MessageStoreMixin(MessageQueryMixin):
                        group_id, platform, timestamp, metadata
                 FROM messages
                 WHERE session_id = ? AND sender_id = ?
-                ORDER BY timestamp DESC
+                ORDER BY message_seq DESC
                 LIMIT ?
             """
             params = (session_id, sender_id, limit)
@@ -140,7 +166,7 @@ class MessageStoreMixin(MessageQueryMixin):
                        group_id, platform, timestamp, metadata
                 FROM messages
                 WHERE session_id = ?
-                ORDER BY timestamp DESC
+                ORDER BY message_seq DESC
                 LIMIT ?
             """
             params = (session_id, limit)
@@ -290,145 +316,3 @@ class MessageStoreMixin(MessageQueryMixin):
         if session_id:
             return "AND session_id = ?", (session_id,)
         return "AND platform = ? AND group_id IS NULL", (private_platform or "",)
-
-    async def trim_session_messages(
-        self,
-        session_id: str,
-        delete_count: int,
-    ) -> int:
-        """仅删除最旧的已总结消息，并刷新会话计数。"""
-        if self.connection is None or delete_count <= 0:
-            return 0
-
-        async with self.connection.execute(
-            """
-            SELECT
-                s.metadata,
-                COUNT(m.id) AS actual_count
-            FROM sessions s
-            LEFT JOIN messages m ON m.session_id = s.session_id
-            WHERE s.session_id = ?
-            GROUP BY s.session_id
-            """,
-            (session_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-
-        if not row:
-            return 0
-
-        try:
-            metadata = json.loads(row["metadata"] or "{}")
-        except (json.JSONDecodeError, TypeError):
-            metadata = {}
-        if not isinstance(metadata, dict):
-            metadata = {}
-
-        try:
-            last_summarized_index = int(metadata.get("last_summarized_index", 0) or 0)
-        except (TypeError, ValueError):
-            last_summarized_index = 0
-        last_summarized_index = max(0, last_summarized_index)
-
-        actual_count = int(row["actual_count"] or 0)
-
-        if last_summarized_index > actual_count:
-            metadata["last_summarized_index"] = 0
-            async with self._write_lock:
-                await self.connection.execute(
-                    """
-                    UPDATE sessions
-                    SET metadata = ?,
-                        message_count = ?
-                    WHERE session_id = ?
-                    """,
-                    (
-                        json.dumps(metadata, ensure_ascii=False),
-                        actual_count,
-                        session_id,
-                    ),
-                )
-                await self.connection.commit()
-            logger.warning(
-                f"[ConversationStore] 阻止清理未总结消息并重置 last_summarized_index: "
-                f"{session_id} ({last_summarized_index} > {actual_count})"
-            )
-            return 0
-
-        safe_delete_count = min(delete_count, last_summarized_index)
-        if safe_delete_count <= 0:
-            return 0
-
-        async with self._write_lock:
-            cursor = await self.connection.execute(
-                """
-                DELETE FROM messages
-                WHERE id IN (
-                    SELECT id FROM messages
-                    WHERE session_id = ?
-                    ORDER BY timestamp ASC, id ASC
-                    LIMIT ?
-                )
-                """,
-                (session_id, safe_delete_count),
-            )
-            deleted_count = max(0, cursor.rowcount)
-            if deleted_count <= 0:
-                return 0
-
-            metadata["last_summarized_index"] = max(
-                0, last_summarized_index - deleted_count
-            )
-            await self.connection.execute(
-                """
-                UPDATE sessions
-                SET message_count = ?,
-                    metadata = ?
-                WHERE session_id = ?
-                """,
-                (
-                    max(0, actual_count - deleted_count),
-                    json.dumps(metadata, ensure_ascii=False),
-                    session_id,
-                ),
-            )
-            await self.connection.commit()
-        return deleted_count
-
-    async def delete_session_messages(self, session_id: str) -> int:
-        """
-        删除会话的所有消息
-
-        Args:
-            session_id: 会话ID
-
-        Returns:
-            int: 删除的消息数量
-        """
-        if self.connection is None:
-            return 0
-        async with self._write_lock:
-            cursor = await self.connection.execute(
-                """
-                DELETE FROM messages
-                WHERE session_id = ?
-            """,
-                (session_id,),
-            )
-
-            deleted_count = cursor.rowcount
-
-            await self.connection.execute(
-                """
-                UPDATE sessions
-                SET message_count = 0
-                WHERE session_id = ?
-            """,
-                (session_id,),
-            )
-            await self.connection.commit()
-
-        logger.info(
-            f"[ConversationStore] 删除会话消息: session={session_id}, count={deleted_count}"
-        )
-        return deleted_count

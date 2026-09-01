@@ -20,10 +20,11 @@ class ReflectionStoreOutcome(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class ReflectionStoreResult:
-    """保存单条候选结果及可提交的幂等键。"""
+    """保存单条候选结果、幂等键及可选 canonical ID。"""
 
     outcome: ReflectionStoreOutcome
     idempotency_key: str = ""
+    canonical_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

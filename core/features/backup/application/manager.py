@@ -11,8 +11,10 @@ import shutil
 import sqlite3
 import time
 import uuid
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, cast
 
 from astrbot.api import logger
 
@@ -56,6 +58,28 @@ class BackupManager(BackupRestoreTransactionMixin):
         self.data_dir = Path(data_dir)
         self.version_file = self.data_dir / _VERSION_FILE
         self._operation_lock = asyncio.Lock()
+        self._summary_scheduler: object | None = None
+
+    def bind_summary_scheduler(self, scheduler: object | None) -> None:
+        """绑定可暂停/恢复的总结调度器；未装配时保持普通备份行为。"""
+        self._summary_scheduler = scheduler
+
+    @contextlib.asynccontextmanager
+    async def _summary_quiesced(self) -> AsyncGenerator[None, None]:
+        """在异步备份期间暂停总结入队、领取和 worker。"""
+        scheduler = self._summary_scheduler
+        pause = getattr(scheduler, "pause", None)
+        resume = getattr(scheduler, "resume", None)
+        if not callable(pause) or not callable(resume):
+            yield
+            return
+        pause_call = cast(Callable[[], Awaitable[None]], pause)
+        resume_call = cast(Callable[[], Awaitable[None]], resume)
+        await pause_call()
+        try:
+            yield
+        finally:
+            await resume_call()
 
     # 公共接口
 
@@ -100,20 +124,45 @@ class BackupManager(BackupRestoreTransactionMixin):
         self.write_current_version()
         return result
 
-    async def backup_if_needed_async(self) -> dict[str, object] | None:
-        """在线程池中执行版本检查和同步文件备份。"""
+    @staticmethod
+    async def _run_sync_backup(operation: Callable[..., Any], *args: object) -> Any:
+        """即使调用方取消，也等待同步快照线程结束后再传播控制流。"""
+        task = asyncio.create_task(asyncio.to_thread(operation, *args))
+        cancelled = False
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+        try:
+            result = task.result()
+        except BaseException:
+            if cancelled:
+                raise asyncio.CancelledError
+            raise
+        if cancelled:
+            raise asyncio.CancelledError
+        return result
 
-        return await asyncio.to_thread(self.backup_if_needed)
+    async def backup_if_needed_async(self) -> dict[str, object] | None:
+        """暂停总结调度器后在线程池中执行版本变更备份。"""
+        async with self._operation_lock:
+            async with self._summary_quiesced():
+                return await self._run_sync_backup(self.backup_if_needed)
 
     async def create_backup(self, kind: str = "manual") -> dict[str, object]:
-        """创建经过校验的备份，并把同步文件 I/O 放入线程池。"""
-
+        """暂停总结调度器后创建经过校验的完整备份。"""
         try:
             backup_type = BackupType(kind)
         except ValueError as exc:
             raise BackupOperationError("invalid_backup_type") from exc
         async with self._operation_lock:
-            return await asyncio.to_thread(self._create_backup_sync, backup_type, None)
+            async with self._summary_quiesced():
+                return await self._run_sync_backup(
+                    self._create_backup_sync,
+                    backup_type,
+                    None,
+                )
 
     def _has_backup_data(self) -> bool:
         """判断 live 数据目录是否包含可备份的 canonical SQLite。"""
@@ -172,6 +221,36 @@ class BackupManager(BackupRestoreTransactionMixin):
         )
         return snapshots, total_size
 
+    @staticmethod
+    def _summary_backup_state(temporary_dir: Path) -> dict[str, object]:
+        """从 conversations.db 快照读取安全 schema 与任务计数。"""
+        path = temporary_dir / "conversations.db"
+        if not path.is_file():
+            return {"present": False, "schema_version": 0, "job_count": 0}
+        connection = sqlite3.connect(str(path))
+        try:
+            version_row = connection.execute("PRAGMA user_version").fetchone()
+            schema_version = int(version_row[0] or 0) if version_row else 0
+            has_jobs = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='summary_jobs'"
+            ).fetchone()
+            job_count = (
+                int(
+                    connection.execute("SELECT COUNT(*) FROM summary_jobs").fetchone()[
+                        0
+                    ]
+                )
+                if has_jobs
+                else 0
+            )
+            return {
+                "present": True,
+                "schema_version": max(0, schema_version),
+                "job_count": max(0, job_count),
+            }
+        finally:
+            connection.close()
+
     def _create_backup_sync(
         self,
         backup_type: BackupType,
@@ -197,6 +276,8 @@ class BackupManager(BackupRestoreTransactionMixin):
                 "previous_version": previous_version,
                 "backup_timestamp": timestamp,
                 "backup_unix_time": time.time(),
+                "backup_epoch": uuid.uuid4().hex,
+                "summary_state": self._summary_backup_state(temporary_dir),
                 "files": snapshots,
                 "file_count": len(snapshots),
                 "total_size_bytes": total_size,

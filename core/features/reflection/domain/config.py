@@ -10,6 +10,13 @@ class ReflectionEngineConfig(BaseModel):
         default=10, ge=1, le=100, description="触发反思的对话轮次"
     )
 
+    max_parallel_summary_tasks: int = Field(
+        default=4, ge=1, le=16, description="全局活动总结窗口上限"
+    )
+    max_parallel_summary_tasks_per_session: int = Field(
+        default=2, ge=1, le=8, description="单会话活动总结窗口上限"
+    )
+
 
 class StrategyBConfig(BaseModel):
     """策略 B 的嵌入聚类参数。"""

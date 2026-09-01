@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import secrets
@@ -21,9 +22,19 @@ class MemoryQuarantineStore:
     """用独立 SQLite 状态机保存 pre-canonical 记忆候选。"""
 
     def __init__(self, db_path: str | Path) -> None:
-        """记录隔离数据库路径；每次操作使用独立短连接。"""
+        """记录隔离数据库路径并建立来源协调锁。"""
 
         self.db_path = str(db_path)
+        self._source_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def source_guard(self):
+        """协调隔离候选写入与来源删除。"""
+        await self._source_lock.acquire()
+        try:
+            yield
+        finally:
+            self._source_lock.release()
 
     @asynccontextmanager
     async def _connect(self):
@@ -96,7 +107,7 @@ class MemoryQuarantineStore:
                 )
             await db.commit()
 
-    async def stage_candidate(
+    async def _stage_candidate_unlocked(
         self,
         *,
         candidate_key: str,
@@ -109,8 +120,7 @@ class MemoryQuarantineStore:
         source_window: Mapping[str, Any],
         is_group_chat: bool,
     ) -> dict[str, Any]:
-        """按稳定候选键幂等写入 pending 候选并返回权威记录。"""
-
+        """在调用方持有来源锁时幂等写入隔离候选。"""
         normalized_key = str(candidate_key).strip()
         if not normalized_key:
             raise ValueError("candidate_key 不能为空")
@@ -164,6 +174,14 @@ class MemoryQuarantineStore:
             raise RuntimeError("隔离候选未能持久化")
         return self._row_to_candidate(row)
 
+    async def stage_candidate(
+        self,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """在来源协调锁内幂等写入隔离候选。"""
+        async with self.source_guard():
+            return await self._stage_candidate_unlocked(**kwargs)
+
     async def get_candidate(self, candidate_id: str | None) -> dict[str, Any] | None:
         """按候选 ID 返回一条隔离记录；不存在时返回 ``None``。"""
 
@@ -200,6 +218,19 @@ class MemoryQuarantineStore:
             cursor = await db.execute(sql, tuple(params))
             rows = await cursor.fetchall()
         return [self._row_to_candidate(row) for row in rows]
+
+    async def has_pending_for_session(self, session_id: str) -> bool:
+        """判断会话是否存在仍需来源的隔离候选。"""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                """
+                SELECT 1 FROM memory_quarantine_candidates
+                WHERE session_id = ? AND status NOT IN ('approved', 'rejected')
+                LIMIT 1
+                """,
+                (str(session_id),),
+            )
+            return await cursor.fetchone() is not None
 
     async def claim_approval(
         self,
@@ -360,6 +391,15 @@ class MemoryQuarantineStore:
         return [self._row_to_action(row) for row in rows]
 
     async def _transition(
+        self,
+        candidate_id: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """在进程内来源协调锁下执行候选状态转换。"""
+        async with self.source_guard():
+            return await self._transition_unlocked(candidate_id, **kwargs)
+
+    async def _transition_unlocked(
         self,
         candidate_id: str,
         *,

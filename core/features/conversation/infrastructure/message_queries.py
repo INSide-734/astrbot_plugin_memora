@@ -1,6 +1,7 @@
 """ConversationStore 的只读查询与数据完整性操作。"""
 
 import json
+from typing import Any
 
 from astrbot.api import logger
 
@@ -9,6 +10,9 @@ from ....shared.contracts.conversation import Message
 
 class MessageQueryMixin:
     """ConversationStore 的只读查询与数据完整性操作。"""
+
+    connection: Any
+    _write_lock: Any
 
     async def get_message_count(self, session_id: str) -> int:
         """
@@ -148,6 +152,66 @@ class MessageQueryMixin:
 
         return messages
 
+    async def get_messages_seq_range(
+        self,
+        session_id: str,
+        start_seq: int,
+        end_seq: int,
+        *,
+        expected_count: int | None = None,
+    ) -> list[Message]:
+        """按不可变 message_seq 读取并验证完整来源范围。"""
+        if self.connection is None:
+            raise RuntimeError("数据库连接未初始化")
+        if (
+            isinstance(start_seq, bool)
+            or isinstance(end_seq, bool)
+            or not isinstance(start_seq, int)
+            or not isinstance(end_seq, int)
+            or start_seq < 0
+            or end_seq <= start_seq
+        ):
+            raise ValueError("source_seq_range_invalid")
+        expected = end_seq - start_seq
+        if expected_count is not None:
+            if (
+                isinstance(expected_count, bool)
+                or not isinstance(expected_count, int)
+                or expected_count != expected
+            ):
+                raise ValueError("source_seq_count_invalid")
+        async with self.connection.execute(
+            """
+            SELECT id,session_id,role,content,sender_id,sender_name,
+                   group_id,platform,timestamp,metadata,message_seq
+            FROM messages
+            WHERE session_id=? AND message_seq>? AND message_seq<=?
+            ORDER BY message_seq ASC
+            """,
+            (session_id, start_seq, end_seq),
+        ) as cursor:
+            rows = await cursor.fetchall()
+        seqs = [int(row["message_seq"]) for row in rows]
+        if len(rows) != expected or seqs != list(range(start_seq + 1, end_seq + 1)):
+            raise ValueError("source_seq_range_incomplete")
+        return [
+            Message.from_dict(
+                {
+                    "id": row["id"],
+                    "session_id": row["session_id"],
+                    "role": row["role"],
+                    "content": row["content"],
+                    "sender_id": row["sender_id"],
+                    "sender_name": row["sender_name"],
+                    "group_id": row["group_id"],
+                    "platform": row["platform"],
+                    "timestamp": row["timestamp"],
+                    "metadata": row["metadata"],
+                }
+            )
+            for row in rows
+        ]
+
     async def get_messages_range(
         self, session_id: str, offset: int = 0, limit: int = 50
     ) -> list[Message]:
@@ -165,13 +229,13 @@ class MessageQueryMixin:
         if self.connection is None:
             return []
 
-        # 使用子查询确保按时间升序后再应用 OFFSET/LIMIT
+        # message_seq 在 schema migration 中建立；它不受 timestamp 倒流影响。
         query = """
             SELECT id, session_id, role, content, sender_id, sender_name,
                    group_id, platform, timestamp, metadata
             FROM messages
             WHERE session_id = ?
-            ORDER BY timestamp ASC
+            ORDER BY message_seq ASC
             LIMIT ? OFFSET ?
         """
 
@@ -268,58 +332,3 @@ class MessageQueryMixin:
         except Exception as e:
             logger.error(f"同步 message_count 失败: {e}", exc_info=True)
             return {}
-
-    async def reset_summarized_index_if_needed(self, session_id: str) -> bool:
-        """
-        检查并重置 last_summarized_index（如果它超出实际消息范围）
-
-        Args:
-            session_id: 会话ID
-
-        Returns:
-            bool: 是否进行了重置
-        """
-        if self.connection is None:
-            return False
-
-        try:
-            async with self._write_lock:
-                # 获取会话信息
-                async with self.connection.execute(
-                    "SELECT metadata, message_count FROM sessions WHERE session_id = ?",
-                    (session_id,),
-                ) as cursor:
-                    row = await cursor.fetchone()
-
-                if not row:
-                    return False
-
-                metadata_str = row["metadata"] or "{}"
-                metadata = json.loads(metadata_str)
-                message_count = row["message_count"]
-
-                last_summarized_index = metadata.get("last_summarized_index", 0)
-
-                # 如果 last_summarized_index 超出实际消息数量，重置为0
-                if last_summarized_index > message_count:
-                    metadata["last_summarized_index"] = 0
-                    await self.connection.execute(
-                        """
-                        UPDATE sessions
-                        SET metadata = ?
-                        WHERE session_id = ?
-                        """,
-                        (json.dumps(metadata, ensure_ascii=False), session_id),
-                    )
-                    await self.connection.commit()
-                    logger.warning(
-                        f"[ConversationStore] 重置 last_summarized_index: "
-                        f"{session_id} ({last_summarized_index} -> 0, 实际消息数={message_count})"
-                    )
-                    return True
-
-            return False
-
-        except Exception as e:
-            logger.error(f"检查 last_summarized_index 失败: {e}", exc_info=True)
-            return False

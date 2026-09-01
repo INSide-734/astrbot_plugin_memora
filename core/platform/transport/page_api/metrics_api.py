@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import inspect
 import json
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from astrbot.api import logger
 from quart import request
 
+from ....features.reflection.domain.summary_models import (
+    SummaryTaskSnapshot,
+    sanitize_summary_task_snapshot,
+)
 from .response_utils import error_response, ok_response
 
 
@@ -29,22 +35,28 @@ class MetricsApiMixin:
     """Expose a compact, JSON-serializable runtime observability snapshot."""
 
     async def get_metrics_summary(self):
-        """Return recall, quality, background task, and metric registry summary."""
+        """返回召回、质量、后台任务和指标注册表摘要。"""
         try:
-            return ok_response(
-                {
-                    "recall": self._build_recall_summary(),
-                    "quality": self._build_quality_summary(),
-                    "background_tasks": self._build_background_task_summary(),
-                    "provider": self._build_provider_summary(),
-                    "index": self._build_index_summary(),
-                    "write_coordinator": self._build_write_coordinator_summary(),
-                    "prometheus": self._build_prometheus_summary(),
-                }
-            )
+            summary = {
+                "recall": self._build_recall_summary(),
+                "quality": self._build_quality_summary(),
+                "background_tasks": self._build_background_task_summary(),
+                "provider": self._build_provider_summary(),
+                "index": self._build_index_summary(),
+                "write_coordinator": self._build_write_coordinator_summary(),
+                "prometheus": self._build_prometheus_summary(),
+            }
+            summary_tasks = await self._build_summary_task_summary()
+            if summary_tasks is not None:
+                summary["summary_tasks"] = summary_tasks
+            return ok_response(summary)
         except Exception as exc:
-            logger.error("[指标接口] 获取运行观测摘要失败: %s", exc, exc_info=True)
-            return error_response(f"获取运行观测摘要失败: {exc}")
+            logger.error(
+                "[指标接口] 获取运行观测摘要失败，异常类型=%s",
+                exc.__class__.__name__,
+                exc_info=True,
+            )
+            return error_response("metrics_summary_failed")
 
     def _build_recall_summary(self) -> dict[str, Any]:
         tracker = self._get_existing_perf_tracker()
@@ -153,7 +165,6 @@ class MetricsApiMixin:
                     {
                         "name": self._task_name(task),
                         "error": task_exc.__class__.__name__,
-                        "message": str(task_exc),
                         "suggestion": self._failure_recovery_suggestion(
                             self._task_name(task),
                             task_exc.__class__.__name__,
@@ -171,6 +182,30 @@ class MetricsApiMixin:
             "failed_tasks": failed_tasks[:10],
             "schedulers": self._build_scheduler_summary(),
         }
+
+    async def _build_summary_task_summary(self) -> dict[str, int] | None:
+        """读取可选总结调度器，并只返回统一 allowlist 标量投影。"""
+        initializer = getattr(getattr(self, "plugin", None), "initializer", None)
+        scheduler = getattr(initializer, "summary_scheduler", None)
+        get_snapshot = getattr(scheduler, "snapshot", None)
+        if not callable(get_snapshot):
+            return None
+
+        try:
+            raw_snapshot = get_snapshot()
+            if inspect.isawaitable(raw_snapshot):
+                raw_snapshot = await raw_snapshot
+            safe_snapshot = cast(
+                SummaryTaskSnapshot | Mapping[str, object] | None,
+                raw_snapshot,
+            )
+            return sanitize_summary_task_snapshot(safe_snapshot).to_dict()
+        except Exception as exc:
+            logger.warning(
+                "[指标接口] 读取总结任务快照失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return sanitize_summary_task_snapshot(None).to_dict()
 
     def _build_provider_summary(self) -> dict[str, Any]:
         initializer = getattr(getattr(self, "plugin", None), "initializer", None)
@@ -337,7 +372,6 @@ class MetricsApiMixin:
             }
             if startup_error is not None:
                 summary["decay"]["startup_error"] = startup_error["error"]
-                summary["decay"]["startup_message"] = startup_error["message"]
                 summary["decay"]["suggestion"] = (
                     "检查衰减调度器启动日志；修复异常后重启插件以恢复定期衰减。"
                 )
@@ -474,9 +508,7 @@ class MetricsApiMixin:
             exc = task.exception()
         except Exception:
             return None
-        if exc is None:
-            return None
-        return {"error": exc.__class__.__name__, "message": str(exc)}
+        return {"error": exc.__class__.__name__}
 
     @staticmethod
     def _failure_recovery_suggestion(name: str, error: str) -> str:
@@ -529,7 +561,7 @@ class MetricsApiMixin:
 
             collectors = list(metrics.REGISTRY.collect())
             return {
-                "available": bool(metrics.is_prometheus_available()),
+                "available": metrics.is_prometheus_available(),
                 "collector_count": len(collectors),
                 "metric_names": [getattr(item, "name", "") for item in collectors],
             }
