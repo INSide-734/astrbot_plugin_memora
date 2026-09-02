@@ -13,7 +13,7 @@
 | `/memora rebuild-index` | 重建向量与 BM25/FTS 索引。 |
 | `/memora rebuild-graph` | 重建图记忆索引。 |
 | `/memora webui` | 输出 Dashboard 访问信息。 |
-| `/memora summarize [confirm-abandon]` | 默认立即入队当前会话的固定总结窗口；`confirm-abandon` 仅在管理员确认数据丢失时跳过无 canonical 证据的阻塞窗口。 |
+| `/memora summarize [confirm-abandon]` | 默认立即入队当前会话的固定总结窗口；总结可能以“无稳定事实”完成，不保证写入长期记忆。`confirm-abandon` 仅在管理员确认数据丢失时跳过无 canonical 证据的阻塞窗口。 |
 | `/memora reset` | 重置当前会话的长期记忆上下文。 |
 | `/memora cleanup [preview 或 exec]` | 清理历史消息中的记忆注入片段，默认预演。 |
 | `/memora update [check、download 或 apply]` | 检查、下载或安装经校验的 runtime 包，默认检查。 |

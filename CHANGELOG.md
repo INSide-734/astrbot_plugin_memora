@@ -15,6 +15,7 @@ Memora 的所有重要变更都记录在此文件中。
 - 新增 `reflection_engine.max_parallel_summary_tasks`（默认 `4`，范围 `1–16`）和 `reflection_engine.max_parallel_summary_tasks_per_session`（默认 `2`，范围 `1–8`）配置；`cost_control.max_reflection_parallel_llm_calls` 继续作为物理 Provider 并发上限。
 - 总结失败采用有界退避与 dead-letter/blocked 保护；source digest、claim fence、session epoch、worker generation 或跨库 candidate ledger 无法核对时进入 `unknown`/人工恢复状态，禁止推进游标、重复写入 canonical 或提前 trim 来源消息。
 - reset、TTL 清理和同名会话重建均递增 session epoch；迟到 worker 对旧 epoch 的提交安全无效。来源消息仅在连续完成前缀、隔离候选和 candidate ledger 全部收口后才允许 trim。
+- 总结阈值现在只触发一次后台总结尝试，不再把达到轮次解释为必须写入长期记忆；合法无事实结果以固定 `no_facts` reason 完成并推进窗口，零候选、零 canonical 与零派生写入；严格总结结构错误以 `summary_invalid` reason 进入有界重试，失败原因、诊断、reconcile 与 trim 保护保持可观察且不泄漏模型响应。
 
 ### 破坏性变更
 
@@ -27,8 +28,7 @@ Memora 的所有重要变更都记录在此文件中。
 
 ### 升级说明
 
-- 升级时会自动迁移 `conversations.db` 至总结调度 schema version `4`，并为历史消息回填不可变 `message_seq`；迁移失败、来源序号不连续或数据库版本高于当前版本时拒绝发布总结运行时，避免丢失或重复处理消息。
-- 历史 `pending_summary` 会幂等转换为持久化任务；无法证明完整 session/message scope 的旧 pending 保留为 `blocked`，需要管理员显式使用 `confirm-abandon` 才能跳过。
+- 升级时会自动迁移 `conversations.db` 至总结调度 schema version `5`，并为历史消息回填不可变 `message_seq`；迁移失败、来源序号不连续或数据库版本高于当前版本时拒绝发布总结运行时，避免丢失或重复处理消息。
 
 
 ### 修复

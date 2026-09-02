@@ -362,12 +362,12 @@ class SummaryStoreTerminalMixin(
                     status, next_at, reason = (
                         SummaryJobStatus.BLOCKED,
                         stamp,
-                        SummaryReasonCode.RETRY_EXHAUSTED,
+                        failure.reason_code,
                     )
                 else:
                     status = SummaryJobStatus.FAILED
                     next_at = stamp + retry_delay_seconds(claim.attempt_count)
-                    reason = SummaryReasonCode.RETRY_SCHEDULED
+                    reason = failure.reason_code
                 updated = await self.connection.execute(
                     """
                     UPDATE summary_jobs SET status=?,next_attempt_at=?,lease_until=NULL,

@@ -432,6 +432,7 @@ _VALUE_FIELDS = {
             "storage_started",
             "storage_task_already_running",
             "storage_task_scheduled",
+            "summary_invalid",
             "summary_metadata_committed",
             "summary_metadata_failed",
             "summary_metadata_retrying",

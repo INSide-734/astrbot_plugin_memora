@@ -426,7 +426,8 @@ class SummaryStoreReconcileMixin:
                     SELECT job.status,job.worker_generation,job.canonical_count,
                            job.quarantine_count,job.discard_count,job.mark_write_count,
                            job.failed_count,job.skipped_count,
-                           job.start_seq,job.end_seq,job.expected_count,job.source_digest
+                           job.start_seq,job.end_seq,job.expected_count,job.source_digest,
+                           job.reason_code
                     FROM summary_jobs AS job
                     INNER JOIN session_epochs AS epoch
                       ON epoch.session_id=job.session_id
@@ -481,6 +482,37 @@ class SummaryStoreReconcileMixin:
                 rows = list(await ledger_cursor.fetchall())
                 if status == SummaryJobStatus.COMPLETED.value:
                     if not rows:
+                        zero_counts = all(
+                            int(_row(job, name, index) or 0) == 0
+                            for name, index in (
+                                ("canonical_count", 2),
+                                ("quarantine_count", 3),
+                                ("discard_count", 4),
+                                ("mark_write_count", 5),
+                                ("failed_count", 6),
+                                ("skipped_count", 7),
+                            )
+                        )
+                        reason_code = str(_row(job, "reason_code", 12) or "")
+                        if (
+                            zero_counts
+                            and reason_code == SummaryReasonCode.NO_FACTS.value
+                            and not slot_to_canonical_id
+                        ):
+                            cursor = await self.connection.execute(
+                                "SELECT cursor_seq FROM session_epochs WHERE session_id=? AND epoch=?",
+                                (claim.session_id, claim.session_epoch),
+                            )
+                            cursor_row = await cursor.fetchone()
+                            await self.connection.commit()
+                            return CompletionResult(
+                                True,
+                                SummaryJobStatus.COMPLETED,
+                                int(_row(cursor_row, "cursor_seq", 0) or 0)
+                                if cursor_row
+                                else 0,
+                                SummaryReasonCode.NO_FACTS,
+                            )
                         return await self._mark_unknown_completed(claim, now)
                     if not _terminal_ledger_matches_job(job, rows):
                         return await self._mark_unknown_completed(claim, now)

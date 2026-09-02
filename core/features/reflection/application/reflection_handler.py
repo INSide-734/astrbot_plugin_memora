@@ -283,16 +283,16 @@ class ReflectionHandler(ReflectionContextMixin):
         *,
         identity: ResolvedIdentity | None = None,
     ) -> None:
-        """检查当前会话阈值，并在可用时调度后台记忆反思。
+        """达到当前会话阈值后调度一次后台总结尝试。
 
-        该入口同时服务于普通群消息捕获和 LLM assistant 响应。普通可恢复
-        错误只记录并降级，避免反思检查破坏聊天主链；取消信号保持传播。
+        阈值只触发尝试，不保证产生长期记忆。该入口同时服务普通群消息捕获
+        和 LLM assistant 响应；普通可恢复错误降级，取消信号保持传播。
 
         Args:
             event: 提供统一会话标识与人格作用域的 AstrBot 消息事件。
 
         Returns:
-            无返回值；达到阈值时创建并登记后台存储任务。
+            无返回值；达到阈值时创建并登记后台总结尝试任务。
 
         Raises:
             asyncio.CancelledError: 当前任务在关闭或取消期间被中止。

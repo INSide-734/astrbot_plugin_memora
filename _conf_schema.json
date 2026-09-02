@@ -593,12 +593,12 @@
     },
     "reflection_engine": {
         "description": "记忆生成设置",
-        "hint": "控制何时触发对话总结并生成记忆",
+        "hint": "控制何时触发对话总结尝试并生成有价值的记忆",
         "type": "object",
         "items": {
             "summary_trigger_rounds": {
                 "description": "总结触发轮次",
-                "hint": "累计对话达到该轮次（一问一答为一轮）后触发总结并写入记忆。",
+                "hint": "累计对话达到该轮次（一问一答为一轮）后尝试总结；没有稳定事实时不写入长期记忆。",
                 "type": "int",
                 "default": 10,
                 "min": 1,

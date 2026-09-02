@@ -49,11 +49,11 @@ pageClass: config-reference-page
 
 ## 记忆生成设置
 
-配置域：`"reflection_engine"`。控制何时触发对话总结并生成记忆
+配置域：`"reflection_engine"`。控制何时触发对话总结尝试，并从有价值的结果生成记忆。
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"reflection_engine.summary_trigger_rounds"` | `"int"` | `10` | 最小值：`1`<br>最大值：`100` | 总结触发轮次<br><small>累计对话达到该轮次（一问一答为一轮）后触发总结并写入记忆。</small> |
+| `"reflection_engine.summary_trigger_rounds"` | `"int"` | `10` | 最小值：`1`<br>最大值：`100` | 总结触发轮次<br><small>累计对话达到该轮次（一问一答为一轮）后尝试总结；没有稳定事实时不写入长期记忆。</small> |
 
 ## 自定义提示词模板
 
