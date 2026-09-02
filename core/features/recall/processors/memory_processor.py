@@ -30,7 +30,7 @@ from ...quality.domain.gate_config import BUILTIN_GENERIC_TERMS, GateProfile
 from .atom_classifier import classify_atoms
 from .conversation_formatter import ConversationFormatter
 from .gate_context import resolve_reflection_gate
-from .json_parser import JsonParser
+from .json_parser import JsonParser, SummaryParseError
 from .llm_client import LLMClient
 from .memory_grounding import GroundingResult, MemoryGroundingValidator
 from .prompt_builder import (
@@ -161,11 +161,12 @@ class MemoryProcessor:
         llm_max_retries: int = 3,
         group_id: str | None = None,
         gate_snapshot_json: str | None = None,
+        strict_summary: bool = False,
     ) -> list[dict[str, Any]]:
-        """处理对话批次并生成结构化记忆（可能返回多条独立话题记忆）。
+        """处理对话并生成结构化记忆。
 
-        返回:
-            list[dict]: 每条 dict = {content, metadata, importance, atoms}
+        ``strict_summary`` 只供统一总结 Worker 使用；结构无效时抛出
+        :class:`SummaryParseError`，合法空候选返回空列表。
         """
         if not messages:
             raise ValueError("消息列表不能为空")
@@ -256,7 +257,11 @@ class MemoryProcessor:
 
             current_stage = "parse"
             stage_started = time.perf_counter()
-            structured_data = self._parse_llm_response(llm_response_text, is_group_chat)
+            structured_data = self._parse_llm_response(
+                llm_response_text,
+                is_group_chat,
+                strict_summary=strict_summary,
+            )
 
             quality = (
                 "normal"
@@ -297,11 +302,13 @@ class MemoryProcessor:
                 candidate_count=len(memories_raw),
             )
 
-            fallback_excerpt = (
-                conversation_text[:200] + "..."
-                if len(conversation_text) > 200
-                else conversation_text
-            )
+            fallback_excerpt = ""
+            if not strict_summary:
+                fallback_excerpt = (
+                    conversation_text[:200] + "..."
+                    if len(conversation_text) > 200
+                    else conversation_text
+                )
             content, metadata = self.storage.build_storage_format(
                 fallback_excerpt, structured_data, is_group_chat
             )
@@ -518,6 +525,23 @@ class MemoryProcessor:
                 stage_started,
             )
             raise
+        except SummaryParseError:
+            _report_generation_stage(
+                current_stage,
+                "failed",
+                "summary_invalid",
+                stage_started,
+            )
+            _report_generation_stage(
+                "window_total",
+                "failed",
+                "summary_invalid",
+                total_started,
+            )
+            logger.error(
+                "[MemoryProcessor] 总结结构无效，reason_code=summary_invalid，异常类型=SummaryParseError"
+            )
+            raise
         except Exception as e:
             _report_generation_stage(
                 current_stage,
@@ -639,8 +663,13 @@ class MemoryProcessor:
         self,
         response_text: str,
         is_group_chat: bool,
+        *,
+        strict_summary: bool = False,
     ) -> dict[str, Any]:
-        """优先通过结构护栏解析 LLM 输出，失败后使用旧解析器。"""
+        """按调用边界选择严格总结或既有兼容解析。"""
+        if strict_summary:
+            guarded = self.json_parser.parse_summary_response(response_text)
+            return self._guarded_result_to_structured_data(guarded)
         if self.config.get("security.guardrails_enabled", True):
             try:
                 guarded = validate_llm_response(

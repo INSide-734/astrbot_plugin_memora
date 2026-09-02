@@ -6,7 +6,12 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ....platform.security.guardrails import MemoryExtractionResult
 from .quality_validator import QualityValidator
+
+
+class SummaryParseError(ValueError):
+    """表示总结模型输出不满足严格结构契约。"""
 
 
 class JsonParser:
@@ -43,6 +48,61 @@ class JsonParser:
         fixed = fixed.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
 
         return fixed
+
+    @staticmethod
+    def _strip_summary_code_fence(text: str) -> str:
+        """仅移除完整 JSON/普通代码围栏，不修复围栏或正文。"""
+
+        cleaned = text.strip()
+        if not cleaned.startswith("```"):
+            return cleaned
+        lines = cleaned.splitlines()
+        if (
+            len(lines) < 3
+            or lines[0].strip().lower() not in {"```", "```json"}
+            or lines[-1].strip() != "```"
+        ):
+            raise SummaryParseError("summary_invalid")
+        return "\n".join(lines[1:-1]).strip()
+
+    @staticmethod
+    def _normalize_strict_numeric_fields(data: dict[str, Any]) -> None:
+        """仅把 JSON 整数转换为浮点字段，不修复或改变事实内容。"""
+
+        for field in ("confidence",):
+            value = data.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                data[field] = float(value)
+        for memory in data["memories"]:
+            if not isinstance(memory, dict):
+                continue
+            for field in ("importance", "confidence"):
+                value = memory.get(field)
+                if isinstance(value, int) and not isinstance(value, bool):
+                    memory[field] = float(value)
+
+    def parse_summary_response(self, response_text: str) -> MemoryExtractionResult:
+        """严格解析并验证总结对象，允许空 memories 列表。"""
+
+        cleaned = self._strip_summary_code_fence(response_text)
+        try:
+            data = json.loads(cleaned)
+            if (
+                not isinstance(data, dict)
+                or "memories" not in data
+                or not isinstance(data["memories"], list)
+            ):
+                raise SummaryParseError("summary_invalid")
+            self._normalize_strict_numeric_fields(data)
+            result = MemoryExtractionResult.model_validate(data, strict=True)
+        except (json.JSONDecodeError, ValueError):
+            raise SummaryParseError("summary_invalid") from None
+        if any(
+            not memory.key_facts or any(not fact.strip() for fact in memory.key_facts)
+            for memory in result.memories
+        ):
+            raise SummaryParseError("summary_invalid")
+        return result
 
     def parse_llm_response(
         self, response_text: str, is_group_chat: bool

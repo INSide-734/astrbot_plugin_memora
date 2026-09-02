@@ -78,7 +78,32 @@ class SummaryReasonCode(str, Enum):
     LEGACY_PENDING = "legacy_pending"
     LEGACY_PENDING_INVALID = "legacy_pending_invalid"
     ABANDONED_CONFIRMED = "abandoned_confirmed"
+    NO_FACTS = "no_facts"
+    SUMMARY_INVALID = "summary_invalid"
     COMPLETED = "completed"
+
+
+_FAILURE_REASON_CODES = frozenset(
+    {
+        SummaryReasonCode.BLOCKED,
+        SummaryReasonCode.CANCELLED,
+        SummaryReasonCode.UNKNOWN,
+        SummaryReasonCode.STORE_UNAVAILABLE,
+        SummaryReasonCode.MIGRATION_FAILED,
+        SummaryReasonCode.SOURCE_INCOMPLETE,
+        SummaryReasonCode.SOURCE_DIGEST_MISMATCH,
+        SummaryReasonCode.CLAIM_LOST,
+        SummaryReasonCode.EPOCH_FENCED,
+        SummaryReasonCode.GENERATION_FENCED,
+        SummaryReasonCode.LEASE_EXPIRED,
+        SummaryReasonCode.RETRY_SCHEDULED,
+        SummaryReasonCode.RETRY_EXHAUSTED,
+        SummaryReasonCode.INVALID_ACTION,
+        SummaryReasonCode.INVALID_SLOT,
+        SummaryReasonCode.LEDGER_UNRESOLVED,
+        SummaryReasonCode.SUMMARY_INVALID,
+    }
+)
 
 
 def _text(value: object, name: str, *, optional: bool = True) -> str | None:
@@ -107,15 +132,15 @@ def _nonnegative_int(value: object, name: str, *, positive: bool = False) -> int
 
 
 def _reason(value: SummaryReasonCode | str | None) -> SummaryReasonCode:
-    """把外部 reason code 收敛到固定枚举。"""
+    """把外部 reason code 收敛到固定枚举，未知值降级为 unknown。"""
     if value is None:
         return SummaryReasonCode.UNKNOWN
     if isinstance(value, SummaryReasonCode):
         return value
     try:
         return SummaryReasonCode(str(value))
-    except ValueError as exc:
-        raise ValueError("未知总结 reason code") from exc
+    except ValueError:
+        return SummaryReasonCode.UNKNOWN
 
 
 def _nonnegative_number(value: object, name: str) -> float:
@@ -456,8 +481,8 @@ class WindowOutcome:
     reason_code: SummaryReasonCode = SummaryReasonCode.COMPLETED
 
     def __post_init__(self) -> None:
-        """校验结果计数并禁止重复 slot。"""
-        for name in (
+        """校验结果计数、唯一 slot 与合法无事实结果形状。"""
+        count_names = (
             "canonical_count",
             "quarantine_count",
             "discard_count",
@@ -465,7 +490,8 @@ class WindowOutcome:
             "failed_count",
             "skipped_idempotent_count",
             "unknown_count",
-        ):
+        )
+        for name in count_names:
             object.__setattr__(self, name, _nonnegative_int(getattr(self, name), name))
         slots = tuple(self.candidate_slots)
         if len({item.slot for item in slots}) != len(slots):
@@ -474,7 +500,14 @@ class WindowOutcome:
         object.__setattr__(
             self, "failed_stage", _text(self.failed_stage, "failed_stage")
         )
-        object.__setattr__(self, "reason_code", _reason(self.reason_code))
+        reason_code = _reason(self.reason_code)
+        if reason_code is SummaryReasonCode.NO_FACTS and (
+            not self.can_advance
+            or slots
+            or any(getattr(self, name) for name in count_names)
+        ):
+            raise ValueError("no_facts 结果必须推进且不含候选或写入计数")
+        object.__setattr__(self, "reason_code", reason_code)
 
     @property
     def slots(self) -> tuple[CandidateIntent, ...]:
@@ -499,7 +532,10 @@ class SummaryFailure:
         exception_type = _text(self.exception_type, "exception_type") or ""
         object.__setattr__(self, "failed_stage", stage)
         object.__setattr__(self, "exception_type", exception_type)
-        object.__setattr__(self, "reason_code", _reason(self.reason_code))
+        reason_code = _reason(self.reason_code)
+        if reason_code not in _FAILURE_REASON_CODES:
+            reason_code = SummaryReasonCode.UNKNOWN
+        object.__setattr__(self, "reason_code", reason_code)
 
 
 WindowFailure = SummaryFailure

@@ -7,8 +7,8 @@ import json
 import time
 from typing import Any
 
-SUMMARY_SCHEMA_VERSION = 4
-_MIGRATION_ID = "summary_schema_v4"
+SUMMARY_SCHEMA_VERSION = 5
+_MIGRATION_ID = "summary_schema_v5"
 
 _SUMMARY_STATUSES = (
     "queued",
@@ -55,6 +55,8 @@ _REASON_CODES = (
     "legacy_pending_invalid",
     "completed",
     "abandoned_confirmed",
+    "no_facts",
+    "summary_invalid",
 )
 
 
@@ -441,6 +443,56 @@ async def _ensure_summary_extensions(connection: Any) -> None:
         )
 
 
+async def _ensure_reason_code_constraint(connection: Any) -> None:
+    """重建旧任务表，使新增固定 reason code 可持久化且数据不变。"""
+
+    row = await (
+        await connection.execute(
+            "SELECT sql FROM sqlite_schema WHERE type='table' AND name='summary_jobs'"
+        )
+    ).fetchone()
+    schema_sql = str(row[0] or "") if row is not None else ""
+    if "CHECK(reason_code IN" not in schema_sql or all(
+        f"'{code}'" in schema_sql for code in ("no_facts", "summary_invalid")
+    ):
+        return
+
+    job_columns = (
+        "job_id,session_id,session_epoch,start_seq,end_seq,expected_count,"
+        "source_digest,persona_id,chat_type,group_id,scope_id,gate_revision,"
+        "gate_snapshot_json,triggered_by,status,attempt_count,next_attempt_at,"
+        "claim_token,lease_until,worker_generation,failed_stage,reason_code,"
+        "exception_type,canonical_count,quarantine_count,discard_count,"
+        "mark_write_count,failed_count,skipped_count,created_at,updated_at,"
+        "operator_action"
+    )
+    candidate_columns = (
+        "job_id,slot,slot_key,content_digest,idempotency_key,disposition,"
+        "status,canonical_id,updated_at"
+    )
+    await connection.execute("PRAGMA defer_foreign_keys=ON")
+    await connection.execute(
+        "ALTER TABLE summary_job_candidates RENAME TO summary_job_candidates_reason_v4"
+    )
+    await connection.execute(
+        "ALTER TABLE summary_jobs RENAME TO summary_jobs_reason_v4"
+    )
+    await _ensure_summary_tables(connection)
+    await connection.execute(
+        f"INSERT INTO summary_jobs({job_columns}) "
+        f"SELECT {job_columns} FROM summary_jobs_reason_v4"
+    )
+    await connection.execute(
+        f"INSERT INTO summary_job_candidates({candidate_columns}) "
+        f"SELECT {candidate_columns} FROM summary_job_candidates_reason_v4"
+    )
+    await connection.execute("DROP TABLE summary_job_candidates_reason_v4")
+    await connection.execute("DROP TABLE summary_jobs_reason_v4")
+    violations = await (await connection.execute("PRAGMA foreign_key_check")).fetchone()
+    if violations is not None:
+        raise RuntimeError("summary_reason_constraint_migration_failed")
+
+
 async def _migrate_legacy_summary_cursors(connection: Any) -> None:
     """把旧 metadata 游标迁移到唯一的 session epoch 状态。"""
     cursor = await connection.execute(
@@ -573,6 +625,7 @@ async def migrate_conversation_schema(connection: Any) -> None:
         await _backfill_message_sequences(connection)
         await _ensure_summary_tables(connection)
         await _ensure_summary_extensions(connection)
+        await _ensure_reason_code_constraint(connection)
         await _migrate_legacy_summary_cursors(connection)
         await _validate_schema_shape(connection)
         await _validate_data_integrity(connection)

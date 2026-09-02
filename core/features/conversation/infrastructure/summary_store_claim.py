@@ -7,7 +7,7 @@ import secrets
 import time
 from collections.abc import Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from ....shared.summary_source_fence import SummarySourceFence
 from ...reflection.domain.summary_models import (
@@ -71,8 +71,9 @@ class SummaryStoreClaimMixin:
             lease_until=_row(row, "lease_until", 17),
             worker_generation=int(_row(row, "worker_generation", 18) or 0),
             failed_stage=_row(row, "failed_stage", 19),
-            reason_code=SummaryReasonCode(
-                str(_row(row, "reason_code", 20) or "unknown")
+            reason_code=cast(
+                SummaryReasonCode,
+                str(_row(row, "reason_code", 20) or "unknown"),
             ),
             exception_type=_row(row, "exception_type", 21),
             operator_action=_row(row, "operator_action", 30),

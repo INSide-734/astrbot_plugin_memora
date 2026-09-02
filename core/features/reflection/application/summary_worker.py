@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ....shared.summary_source import source_window_digest
 from ...quality.application.gate_runtime import gate_snapshot_from_json
+from ...recall.processors.json_parser import SummaryParseError
 from ..domain.storage_outcomes import ReflectionStoreOutcome, ReflectionStoreResult
 from ..domain.summary_models import (
     CandidateDisposition,
@@ -111,6 +112,11 @@ class SummaryWorker(SummaryWorkerReconcileMixin, SummaryWorkerValidationMixin):
             is_group_chat,
             snapshot_payload,
         )
+        if not memories:
+            return WindowOutcome(
+                can_advance=True,
+                reason_code=SummaryReasonCode.NO_FACTS,
+            )
         candidates, intents = self._prepare_candidates(claim, memories)
         try:
             begun = await self._job_store.begin_candidate_intents(claim, intents)
@@ -468,10 +474,19 @@ class SummaryWorker(SummaryWorkerReconcileMixin, SummaryWorkerValidationMixin):
                 is_group_chat=is_group_chat,
                 persona_id=claim.persona_id,
                 group_id=claim.group_id,
+                llm_max_retries=1,
+                strict_summary=True,
                 **snapshot_kwargs,
             )
         except asyncio.CancelledError:
             raise
+        except SummaryParseError as error:
+            raise SummaryWorkerFailure(
+                "memory_extract",
+                SummaryReasonCode.SUMMARY_INVALID,
+                retryable=True,
+                exception_type=error.__class__.__name__,
+            ) from error
         except SummaryWorkerFailure:
             raise
         except Exception as error:
