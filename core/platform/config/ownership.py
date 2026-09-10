@@ -215,6 +215,71 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
         ConfigOwnershipKind.RUNTIME,
         "core.features.reflection.application.topic_batch_preparer",
     ),
+    "topic_segmentation.candidate_reuse": _ownership(
+        "topic_segmentation.candidate_reuse",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.mode": _ownership(
+        "topic_segmentation.candidate_reuse.mode",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.fixed_k": _ownership(
+        "topic_segmentation.candidate_reuse.fixed_k",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.activation_threshold": _ownership(
+        "topic_segmentation.candidate_reuse.activation_threshold",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.max_full_topics": _ownership(
+        "topic_segmentation.candidate_reuse.max_full_topics",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.max_full_prompt_tokens": _ownership(
+        "topic_segmentation.candidate_reuse.max_full_prompt_tokens",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.max_query_chars": _ownership(
+        "topic_segmentation.candidate_reuse.max_query_chars",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.overfetch_factor": _ownership(
+        "topic_segmentation.candidate_reuse.overfetch_factor",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.metrics_retention_days": _ownership(
+        "topic_segmentation.candidate_reuse.metrics_retention_days",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.observe_max_candidates": _ownership(
+        "topic_segmentation.candidate_reuse.observe_max_candidates",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.observe_max_rows": _ownership(
+        "topic_segmentation.candidate_reuse.observe_max_rows",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.candidate_reuse.observe_max_duration_ms": _ownership(
+        "topic_segmentation.candidate_reuse.observe_max_duration_ms",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.reflection.application.topic_candidate_selector",
+    ),
+    "topic_segmentation.catalog_reconcile_interval_seconds": _ownership(
+        "topic_segmentation.catalog_reconcile_interval_seconds",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.memory.application.catalog_reconcile_scheduler",
+    ),
     "atom_classifier": _ownership(
         "atom_classifier",
         ConfigOwnershipKind.RUNTIME,
@@ -239,9 +304,16 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
 
 
 def resolve_config_ownership(path: str) -> ConfigSectionOwnership:
-    """按点路径返回配置所有权；未登记分支直接失败。"""
+    """按点路径返回配置所有权；未登记分支直接失败。
 
-    section = path.strip().split(".", 1)[0]
+    精确路径优先：叶子级登记（如 candidate_reuse 子键）覆盖顶层分支；
+    无精确匹配时回落顶层 section 声明。
+    """
+
+    normalized = path.strip()
+    if normalized in CONFIG_SECTION_OWNERSHIP:
+        return CONFIG_SECTION_OWNERSHIP[normalized]
+    section = normalized.split(".", 1)[0]
     if not section or section not in CONFIG_SECTION_OWNERSHIP:
         raise KeyError(f"未声明配置所有权: {path}")
     return CONFIG_SECTION_OWNERSHIP[section]

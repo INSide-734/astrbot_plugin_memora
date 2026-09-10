@@ -19,6 +19,10 @@ class SummarySourceFence:
     source_digest: str
     worker_generation: int
     claim_token: str
+    scope_key: str | None = None
+    privacy_level: str | None = None
+    resolver_revision: str | None = None
+    scope_provenance_complete: bool | None = None
 
     def __post_init__(self) -> None:
         """验证范围和 fence 字段，禁止把无效来源送入外部 Store。"""
@@ -53,6 +57,45 @@ class SummarySourceFence:
             or not self.claim_token.strip()
         ):
             raise ValueError("summary_source_fence_invalid")
+        raw_scope_values = (
+            self.scope_key,
+            self.privacy_level,
+            self.resolver_revision,
+        )
+        if any(
+            value is not None and not isinstance(value, str)
+            for value in raw_scope_values
+        ):
+            raise TypeError("summary_source_fence_invalid")
+        scope_key = self.scope_key.strip() if self.scope_key is not None else None
+        privacy_level = (
+            self.privacy_level.strip() if self.privacy_level is not None else None
+        )
+        resolver_revision = (
+            self.resolver_revision.strip()
+            if self.resolver_revision is not None
+            else None
+        )
+        scope_values = (scope_key, privacy_level, resolver_revision)
+        marker = self.scope_provenance_complete
+        if marker is not None and not isinstance(marker, bool):
+            raise TypeError("summary_source_fence_invalid")
+        if any(value is not None for value in scope_values) and not all(scope_values):
+            raise ValueError("summary_source_fence_invalid")
+        if privacy_level is not None and privacy_level not in {
+            "public",
+            "shared",
+            "confidential",
+        }:
+            raise ValueError("summary_source_fence_invalid")
+        if marker is True and not all(scope_values):
+            raise ValueError("summary_source_fence_invalid")
+        if marker is None and all(scope_values):
+            marker = True
+        object.__setattr__(self, "scope_key", scope_key)
+        object.__setattr__(self, "privacy_level", privacy_level)
+        object.__setattr__(self, "resolver_revision", resolver_revision)
+        object.__setattr__(self, "scope_provenance_complete", marker)
 
     @property
     def opaque_token(self) -> str:
@@ -63,6 +106,17 @@ class SummarySourceFence:
                 "utf-8"
             )
         ).hexdigest()
+
+    @property
+    def has_exact_scope(self) -> bool:
+        """返回 fence 是否携带完整 resolver 快照。"""
+
+        return bool(
+            self.scope_provenance_complete is True
+            and self.scope_key
+            and self.privacy_level
+            and self.resolver_revision
+        )
 
 
 __all__ = ["SummarySourceFence"]

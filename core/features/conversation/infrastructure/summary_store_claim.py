@@ -35,6 +35,29 @@ def _row(row: Any, name: str, index: int) -> Any:
         return row[index]
 
 
+def _row_optional(row: Any, name: str, index: int, default: Any = None) -> Any:
+    """兼容旧 tuple 行并在新增列缺失时返回默认值。"""
+
+    try:
+        return row[name]
+    except (KeyError, IndexError, TypeError):
+        try:
+            return row[index]
+        except (IndexError, TypeError):
+            return default
+
+
+def _scope_fence_values(value: object) -> tuple[object, object, object, int]:
+    """返回 claim/source fence 使用的不可变 scope 快照字段。"""
+
+    return (
+        getattr(value, "scope_key", "") or "",
+        getattr(value, "privacy_level", "") or "",
+        getattr(value, "resolver_revision", "") or "",
+        int(bool(getattr(value, "scope_provenance_complete", False))),
+    )
+
+
 class SummaryStoreClaimMixin:
     """提供 ready 任务领取、claim fencing 与候选 slot intent 写入。"""
 
@@ -49,7 +72,8 @@ class SummaryStoreClaimMixin:
         async def _rollback_summary(self) -> None: ...
 
     async def _job(self, row: Any) -> SummaryJob:
-        """将 summary_jobs 行映射为安全 DTO。"""
+        """将 summary_jobs 行映射为安全 DTO，并保留原始 scope 快照。"""
+        scope_complete = _row_optional(row, "scope_provenance_complete", 35, 0)
         return SummaryJob(
             job_id=str(_row(row, "job_id", 0)),
             session_id=str(_row(row, "session_id", 1)),
@@ -68,23 +92,30 @@ class SummaryStoreClaimMixin:
             triggered_by=str(_row(row, "triggered_by", 13)),
             attempt_count=int(_row(row, "attempt_count", 15) or 0),
             next_attempt_at=float(_row(row, "next_attempt_at", 16) or 0),
-            lease_until=_row(row, "lease_until", 17),
-            worker_generation=int(_row(row, "worker_generation", 18) or 0),
-            failed_stage=_row(row, "failed_stage", 19),
+            lease_until=_row(row, "lease_until", 18),
+            worker_generation=int(_row(row, "worker_generation", 19) or 0),
+            failed_stage=_row(row, "failed_stage", 20),
             reason_code=cast(
                 SummaryReasonCode,
-                str(_row(row, "reason_code", 20) or "unknown"),
+                str(_row(row, "reason_code", 21) or "unknown"),
             ),
-            exception_type=_row(row, "exception_type", 21),
-            operator_action=_row(row, "operator_action", 30),
-            canonical_count=int(_row(row, "canonical_count", 22) or 0),
-            quarantine_count=int(_row(row, "quarantine_count", 23) or 0),
-            discard_count=int(_row(row, "discard_count", 24) or 0),
-            mark_write_count=int(_row(row, "mark_write_count", 25) or 0),
-            failed_count=int(_row(row, "failed_count", 26) or 0),
-            skipped_count=int(_row(row, "skipped_count", 27) or 0),
-            created_at=float(_row(row, "created_at", 28) or 0),
-            updated_at=float(_row(row, "updated_at", 29) or 0),
+            exception_type=_row(row, "exception_type", 22),
+            operator_action=_row_optional(row, "operator_action", 31),
+            canonical_count=int(_row(row, "canonical_count", 23) or 0),
+            quarantine_count=int(_row(row, "quarantine_count", 24) or 0),
+            discard_count=int(_row(row, "discard_count", 25) or 0),
+            mark_write_count=int(_row(row, "mark_write_count", 26) or 0),
+            failed_count=int(_row(row, "failed_count", 27) or 0),
+            skipped_count=int(_row(row, "skipped_count", 28) or 0),
+            created_at=float(_row(row, "created_at", 29) or 0),
+            updated_at=float(_row(row, "updated_at", 30) or 0),
+            scope_key=str(_row_optional(row, "scope_key", 32) or ""),
+            privacy_level=_row_optional(row, "privacy_level", 33),
+            resolver_revision=str(_row_optional(row, "resolver_revision", 34) or ""),
+            scope_provenance_complete=scope_complete in (1, True),
+            scope_reason_code=(
+                "scope_resolved" if scope_complete in (1, True) else "scope_unavailable"
+            ),
         )
 
     async def claim_ready(
@@ -138,9 +169,8 @@ class SummaryStoreClaimMixin:
                         (0 if str(_row(item, "session_id", 1)) > after else 1)
                         if after is not None
                         else order.get(str(_row(item, "session_id", 1)), len(order)),
-                        str(_row(item, "session_id", 1)),
-                        int(_row(item, "start_seq", 3)),
-                        float(_row(item, "created_at", 28) or 0),
+                        float(_row(item, "created_at", 29) or 0),
+                        int(_row(item, "start_seq", 3) or 0),
                         str(_row(item, "job_id", 0)),
                     )
                 )
@@ -182,7 +212,7 @@ class SummaryStoreClaimMixin:
                         continue
                     job_id = str(_row(item, "job_id", 0))
                     token = secrets.token_urlsafe(24)
-                    generation = int(_row(item, "worker_generation", 18) or 0) + 1
+                    generation = int(_row(item, "worker_generation", 19) or 0) + 1
                     lease_until = stamp + max(1, int(lease_seconds))
                     updated = await self.connection.execute(
                         """
@@ -258,7 +288,8 @@ class SummaryStoreClaimMixin:
             raise RuntimeError("summary_claim_failed") from error
 
     async def _claim_matches(self, claim: ClaimedJob) -> bool:
-        """检查 claim token、来源范围、epoch、generation 和 lease 是否仍有效。"""
+        """检查 claim token、来源范围、scope、epoch、generation 和 lease。"""
+
         cursor = await self.connection.execute(
             """
             SELECT 1
@@ -268,6 +299,10 @@ class SummaryStoreClaimMixin:
             WHERE job.job_id=? AND job.session_id=? AND job.session_epoch=?
               AND job.start_seq=? AND job.end_seq=? AND job.expected_count=?
               AND job.source_digest=?
+              AND COALESCE(job.scope_key,'')=COALESCE(?, '')
+              AND COALESCE(job.privacy_level,'')=COALESCE(?, '')
+              AND COALESCE(job.resolver_revision,'')=COALESCE(?, '')
+              AND job.scope_provenance_complete=?
               AND job.status='running' AND job.claim_token=?
               AND job.worker_generation=? AND job.lease_until IS NOT NULL
               AND job.lease_until > ?
@@ -280,6 +315,7 @@ class SummaryStoreClaimMixin:
                 claim.end_seq,
                 claim.expected_count,
                 claim.source_digest,
+                *_scope_fence_values(claim),
                 claim.claim_token,
                 claim.worker_generation,
                 self._summary_now(),
@@ -310,8 +346,13 @@ class SummaryStoreClaimMixin:
               ON epoch.session_id=job.session_id AND epoch.epoch=job.session_epoch
             WHERE job.job_id=? AND job.session_id=? AND job.session_epoch=?
               AND job.start_seq=? AND job.end_seq=? AND job.expected_count=?
-              AND job.source_digest=? AND job.status='running'
-              AND job.claim_token=? AND job.worker_generation=?
+              AND job.source_digest=?
+              AND COALESCE(job.scope_key,'')=COALESCE(?, '')
+              AND COALESCE(job.privacy_level,'')=COALESCE(?, '')
+              AND COALESCE(job.resolver_revision,'')=COALESCE(?, '')
+              AND job.scope_provenance_complete=?
+              AND job.status='running' AND job.claim_token=?
+              AND job.worker_generation=?
               AND job.lease_until IS NOT NULL AND job.lease_until > ?
             """,
             (
@@ -322,6 +363,7 @@ class SummaryStoreClaimMixin:
                 source_fence.end_seq,
                 source_fence.expected_count,
                 source_fence.source_digest,
+                *_scope_fence_values(source_fence),
                 source_fence.claim_token,
                 source_fence.worker_generation,
                 self._summary_now(),

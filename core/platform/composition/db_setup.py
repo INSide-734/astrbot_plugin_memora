@@ -1,5 +1,9 @@
 """数据库迁移、索引重建与消息计数修复。"""
 
+import inspect
+from collections.abc import Awaitable, Callable
+from typing import cast
+
 from astrbot.api import logger
 
 
@@ -17,11 +21,10 @@ class DatabaseSetup:
         memory_engine,
         rebuild_coordinator=None,
     ):
-        """检查索引并在需要时执行统一派生重建。
+        """检查索引和 topic catalog，并在需要时执行统一派生重建。
 
-        ``rebuild_coordinator`` 由组件工厂注入时，重建顺序固定为
-        canonical、FTS/FAISS、graph、relation/projection；未注入时保留旧的
-        FTS/FAISS-only 兼容路径，供独立测试和延迟装配使用。
+        ``rebuild_coordinator`` 由组合根注入时，catalog readiness 独立于
+        FTS/FAISS 一致性；未注入时保留旧的 FTS/FAISS-only 兼容路径。
         """
 
         try:
@@ -32,14 +35,36 @@ class DatabaseSetup:
                 }
 
             status = await index_validator.check_consistency()
-            if not status.is_consistent and status.needs_rebuild:
-                logger.warning(f"检测到索引不一致：{status.reason}")
-                logger.info(
-                    f"当前索引计数：文档 {status.documents_count}，"
-                    f"BM25 {status.bm25_count}，向量 {status.vector_count}"
+            indexes_need_rebuild = bool(
+                not status.is_consistent and status.needs_rebuild
+            )
+            catalog_needs_rebuild = False
+            if rebuild_coordinator is not None and not indexes_need_rebuild:
+                catalog_probe = getattr(
+                    rebuild_coordinator, "catalog_needs_reconcile", None
                 )
+                if callable(catalog_probe):
+                    probe = cast(Callable[[], object], catalog_probe)
+                    probe_result = probe()
+                    if inspect.isawaitable(probe_result):
+                        probe_result = await cast(Awaitable[object], probe_result)
+                    catalog_needs_rebuild = bool(probe_result)
+
+            if indexes_need_rebuild or catalog_needs_rebuild:
+                if indexes_need_rebuild:
+                    logger.warning(f"检测到索引不一致：{status.reason}")
+                    logger.info(
+                        f"当前索引计数：文档 {status.documents_count}，"
+                        f"BM25 {status.bm25_count}，向量 {status.vector_count}"
+                    )
                 if rebuild_coordinator is not None:
-                    result = await rebuild_coordinator.rebuild_all()
+                    result = (
+                        await rebuild_coordinator.rebuild_all()
+                        if indexes_need_rebuild
+                        else await rebuild_coordinator.rebuild_all(
+                            rebuild_indexes=False
+                        )
+                    )
                 else:
                     result = await index_validator.rebuild_indexes(memory_engine)
                 if result["success"]:
@@ -56,13 +81,12 @@ class DatabaseSetup:
                         result.get("reason_code") or result.get("message"),
                     )
                 return result
-            logger.info(f"索引一致性检查通过：{status.reason}")
+            logger.info(f"索引与 topic catalog 一致性检查通过：{status.reason}")
             return {
                 "success": True,
                 "skipped": True,
                 "reason_code": "indexes_consistent",
             }
-
         except Exception:
             logger.error("自动重建索引失败，reason_code=index_rebuild_failed")
             return {

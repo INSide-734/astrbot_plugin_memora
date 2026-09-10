@@ -2,8 +2,17 @@
 
 from __future__ import annotations
 
+import time
+from pathlib import Path
+from typing import Any
+
 from astrbot.api import logger
 
+from ....features.memory.infrastructure.topic_metrics import (
+    read_topic_metrics_summary,
+)
+
+from ...config.manager import ConfigConflictError
 from .response_utils import error_response, ok_response
 
 _STRATEGY_ALIASES = {
@@ -30,10 +39,10 @@ def _validate_and_cast(key: str, value: object) -> object:
     """对话题分割配置值进行基本的类型与范围校验。"""
     if key == "strategy":
         if not isinstance(value, str):
-            return None
+            raise ValueError("strategy_must_be_string")
         normalized = _STRATEGY_ALIASES.get(value, value)
         if normalized not in _VALID_STRATEGIES:
-            return None
+            raise ValueError("strategy_invalid")
         return normalized
     if key == "enabled":
         return bool(value)
@@ -42,29 +51,32 @@ def _validate_and_cast(key: str, value: object) -> object:
     bounds = _NUMERIC_BOUNDS.get(key)
     if bounds is not None:
         if isinstance(value, bool):
-            return None  # reject JSON booleans for numeric fields
+            raise ValueError(f"{key}_must_be_number")
         try:
             v = float(value)
         except (TypeError, ValueError):
-            return None
-        lo, hi = bounds
-        if v < lo or v > hi:
-            return None
-        if key in (
+            raise ValueError(f"{key}_must_be_number") from None
+        low, high = bounds
+        if not (low <= v <= high):
+            raise ValueError(f"{key}_out_of_range")
+        if key in {
             "min_cluster_size",
             "max_clusters",
             "min_chunk_size",
             "stage1_max_topics",
-        ):
+        }:
             if not v.is_integer():
-                return None
-            return int(v)
+                raise ValueError(f"{key}_must_be_integer")
+            v = int(v)
         return v
     return value
 
 
 class TopicSegmentationApiMixin:
+    """提供话题配置、回填控制与低敏候选观测。"""
+
     async def get_topic_segmentation_config(self):
+        """返回现有配置和 canonical Store 的低敏状态；保留 ready 错误 envelope。"""
         engines, err = await self._ensure_plugin_ready()
         if err:
             return err
@@ -132,85 +144,149 @@ class TopicSegmentationApiMixin:
                     "desc": "先识别话题范围再分别抽取",
                 },
             ],
+            "candidate_reuse": await self._get_candidate_reuse_status(engines),
         }
         return ok_response(cfg)
 
+    async def _get_candidate_reuse_status(
+        self, engines: dict[str, Any]
+    ) -> dict[str, Any]:
+        """只通过 canonical Store 公共端口读取目录与版本化指标聚合。"""
+        result: dict[str, Any] = {
+            "catalog_status": "unavailable",
+            "dirty_count": None,
+            "scope_buckets": None,
+            "aggregated_metrics": None,
+        }
+        store = getattr(engines.get("memory_engine"),
+                        "topic_catalog_store", None)
+        if store is None:
+            return result
+        try:
+            summary = await store.get_catalog_summary()
+            for field in ("catalog_status", "dirty_count", "scope_buckets"):
+                result[field] = summary[field]
+        except Exception:
+            logger.warning("[API] 读取话题目录状态失败")
+        result["aggregated_metrics"] = await self._query_aggregated_metrics(engines)
+        return result
+
+    async def _query_aggregated_metrics(
+        self, engines: dict[str, Any]
+    ) -> dict[str, float | None] | None:
+        """从 canonical catalog 读取 UTC 窗口样本的真实 P95。"""
+        try:
+            memory_engine = engines.get("memory_engine")
+            catalog_store = getattr(memory_engine, "topic_catalog_store", None)
+            if catalog_store is None:
+                return None
+            initializer = getattr(self.plugin, "initializer", None)
+            data_dir = getattr(initializer, "data_dir", None)
+            if not data_dir:
+                db_path = getattr(memory_engine, "db_path", None)
+                data_dir = Path(db_path).parent if db_path else None
+            if not data_dir:
+                return None
+            summary = await read_topic_metrics_summary(
+                catalog_store,
+                data_dir,
+                retention_days=7,
+                now=time.time(),
+            )
+            if not isinstance(summary, dict):
+                return None
+            safe_summary: dict[str, float | None] = {}
+            for field in ("p95_latency_ms", "p95_candidates", "p95_tokens"):
+                value = summary.get(field)
+                if value is None:
+                    safe_summary[field] = None
+                elif (
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    and value == value
+                    and value != float("inf")
+                    and value != float("-inf")
+                ):
+                    safe_summary[field] = float(value)
+                else:
+                    return None
+            return (
+                safe_summary
+                if any(value is not None for value in safe_summary.values())
+                else None
+            )
+        except Exception:
+            logger.warning("[API] 读取 canonical 候选指标失败")
+            return None
+
     async def update_topic_segmentation_config(self):
+        """更新话题分割配置，并以 base_revision 执行原子热重载。"""
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
         if guard:
             return guard
         engines, err = await self._ensure_plugin_ready()
         if err:
             return err
-        try:
-            request_getter = getattr(self, "_get_web_request", None)
-            request_source = request_getter() if callable(request_getter) else None
-            if request_source is None:
-                from astrbot.api.web import request as request_source
-
-            invalid_json = object()
-            try:
-                body = await request_source.json(default=invalid_json)
-            except TypeError:
-                # 兼容 json() 尚不支持公共代理 default 参数的旧请求适配器。
-                body = await request_source.json()
-            if body is invalid_json:
-                return error_response("invalid JSON body")
-        except Exception as exc:
-            logger.debug(
-                "[TopicSegmentationApi] invalid config JSON body: %s",
-                exc,
-                exc_info=True,
-            )
-            return error_response("invalid JSON body")
+        body = await self._get_web_request().json()
         if not isinstance(body, dict):
-            return error_response("request body must be a JSON object")
+            return error_response("配置对象必须是 JSON 对象")
 
-        cfg = self.plugin.config_manager
-        flat_updates: dict[str, object] = {}
-
-        if "strategy" in body:
-            v = _validate_and_cast("strategy", body["strategy"])
-            if v is None:
-                return error_response(f"invalid strategy: {body['strategy']}")
-            flat_updates["topic_segmentation.strategy"] = v
-
-        if "enabled" in body:
-            flat_updates["topic_segmentation.enabled"] = bool(body["enabled"])
-
-        for section, fields in {
-            "strategy_b": {
-                "similarity_threshold": "topic_segmentation.strategy_b.similarity_threshold",
-                "min_cluster_size": "topic_segmentation.strategy_b.min_cluster_size",
-                "max_clusters": "topic_segmentation.strategy_b.max_clusters",
-            },
-            "strategy_c": {
-                "topic_shift_threshold": "topic_segmentation.strategy_c.topic_shift_threshold",
-                "min_chunk_size": "topic_segmentation.strategy_c.min_chunk_size",
-            },
-            "strategy_d": {
-                "stage1_max_topics": "topic_segmentation.strategy_d.stage1_max_topics",
-                "enable_parallel_stage2": "topic_segmentation.strategy_d.enable_parallel_stage2",
-            },
-        }.items():
-            if section in body and isinstance(body[section], dict):
-                for field, config_path in fields.items():
-                    if field in body[section]:
-                        v = _validate_and_cast(field, body[section][field])
-                        if v is None:
-                            return error_response(
-                                f"invalid value for {section}.{field}: {body[section][field]}"
-                            )
-                        flat_updates[config_path] = v
-
-        if not await cfg.update_runtime_config(flat_updates, persist=True):
-            return error_response("invalid runtime config update")
-        updated = list(flat_updates.keys())
-
-        logger.info("[TopicSegmentationApi] config updated: %s", updated)
-        return ok_response(
-            {"ok": True, "updated": updated, "message": "配置已更新，下次记忆处理生效"}
-        )
+        try:
+            base_revision = body.pop("base_revision", None)
+            (
+                _,
+                current_revision,
+            ) = await self.plugin.config_manager.get_config_snapshot_async()
+            if base_revision is None:
+                base_revision = current_revision
+            if not isinstance(base_revision, str) or not base_revision.strip():
+                return error_response(
+                    "base_revision 必须是非空字符串", code="invalid_request"
+                )
+            changes: dict[str, object] = {}
+            for key, value in body.items():
+                if key.startswith("topic_segmentation."):
+                    short_key = key.replace("topic_segmentation.", "", 1)
+                    parts = short_key.split(".")
+                    if len(parts) == 1:
+                        changes[key] = _validate_and_cast(parts[0], value)
+                    elif len(parts) == 2:
+                        changes[key] = _validate_and_cast(parts[1], value)
+                elif key.startswith("candidate_reuse."):
+                    changes[f"topic_segmentation.{key}"] = value
+                elif key in ("strategy", "enabled"):
+                    changes[f"topic_segmentation.{key}"] = _validate_and_cast(
+                        key, value
+                    )
+                elif key in ("strategy_b", "strategy_c", "strategy_d") and isinstance(
+                    value, dict
+                ):
+                    for field, field_value in value.items():
+                        changes[f"topic_segmentation.{key}.{field}"] = (
+                            _validate_and_cast(field, field_value)
+                        )
+            if not changes:
+                return error_response("未找到有效的配置字段")
+            result = await self.plugin.config_manager.apply_config_changes(
+                changes, expected_revision=base_revision, persist=True
+            )
+            return ok_response(
+                {
+                    "updated": list(result.changed_paths),
+                    "revision": result.revision,
+                    "status": "success",
+                }
+            )
+        except ConfigConflictError as exc:
+            return error_response(
+                str(exc),
+                code="config_conflict",
+                data={"current_revision": exc.current_revision},
+            )
+        except Exception as exc:
+            logger.error("[API] 配置更新失败: %s", exc, exc_info=True)
+            return error_response(f"配置更新失败: {exc}")
 
     async def start_backfill(self):
         guard = getattr(self, "_maintenance_write_guard", lambda: None)()
@@ -219,25 +295,23 @@ class TopicSegmentationApiMixin:
         engines, err = await self._ensure_plugin_ready()
         if err:
             return err
-        scheduler = getattr(self.plugin, "_backfill_scheduler", None)
+        scheduler = self.plugin._backfill_scheduler
         if scheduler is None:
-            return error_response("backfill scheduler not available")
+            return error_response("回填调度器未初始化")
         try:
             if scheduler.is_running:
                 return error_response("回填任务已在运行中")
             job_id = await scheduler.start()
             return ok_response({"job_id": job_id, "message": "回填任务已启动"})
         except Exception as e:
-            logger.error(
-                "[TopicSegmentationApi] backfill start failed: %s", e, exc_info=True
-            )
+            logger.error("[API] 启动回填失败: %s", e, exc_info=True)
             return error_response(f"启动回填失败: {e}")
 
     async def get_backfill_status(self):
         engines, err = await self._ensure_plugin_ready()
         if err:
             return err
-        scheduler = getattr(self.plugin, "_backfill_scheduler", None)
+        scheduler = self.plugin._backfill_scheduler
         if scheduler is None:
-            return ok_response({"status": "unavailable"})
+            return error_response("回填调度器未初始化")
         return ok_response(scheduler.progress)

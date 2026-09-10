@@ -208,6 +208,20 @@ class SummaryLegacyMigrationMixin:
                     declared_chat = self._legacy_text(pending.get("chat_type"))
                     declared_group = self._legacy_text(pending.get("group_id"))
                     declared_scope = self._legacy_text(pending.get("scope_id"))
+                    declared_scope_key = self._legacy_text(pending.get("scope_key"))
+                    declared_privacy = self._legacy_text(pending.get("privacy_level"))
+                    declared_resolver_revision = self._legacy_text(
+                        pending.get("resolver_revision")
+                    )
+                    # 候选 scope 三元组：缺失只影响候选功能，不影响窗口合法性。
+                    candidate_scope = all(
+                        value is not None
+                        for value in (
+                            declared_scope_key,
+                            declared_privacy,
+                            declared_resolver_revision,
+                        )
+                    )
                     try:
                         (
                             chat_type,
@@ -215,7 +229,8 @@ class SummaryLegacyMigrationMixin:
                             scope_id,
                             stored_persona,
                         ) = await self.get_summary_scope(session_id)
-                        scope_valid = all(
+                        # 身份三元组从持久消息权威恢复；声明值冲突才拒绝。
+                        identity_valid = all(
                             declared is None or declared == actual
                             for declared, actual in (
                                 (declared_chat, chat_type),
@@ -233,7 +248,8 @@ class SummaryLegacyMigrationMixin:
                         chat_type = None
                         group_id = None
                         scope_id = None
-                        scope_valid = False
+                        identity_valid = False
+                    scope_valid = identity_valid and candidate_scope
                     try:
                         messages = tuple(
                             self._legacy_message(item) for item in source_rows
@@ -244,7 +260,7 @@ class SummaryLegacyMigrationMixin:
                         )
                         complete = (
                             range_valid
-                            and scope_valid
+                            and identity_valid
                             and snapshot_data is not None
                             and len(messages) == end - start
                             and seqs == tuple(range(start + 1, end + 1))
@@ -265,8 +281,9 @@ class SummaryLegacyMigrationMixin:
                           job_id,session_id,session_epoch,start_seq,end_seq,expected_count,
                           source_digest,persona_id,chat_type,group_id,scope_id,gate_revision,
                           gate_snapshot_json,triggered_by,status,attempt_count,
-                          next_attempt_at,worker_generation,reason_code,created_at,updated_at
-                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          next_attempt_at,worker_generation,reason_code,created_at,updated_at,
+                          scope_key,privacy_level,resolver_revision,scope_provenance_complete
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             uuid.uuid4().hex,
@@ -277,9 +294,9 @@ class SummaryLegacyMigrationMixin:
                             end - start,
                             digest,
                             persona_id,
-                            chat_type if scope_valid else None,
-                            group_id if scope_valid else None,
-                            scope_id if scope_valid else None,
+                            chat_type if identity_valid else None,
+                            group_id if identity_valid else None,
+                            scope_id if identity_valid else None,
                             gate_revision,
                             gate_snapshot_json,
                             "legacy",
@@ -290,6 +307,10 @@ class SummaryLegacyMigrationMixin:
                             reason,
                             now,
                             now,
+                            declared_scope_key if scope_valid else None,
+                            declared_privacy if scope_valid else None,
+                            declared_resolver_revision if scope_valid else None,
+                            int(bool(scope_valid)),
                         ),
                     )
                     metadata.pop("pending_summary", None)

@@ -12,6 +12,8 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from astrbot.api import logger
+
 from ....shared.contracts.conversation import Message
 from ....shared.summary_source import source_window_digest
 from ...reflection.domain.summary_models import (
@@ -220,6 +222,131 @@ class SummaryStoreMixin(
             raise RuntimeError("summary_startup_scope_unavailable")
         return "private", None, session_id, persona_id
 
+    async def get_summary_scope_snapshot(
+        self, session_id: str
+    ) -> dict[str, object] | None:
+        """读取已固化的完整 scope 快照；缺失时绝不从会话标识推导。"""
+
+        if self.connection is None:
+            return None
+        try:
+            session_cursor = await self.connection.execute(
+                "SELECT metadata FROM sessions WHERE session_id=?",
+                (session_id,),
+            )
+            session_row = await session_cursor.fetchone()
+            if session_row is not None:
+                raw_metadata = _row(session_row, "metadata", 0) or "{}"
+                metadata = (
+                    json.loads(raw_metadata)
+                    if isinstance(raw_metadata, str)
+                    else raw_metadata
+                )
+                if (
+                    isinstance(metadata, dict)
+                    and metadata.get("scope_provenance_complete") is True
+                ):
+                    snapshot = {
+                        key: metadata.get(key)
+                        for key in (
+                            "scope_key",
+                            "chat_type",
+                            "privacy_level",
+                            "resolver_revision",
+                            "scope_id",
+                        )
+                    }
+                    if all(
+                        isinstance(value, str) and value.strip()
+                        for value in snapshot.values()
+                    ):
+                        return dict(snapshot)
+            job_cursor = await self.connection.execute(
+                "SELECT scope_key,chat_type,privacy_level,resolver_revision,"
+                "scope_id,scope_provenance_complete FROM summary_jobs "
+                "WHERE session_id=? ORDER BY updated_at DESC,created_at DESC LIMIT 1",
+                (session_id,),
+            )
+            job_row = await job_cursor.fetchone()
+            if job_row is None or _row(job_row, "scope_provenance_complete", 5) not in (
+                1,
+                True,
+            ):
+                return None
+            snapshot = {
+                key: _row(job_row, key, index)
+                for key, index in (
+                    ("scope_key", 0),
+                    ("chat_type", 1),
+                    ("privacy_level", 2),
+                    ("resolver_revision", 3),
+                    ("scope_id", 4),
+                )
+            }
+            if not (
+                isinstance(snapshot["scope_id"], str) and snapshot["scope_id"].strip()
+            ):
+                return None
+            return (
+                snapshot
+                if all(
+                    isinstance(value, str) and value.strip()
+                    for value in snapshot.values()
+                )
+                else None
+            )
+        except (asyncio.CancelledError,):
+            raise
+        except Exception as error:
+            logger.warning(
+                "读取固化 scope 快照失败，异常类型=%s",
+                error.__class__.__name__,
+            )
+            return None
+
+    async def _persist_summary_scope_snapshot(
+        self, context: SummaryWindowContext
+    ) -> None:
+        """在总结规划事务内保存可信 scope 快照，拒绝覆盖冲突值。"""
+
+        if self.connection is None or not context.scope_available:
+            return
+        cursor = await self.connection.execute(
+            "SELECT metadata FROM sessions WHERE session_id=?",
+            (context.session_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return
+        raw_metadata = _row(row, "metadata", 0) or "{}"
+        try:
+            metadata = (
+                json.loads(raw_metadata)
+                if isinstance(raw_metadata, str)
+                else raw_metadata
+            )
+        except (TypeError, ValueError, json.JSONDecodeError) as error:
+            raise RuntimeError("scope_snapshot_conflict") from error
+        if not isinstance(metadata, dict):
+            raise RuntimeError("scope_snapshot_conflict")
+        values = {
+            "scope_key": context.scope_key,
+            "chat_type": context.chat_type,
+            "privacy_level": context.privacy_level,
+            "resolver_revision": context.resolver_revision,
+            "scope_id": context.scope_id,
+        }
+        if metadata.get("scope_provenance_complete") is True and any(
+            metadata.get(key) not in (None, value) for key, value in values.items()
+        ):
+            raise RuntimeError("scope_snapshot_conflict")
+        metadata.update(values)
+        metadata["scope_provenance_complete"] = True
+        await self.connection.execute(
+            "UPDATE sessions SET metadata=? WHERE session_id=?",
+            (json.dumps(metadata, ensure_ascii=False), context.session_id),
+        )
+
     async def plan_existing_frontiers(
         self,
         context_factory: Callable[
@@ -359,6 +486,7 @@ class SummaryStoreMixin(
                     return SummaryEnqueueResult(
                         False, reason_code=SummaryReasonCode.EPOCH_FENCED
                     )
+                await self._persist_summary_scope_snapshot(context)
                 if context.triggered_by == "manual":
                     blocker_cursor = await self.connection.execute(
                         """
@@ -445,7 +573,9 @@ class SummaryStoreMixin(
                     else:
                         blocked = True
                         digest = hashlib.sha256(
-                            f"incomplete:{context.session_id}:{start_seq}:{end_seq}".encode()
+                            f"incomplete:{context.session_id}:{start_seq}:{
+                                end_seq
+                            }".encode()
                         ).hexdigest()
                         status = SummaryJobStatus.BLOCKED.value
                         reason = SummaryReasonCode.SOURCE_INCOMPLETE.value
@@ -455,8 +585,9 @@ class SummaryStoreMixin(
                           job_id,session_id,session_epoch,start_seq,end_seq,expected_count,
                           source_digest,persona_id,chat_type,group_id,scope_id,gate_revision,
                           gate_snapshot_json,triggered_by,status,attempt_count,next_attempt_at,
-                          worker_generation,reason_code,created_at,updated_at
-                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                          worker_generation,reason_code,created_at,updated_at,
+                          scope_key,privacy_level,resolver_revision,scope_provenance_complete
+                        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                         """,
                         (
                             uuid.uuid4().hex,
@@ -480,6 +611,10 @@ class SummaryStoreMixin(
                             reason,
                             now,
                             now,
+                            context.scope_key or None,
+                            context.privacy_level,
+                            context.resolver_revision or None,
+                            int(context.scope_available),
                         ),
                     )
                 executable_cursor = await self.connection.execute(

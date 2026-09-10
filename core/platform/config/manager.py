@@ -39,6 +39,7 @@ _COMPOSITE_SCHEMA_PATHS = frozenset(
     {
         "quality.gate.bindings",
         "quality.gate.profiles",
+        "topic_segmentation.candidate_reuse.bucket_overrides",
     }
 )
 
@@ -211,7 +212,8 @@ class ConfigManager:
             and delivery_value in _INJECTION_DELIVERY_METHODS
         )
         override_numbers_valid = all(
-            type(recall.get(path, 0)) is int and 0 <= recall.get(path, 0) <= maximum
+            type(recall.get(path, 0)) is int and 0 <= recall.get(
+                path, 0) <= maximum
             for path, maximum in (
                 ("injection_budget_chars", 10_000),
                 ("injection_memory_max_chars", 2_000),
@@ -291,7 +293,8 @@ class ConfigManager:
         candidate = copy.deepcopy(merged_config)
         invalid_sections = self._extract_invalid_sections(validation_error)
         if not invalid_sections:
-            invalid_sections = self._probe_invalid_sections(candidate, defaults)
+            invalid_sections = self._probe_invalid_sections(
+                candidate, defaults)
 
         for section in sorted(invalid_sections):
             if section in defaults:
@@ -506,7 +509,8 @@ class ConfigManager:
             try:
                 candidate_obj = MemoraConfig(**candidate)
             except PydanticValidationError as exc:
-                raise ConfigValidationError(self._pydantic_field_errors(exc)) from exc
+                raise ConfigValidationError(
+                    self._pydantic_field_errors(exc)) from exc
             except Exception as exc:
                 raise ConfigValidationError({"*": str(exc)}) from exc
 
@@ -540,6 +544,41 @@ class ConfigManager:
                     persistence_conflict_revision,
                 )
             return ConfigApplyResult(candidate_revision, changed_paths)
+
+    async def update_candidate_reuse_bucket(
+        self,
+        bucket: str,
+        mode: str,
+        fixed_k: int | None,
+        *,
+        expected_revision: str | None = None,
+        persist: bool = True,
+    ) -> ConfigApplyResult:
+        """更新单个规模桶的候选复用配置。
+
+        参数:
+            bucket: 规模桶名称 (tiny/small/medium/large/xlarge/huge)
+            mode: 候选模式 (off/observe/full/top_k)
+            fixed_k: 固定 K 值，None 表示继承全局配置
+            expected_revision: 预期配置版本，用于并发控制
+            persist: 是否持久化到 AstrBot 配置源
+
+        返回:
+            ConfigApplyResult 包含新版本号和变更路径
+
+        异常:
+            ConfigConflictError: 版本冲突
+            ConfigValidationError: 配置验证失败
+        """
+        changes = {
+            f"topic_segmentation.candidate_reuse.bucket_overrides.{bucket}.mode": mode,
+            f"topic_segmentation.candidate_reuse.bucket_overrides.{bucket}.fixed_k": fixed_k,
+        }
+        return await self.apply_config_changes(
+            changes,
+            expected_revision=expected_revision,
+            persist=persist,
+        )
 
     def _validate_change_paths(
         self,

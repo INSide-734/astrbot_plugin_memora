@@ -1747,6 +1747,54 @@
       "VERSION": "版本",
       "UPDATED": "更新时间"
     },
+    "candidateReuse": {
+      "title": "Topic 候选重用配置",
+      "description": "配置候选重用模式、阈值和目录状态监控",
+      "loading": "正在加载候选重用配置",
+      "refresh": "刷新",
+      "config": "配置参数",
+      "status": "运行状态",
+      "modeLabel": "重用模式",
+      "mode": {
+        "observe": "观察模式",
+        "off": "关闭（回滚基线）",
+        "full": "全量注入",
+        "top_k": "固定 Top-K"
+      },
+      "fixedK": "固定 K 值",
+      "activationThreshold": "激活阈值",
+      "maxFullTopics": "最大完整 Topic 数",
+      "maxFullPromptTokens": "最大完整提示词 Token 数",
+      "maxQueryChars": "候选查询最大字符数",
+      "overfetchFactor": "补足扫描倍数（固定 3）",
+      "metricsRetentionDays": "观测数据保留天数",
+      "observeMaxCandidates": "observe 影子候选上限",
+      "observeMaxRows": "observe 影子行数上限",
+      "observeMaxDurationMs": "observe 影子耗时上限 (ms)",
+      "save": "保存配置",
+      "saving": "正在保存…",
+      "saveSuccess": "候选重用配置已保存",
+      "discard": "放弃修改",
+      "validation": {
+        "fixedKExceedsMax": "固定 K 值不能超过最大完整 Topic 数",
+        "thresholdExceedsMax": "激活阈值不能超过最大完整 Topic 数"
+      },
+      "catalogStatusLabel": "目录状态",
+      "catalogStatus": {
+        "ready": "就绪",
+        "building": "构建中",
+        "degraded": "降级",
+        "unavailable": "不可用"
+      },
+      "dirtyCount": "未收敛脏记录",
+      "p95Latency": "P95 选择时延 (ms)",
+      "p95Candidates": "P95 候选数",
+      "p95Tokens": "P95 Token 数",
+      "catalogDegraded": "目录处于降级状态",
+      "catalogDegradedHint": "目录未就绪时强制使用观察模式，模式选择器已禁用",
+      "sizeBuckets": "规模桶分布",
+      "metrics": "聚合指标"
+    },
     "category": {
       "fact": "事实",
       "concept": "概念",

@@ -12,7 +12,7 @@
 ## 公开入口与文件分工
 
 - `__init__.py`：惰性导出 `ConfigManager`、验证/默认值函数、所有权和影响分类；保持包导入轻量，未知属性必须失败。
-- `manager.py`：唯一可变配置控制面。读取外部源、建立快照、计算 SHA-256 revision，并实现锁内 CAS、持久化、回滚、取消和配置错误映射。
+- `manager.py`：唯一可变配置控制面。读取外部源、建立快照、计算 SHA-256 revision，并实现锁内 CAS、持久化、回滚、取消和配置错误映射。新增 `update_candidate_reuse_bucket(bucket, mode, k)` 支持按规模桶更新 topic 候选配置。
 - `config_validator.py`：`MemoraConfig` 根模型及旧兼容导出；不要把验证编排移回 `core/base`。
 - `validation.py`：根模型的延迟加载、默认值生成、递归合并和完整候选验证。
 - `migrations.py`：只迁移明确支持的旧键；迁移在隔离副本上执行，返回稳定 migration id，不改写源映射。

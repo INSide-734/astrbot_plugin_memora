@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -14,12 +15,15 @@ async def close_initializer_injection_components(initializer: Any) -> None:
     """按记录器后存储的顺序幂等关闭注入观测组件。"""
 
     async with initializer._injection_close_lock:
-        first_error: BaseException | None = None
+        first_error: Exception | None = None
+        cancellation: asyncio.CancelledError | None = None
         recorder = initializer.injection_decision_recorder
         if recorder is not None:
             try:
                 await recorder.close(timeout=5.0)
-            except BaseException as error:
+            except asyncio.CancelledError as error:
+                cancellation = error
+            except Exception as error:
                 first_error = error
             else:
                 if initializer.injection_decision_recorder is recorder:
@@ -29,13 +33,17 @@ async def close_initializer_injection_components(initializer: Any) -> None:
         if store is not None:
             try:
                 await store.close()
-            except BaseException as error:
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+            except Exception as error:
                 if first_error is None:
                     first_error = error
             else:
                 if initializer.injection_decision_store is store:
                     initializer.injection_decision_store = None
 
+        if cancellation is not None:
+            raise cancellation
         if first_error is not None:
             raise first_error
 
@@ -44,12 +52,15 @@ async def close_initializer_memory_evolution_components(initializer: Any) -> Non
     """按 manager 后 Store 的顺序关闭记忆演化组件。"""
 
     async with initializer._evolution_close_lock:
-        first_error: BaseException | None = None
+        first_error: Exception | None = None
+        cancellation: asyncio.CancelledError | None = None
         manager = initializer.memory_evolution_manager
         if manager is not None:
             try:
                 await manager.stop()
-            except BaseException as error:
+            except asyncio.CancelledError as error:
+                cancellation = error
+            except Exception as error:
                 first_error = error
             else:
                 if initializer.memory_evolution_manager is manager:
@@ -59,23 +70,30 @@ async def close_initializer_memory_evolution_components(initializer: Any) -> Non
         if store is not None:
             try:
                 await store.close()
-            except BaseException as error:
+            except asyncio.CancelledError as error:
+                cancellation = cancellation or error
+            except Exception as error:
                 if first_error is None:
                     first_error = error
             else:
                 if initializer.memory_evolution_store is store:
                     initializer.memory_evolution_store = None
 
+        if cancellation is not None:
+            raise cancellation
         if first_error is not None:
             raise first_error
 
 
 async def close_initializer_core_components_after_failure(initializer: Any) -> None:
-    """初始化失败时继续关闭所有已发布的核心资源，并返回首个错误。"""
-    first_error: BaseException | None = None
+    """初始化失败时继续关闭所有已发布的核心资源，取消优先于普通错误。"""
+    first_error: Exception | None = None
+    cancellation: asyncio.CancelledError | None = None
     try:
         await close_prompt_protection(initializer)
-    except BaseException as error:
+    except asyncio.CancelledError as error:
+        cancellation = error
+    except Exception as error:
         first_error = error
 
     conversation_manager = getattr(initializer, "conversation_manager", None)
@@ -83,6 +101,11 @@ async def close_initializer_core_components_after_failure(initializer: Any) -> N
     steps = (
         ("backfill_scheduler", initializer.backfill_scheduler, "stop"),
         ("decay_scheduler", initializer.decay_scheduler, "stop"),
+        (
+            "topic_catalog_reconcile_scheduler",
+            initializer.topic_catalog_reconcile_scheduler,
+            "stop",
+        ),
         ("memory_engine", initializer.memory_engine, "close"),
         ("graph_db", initializer.graph_db, "close"),
         ("db", initializer.db, "close"),
@@ -100,7 +123,9 @@ async def close_initializer_core_components_after_failure(initializer: Any) -> N
             result = method()
             if inspect.isawaitable(result):
                 await result
-        except BaseException as error:
+        except asyncio.CancelledError as error:
+            cancellation = cancellation or error
+        except Exception as error:
             if first_error is None:
                 first_error = error
         else:
@@ -110,6 +135,8 @@ async def close_initializer_core_components_after_failure(initializer: Any) -> N
             elif getattr(initializer, attribute, None) is component:
                 setattr(initializer, attribute, None)
 
+    if cancellation is not None:
+        raise cancellation
     if first_error is not None:
         raise first_error
 
@@ -186,6 +213,17 @@ async def stop_runtime_producers(
         )
     else:
         report_skipped("engine_pending_tasks", "component_inactive")
+
+    reconcile_catalog = getattr(initializer, "reconcile_catalog_for_shutdown", None)
+    if callable(reconcile_catalog):
+        await safe_step(
+            "catalog_reconcile",
+            "关停前收敛话题目录",
+            reconcile_catalog(),
+            timeout=timeout,
+        )
+    else:
+        report_skipped("catalog_reconcile", "component_inactive")
 
     await safe_step(
         "prompt_protection",

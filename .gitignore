@@ -69,6 +69,8 @@ storage/**/*.sqlite*
 openspec/
 .uv-cache/
 .tmp*/
+.trellis/
+.omp/
 
 # 本地数据目录
 data/

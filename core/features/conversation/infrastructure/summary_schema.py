@@ -7,8 +7,8 @@ import json
 import time
 from typing import Any
 
-SUMMARY_SCHEMA_VERSION = 5
-_MIGRATION_ID = "summary_schema_v5"
+SUMMARY_SCHEMA_VERSION = 6
+_MIGRATION_ID = "summary_schema_v6_scope_snapshot"
 
 _SUMMARY_STATUSES = (
     "queued",
@@ -57,6 +57,7 @@ _REASON_CODES = (
     "abandoned_confirmed",
     "no_facts",
     "summary_invalid",
+    "scope_unavailable",
 )
 
 
@@ -259,6 +260,10 @@ async def _validate_schema_shape(connection: Any) -> None:
             "skipped_count",
             "created_at",
             "updated_at",
+            "scope_key",
+            "privacy_level",
+            "resolver_revision",
+            "scope_provenance_complete",
         },
         "summary_job_candidates": {
             "job_id",
@@ -380,6 +385,16 @@ async def _ensure_summary_tables(connection: Any) -> None:
             operator_action TEXT CHECK(
                 operator_action IS NULL OR length(operator_action) BETWEEN 1 AND 64
             ),
+            scope_key TEXT CHECK(scope_key IS NULL OR length(scope_key) BETWEEN 1 AND 256),
+            privacy_level TEXT CHECK(
+                privacy_level IS NULL OR privacy_level IN ('public','shared','confidential')
+            ),
+            resolver_revision TEXT CHECK(
+                resolver_revision IS NULL OR length(resolver_revision) BETWEEN 1 AND 256
+            ),
+            scope_provenance_complete INTEGER NOT NULL DEFAULT 0 CHECK(
+                scope_provenance_complete IN (0,1)
+            ),
             UNIQUE(session_id, session_epoch, start_seq, end_seq)
         )
         """,
@@ -429,13 +444,37 @@ async def _ensure_summary_tables(connection: Any) -> None:
 
 
 async def _ensure_summary_extensions(connection: Any) -> None:
-    """为已有总结表补齐操作审计和候选幂等字段。"""
+    """为已有总结表补齐操作审计、幂等和 scope 快照字段。"""
     job_columns = await _columns(connection, "summary_jobs")
     if "operator_action" not in job_columns:
         await connection.execute(
             "ALTER TABLE summary_jobs ADD COLUMN operator_action TEXT CHECK("
             "operator_action IS NULL OR length(operator_action) BETWEEN 1 AND 64)"
         )
+    for column, definition in (
+        (
+            "scope_key",
+            "TEXT CHECK(scope_key IS NULL OR length(scope_key) BETWEEN 1 AND 256)",
+        ),
+        (
+            "privacy_level",
+            "TEXT CHECK(privacy_level IS NULL OR privacy_level IN "
+            "('public','shared','confidential'))",
+        ),
+        (
+            "resolver_revision",
+            "TEXT CHECK(resolver_revision IS NULL OR length(resolver_revision) "
+            "BETWEEN 1 AND 256)",
+        ),
+        (
+            "scope_provenance_complete",
+            "INTEGER NOT NULL DEFAULT 0 CHECK(scope_provenance_complete IN (0,1))",
+        ),
+    ):
+        if column not in job_columns:
+            await connection.execute(
+                f"ALTER TABLE summary_jobs ADD COLUMN {column} {definition}"
+            )
     candidate_columns = await _columns(connection, "summary_job_candidates")
     if "idempotency_key" not in candidate_columns:
         await connection.execute(
@@ -453,7 +492,8 @@ async def _ensure_reason_code_constraint(connection: Any) -> None:
     ).fetchone()
     schema_sql = str(row[0] or "") if row is not None else ""
     if "CHECK(reason_code IN" not in schema_sql or all(
-        f"'{code}'" in schema_sql for code in ("no_facts", "summary_invalid")
+        f"'{code}'" in schema_sql
+        for code in ("no_facts", "summary_invalid", "scope_unavailable")
     ):
         return
 
@@ -464,7 +504,8 @@ async def _ensure_reason_code_constraint(connection: Any) -> None:
         "claim_token,lease_until,worker_generation,failed_stage,reason_code,"
         "exception_type,canonical_count,quarantine_count,discard_count,"
         "mark_write_count,failed_count,skipped_count,created_at,updated_at,"
-        "operator_action"
+        "operator_action,scope_key,privacy_level,resolver_revision,"
+        "scope_provenance_complete"
     )
     candidate_columns = (
         "job_id,slot,slot_key,content_digest,idempotency_key,disposition,"

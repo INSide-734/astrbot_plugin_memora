@@ -48,6 +48,12 @@ flowchart LR
 8. Prompt protection scope、可信稳定身份、GateSnapshot 和 source evidence 必须从事件链传入；日志与观测只能记录计数、阶段和 reason code。
 9. `asyncio.CancelledError` 穿透批次、写入和关闭流程；组合根负责停止调度器并等待或回收所有已登记 worker。
 
+## Topic candidate contract
+
+反思候选契约由 `reflection/domain` 持有：`CanonicalScopeResolver` 的结果必须作为不可变 scope snapshot 传入总结任务；缺失或冲突的 `scope_key`、`chat_type`、`privacy_level` 或 resolver revision 统一为 `scope_unavailable`，不得由 `session_id`、`persona_id` 或 `group_id` 猜测。`TopicCandidateLabel` 只有明确的 `source_provenance_complete=True` 才能进入未来生产 Prompt；缺失/不完整证据不得被推断为完整，也不执行 topic 字符串身份替换。
+
+`CandidateReuseConfig` 是 reflection domain 的 typed 配置，默认 `observe`，并强制 `fixed_k <= max_full_topics`、`activation_threshold <= max_full_topics`、`overfetch_factor == 3`；在平台 schema/runtime/API 完成同步前不得挂入根配置或启用生产 selector。候选 DTO 的安全投影只能包含固定模式、状态、reason 和非负计数，禁止携带 query、正文、scope、canonical ID、revision 或身份查找细节。`BucketOverride` 允许按规模桶（tiny/small/medium/large/xlarge/huge）覆盖全局 mode 和 fixed_k；`CandidateReuseConfig.get_bucket_config(bucket)` 返回有效的 (mode, k) 配置，优先使用桶覆盖，回落全局配置。
+
 ## 依赖方向
 
 `event_handler` → reflection application → conversation、recall processors、quality、memory、observability 与 shared cost control。reflection 不应依赖 Page API、命令或具体 SQLite Store；质量门和写端口通过构造注入。

@@ -22,7 +22,7 @@ class StopwordsManager:
         """
         # 获取内置停用词目录（仓库中的 static/stopwords）
         self.builtin_stopwords_dir = (
-            Path(__file__).parent.parent.parent / "static" / "stopwords"
+            Path(__file__).parent.parent.parent.parent.parent / "static" / "stopwords"
         )
 
         # 用户自定义停用词目录（用于保存用户添加的停用词）

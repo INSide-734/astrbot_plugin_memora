@@ -15,6 +15,7 @@
 - `application/enricher.py`：canonical 身份 metadata 和召回候选临时名称说明。
 - `infrastructure/store.py`：独立 SQLite 身份、作用域成员与别名表。
 - `contracts.py`：`IDENTITY_SCHEMA_VERSION` 与目录端口。
+- `application/scope_resolver.py`：由可信协议身份或已持久化完整快照解析 canonical scope，并在缺失、冲突或不可信时返回 `scope_unavailable`。
 
 ## 解析与同步链
 

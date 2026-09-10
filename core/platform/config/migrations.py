@@ -8,6 +8,10 @@ from typing import Any
 
 _RERANKER_MIGRATION_ID = "reranker.cross_encoder_to_embedding_similarity"
 _FORMATTER_LLM_MIGRATION_ID = "human_like_memory.formatter_llm_to_rule"
+_CANDIDATE_REUSE_MODE_MIGRATION_ID = (
+    "topic_segmentation.candidate_reuse.mode_vocabulary"
+)
+_CANDIDATE_REUSE_LEGACY_MODES = {"disabled": "off", "adaptive": "top_k"}
 
 
 def migrate_legacy_config(
@@ -49,6 +53,18 @@ def migrate_legacy_config(
     ):
         human_like["human_like_formatter_mode"] = "rule"
         applied.append(_FORMATTER_LLM_MIGRATION_ID)
+
+    # 旧版词表 disabled/adaptive 已收敛为计划闭集 off/observe/full/top_k；
+    # 只迁移全局 mode，bucket_overrides 内的桶级 mode 由 Pydantic 按新词表
+    # 拒绝后走分支降级，不在快照层静默改写。
+    segmentation = migrated.get("topic_segmentation")
+    if isinstance(segmentation, dict):
+        candidate_reuse = segmentation.get("candidate_reuse")
+        if isinstance(candidate_reuse, dict):
+            legacy_mode = candidate_reuse.get("mode")
+            if legacy_mode in _CANDIDATE_REUSE_LEGACY_MODES:
+                candidate_reuse["mode"] = _CANDIDATE_REUSE_LEGACY_MODES[legacy_mode]
+                applied.append(_CANDIDATE_REUSE_MODE_MIGRATION_ID)
 
     return migrated, tuple(applied)
 

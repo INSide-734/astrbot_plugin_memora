@@ -13,6 +13,10 @@ from astrbot.api.event import AstrMessageEvent, MessageEventResult
 from ....features.conversation.application.conversation_manager import (
     ConversationManager,
 )
+from ....features.identity.application.scope_resolver import (
+    CanonicalScopeResolver,
+)
+from ....features.identity.domain.models import ResolvedIdentity
 from ....features.memory.application.memory_engine import MemoryEngine
 from ....features.memory.infrastructure.validators import IndexValidator
 from ....features.quality.application.gate_runtime import capture_gate_snapshot_json
@@ -58,6 +62,7 @@ class CommandHandler(
         update_manager=None,
         update_installer=None,
         identity_runtime: IdentityConversationPort | None = None,
+        scope_resolver: CanonicalScopeResolver | None = None,
     ) -> None:
         """
         初始化命令处理器
@@ -88,6 +93,7 @@ class CommandHandler(
             if isinstance(identity_runtime, IdentityConversationPort)
             else None
         )
+        self._scope_resolver = scope_resolver or CanonicalScopeResolver()
         self._summary_scheduler = summary_scheduler
         self._memory_processor = memory_processor
         self._memory_quality_gate = memory_quality_gate
@@ -138,6 +144,8 @@ class CommandHandler(
             observed_end = await observed_end
         if isinstance(observed_end, bool) or not isinstance(observed_end, int):
             return "未接受：reason=scope_unavailable"
+        if observed_end - cursor < 2:
+            return "未接受：reason=no_window"
         get_scope = getattr(store, "get_summary_scope", None)
         if not callable(get_scope):
             return "未接受：reason=scope_unavailable"
@@ -155,8 +163,31 @@ class CommandHandler(
             return "未接受：reason=scope_unavailable"
         if not scope_id.strip() or (chat_type == "group" and not str(group_id).strip()):
             return "未接受：reason=scope_unavailable"
-        if observed_end - cursor < 2:
-            return "未接受：reason=no_window"
+        identity = None
+        if self._identity_runtime is not None:
+            try:
+                resolved = self._identity_runtime.resolve(event)
+                if isinstance(resolved, ResolvedIdentity):
+                    identity = resolved
+            except Exception:
+                identity = None
+        scope_resolution = self._scope_resolver.resolve(
+            identity,
+            session_id=session_id,
+            chat_type=chat_type,
+            group_id=group_id,
+            scope_id=scope_id,
+        )
+        if not scope_resolution.available:
+            snapshot_reader = getattr(store, "get_summary_scope_snapshot", None)
+            if callable(snapshot_reader) and identity is None:
+                persisted = snapshot_reader(session_id)
+                if inspect.isawaitable(persisted):
+                    persisted = await persisted
+                if isinstance(persisted, dict):
+                    scope_resolution = self._scope_resolver.resolve_persisted(persisted)
+        if not scope_resolution.available:
+            return "未接受：reason=scope_unavailable"
         from ...context_helpers import get_persona_id
 
         persona_id = await get_persona_id(self.context, event) or stored_persona
@@ -184,6 +215,11 @@ class CommandHandler(
                 )
                 * 2,
             ),
+            scope_key=scope_resolution.scope_key,
+            privacy_level=scope_resolution.privacy_level,
+            resolver_revision=scope_resolution.resolver_revision,
+            scope_reason_code="scope_resolved",
+            scope_provenance_complete=True,
         )
         result = await scheduler.enqueue_manual(context, observed_end)
         if result.accepted:

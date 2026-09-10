@@ -11,6 +11,11 @@ from .schema_manager import (
     SchemaMigrationPlan,
     SchemaValidation,
 )
+from .topic_catalog_store import (
+    TopicCatalogDirty,
+    TopicCatalogSource,
+    TopicCatalogStore,
+)
 from .validators import IndexValidator, PersistenceHealthValidator
 from .write_op_journal import WriteOpJournal
 
@@ -26,6 +31,9 @@ __all__ = [
     "SchemaManager",
     "SchemaMigrationPlan",
     "SchemaValidation",
+    "TopicCatalogDirty",
+    "TopicCatalogSource",
+    "TopicCatalogStore",
     "WriteOpJournal",
     "apply_perf_pragmas",
     "load_canonical_memory",

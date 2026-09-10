@@ -98,6 +98,8 @@ def _build_anomaly_detector(
 class MemoryEngineLifecycleMixin:
     """MemoryEngine 生命周期方法（initialize / close / _create_tracked_task）"""
 
+    topic_catalog_store: Any
+
     # ==================== 生命周期 ====================
 
     def __init__(self):
@@ -156,6 +158,7 @@ class MemoryEngineLifecycleMixin:
             self._retrieval,
             self._maintenance,
             self._schema,
+            self.topic_catalog_store,
         ):
             mod._db = self.db_connection
         configured_data_dir = Path(
@@ -180,7 +183,13 @@ class MemoryEngineLifecycleMixin:
         ConnectionRegistry.register(
             self.db_path,
             self.db_connection,
-            [self._write_journal, self._retrieval, self._maintenance, self._schema],
+            [
+                self._write_journal,
+                self._retrieval,
+                self._maintenance,
+                self._schema,
+                self.topic_catalog_store,
+            ],
         )
         stopwords_path = self.config.get("recall_engine.stopwords_path")
         self.text_processor = TextProcessor(stopwords_path)

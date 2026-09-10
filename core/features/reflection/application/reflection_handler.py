@@ -15,7 +15,11 @@ from ....platform.context_helpers import get_persona_id
 from ....shared.contracts import ReflectionWritePort
 from ....shared.cost_control import CostControl
 from ...conversation.application.conversation_manager import ConversationManager
-from ...identity.domain.models import IdentityTrust, ResolvedIdentity
+from ...identity.application.scope_resolver import (
+    CanonicalScopeResolver,
+    ScopeResolution,
+)
+from ...identity.domain.models import ResolvedIdentity
 from ...observability.application import runtime as observability
 from ...quality.application.gate_runtime import capture_gate_snapshot_json
 from ...recall.processors.memory_processor import MemoryProcessor
@@ -50,6 +54,7 @@ class ReflectionHandler(ReflectionContextMixin):
         memory_quality_gate: Any | None = None,
         cost_control: CostControl | None = None,
         summary_scheduler: Any | None = None,
+        scope_resolver: CanonicalScopeResolver | None = None,
     ) -> None:
         """装配响应清洗、反思存储及可选认知组件。"""
 
@@ -68,6 +73,7 @@ class ReflectionHandler(ReflectionContextMixin):
         self._memory_quality_gate = memory_quality_gate
         self._cost_control = cost_control or CostControl()
         self._summary_scheduler = summary_scheduler
+        self._scope_resolver = scope_resolver or CanonicalScopeResolver()
 
     async def _resolve_persona_id(self, event: AstrMessageEvent) -> str | None:
         """通过处理器拥有的平台上下文解析当前人格标识。"""
@@ -82,6 +88,44 @@ class ReflectionHandler(ReflectionContextMixin):
             gate_revision = str(getattr(snapshot, "revision", "") or "")
         gate_snapshot_json = capture_gate_snapshot_json(gate_runtime)
         return gate_revision, gate_snapshot_json
+
+    async def _resolve_summary_scope(
+        self,
+        session_id: str,
+        identity: ResolvedIdentity | None,
+        legacy_scope: tuple[object, ...],
+    ) -> ScopeResolution:
+        """从可信身份或已持久化快照取得总结 scope，不执行字段猜测。"""
+
+        if isinstance(identity, ResolvedIdentity):
+            chat_type, group_id, scope_id, _stored_persona = (
+                (*legacy_scope, None)[:4] if len(legacy_scope) < 4 else legacy_scope[:4]
+            )
+            if identity.scope_type == "private":
+                # 私聊 legacy 投影的 scope_id 是会话标识（如
+                # default:FriendMessage:10001），与协议主体 QQ 号语义不同；
+                # 主体边界由可信 identity 的 canonical_user_id 提供，
+                # 会话归属由 session_id 提供，不能把会话标识当作主体 scope。
+                scope_id = None
+            return self._scope_resolver.resolve(
+                identity,
+                session_id=session_id,
+                chat_type=chat_type,
+                group_id=group_id,
+                scope_id=scope_id,
+            )
+        snapshot_reader = getattr(
+            getattr(self._conversation_manager, "store", None),
+            "get_summary_scope_snapshot",
+            None,
+        )
+        if callable(snapshot_reader):
+            snapshot = snapshot_reader(session_id)
+            if inspect.isawaitable(snapshot):
+                snapshot = await snapshot
+            if isinstance(snapshot, dict):
+                return self._scope_resolver.resolve_persisted(snapshot)
+        return self._scope_resolver.resolve(None)
 
     async def handle_memory_reflection(
         self,
@@ -342,16 +386,11 @@ class ReflectionHandler(ReflectionContextMixin):
             if not isinstance(scope, tuple) or len(scope) != 4:
                 return
             chat_type, group_id, scope_id, stored_persona = scope
-            if identity is not None:
-                if identity.trust_status in {
-                    IdentityTrust.CONFLICT,
-                    IdentityTrust.INVALID,
-                }:
-                    return
-                if identity.scope_type == "group" and identity.scope_id != group_id:
-                    return
-                if identity.scope_type == "private" and group_id is not None:
-                    return
+            scope_resolution = await self._resolve_summary_scope(
+                session_id,
+                identity,
+                (chat_type, group_id, scope_id, stored_persona),
+            )
             epoch_value = get_epoch(session_id)
             if inspect.isawaitable(epoch_value):
                 epoch_value = await epoch_value
@@ -385,6 +424,17 @@ class ReflectionHandler(ReflectionContextMixin):
                         )
                     )
                     * 2,
+                ),
+                scope_key=scope_resolution.scope_key,
+                privacy_level=scope_resolution.privacy_level,
+                resolver_revision=scope_resolution.resolver_revision,
+                scope_reason_code=(
+                    "scope_resolved"
+                    if scope_resolution.available
+                    else "scope_unavailable"
+                ),
+                scope_provenance_complete=(
+                    True if scope_resolution.available else None
                 ),
             )
             result = await scheduler.enqueue_automatic(context, observed_end)

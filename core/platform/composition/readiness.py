@@ -27,6 +27,45 @@ class InitializerReadinessMixin:
     memory_evolution_store: Any | None
     memory_evolution_manager: Any | None
 
+    async def ensure_catalog_readiness(self, components: dict[str, Any]) -> None:
+        """确认 catalog 已 ready 或已明确安全降级，再允许 Worker 启动。"""
+
+        from ...features.observability.infrastructure.debug_reporter import (
+            report_debug_event,
+        )
+        from ...shared.errors import InitializationError
+
+        result = components.get("catalog_maintenance_result")
+        if not isinstance(result, dict):
+            result = {}
+        decision = result.get("catalog_decision")
+        if (
+            decision not in {"ready", "degraded"}
+            or result.get("safe_baseline") is not True
+        ):
+            report_debug_event(
+                "plugin_initialized",
+                component="initializer",
+                stage="catalog_readiness",
+                status="failed",
+                reason_code="catalog_startup_unresolved",
+                capability="topic_catalog",
+            )
+            raise InitializationError("topic_catalog_startup_unresolved")
+        reason_code = result.get("reason_code")
+        report_debug_event(
+            "plugin_initialized",
+            component="initializer",
+            stage="catalog_readiness",
+            status="completed" if decision == "ready" else "degraded",
+            reason_code=(
+                reason_code
+                if isinstance(reason_code, str)
+                else "catalog_startup_decision_invalid"
+            ),
+            capability="topic_catalog",
+        )
+
     @property
     def is_initialized(self) -> bool:
         """返回插件共享组件是否已完成初始化。"""

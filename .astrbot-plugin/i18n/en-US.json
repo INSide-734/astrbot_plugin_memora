@@ -1747,6 +1747,54 @@
       "VERSION": "Version",
       "UPDATED": "Updated"
     },
+    "candidateReuse": {
+      "title": "Topic Candidate Reuse Config",
+      "description": "Configure candidate reuse mode, thresholds, and catalog status monitoring",
+      "loading": "Loading candidate reuse config",
+      "refresh": "Refresh",
+      "config": "Configuration",
+      "status": "Runtime Status",
+      "modeLabel": "Reuse Mode",
+      "mode": {
+        "observe": "Observe",
+        "off": "Off (rollback baseline)",
+        "full": "Full",
+        "top_k": "Fixed Top-K"
+      },
+      "fixedK": "Fixed K",
+      "activationThreshold": "Activation Threshold",
+      "maxFullTopics": "Max Full Topics",
+      "maxFullPromptTokens": "Max Full Prompt Tokens",
+      "maxQueryChars": "Max Query Chars",
+      "overfetchFactor": "Overfetch Factor (fixed 3)",
+      "metricsRetentionDays": "Metrics Retention Days",
+      "observeMaxCandidates": "Observe Max Candidates",
+      "observeMaxRows": "Observe Max Rows",
+      "observeMaxDurationMs": "Observe Max Duration (ms)",
+      "save": "Save Config",
+      "saving": "Saving…",
+      "saveSuccess": "Candidate reuse config saved",
+      "discard": "Discard Changes",
+      "validation": {
+        "fixedKExceedsMax": "Fixed K cannot exceed max full topics",
+        "thresholdExceedsMax": "Activation threshold cannot exceed max full topics"
+      },
+      "catalogStatusLabel": "Catalog Status",
+      "catalogStatus": {
+        "ready": "Ready",
+        "building": "Building",
+        "degraded": "Degraded",
+        "unavailable": "Unavailable"
+      },
+      "dirtyCount": "Unresolved Dirty Records",
+      "p95Latency": "P95 Select Latency (ms)",
+      "p95Candidates": "P95 Candidates",
+      "p95Tokens": "P95 Tokens",
+      "catalogDegraded": "Catalog is in degraded state",
+      "catalogDegradedHint": "Mode selector disabled; forced to observe mode when catalog is not ready",
+      "sizeBuckets": "Size Buckets",
+      "metrics": "Aggregated Metrics"
+    },
     "category": {
       "fact": "Fact",
       "concept": "Concept",

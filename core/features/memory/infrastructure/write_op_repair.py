@@ -92,6 +92,20 @@ class WriteOpRepairMixin:
                     error=str(e),
                 )
 
+        catalog = getattr(self, "_topic_catalog_store", None)
+        if catalog is not None:
+            try:
+                repaired += int(
+                    await catalog.repair_pending(
+                        f"write-journal-{id(self)}",
+                        limit=25,
+                    )
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("[WriteOpJournal] topic catalog 修复失败", exc_info=True)
+
         if repaired:
             logger.info(f"[WriteOpJournal] 已修复 {repaired} 个未完成写操作")
             if self._invalidate_cache:

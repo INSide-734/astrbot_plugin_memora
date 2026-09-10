@@ -11,8 +11,22 @@ from typing import Any
 
 from ....shared.contracts.conversation import Message
 from ....shared.summary_source import source_window_digest
+from .topic_candidate_models import (
+    CandidateMetrics,
+    SourceProvenanceState,
+    TopicCandidateContext,
+    TopicCandidateLabel,
+    TopicCandidateMetrics,
+    TopicCandidateMode,
+    TopicCandidateSelection,
+    _nonnegative_int,
+    _nonnegative_number,
+    _text,
+    normalize_topic_key,
+    normalize_topic_label,
+    render_topic_labels,
+)
 
-_MAX_TEXT_LENGTH = 256
 _MAX_GATE_JSON_BYTES = 65_536
 _MAX_SNAPSHOT_VALUE = 2**63 - 1
 
@@ -80,7 +94,19 @@ class SummaryReasonCode(str, Enum):
     ABANDONED_CONFIRMED = "abandoned_confirmed"
     NO_FACTS = "no_facts"
     SUMMARY_INVALID = "summary_invalid"
+    SCOPE_UNAVAILABLE = "scope_unavailable"
+    TOPIC_LABEL_REJECTED = "topic_label_rejected"
     COMPLETED = "completed"
+
+
+def _reason(value: SummaryReasonCode | str | None) -> SummaryReasonCode:
+    """将外部 reason 值归一化为固定的总结 reason code。"""
+    if isinstance(value, SummaryReasonCode):
+        return value
+    try:
+        return SummaryReasonCode(str(value))
+    except (TypeError, ValueError):
+        return SummaryReasonCode.UNKNOWN
 
 
 _FAILURE_REASON_CODES = frozenset(
@@ -102,55 +128,9 @@ _FAILURE_REASON_CODES = frozenset(
         SummaryReasonCode.INVALID_SLOT,
         SummaryReasonCode.LEDGER_UNRESOLVED,
         SummaryReasonCode.SUMMARY_INVALID,
+        SummaryReasonCode.SCOPE_UNAVAILABLE,
     }
 )
-
-
-def _text(value: object, name: str, *, optional: bool = True) -> str | None:
-    """校验不含正文的有限字符串字段。"""
-    if value is None and optional:
-        return None
-    if not isinstance(value, str):
-        raise TypeError(f"{name} 必须是字符串")
-    value = value.strip()
-    if len(value) > _MAX_TEXT_LENGTH:
-        raise ValueError(f"{name} 超出长度限制")
-    if not value and optional:
-        return None
-    if not value:
-        raise ValueError(f"{name} 不能为空")
-    return value
-
-
-def _nonnegative_int(value: object, name: str, *, positive: bool = False) -> int:
-    """校验非负或正整数，拒绝 bool。"""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise TypeError(f"{name} 必须是整数")
-    if value < 0 or (positive and value == 0):
-        raise ValueError(f"{name} 必须为{'正' if positive else '非负'}整数")
-    return value
-
-
-def _reason(value: SummaryReasonCode | str | None) -> SummaryReasonCode:
-    """把外部 reason code 收敛到固定枚举，未知值降级为 unknown。"""
-    if value is None:
-        return SummaryReasonCode.UNKNOWN
-    if isinstance(value, SummaryReasonCode):
-        return value
-    try:
-        return SummaryReasonCode(str(value))
-    except ValueError:
-        return SummaryReasonCode.UNKNOWN
-
-
-def _nonnegative_number(value: object, name: str) -> float:
-    """校验非负有限时间或租约数值，拒绝布尔值。"""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise TypeError(f"{name} 必须是数值")
-    normalized = float(value)
-    if not math.isfinite(normalized) or normalized < 0:
-        raise ValueError(f"{name} 必须是非负有限数")
-    return normalized
 
 
 def _bounded_json_object(value: object, name: str) -> str:
@@ -186,6 +166,11 @@ class SummaryWindowContext:
     gate_revision: str = ""
     gate_snapshot_json: str = "{}"
     window_size: int = 2
+    scope_key: str = ""
+    privacy_level: str | None = None
+    resolver_revision: str = ""
+    scope_reason_code: str = "scope_unavailable"
+    scope_provenance_complete: bool | None = None
 
     def __post_init__(self) -> None:
         """检查范围、身份标签和固定窗口大小。"""
@@ -238,6 +223,67 @@ class SummaryWindowContext:
             _bounded_json_object(self.gate_snapshot_json, "gate_snapshot_json"),
         )
         object.__setattr__(self, "window_size", window_size)
+        scope_key = _text(self.scope_key, "scope_key") or ""
+        privacy_level = _text(self.privacy_level, "privacy_level")
+        resolver_revision = _text(self.resolver_revision, "resolver_revision") or ""
+        scope_values = (scope_key, privacy_level, resolver_revision)
+        if any(scope_values) and (not all(scope_values) or chat_type is None):
+            raise ValueError("scope_snapshot_incomplete")
+        if privacy_level is not None and privacy_level not in {
+            "public",
+            "shared",
+            "confidential",
+        }:
+            raise ValueError("privacy_level_invalid")
+        scope_reason_code = _text(
+            self.scope_reason_code, "scope_reason_code", optional=False
+        )
+        assert scope_reason_code is not None
+        if scope_reason_code not in {"scope_resolved", "scope_unavailable"}:
+            scope_reason_code = "scope_unavailable"
+        marker = self.scope_provenance_complete
+        if marker is not None and not isinstance(marker, bool):
+            raise TypeError("scope_provenance_complete 必须是布尔值或缺失")
+        if marker is False:
+            scope_reason_code = "scope_unavailable"
+        elif all(scope_values) and chat_type is not None:
+            marker = True
+        else:
+            marker = None
+            scope_reason_code = "scope_unavailable"
+        object.__setattr__(self, "scope_key", scope_key)
+        object.__setattr__(self, "privacy_level", privacy_level)
+        object.__setattr__(self, "resolver_revision", resolver_revision)
+        object.__setattr__(self, "scope_reason_code", scope_reason_code)
+        object.__setattr__(self, "scope_provenance_complete", marker)
+
+    @property
+    def scope_available(self) -> bool:
+        """返回当前上下文是否携带完整 canonical scope 快照。"""
+
+        return bool(
+            self.scope_provenance_complete is True
+            and self.scope_key
+            and self.chat_type
+            and self.privacy_level
+            and self.resolver_revision
+            and self.scope_reason_code == "scope_resolved"
+        )
+
+    @property
+    def scope_snapshot(self) -> TopicCandidateContext:
+        """返回供候选链读取的不可变 scope 快照副本。"""
+
+        return TopicCandidateContext(
+            scope_key=self.scope_key,
+            chat_type=self.chat_type,
+            privacy_level=self.privacy_level,
+            resolver_revision=self.resolver_revision,
+            source_digest=self.source_digest,
+            session_epoch=self.session_epoch,
+            scope_reason_code=self.scope_reason_code,
+            source_provenance_complete=self.scope_provenance_complete,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -275,6 +321,11 @@ class SummaryJob:
     skipped_count: int = 0
     created_at: float = 0.0
     updated_at: float = 0.0
+    scope_key: str = ""
+    privacy_level: str | None = None
+    resolver_revision: str = ""
+    scope_reason_code: str = "scope_unavailable"
+    scope_provenance_complete: bool | None = None
 
     def __post_init__(self) -> None:
         """验证持久任务 DTO 的有限标量和范围约束。"""
@@ -352,6 +403,69 @@ class SummaryJob:
             "skipped_count",
         ):
             object.__setattr__(self, name, _nonnegative_int(getattr(self, name), name))
+        scope_key = _text(self.scope_key, "scope_key") or ""
+        privacy_level = _text(self.privacy_level, "privacy_level")
+        resolver_revision = _text(self.resolver_revision, "resolver_revision") or ""
+        scope_values = (scope_key, privacy_level, resolver_revision)
+        if any(scope_values) and (not all(scope_values) or self.chat_type is None):
+            raise ValueError("scope_snapshot_incomplete")
+        if self.chat_type not in {None, "private", "group"}:
+            raise ValueError("chat_type_invalid")
+        if privacy_level is not None and privacy_level not in {
+            "public",
+            "shared",
+            "confidential",
+        }:
+            raise ValueError("privacy_level_invalid")
+        scope_reason_code = _text(
+            self.scope_reason_code, "scope_reason_code", optional=False
+        )
+        assert scope_reason_code is not None
+        if scope_reason_code not in {"scope_resolved", "scope_unavailable"}:
+            scope_reason_code = "scope_unavailable"
+        marker = self.scope_provenance_complete
+        if marker is not None and not isinstance(marker, bool):
+            raise TypeError("scope_provenance_complete 必须是布尔值或缺失")
+        if marker is False:
+            scope_reason_code = "scope_unavailable"
+        elif all(scope_values) and self.chat_type is not None:
+            marker = True
+        else:
+            marker = None
+            scope_reason_code = "scope_unavailable"
+        object.__setattr__(self, "scope_key", scope_key)
+        object.__setattr__(self, "privacy_level", privacy_level)
+        object.__setattr__(self, "resolver_revision", resolver_revision)
+        object.__setattr__(self, "scope_reason_code", scope_reason_code)
+        object.__setattr__(self, "scope_provenance_complete", marker)
+
+    @property
+    def scope_available(self) -> bool:
+        """返回当前任务是否携带完整 canonical scope 快照。"""
+
+        return bool(
+            self.scope_provenance_complete is True
+            and self.scope_key
+            and self.chat_type
+            and self.privacy_level
+            and self.resolver_revision
+            and self.scope_reason_code == "scope_resolved"
+        )
+
+    @property
+    def scope_snapshot(self) -> TopicCandidateContext:
+        """返回供候选链读取的不可变 scope 快照副本。"""
+
+        return TopicCandidateContext(
+            scope_key=self.scope_key,
+            chat_type=self.chat_type,
+            privacy_level=self.privacy_level,
+            resolver_revision=self.resolver_revision,
+            source_digest=self.source_digest,
+            session_epoch=self.session_epoch,
+            scope_reason_code=self.scope_reason_code,
+            source_provenance_complete=self.scope_provenance_complete,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,6 +592,7 @@ class WindowOutcome:
     unknown_count: int = 0
     candidate_slots: tuple[CandidateIntent, ...] = ()
     failed_stage: str | None = None
+    candidate_metrics: CandidateMetrics | None = None
     reason_code: SummaryReasonCode = SummaryReasonCode.COMPLETED
 
     def __post_init__(self) -> None:
@@ -740,9 +855,11 @@ __all__ = [
     "CandidateDisposition",
     "CandidateIntent",
     "CandidateLedgerStatus",
+    "CandidateMetrics",
     "ClaimedJob",
     "CompletionResult",
     "EpochResult",
+    "SourceProvenanceState",
     "SourceWindow",
     "SummaryEnqueueResult",
     "SummaryFailure",
@@ -751,10 +868,18 @@ __all__ = [
     "SummaryReasonCode",
     "SummaryTaskSnapshot",
     "SummaryWindowContext",
+    "TopicCandidateContext",
+    "TopicCandidateLabel",
+    "TopicCandidateMetrics",
+    "TopicCandidateMode",
+    "TopicCandidateSelection",
     "TrimResult",
     "WindowFailure",
     "WindowOutcome",
+    "normalize_topic_key",
+    "normalize_topic_label",
+    "render_topic_labels",
     "retry_delay_seconds",
-    "source_window_digest",
     "sanitize_summary_task_snapshot",
+    "source_window_digest",
 ]

@@ -22,6 +22,7 @@ from ..domain.summary_models import (
     WindowOutcome,
 )
 from .summary_scheduler_lease import SummarySchedulerLeaseMixin
+from .summary_scheduler_metrics import SummarySchedulerMetricsMixin
 from .summary_worker import SummaryWorker, SummaryWorkerFailure
 
 if TYPE_CHECKING:
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from ...recall.processors.memory_processor import MemoryProcessor
     from ..domain.summary_ports import SummaryJobStorePort
     from .topic_batch_preparer import TopicBatchPreparer
+    from .topic_candidate_selector import TopicCandidateSelector
 
 
 def _utc_now() -> datetime:
@@ -86,7 +88,7 @@ async def _startup_call(
         raise RuntimeError(failure_code) from error
 
 
-class SummaryScheduler(SummarySchedulerLeaseMixin):
+class SummaryScheduler(SummarySchedulerLeaseMixin, SummarySchedulerMetricsMixin):
     """统一规划、领取并执行持久化记忆总结窗口。"""
 
     def __init__(
@@ -96,7 +98,10 @@ class SummaryScheduler(SummarySchedulerLeaseMixin):
         quality_gate: MemoryQualityGate | None,
         memory_engine: ReflectionWritePort,
         batch_preparer: TopicBatchPreparer,
+        candidate_selector: TopicCandidateSelector | None = None,
         *,
+        metrics_recorder: Any | None = None,
+        config_manager: Any | None = None,
         max_parallel_summary_tasks: int = 4,
         max_parallel_summary_tasks_per_session: int = 2,
         clock: Callable[[], datetime | float] | None = None,
@@ -133,6 +138,8 @@ class SummaryScheduler(SummarySchedulerLeaseMixin):
             quality_gate,
             memory_engine,
             batch_preparer,
+            candidate_selector,
+            config_manager,
         )
         self._max_parallel = max_parallel_summary_tasks
         self._max_parallel_per_session = max_parallel_summary_tasks_per_session
@@ -145,6 +152,8 @@ class SummaryScheduler(SummarySchedulerLeaseMixin):
         self._lease_seconds = float(lease_seconds)
         self._retry_poll_seconds = float(retry_poll_seconds)
         self._startup_context_factory = startup_context_factory
+        self._metrics_recorder = metrics_recorder
+        self._config_reader = config_manager
 
         self._condition = asyncio.Condition()
         self._lifecycle_lock = asyncio.Lock()
@@ -216,7 +225,10 @@ class SummaryScheduler(SummarySchedulerLeaseMixin):
             ) -> SummaryWindowContext | Awaitable[SummaryWindowContext]:
                 """登记启动扫描会话并委托原始上下文工厂。"""
                 self._known_sessions.add(session_id)
-                return startup_factory(session_id, epoch, cursor)
+                result = startup_factory(session_id, epoch, cursor)
+                if inspect.isawaitable(result):
+                    result = await result
+                return result
 
             try:
                 set_clock(self._now)
@@ -257,6 +269,8 @@ class SummaryScheduler(SummarySchedulerLeaseMixin):
                     self._accepting_enqueues = False
                     raise RuntimeError("summary_recovery_failed")
 
+            # 启动期清理一次过期指标（fail-safe，不阻塞主链）
+            await self._cleanup_metric_retention()
             self._claiming = True
             coroutine = self._claim_loop()
             try:
@@ -657,6 +671,9 @@ class SummaryScheduler(SummarySchedulerLeaseMixin):
             try:
                 committed = await self._job_store.commit_window(claim, outcome)
                 if committed.accepted:
+                    # 经 HMAC 摘要记录窗口终态指标（失败不阻塞主链）
+                    if outcome.candidate_metrics is not None:
+                        await self._record_candidate_metrics(claim, outcome)
                     return
                 await self._reconcile_commit_failure(claim, outcome)
             except asyncio.CancelledError:

@@ -379,8 +379,35 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         "semantic_compression.similarity_threshold",
         0.85,
     ),
-    _field("persona_decay.enabled", "persona_decay.enabled", True),
-    _field("persona_decay.default_modifier", "persona_decay.default_modifier", 1.0),
+    # candidate_reuse 五叶仅供配置契约/默认值一致性校验；
+    # MemoryEngine 不消费它们——候选配置由 SummaryWorker 在每窗口
+    # 直接从 ConfigManager 嵌套路径读取（支持热重载），
+    # bucket_overrides/observe_* 等叶子不在引擎快照中投影。
+    _field(
+        "topic_segmentation.candidate_reuse.mode",
+        "topic_segmentation.candidate_reuse.mode",
+        "observe",
+    ),
+    _field(
+        "topic_segmentation.candidate_reuse.fixed_k",
+        "topic_segmentation.candidate_reuse.fixed_k",
+        8,
+    ),
+    _field(
+        "topic_segmentation.candidate_reuse.activation_threshold",
+        "topic_segmentation.candidate_reuse.activation_threshold",
+        32,
+    ),
+    _field(
+        "topic_segmentation.candidate_reuse.max_full_topics",
+        "topic_segmentation.candidate_reuse.max_full_topics",
+        32,
+    ),
+    _field(
+        "topic_segmentation.candidate_reuse.max_full_prompt_tokens",
+        "topic_segmentation.candidate_reuse.max_full_prompt_tokens",
+        256,
+    ),
 )
 
 

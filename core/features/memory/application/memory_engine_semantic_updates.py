@@ -38,4 +38,27 @@ def has_semantic_metadata_change(
     return False
 
 
-__all__ = ["has_semantic_metadata_change"]
+def prepare_semantic_metadata_update(
+    current_metadata: Mapping[str, Any],
+    updates: dict[str, Any],
+    *,
+    observed_at: float,
+) -> bool:
+    """标记 topic 实际变化时间并返回是否发生语义更新。
+
+    参数：
+        current_metadata: 更新前的 canonical metadata。
+        updates: 将写入的 metadata 增量；topic 变化时原地补入观察时间。
+        observed_at: 当前 canonical 提交使用的 Unix 时间。
+
+    返回：
+        任一非运行态字段发生变化时返回 ``True``。
+    """
+
+    changed = has_semantic_metadata_change(current_metadata, updates)
+    if "topics" in updates and updates.get("topics") != current_metadata.get("topics"):
+        updates["topic_observed_at"] = observed_at
+    return changed
+
+
+__all__ = ["has_semantic_metadata_change", "prepare_semantic_metadata_update"]

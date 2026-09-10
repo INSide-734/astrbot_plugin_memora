@@ -18,12 +18,19 @@ from .canonical_idempotency import (
     rebuild_canonical_idempotency_mapping,
     validate_canonical_idempotency_mapping,
 )
+from .topic_catalog_schema import (
+    TOPIC_CATALOG_INDEXES,
+    TOPIC_CATALOG_TABLES,
+    TOPIC_CATALOG_TRIGGERS,
+    create_topic_catalog_schema,
+    topic_catalog_schema_is_valid,
+)
 
 if TYPE_CHECKING:
     import aiosqlite
 
 
-CURRENT_DB_VERSION = 9
+CURRENT_DB_VERSION = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +45,7 @@ class SchemaInspection:
     indexes: frozenset[str]
     triggers: frozenset[str]
     idempotency_mapping_valid: bool
+    topic_catalog_schema_valid: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +62,7 @@ class SchemaMigrationPlan:
     missing_triggers: tuple[str, ...]
     idempotency_rebuild_required: bool
     write_journal_required: bool
+    topic_catalog_repair_required: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,12 +123,16 @@ class SchemaManager:
             "CREATE INDEX IF NOT EXISTS idx_hierarchy_parent "
             "ON entity_hierarchy(parent)"
         ),
+        **TOPIC_CATALOG_INDEXES,
     }
     _REQUIRED_TABLES = (
         frozenset({"documents", "entity_hierarchy", "db_version", "migration_status"})
         | REQUIRED_CANONICAL_IDEMPOTENCY_TABLES
+        | TOPIC_CATALOG_TABLES
     )
-    _REQUIRED_TRIGGERS = REQUIRED_CANONICAL_IDEMPOTENCY_TRIGGERS
+    _REQUIRED_TRIGGERS = (
+        REQUIRED_CANONICAL_IDEMPOTENCY_TRIGGERS | TOPIC_CATALOG_TRIGGERS
+    )
 
     def __init__(self, db_connection: aiosqlite.Connection | None = None) -> None:
         """保存由 MemoryEngine 统一管理的 SQLite 连接。"""
@@ -183,6 +196,7 @@ class SchemaManager:
                 indexes=indexes,
                 triggers=triggers,
                 idempotency_mapping_valid=False,
+                topic_catalog_schema_valid=False,
             )
 
         column_cursor = await self._db.execute("PRAGMA table_info(documents)")
@@ -220,6 +234,7 @@ class SchemaManager:
             indexes=indexes,
             triggers=triggers,
             idempotency_mapping_valid=idempotency_mapping_valid,
+            topic_catalog_schema_valid=await topic_catalog_schema_is_valid(self._db),
         )
 
     @classmethod
@@ -257,6 +272,7 @@ class SchemaManager:
         journal_missing = (
             require_write_journal and "memory_write_ops" not in inspection.tables
         )
+        topic_catalog_repair_required = not inspection.topic_catalog_schema_valid
         if (
             inspection.version == CURRENT_DB_VERSION
             and not missing_columns
@@ -265,6 +281,7 @@ class SchemaManager:
             and not missing_triggers
             and not idempotency_rebuild_required
             and not journal_missing
+            and not topic_catalog_repair_required
         ):
             return None
         migration_id = (
@@ -283,6 +300,7 @@ class SchemaManager:
             missing_triggers=missing_triggers,
             idempotency_rebuild_required=idempotency_rebuild_required,
             write_journal_required=journal_missing,
+            topic_catalog_repair_required=topic_catalog_repair_required,
         )
 
     async def create_fresh_schema(
@@ -400,6 +418,8 @@ class SchemaManager:
             reason_code = "schema_triggers_missing"
         elif not inspection.idempotency_mapping_valid:
             reason_code = "schema_idempotency_mapping_invalid"
+        elif not inspection.topic_catalog_schema_valid:
+            reason_code = "topic_catalog_schema_incomplete"
         elif require_write_journal and "memory_write_ops" not in inspection.tables:
             reason_code = "schema_write_journal_missing"
         return SchemaValidation(
@@ -485,6 +505,7 @@ class SchemaManager:
             )
             """
         )
+        await create_topic_catalog_schema(self._db)
         for index_sql in self._INDEX_SQL.values():
             await self._db.execute(index_sql)
         if write_journal_create_table_cb is not None:
@@ -509,6 +530,7 @@ class SchemaManager:
             )
             """
         )
+
         await create_canonical_idempotency_schema(self._db)
 
     async def _write_current_version(self, description: str) -> None:

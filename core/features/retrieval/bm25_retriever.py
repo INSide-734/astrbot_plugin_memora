@@ -26,6 +26,7 @@ from ...shared.sql import (
     MEMORY_FTS_INSERT_SQL,
     MEMORY_FTS_SEARCH_SQL,
     MEMORY_FTS_TABLE,
+    build_fts5_or_query,
 )
 from ..memory.infrastructure.base import apply_perf_pragmas
 from ..recall.processors.text_processor import TextProcessor
@@ -235,16 +236,8 @@ class BM25Retriever:
         if not tokens:
             return []
 
-        # 构建FTS5查询: 使用OR连接多个token,提高召回率
-        # 转义特殊字符
-        escaped_tokens = []
-        for token in tokens:
-            # 转义FTS5特殊字符
-            escaped = token.replace('"', '""')
-            escaped_tokens.append(f'"{escaped}"')
-
-        # 使用OR连接所有token
-        fts_query = " OR ".join(escaped_tokens)
+        # 构建 FTS5 查询: 使用 OR 连接多个 token, 提高召回率
+        fts_query = build_fts5_or_query(tokens)
 
         # 有过滤条件时大幅增加预取量，避免过滤后结果不足
         # Python 层过滤（BM25）比 FAISS 内部过滤损耗更大，需要更多候选

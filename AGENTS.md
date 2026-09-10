@@ -1,8 +1,18 @@
-# Memora — AI 协作入口
+# Memora AI 协作入口
 
-## 最高优先级：八荣八耻
+**最后更新：** 2026-09-09
+**适用范围：** 全仓库；进入子目录后必须继续阅读最近的 `AGENTS.md`。
 
-以下规则是本项目协作规范中的最高优先级，所有任务必须遵守：
+## 规则优先级与事实来源
+
+1. 安全、隐私、数据权威与宿主平台约束优先于其他协作规则。
+2. 根级 `AGENTS.md` 提供全局基线；最近目录的 `AGENTS.md` 可增加或收紧要求，但不得放宽本页的安全、质量和验证要求。
+3. 对运行时行为，生产代码、Schema/迁移、可执行测试和构建脚本是事实来源。文档与实现冲突时先核对事实，不得用改文档掩盖缺陷。
+4. 任务说明只限定本次范围，不能推翻已发布的公开契约。需求、实现或验收标准不明确时先查询代码、调用方和测试；仍有关键歧义时再向人确认。
+
+## 协作底线
+
+以下规则是所有任务的最高优先级：
 
 1. 以暗猜接口为耻，以认真查阅为荣。
 2. 以模糊执行为耻，以寻求确认为荣。
@@ -13,13 +23,9 @@
 7. 以假装理解为耻，以诚实无知为荣。
 8. 以盲目修改为耻，以谨慎重构为荣。
 
-**最后更新：** 2026-07-27
+## 项目与入口
 
-## 项目定位
-
-Memora 是 AstrBot 的长期记忆插件。`main.py` 注册 `MemoraPlugin`；后端以 Python 3.12、SQLite/FTS5、FAISS、Quart 与 Pydantic 为主，`pages/dashboard/` 是 React 18 + TypeScript + Vite 管理面板。源码、配置模型与可执行测试高于文档；冲突时核对当前实现。
-
-## 架构与入口
+Memora 是 AstrBot 的长期记忆插件。后端使用 Python 3.12、SQLite/FTS5、FAISS、Quart 和 Pydantic；`pages/dashboard/` 是 React 18、TypeScript 和 Vite 管理面板。
 
 ```mermaid
 flowchart LR
@@ -29,160 +35,125 @@ flowchart LR
     Plugin --> API["PluginPageApi"]
     Init --> Engine["MemoryEngine"]
     Init --> Identity["ProtocolIdentityRuntime"]
-    Events --> Identity
-    Identity --> Recall
-    Identity --> Reflect
     Events --> Recall["RecallHandler"]
     Events --> Reflect["ReflectionHandler"]
     Recall --> Retrieval["BM25 + FAISS + Graph + Derived"]
     Recall --> Injection["Router + Executor"]
     Reflect --> Processor["MemoryProcessor"]
-    Processor --> Engine
-    Engine --> SQLite["SQLite 权威持久化"]
-    Engine -->|canonical 提交后调度| Evolution["Memory Evolution Gate / Worker"]
-    Evolution --> Derived["Relation / Projection 派生解释平面"]
+    Processor --> Engine --> SQLite["SQLite canonical 数据"]
+    Engine --> Evolution["Memory Evolution Gate / Worker"]
+    Evolution --> Derived["Relation / Projection 派生平面"]
     Derived --> Retrieval
-    Init --> Rebuild["DerivedRebuildCoordinator"]
-    Rebuild -->|canonical → 索引 → graph → evolution| Derived
     API --> Dashboard["AstrBot bridge / Dashboard"]
 ```
 
-- `main.py`：插件注册、hooks、生命周期与工具注册。
-- `core/platform/composition/plugin_initializer.py`：Provider 等待、组件构建、失败回滚与关停；旧根路径仅保留兼容导出。
-- `core/event_handler.py`：消息捕获、召回、反思与维护任务协调。
-- `core/page_api.py`：Page API mixin 组合与 `/astrbot_plugin_memora/page/*` 路由。
-- `pages/dashboard/src/main.tsx`、`App.tsx`：前端入口与 Hash 导航。
+| 入口 | 职责 |
+|---|---|
+| `main.py` | 插件注册、生命周期、hooks 与工具注册 |
+| `core/platform/composition/plugin_initializer.py` | Provider 等待、组件构建、失败回滚与关停 |
+| `core/event_handler.py` | 消息捕获、召回、反思与维护任务协调 |
+| `core/platform/transport/page_api/page_api.py` | Page API 聚合与 `/astrbot_plugin_memora/page/*` 路由 |
+| `core/platform/transport/commands/command_endpoints.py` | `/memora` 命令端点注册 |
+| `pages/dashboard/src/main.tsx`、`App.tsx` | Dashboard 入口、全局壳与 Hash 导航 |
 
 ## 模块导航
 
-| 模块 | 职责 | 上下文 |
-|---|---|---|
-| `core/` | 后端总览 | [AGENTS.md](./core/AGENTS.md) |
-| `core/platform/config/` | 配置模型、验证、revision 与运行时影响 | [AGENTS.md](./core/platform/config/AGENTS.md) |
-| `core/platform/composition/` | Provider、数据库与组件构造 | [AGENTS.md](./core/platform/composition/AGENTS.md) |
-| `core/features/identity/` | 协议稳定身份、名称目录与会话同步 | [AGENTS.md](./core/features/identity/AGENTS.md) |
-| `core/features/recall/` | 召回、注入前编排与记忆处理 | [AGENTS.md](./core/features/recall/AGENTS.md) |
-| `core/features/injection/` | 注入路由、选择、执行与记录 | [AGENTS.md](./core/features/injection/AGENTS.md) |
-| `core/features/memory/` | MemoryEngine 门面、canonical 存储与图基础设施 | [AGENTS.md](./core/features/memory/AGENTS.md) |
-| `core/features/retrieval/` | 多路检索、融合与重排 | [AGENTS.md](./core/features/retrieval/AGENTS.md) |
-| `core/features/quality/` | 质量门、复核队列与隔离候选 | [AGENTS.md](./core/features/quality/AGENTS.md) |
-| `core/features/evaluation/` | 离线检索评测 | [AGENTS.md](./core/features/evaluation/AGENTS.md) |
-| `core/features/decay/` | 衰减与维护操作 | [AGENTS.md](./core/features/decay/AGENTS.md) |
-| `core/features/backfill/` | 旧记忆回填调度 | [AGENTS.md](./core/features/backfill/AGENTS.md) |
-| `core/features/observability/` | 指标、追踪与质量评分 | [AGENTS.md](./core/features/observability/AGENTS.md) |
-| `core/features/diagnostics/` | 诊断事件与健康评分 | [AGENTS.md](./core/features/diagnostics/AGENTS.md) |
-| `core/features/cognition/` | 好感度、表达、黑话与社交关系 | [AGENTS.md](./core/features/cognition/AGENTS.md) |
-| `core/platform/security/` | Prompt 保护与输出护栏 | [AGENTS.md](./core/platform/security/AGENTS.md) |
-| `core/platform/transport/page_api/` | Page API 与响应契约 | [AGENTS.md](./core/platform/transport/page_api/AGENTS.md) |
-| `core/platform/transport/commands/` | `/memora` 查询与维护命令 | [AGENTS.md](./core/platform/transport/commands/AGENTS.md) |
-| `core/platform/transport/tools/` | AstrBot Agent 工具 | [AGENTS.md](./core/platform/transport/tools/AGENTS.md) |
-| `core/shared/` | 共享端口、DTO 与纯工具 | [AGENTS.md](./core/shared/AGENTS.md) |
-| `pages/dashboard/` | React 管理面板 | [AGENTS.md](./pages/dashboard/AGENTS.md) |
-| `tests/` | pytest 测试体系 | [AGENTS.md](./tests/AGENTS.md) |
-| `scripts/` | 门禁、smoke 与 benchmark | [AGENTS.md](./scripts/AGENTS.md) |
-| `website/` | VitePress 中文用户与开发文档站 | [AGENTS.md](./website/AGENTS.md) |
-| `docs/` | 设计、计划与旧链接迁移入口 | [AGENTS.md](./docs/AGENTS.md) |
+先阅读目标模块的上下文；根文件只定义跨模块约束，不复制模块内部实现细节。
 
-## 跨模块契约
+| 模块 | 详细上下文 |
+|---|---|
+| Python 运行时与装配 | [`core/AGENTS.md`](./core/AGENTS.md)、[`core/platform/AGENTS.md`](./core/platform/AGENTS.md) |
+| 记忆、会话、反思与演化 | [`core/features/memory/AGENTS.md`](./core/features/memory/AGENTS.md)、[`core/features/conversation/AGENTS.md`](./core/features/conversation/AGENTS.md)、[`core/features/reflection/AGENTS.md`](./core/features/reflection/AGENTS.md)、[`core/features/evolution/AGENTS.md`](./core/features/evolution/AGENTS.md) |
+| 检索、召回、注入与质量 | [`core/features/retrieval/AGENTS.md`](./core/features/retrieval/AGENTS.md)、[`core/features/recall/AGENTS.md`](./core/features/recall/AGENTS.md)、[`core/features/injection/AGENTS.md`](./core/features/injection/AGENTS.md)、[`core/features/quality/AGENTS.md`](./core/features/quality/AGENTS.md) |
+| 身份、配置、安全与共享契约 | [`core/features/identity/AGENTS.md`](./core/features/identity/AGENTS.md)、[`core/platform/config/AGENTS.md`](./core/platform/config/AGENTS.md)、[`core/platform/security/AGENTS.md`](./core/platform/security/AGENTS.md)、[`core/shared/AGENTS.md`](./core/shared/AGENTS.md) |
+| Dashboard | [`pages/dashboard/AGENTS.md`](./pages/dashboard/AGENTS.md) |
+| 测试、脚本与文档 | [`tests/AGENTS.md`](./tests/AGENTS.md)、[`scripts/AGENTS.md`](./scripts/AGENTS.md)、[`docs/AGENTS.md`](./docs/AGENTS.md)、[`website/AGENTS.md`](./website/AGENTS.md) |
 
-- 写入链：AstrBot 消息 → `EventHandler` → `ConversationManager`/`MemoryProcessor` → `MemoryQualityGate` → `MemoryEngine` → SQLite。FTS、FAISS 与图索引是可重建派生数据。
-- 门禁链与 mark_write：写入门禁按绑定顺序首个精确匹配解析 profile（chat_type/group_id/persona_id 字段缺省视为不约束，未命中回落 `default_profile`），处置优先级为规则 `force_disposition` > 原因码 override > profile 默认。`discard` 不落库；`quarantine` 走隔离状态机人工批准后重取证；`mark_write` 写 canonical 但携带 `gate_disposition=mark_write` 标记，默认不参与召回、注入与演化，仅 `/memora search` 末尾位置参数 `true` 或记忆列表 API `include_mark_write=true` 显式包含。门禁快照热重载为原子替换，窗口内评估始终引用同一快照；任何处置路径不得绕过 source revision、scope、privacy 与 role 校验。
-- 身份链：协议事件 → 固定适配器 `ProtocolIdentityResolver` → `ResolvedIdentity` → 身份目录/会话名称同步 → 召回与反思。OneBot 11 只把规范化 QQ 号作为 canonical user ID；QQ 官方按平台实例隔离场景 OpenID，不能伪装成 QQ 号，`union_openid` 不参与主键；名称是可更新辅助数据，匿名、冲突和非法事件不得写用户目录。
-- 稳定身份 metadata 由可信来源消息确定并锚定长期记忆参与者；新记忆携带 canonical → protocol/namespace/stable/label 的内部来源证据，legacy 别名只在原会话作用域且唯一匹配时附着到召回候选副本，不改 canonical memory、分数、排序、ID、revision 或 System Prompt。
-- 演化链：canonical memory 成功写入后 → `MemoryEvolutionGate` → job queue/worker → relation/projection 派生解释平面。canonical SQLite 记录及其整数 ID 始终是唯一权威身份；Projection 只能作为有 source/revision 证据的读时注解，不能形成第二套 canonical memory 或 `doc_id`。
-- 派生重建链：`DerivedRebuildCoordinator` 只读确认 canonical 后按 canonical → FTS5/FAISS → graph → relation/projection 顺序执行；阶段失败只报告降级，不删除 canonical，Evolution worker 在启动期重建完成或安全降级后再启动。
-- `MemoryEngine` 在 canonical add/语义 metadata update 提交后统一重载 source 并调度演化；`ReflectionHandler` 的历史调度入口仍保留用于反思链兼容，依靠稳定 idempotency key 去重，不改变 canonical 提交边界。
-- 召回链：请求 → 改写/隔离过滤 → direct/graph 合并 → relation expansion → projection attachment → reranker → privacy filter → `InjectionStrategyRouter` → `InjectionExecutor`。动态记忆不得进入 System Prompt；请求变更须先完整构建再原子应用。
-- `memory_evolution.enabled=false` 强制等价于 `disabled`；`disabled` 不启动 worker。当前实现中 `shadow`、`readonly`、`active` 都会启动 worker 并可持久化派生对象，但只有 `readonly`/`active` 装配 relation/projection 读取器；不要从 mode 名称推断 canonical 写权限。任何模式都不得绕过 source revision、scope、privacy、validity 与 role 校验。
-- 注入观测只持久化 allowlist 标量；不得记录 query、prompt、记忆正文或 ID 列表、原始身份、Provider 密钥/请求头/API 地址或堆栈。
-- 模型可见的 Projection metadata 只允许 `type`、`summary`、`confidence`；source mapping、revision、scope、privacy、role、内部 ID 与 job 信息不得进入 prompt、fake tool call 或 DeepSeek V4 转录。
-- 模型可见身份说明只允许当前名称、单个历史名称和适配器确定的稳定标签；身份表内部 ID、候选列表、查询过程、时间戳和歧义过程不得进入 prompt、日志、指标或 trace。
-- `PluginPageApi` 与 `src/lib/bridge.ts` 是后端/前端边界。写回保留 revision、字段校验、冲突处理和显式错误 envelope；不得伪造客户端分页。
-- 配置叶变更同步 `_conf_schema.json`、Pydantic 模型、运行时读取、Dashboard 类型/默认值与契约测试。
+## 不可破坏的跨模块契约
 
-## 实施约束
+- **权威数据：** SQLite canonical memory 及其整数 ID 是唯一权威身份。FTS、FAISS、图、relation 和 projection 都是带 source/revision 证据、可失效且可重建的派生数据，不能形成第二套 canonical memory 或 `doc_id`。
+- **写入与演化：** `EventHandler` 经 `ConversationManager`/`MemoryProcessor`、质量门和 `MemoryEngine` 写 canonical。只有 canonical 成功提交并重读 source 后才能调度演化；派生失败只能降级报告，不能回滚或删除 canonical。
+- **重建顺序：** `DerivedRebuildCoordinator` 必须按 canonical → FTS5/FAISS → graph → relation/projection 工作。启动期重建成功或安全降级后，才启动 Evolution worker。
+- **质量门：** profile 按绑定顺序首个精确匹配解析，未命中使用 `default_profile`；处置优先级是规则 `force_disposition`、原因码 override、profile 默认。`discard` 不落库，`quarantine` 经人工批准重取证，`mark_write` 默认不进入召回、注入和演化。
+- **身份：** 协议事件必须先经固定 `ProtocolIdentityResolver` 解析为 `ResolvedIdentity`。OneBot 11 使用规范化 QQ 号；QQ 官方使用带平台实例边界的 OpenID，`union_openid` 不参与主键。名称是可更新辅助数据，匿名、冲突和非法事件不得写目录。
+- **召回与模型可见内容：** 固定顺序为请求过滤 → direct/graph 合并 → relation expansion → projection attachment → reranker → privacy filter → 注入。动态记忆不得进入 System Prompt；Projection 只允许向模型暴露 `type`、`summary`、`confidence`。
+- **安全与隐私：** query、prompt、记忆正文、ID 列表、原始身份、source mapping、revision、scope、privacy、role、Provider 密钥、请求头、内部地址和堆栈不得进入模型输入、观测、日志、trace 或示例，除非局部规范明确了受控人工复核权限。
+- **生命周期与异步：** 初始化器单点发布共享运行时实例；请求路径不得新建数据库、索引或模型。`asyncio.CancelledError` 必须传播；所有后台任务必须可观察、可收束，普通可恢复失败不得中断聊天主链路。
+- **页面边界：** `PluginPageApi` 与 `pages/dashboard/src/lib/bridge.ts` 是稳定边界。写回必须保留 revision、字段校验、冲突处理和显式错误 envelope；不得伪造客户端分页或静默 last-write-wins。
+- **配置联动：** 配置叶变更同步 `_conf_schema.json`、Pydantic 模型、运行时读取、Dashboard 类型/默认值、i18n 与契约测试。请求级状态先完整构造，再原子替换。
 
-- 先阅读目标目录 `AGENTS.md`；复用既有路径，不创建兼容双轨或重复抽象。
-- 新行为与 bug 修复遵循 RED → GREEN → REFACTOR；不顺手修改无关代码或用户本地改动。
-- `asyncio.CancelledError` 必须传播；普通可恢复失败不得破坏聊天主链路。
-- SQL 值参数绑定；动态标识符只允许固定 allowlist。
-- Dashboard 复用 Base UI-backed shadcn、`PageFrame`、语义 token、Lucide 与三语言 key；桌面/移动端均需可访问、可滚动、无重叠和页面级横向溢出。
+## 工程质量基线
 
-## LSP 检查
+本节借鉴 Google、Microsoft 和 Airbnb 的可读性、单一职责、显式契约、小批量评审和自动化验证实践；以仓库已配置的工具和最近模块规范为准。
 
-- 每次新增或修改源码文件后，必须对本轮涉及且受已安装语言服务器支持的文件逐一调用 Codex LSP `mcp__lsp__diagnostics`，默认使用 `severity: "error"`；任何后续修复再次改变文件时必须重复检查，直至不再存在本轮引入的 LSP 错误。
-- 若诊断提示语言服务器缺失，先调用 `mcp__lsp__status` 确认状态并安装或配置对应服务；若文件类型不受 LSP 支持或服务不可用，记录原因并执行该文件类型对应的 lint、类型检查或验证命令，不得静默跳过。
-- Python LSP 报告 `reportMissingImports` 或依赖无法解析时，必须先用 `uv run --locked python` 在锁定环境中复现导入，并确认 `.venv` 已由 `uv sync --locked --dev` 同步、`[tool.pyright]` 指向该 `.venv` 与 Python 3.12；不得通过关闭 `reportMissingImports`、添加宽泛 `extraPaths` 或忽略规则掩盖虚拟环境配置错误。
+### 设计与实现
 
-## Python 环境、Ruff 与提交前门禁
+- 先定位现有公开接口、调用方、数据所有者和测试，再修改。优先复用已有类型、服务和边界；不要创建兼容双轨、镜像状态或只转发的空壳抽象。
+- 每个模块、类和函数只承担一个可清楚命名的职责。按生命周期、存储、编排或领域边界拆分，保持单向依赖，避免循环导入；稳定导出和公共类型留在其既有所有者处。
+- 新行为与缺陷修复遵循 RED → GREEN → REFACTOR。重构不得顺带改变行为；行为、API、Schema 或持久化变化必须提供可观察测试。
+- 边界处验证不可信输入。SQL 值使用参数绑定，动态标识符只允许固定 allowlist；不要吞掉异常、返回伪成功或以宽泛 fallback 掩盖失败。
+- Python 使用明确类型、`pathlib`、结构化数据和标准库能力；TypeScript 不使用 `any` 绕过类型系统。格式、导入和静态检查交给项目工具，不手工制造等价规则。
+- Python 代码遵循 [PEP 8](https://peps.python.org/pep-0008/) 的可读性原则：使用 4 个空格缩进、清晰命名并保持合理行宽；项目及模块既有约定优先，不为机械风格一致性破坏兼容性。
+- 新增或修改的生产注释、docstring、日志和 reason 文本使用中文；协议字段、枚举值、第三方原始错误和固定 API 标识符可保留英文。为公开接口、复杂算法、关键副作用、异常边界和非显然决策写说明，不为显而易见的私有实现复制代码含义。
+- Dashboard 复用 Base UI-backed shadcn、`PageFrame`、语义 token、Lucide 和三语言 key。桌面与移动端必须可访问、可滚动、无重叠及页面级横向溢出；详情、冲突、加载、空态和失败态都是完整功能的一部分。
 
-- `pyproject.toml`、`.python-version` 与 `uv.lock` 是 Python 3.12 开发环境的权威来源；`requirements.txt` 继续服务 AstrBot 插件安装。新增或调整直接运行时依赖时同步两处声明并更新锁文件，不得只修改当前 `.venv`。
-- 新克隆仓库后先同步锁定环境并安装本地 Git hook；`.git/hooks/pre-commit` 缺失或重建 `.git` 后必须重新安装：
+### 可审查的代码规模
 
-```powershell
-uv sync --locked --dev
-uv run --locked pre-commit install --install-hooks
-```
+行数按物理行统计，空行和注释也计入；不得用超长行、压缩表达式、复制代码或无意义转发规避限制。下列为代码评审基线，局部模块可更严格。
 
-- `pyproject.toml` 的 `[tool.ruff]` 与 `[tool.ruff.lint]` 是 Ruff 规则权威；`.pre-commit-config.yaml` 中 Ruff hook 版本必须与 uv dev 依赖保持一致。修改工具版本、规则或 hook 时同步 `uv.lock`、`website/docs/development/` 与契约测试。
-- Ruff 采用渐进门禁。本轮新增或修改的 Python 文件必须先按以下顺序修复 lint、格式化并复查；若自动修复改变文件，先审阅差异再继续：
+| 对象 | 默认目标 | 必须评估拆分 | 硬上限 |
+|---|---:|---:|---:|
+| 生产源码、React 页面/组件、hook | 400 行 | 超过 600 行 | 700 行 |
+| 测试、fixture、开发脚本 | 500 行 | 超过 700 行 | 800 行 |
+| 单个生产函数/方法 | 40 行 | 超过 80 行 | 120 行 |
+| 单个测试函数 | 60 行 | 超过 100 行 | 150 行 |
 
-```powershell
-uv run --locked ruff check --fix path/to/file.py
-uv run --locked ruff format path/to/file.py
-uv run --locked ruff check path/to/file.py
-```
+- 超过“必须评估拆分”阈值时，在评审说明中写明职责边界、未拆分原因和后续拆分点。超过硬上限前必须拆分；例外仅限生成代码、第三方镜像、不可切分的协议表或测试数据，并应在文件顶部说明来源、生成方式和豁免原因。
+- 既有超限文件是技术债：不得继续增加同一职责。修复时将新增行为放入职责明确的协作对象、模块或测试文件，并保持公开导入路径和行为兼容；未经明确要求不进行无关的大规模迁移。
+- 正常函数圈复杂度不超过 10；11 至 15 必须用 guard clause、数据驱动表或提取分支降低复杂度；超过 15 仅允许有限状态机、解析器或安全策略等必要场景，并要求分支覆盖、设计理由和评审确认。嵌套通常不超过 3 层，优先提前返回和提取意图明确的辅助函数。
+- 单次变更应聚焦一个可独立验证的目的。逻辑改动建议不超过 400 行，超过 800 行或同时跨三个以上所有权边界时，应先拆成可独立回滚、可独立测试的变更，或记录无法拆分的原因与风险。
 
-- 完成变更前，对本轮全部新增或修改文件运行 pre-commit；hook 改写文件时必须重新检查 `git diff`，并重复运行直到通过：
+### 文档规模与信息架构
 
-```powershell
-uv run --locked pre-commit run --files path/to/file.py path/to/config.toml
-```
+文档的目标是让读者能快速定位权威事实，而不是复制源码、测试或其他文档。一个事实只保留一个详细说明，其余位置使用相对链接和必要摘要。
 
-- 默认不得运行会无关改写历史文件的 `ruff format .`、`ruff check --fix .` 或 `pre-commit run --all-files`。只有用户明确要求治理全仓基线时才扩大范围，并在开始前量化影响。
-- 不得通过批量 `# noqa`、宽泛 `per-file-ignores`、扩大 exclude 或删除规则来伪造通过；确需抑制的规则必须限定到最小范围并写明中文原因。
-- 禁止使用 `git commit --no-verify`、`SKIP` 或移除 hook 绕过门禁，除非用户明确授权且交付说明记录原因。网络或工具环境失败时报告阻塞，不得静默降低检查标准。
+| 文档类型 | 默认目标 | 拆分评审线 | 硬上限 |
+|---|---:|---:|---:|
+| `AGENTS.md` 与模块导航 | 180 行 | 250 行 | 300 行 |
+| README、开发指南、接口说明 | 350 行 | 500 行 | 600 行 |
+| 设计文档 | 400 行 | 500 行 | 600 行 |
+| 计划、决策记录与验收记录 | 300 行 | 400 行 | 500 行 |
 
-## 文件长度与拆分规范
+- `AGENTS.md` 只保留职责、边界、不变量、关键入口、联动和精确验证；类、字段、SQL、长命令清单和实现过程下沉到最近模块或正式文档。根级文件只保留跨模块不变量。
+- 超过拆分评审线时按读者、生命周期或主题拆成独立文档并建立双向链接。超过硬上限必须拆分，不得通过巨型表格、长段落、折叠区或复制内容规避。
+- `CHANGELOG.md`、受工具生成的 API 参考、许可证和数据集说明可不受行数硬上限约束，但仍须避免重复和手工编辑生成内容。局部 `AGENTS.md` 的更严格文档上限仍然生效。
+- 文档中的命令必须标明工作目录、前置条件、重要副作用和成功判定。计划必须区分现状、目标、非目标与验证证据；未实现内容必须明确标注为提案。
 
-- 新增或本轮负责修改的源码、测试文件以 **800 行为硬上限**，新增文件建议控制在 600 行以内；Markdown 设计/计划文件以 400 行为上限。行数按物理行统计，不能通过把一条语句或文档段落压成超长行规避。
-- 已有超过 800 行的历史文件视为遗留债务：本轮不得继续堆加同一职责；需要新增行为时拆到职责明确的新模块、mixin 或辅助文件，并保持原导入路径和公开契约兼容。除非用户明确要求，不进行无关的大规模重构。
-- 拆分按单一职责、生命周期边界或存储/编排边界进行；禁止复制两套实现、循环导入和用仅转发的空壳文件规避上限。公共类型与稳定导出应留在原模块，内部实现通过明确的依赖方向组合。
-- 完成实现前必须检查本轮新增/修改文件行数；超过上限先拆分再提交。验证至少包含 `git diff --check`、受影响模块测试和相对 Markdown 链接检查。
+## 验证与交付
 
-## 语言规范
+按影响面选择最窄、最有证明力的检查，再逐级扩大。不得把未执行的门禁描述为通过。
 
-- 生产代码中的注释、docstring、日志消息和可观测性 reason 文本统一使用中文。
-- 测试、脚本和文档中的解释性注释也使用中文；Python/SQLite/API 的固定标识符、枚举值、协议字段和第三方原始错误信息可保留英文。
-- 新增或修改代码时，先把已有英文注释、docstring 和日志改为中文，再继续扩展行为；不要只为新增代码遵守而留下同一文件中可避免的英文解释文本。
+### 测试与验证
 
-## 代码注释与函数说明
+- 不要为可逆、影响小且只是复述现有实现的改动新增测试。
+- 运行与本次改动相称的测试，并完成必要检查。通过后，只有发生新的改动、出现新的失败或仍有未解决疑点时，才扩大或重复测试；否则继续完成任务。
+- 收尾时删除本次产生且后续不再使用的临时文件。
 
-- 每个函数和方法都必须编写符合对应语言惯例的函数说明（例如 Python docstring、TypeScript TSDoc），准确描述用途、参数、返回值；存在异常、重要副作用、前置条件或边界条件时也必须明确说明。
-- 复杂函数必须提供详细注释，说明关键算法、非显然分支、状态变化、约束条件及设计原因；注释应解释“为什么”和关键控制流程，不得仅逐行复述代码。
-- 函数说明和复杂逻辑注释必须随实现同步更新，禁止保留与当前行为不一致、含糊或过期的说明。
+1. 每次修改源码后，对本轮文件运行已安装语言服务的 error 级诊断；服务不可用时记录原因，并执行等效的类型检查、lint 或构建。Python 导入诊断先在锁定 uv 环境复现，不能以关闭规则或宽泛路径配置掩盖环境问题。
+2. Python 环境以 `pyproject.toml`、`.python-version` 和 `uv.lock` 为准。新增直接运行时依赖时同步 `requirements.txt` 与锁文件；不要只修改本地 `.venv`。
+3. 本轮 Python 文件依次执行 `uv run --locked ruff check --fix`、`uv run --locked ruff format`、`uv run --locked ruff check`，审阅自动修复差异；不要运行会改写无关文件的全仓自动修复。
+4. 为本轮全部受影响文件运行 `uv run --locked pre-commit run --files <files>`。禁止使用 `--no-verify`、`SKIP`、批量 `# noqa`、宽泛 ignore/exclude 或删除规则绕过质量门。
+5. 运行对应单元、契约或集成测试。Python 命令使用 `uv run --locked python -m pytest ...`；Dashboard 改动至少运行相关 Vitest 与 `npm run build`，涉及交互、布局或可视化时继续运行对应 smoke 并人工检查截图。
+6. 文档变更至少运行 `git diff --check`，统计本轮 Markdown 物理行数，并逐一验证新增或修改的相对链接。仅文档变更不要求运行后端、Dashboard 或全仓门禁，除非文档同步了可执行契约。
 
-## 管理命令
+常用完整门禁仅在影响跨域契约或准备合并时执行：
 
-以下命令由 `core/command_endpoints.py` 注册；修改命令名或行为时，必须同步 README、CHANGELOG、测试与本页：
-
-`/memora status`、`/memora health`、`/memora diagnostics`、`/memora search <query> [k] [true|false]`、`/memora trace <query> [k]`、`/memora forget <id>`、`/memora rebuild-index`、`/memora rebuild-graph`、`/memora webui`、`/memora summarize [confirm-abandon]`、`/memora reset`、`/memora cleanup`、`/memora update [check|download|apply]`、`/memora help`。
-
-`/memora summarize` 只返回持久化窗口的即时入队确认；最终 canonical、quarantine、discard、mark_write 和失败累计通过安全诊断快照观察。`confirm-abandon` 仅在管理员明确确认数据丢失时跳过当前 epoch 中无 canonical 证据的 blocked/unknown 窗口。
-
-## 验证入口
-
-按范围选择最窄命令；Python 命令统一通过锁定 uv 环境执行。完整运行时门禁由 `scripts/check_all.py` 编排，schema validator 仅在对应脚本存在时执行；代码变更还必须通过本轮文件的 pre-commit：
-
-```powershell
+```bash
 uv run --locked python -m pytest tests -q
 uv run --locked python scripts/run_smoke.py -q
 uv run --locked python scripts/check_all.py
-uv run --locked python scripts/benchmark_recall_cost.py --all
-uv run --locked python scripts/benchmark_injection_decisions.py
-uv run --locked pre-commit run --files path/to/changed-file
 
-Set-Location pages/dashboard
+cd pages/dashboard
 npm test
 npm run build
 npm run check:artifacts
@@ -190,15 +161,7 @@ npm run smoke:runtime
 npm run smoke:browser
 ```
 
-浏览器 smoke 后必须人工检查截图；日志不能替代视觉确认。
+## 代码探索与扫描边界
 
-## 代码探索与降级
-
-需要理解代码上下文或进行自然语言定位时，优先使用
-`mcp__fast-context__fast_context_search`。如果服务不可用或返回资源错误，使用
-`rg`、PowerShell `Select-String` 和定向文件读取降级，并记录失败原因；不要把
-`node_modules/`、`dist/`、`build/`、运行时数据或工作树当作架构事实来源。
-
-## 扫描边界
-
-跳过 `node_modules/`、`dist/`、`build/`、覆盖率输出、缓存、二进制、运行时数据、工作树和 Dashboard 生成物；这些路径不是架构事实来源。
+- 扫描和架构判断跳过 `node_modules/`、`dist/`、`build/`、覆盖率输出、缓存、二进制、运行时数据、临时工作树和 Dashboard 生成物。这些路径不是实现或架构事实来源。
+- 修改管理命令、公开 API、配置叶、存储/隐私边界、质量门或构建入口时，同步最近模块上下文、面向用户文档、调用方和契约测试；只在根级不变量或导航实际变化时更新本页。

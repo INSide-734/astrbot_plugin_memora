@@ -53,12 +53,19 @@ async def load_canonical_source_states(
             or metadata.get("persona_id")
         )
         scope_key = str(raw_scope) if raw_scope is not None else None
+        # legacy 行缺失 privacy_level（键不存在或值为 null）时回退 "shared"，
+        # 与构造端 MemoryEvolutionStore.load_sources 的回退语义对齐；
+        # 键存在但值非法时保持 None，由 validate_domain_provenance 继续
+        # 抛 source_privacy_missing（fail-closed 不变量不变）。
         raw_privacy = metadata.get("privacy_level")
-        privacy_level = (
-            str(raw_privacy)
-            if raw_privacy in {"public", "shared", "confidential"}
-            else None
-        )
+        if raw_privacy is None:
+            privacy_level = "shared"
+        else:
+            privacy_level = (
+                str(raw_privacy)
+                if raw_privacy in {"public", "shared", "confidential"}
+                else None
+            )
         states[int(row[0])] = CanonicalSourceState(
             memory_id=int(row[0]),
             revision_token=str(row[3] or row[2] or "").strip(),

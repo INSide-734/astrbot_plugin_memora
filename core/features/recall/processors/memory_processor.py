@@ -50,9 +50,12 @@ from .topic_segmentation_pipeline import (
 
 if TYPE_CHECKING:
     from ....shared.contracts import PromptProtectionPort
+    from ...reflection.domain.summary_models import TopicCandidateSelection
+
+from .memory_processor_candidate_mixin import MemoryProcessorCandidateMixin
 
 
-class MemoryProcessor:
+class MemoryProcessor(MemoryProcessorCandidateMixin):
     """
     记忆处理器
 
@@ -162,6 +165,7 @@ class MemoryProcessor:
         group_id: str | None = None,
         gate_snapshot_json: str | None = None,
         strict_summary: bool = False,
+        candidate_selection: "TopicCandidateSelection | None" = None,
     ) -> list[dict[str, Any]]:
         """处理对话并生成结构化记忆。
 
@@ -208,6 +212,9 @@ class MemoryProcessor:
         prompt += self.grounding_validator.prompt_contract(
             len(messages), profile.references.max_references
         )
+        # 注入候选块（如果有）
+        prompt = self._inject_topic_candidates(prompt, candidate_selection)
+
         identity_metadata = identity_context.metadata()
 
         try:

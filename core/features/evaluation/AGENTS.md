@@ -10,11 +10,12 @@
 - `application/retrieval_quality.py`：用例/结果/报告 DTO、fixture loader、指标和 engine adapter。
 - `application/retrieval_ablation.py`：只读 snapshot 与固定检索变体。
 - `session_first_ablation.py`、`derived_metadata_ablation.py`、`feedback_ranking_ablation.py`：实验专用反事实链。
-- `feedback_learning_pipeline.py`：将完成的离线证据投递给 learning 私有 inbox。
+- `topic_candidate_evidence.py`：离线 topic 候选证据门：脱敏记录、隐私 canary、证据门判定与推荐 K。
 - `domain/metric_provenance.py`：observed/annotated/reported/judged 指标来源。
 - `infrastructure/evaluation_service.py`：数据集/变体执行与报告编排。
 - `dataset_repository.py`：生产人工数据集边界和原子保存。
 - `report_store.py`：独立 SQLite 报告及逐用例安全投影。
+- 配置灰度审计归属 `core/platform/config/audit.py`（ConfigAuditEntry），评测 feature 不维护第二套审计模型。
 
 ## 主流程
 
@@ -66,4 +67,4 @@ python -m pytest -q tests/evaluation/test_retrieval_ablation.py tests/evaluation
 python -m pytest -q tests/evaluation/test_dataset_repository.py
 python -m pytest -q tests/evaluation/test_session_first_ablation.py
 python -m pytest -q tests/evaluation/test_feedback_ranking_ablation.py tests/evaluation/test_derived_metadata_ablation.py
-```
+python -m pytest -q tests/evaluation/test_topic_candidate_evidence.py

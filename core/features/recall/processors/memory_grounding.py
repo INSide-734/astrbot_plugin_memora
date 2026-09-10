@@ -198,7 +198,9 @@ class MemoryGroundingValidator:
                     claim_text=claim_text,
                 )
         if profile.checks.negation_check:
-            negation_reason = self._validate_negation(claim_text, source_text, profile)
+            negation_reason = self._validate_negation(
+                claim_text, profile, referenced_messages
+            )
             if negation_reason:
                 return self._rejected(
                     negation_reason,
@@ -477,10 +479,29 @@ class MemoryGroundingValidator:
 
     @staticmethod
     def _validate_negation(
-        claim_text: str, source_text: str, profile: GateProfile
+        claim_text: str,
+        profile: GateProfile,
+        referenced_messages: list[Message],
     ) -> str | None:
-        """阻止候选与紧邻来源片段出现相反否定极性（白名单短语先剔除）。"""
+        """仅以 user 角色引用片段判定否定极性（白名单短语先剔除）。
 
+        取舍：assistant 片段不参与否定预检——assistant 的修辞性否定
+        （如“不亚于”“毫无悬念”）不是用户事实证据；用户真实否定翻转
+        仍由 user 片段极性对比捕捉。引用中无 user 片段时直接跳过检查。
+        """
+
+        user_snippets = [
+            snippet
+            for snippet in (
+                Message.content_to_text(message.content).strip()
+                for message in referenced_messages
+                if message.role == "user"
+            )
+            if snippet
+        ]
+        if not user_snippets:
+            return None
+        user_source_text = "\n".join(user_snippets)
         whitelist = {
             phrase.casefold()
             for phrase in (
@@ -489,7 +510,7 @@ class MemoryGroundingValidator:
             )
         }
         claim_clean = claim_text.casefold()
-        source_clean = source_text.casefold()
+        source_clean = user_source_text.casefold()
         for phrase in sorted(whitelist, key=len, reverse=True):
             claim_clean = claim_clean.replace(phrase, "")
             source_clean = source_clean.replace(phrase, "")
@@ -507,7 +528,10 @@ class MemoryGroundingValidator:
         return None
 
     def _support_score(
-        self, claim_text: str, source_text: str, profile: GateProfile
+        self,
+        claim_text: str,
+        source_text: str,
+        profile: GateProfile,
     ) -> float:
         """组合词元覆盖与字符序列相似度，权重由 profile 控制。"""
 

@@ -49,6 +49,72 @@ def build_reflection_idempotency_key(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _merge_scope_metadata(
+    metadata: dict[str, Any],
+    *,
+    scope_key: str | None,
+    privacy_level: str | None,
+    resolver_revision: str | None,
+    chat_type: str | None = None,
+    source_provenance_complete: bool | None = None,
+) -> bool:
+    """合并并校验候选 scope 快照，返回是否具备完整来源证据。
+
+    ``chat_type`` 与 scope 三元组同源（resolver 固化的可信快照），
+    一并写入 canonical metadata，供 catalog 聚合的读取侧复核。
+    """
+
+    if source_provenance_complete is not None and not isinstance(
+        source_provenance_complete, bool
+    ):
+        raise TypeError("source_provenance_complete_invalid")
+    values = (scope_key, privacy_level, resolver_revision)
+    if any(value is not None for value in values):
+        if not all(isinstance(value, str) and value.strip() for value in values):
+            raise ValueError("scope_snapshot_incomplete")
+        if chat_type is not None and chat_type not in {"private", "group"}:
+            raise ValueError("chat_type_invalid")
+        normalized = {
+            "scope_key": str(scope_key).strip(),
+            "privacy_level": str(privacy_level).strip(),
+            "resolver_revision": str(resolver_revision).strip(),
+        }
+        if normalized["privacy_level"] not in {
+            "public",
+            "shared",
+            "confidential",
+        }:
+            raise ValueError("privacy_level_invalid")
+        for key, value in normalized.items():
+            existing = metadata.get(key)
+            if existing not in (None, value):
+                raise ValueError("scope_snapshot_conflict")
+            metadata[key] = value
+        if chat_type is not None:
+            existing_chat_type = metadata.get("chat_type")
+            if existing_chat_type not in (None, chat_type):
+                raise ValueError("scope_snapshot_conflict")
+            metadata["chat_type"] = chat_type
+        complete = source_provenance_complete is True
+        metadata["source_provenance_complete"] = complete
+        return complete
+    if source_provenance_complete is True:
+        raise ValueError("scope_snapshot_incomplete")
+    # 模型输出中的 scope 字段不是可信来源证据；没有 resolver 快照时清除。
+    for key in (
+        "scope_key",
+        "privacy_level",
+        "resolver_revision",
+        "chat_type",
+    ):
+        metadata.pop(key, None)
+    if source_provenance_complete is False:
+        metadata["source_provenance_complete"] = False
+    else:
+        metadata.pop("source_provenance_complete", None)
+    return False
+
+
 async def store_reflection_candidates(
     memories: list[dict[str, Any]],
     *,
@@ -67,6 +133,11 @@ async def store_reflection_candidates(
     claim_token: str | None = None,
     job_id: str | None = None,
     gate_snapshot_json: str | None = None,
+    scope_key: str | None = None,
+    privacy_level: str | None = None,
+    resolver_revision: str | None = None,
+    chat_type: str | None = None,
+    source_provenance_complete: bool | None = None,
     before_side_effect: Callable[[], Awaitable[bool]] | None = None,
     run_claim_side_effect: Callable[
         [Callable[[], Awaitable[object]]], Awaitable[object]
@@ -96,6 +167,12 @@ async def store_reflection_candidates(
         worker_generation: claim 固化的 worker generation。
         claim_fence: 不透明 claim fence 摘要，不保存原始 claim token。
         gate_snapshot_json: 入队时固化的门禁配置 JSON。
+        scope_key: resolver 固化的 canonical scope；缺失时不具备候选来源证据。
+        privacy_level: resolver 固化的隐私等级。
+        resolver_revision: resolver 快照修订号。
+        chat_type: resolver 固化的聊天类型（private/group），随可信 scope
+            快照一并写入 metadata，供 catalog 读取侧复核。
+        source_provenance_complete: 调用方声明的来源证据状态，只接受布尔值。
         before_side_effect: canonical 或隔离副作用前的 claim fence 回调。
         run_claim_side_effect: Store 提供的 epoch/source fence runner。
         memory_engine: canonical 记忆引擎。
@@ -106,12 +183,22 @@ async def store_reflection_candidates(
         与候选顺序一致的互斥存储终态。取消会继续向上传播，普通失败转为
         ``FAILED``，canonical 成功后的普通派生处理失败不改变写入终态。
     """
+
     semaphore = asyncio.Semaphore(_MAX_CONCURRENT_WRITES)
 
     async def _store_one(memory: dict[str, Any]) -> ReflectionStoreResult:
         """在质量门后返回一条候选的单一持久化终态。"""
         metadata_value = memory.get("metadata")
         metadata = dict(metadata_value) if isinstance(metadata_value, dict) else {}
+        _merge_scope_metadata(
+            metadata,
+            scope_key=scope_key,
+            privacy_level=privacy_level,
+            resolver_revision=resolver_revision,
+            chat_type=chat_type,
+            source_provenance_complete=source_provenance_complete,
+        )
+
         if (
             isinstance(session_epoch, bool)
             or not isinstance(session_epoch, int)
@@ -188,6 +275,15 @@ async def store_reflection_candidates(
             "scope_id": scope_id,
             "session_epoch": session_epoch,
         }
+        if scope_key is not None:
+            source_window["scope_key"] = str(scope_key).strip()
+        if privacy_level is not None:
+            source_window["privacy_level"] = str(privacy_level).strip()
+        if resolver_revision is not None:
+            source_window["resolver_revision"] = str(resolver_revision).strip()
+        source_window["source_provenance_complete"] = bool(
+            metadata.get("source_provenance_complete") is True
+        )
         if normalized_source_digest is not None:
             source_window["source_digest"] = normalized_source_digest
         if worker_generation is not None:
@@ -266,6 +362,12 @@ async def store_reflection_candidates(
                         source_digest=source_digest,
                         worker_generation=worker_generation,
                         claim_token=claim_token,
+                        scope_key=scope_key,
+                        privacy_level=privacy_level,
+                        resolver_revision=resolver_revision,
+                        scope_provenance_complete=metadata.get(
+                            "source_provenance_complete"
+                        ),
                     )
                 write_kwargs: dict[str, Any] = {
                     "content": memory["content"],

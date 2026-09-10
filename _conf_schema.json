@@ -1568,6 +1568,229 @@
                         "max": 10000
                     }
                 }
+            },
+            "candidate_reuse": {
+                "description": "候选话题重用",
+                "hint": "控制总结时是否重用近期高频话题作为候选，减少重复分类开销。支持四种模式：off(关闭)、observe(仅观测)、full(完整重用)、top_k(固定K重用)。",
+                "type": "object",
+                "items": {
+                    "mode": {
+                        "description": "重用模式",
+                        "hint": "off: 关闭重用; observe: 仅观测不实际重用; full: 重用完整 scope 话题描述; top_k: 固定重用前K个高频话题",
+                        "type": "string",
+                        "options": ["off", "observe", "full", "top_k"],
+                        "default": "observe"
+                    },
+                    "fixed_k": {
+                        "description": "固定K值",
+                        "hint": "top_k 模式下重用的话题数量。必须 <= max_full_topics",
+                        "type": "int",
+                        "default": 8,
+                        "min": 1,
+                        "max": 24
+                    },
+                    "activation_threshold": {
+                        "description": "激活阈值",
+                        "hint": "catalog 中话题数量达到此值时才激活重用。必须 <= max_full_topics",
+                        "type": "int",
+                        "default": 32,
+                        "min": 3,
+                        "max": 100
+                    },
+                    "max_full_topics": {
+                        "description": "最大完整话题数",
+                        "hint": "prompt 中包含完整 scope 描述的话题数量上限",
+                        "type": "int",
+                        "default": 32,
+                        "min": 1,
+                        "max": 50
+                    },
+                    "max_full_prompt_tokens": {
+                        "description": "最大完整 prompt 令牌数",
+                        "hint": "完整话题描述部分的 token 预算上限",
+                        "type": "int",
+                        "default": 256,
+                        "min": 50,
+                        "max": 2000
+                    },
+                    "max_query_chars": {
+                        "description": "候选查询最大字符数",
+                        "hint": "构造候选话题查询文本时截断的最大字符数。",
+                        "type": "int",
+                        "default": 2000,
+                        "min": 1,
+                        "max": 10000
+                    },
+                    "overfetch_factor": {
+                        "description": "补足扫描倍数",
+                        "hint": "候选不足时的补足扫描倍数，第一阶段固定为 3，不可修改。",
+                        "type": "int",
+                        "default": 3,
+                        "min": 3,
+                        "max": 3
+                    },
+                    "metrics_retention_days": {
+                        "description": "候选观测数据保留天数",
+                        "hint": "observe 模式指标样本的保留天数，超出后按天清理。",
+                        "type": "int",
+                        "default": 30,
+                        "min": 1,
+                        "max": 3650
+                    },
+                    "observe_max_candidates": {
+                        "description": "observe 影子候选上限",
+                        "hint": "observe 模式影子计算最多评估的候选话题数量。",
+                        "type": "int",
+                        "default": 32,
+                        "min": 1,
+                        "max": 512
+                    },
+                    "observe_max_rows": {
+                        "description": "observe 影子扫描行数上限",
+                        "hint": "observe 模式影子扫描最多读取的目录行数。",
+                        "type": "int",
+                        "default": 96,
+                        "min": 1,
+                        "max": 4096
+                    },
+                    "observe_max_duration_ms": {
+                        "description": "observe 影子耗时上限（毫秒）",
+                        "hint": "observe 模式单次影子计算的时间预算，超出即中止。",
+                        "type": "int",
+                        "default": 250,
+                        "min": 1,
+                        "max": 60000
+                    },
+                    "bucket_overrides": {
+                        "description": "按话题规模桶覆盖候选重用模式与固定 K",
+                        "hint": "未启用的桶保持 observe；top_k 桶必须由离线证据和灰度控制面写入。",
+                        "type": "object",
+                        "items": {
+                            "tiny": {
+                                "description": "少于 10 个话题的规模桶覆盖",
+                                "type": "object",
+                                "items": {
+                                    "mode": {
+                                        "description": "候选重用模式",
+                                        "type": "string",
+                                        "options": ["off", "observe", "full", "top_k"],
+                                        "default": "observe"
+                                    },
+                                    "fixed_k": {
+                                        "description": "固定 K 值",
+                                        "type": "int",
+                                        "default": 8,
+                                        "min": 1,
+                                        "max": 24
+                                    }
+                                }
+                            },
+                            "small": {
+                                "description": "10 到 29 个话题的规模桶覆盖",
+                                "type": "object",
+                                "items": {
+                                    "mode": {
+                                        "description": "候选重用模式",
+                                        "type": "string",
+                                        "options": ["off", "observe", "full", "top_k"],
+                                        "default": "observe"
+                                    },
+                                    "fixed_k": {
+                                        "description": "固定 K 值",
+                                        "type": "int",
+                                        "default": 8,
+                                        "min": 1,
+                                        "max": 24
+                                    }
+                                }
+                            },
+                            "medium": {
+                                "description": "30 到 99 个话题的规模桶覆盖",
+                                "type": "object",
+                                "items": {
+                                    "mode": {
+                                        "description": "候选重用模式",
+                                        "type": "string",
+                                        "options": ["off", "observe", "full", "top_k"],
+                                        "default": "observe"
+                                    },
+                                    "fixed_k": {
+                                        "description": "固定 K 值",
+                                        "type": "int",
+                                        "default": 8,
+                                        "min": 1,
+                                        "max": 24
+                                    }
+                                }
+                            },
+                            "large": {
+                                "description": "100 到 299 个话题的规模桶覆盖",
+                                "type": "object",
+                                "items": {
+                                    "mode": {
+                                        "description": "候选重用模式",
+                                        "type": "string",
+                                        "options": ["off", "observe", "full", "top_k"],
+                                        "default": "observe"
+                                    },
+                                    "fixed_k": {
+                                        "description": "固定 K 值",
+                                        "type": "int",
+                                        "default": 8,
+                                        "min": 1,
+                                        "max": 24
+                                    }
+                                }
+                            },
+                            "xlarge": {
+                                "description": "300 到 999 个话题的规模桶覆盖",
+                                "type": "object",
+                                "items": {
+                                    "mode": {
+                                        "description": "候选重用模式",
+                                        "type": "string",
+                                        "options": ["off", "observe", "full", "top_k"],
+                                        "default": "observe"
+                                    },
+                                    "fixed_k": {
+                                        "description": "固定 K 值",
+                                        "type": "int",
+                                        "default": 8,
+                                        "min": 1,
+                                        "max": 24
+                                    }
+                                }
+                            },
+                            "huge": {
+                                "description": "不少于 1000 个话题的规模桶覆盖",
+                                "type": "object",
+                                "items": {
+                                    "mode": {
+                                        "description": "候选重用模式",
+                                        "type": "string",
+                                        "options": ["off", "observe", "full", "top_k"],
+                                        "default": "observe"
+                                    },
+                                    "fixed_k": {
+                                        "description": "固定 K 值",
+                                        "type": "int",
+                                        "default": 8,
+                                        "min": 1,
+                                        "max": 24
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "catalog_reconcile_interval_seconds": {
+                "description": "目录周期收敛间隔（秒）",
+                "hint": "运行期周期性收敛话题目录 dirty 记录的间隔秒数；0 表示禁用周期收敛。",
+                "type": "int",
+                "default": 60,
+                "min": 0,
+                "max": 86400
             }
         }
     },

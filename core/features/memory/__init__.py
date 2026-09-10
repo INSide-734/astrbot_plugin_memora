@@ -22,6 +22,7 @@ if TYPE_CHECKING:
         IndexValidator,
         PersistenceHealthValidator,
         SchemaManager,
+        TopicCatalogStore,
         WriteOpJournal,
     )
 
@@ -37,6 +38,7 @@ __all__ = [
     "PrivacyLevel",
     "PersistenceHealthValidator",
     "SchemaManager",
+    "TopicCatalogStore",
     "WriteOpJournal",
     "compute_decay_score",
     "compute_ttl",
@@ -55,6 +57,7 @@ _EXPORTS = {
     "PrivacyLevel": (".domain", "PrivacyLevel"),
     "PersistenceHealthValidator": (".infrastructure", "PersistenceHealthValidator"),
     "SchemaManager": (".infrastructure", "SchemaManager"),
+    "TopicCatalogStore": (".infrastructure", "TopicCatalogStore"),
     "WriteOpJournal": (".infrastructure", "WriteOpJournal"),
     "compute_decay_score": (".domain", "compute_decay_score"),
     "compute_ttl": (".domain", "compute_ttl"),

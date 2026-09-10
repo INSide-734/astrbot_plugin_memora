@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sqlite3
 import statistics
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
@@ -66,8 +67,8 @@ def _nearest_rank(values: list[float], percentile: float) -> float | None:
     if not values:
         return None
     ordered = sorted(values)
-    rank = max(1, math.ceil(percentile * len(ordered)))
-    return ordered[rank - 1]
+    rank = max(1, math.ceil(percentile / 100.0 * len(ordered)))
+    return ordered[min(rank - 1, len(ordered) - 1)]
 
 
 def _distribution(
@@ -79,7 +80,7 @@ def _distribution(
     if include_count:
         result["sample_count"] = len(values)
     result["p50"] = statistics.median(values) if values else None
-    result["p95"] = _nearest_rank(values, 0.95)
+    result["p95"] = _nearest_rank(values, 95)
     return result
 
 
@@ -175,12 +176,117 @@ def summarize(
     }
 
 
+def aggregate_candidate_metrics(
+    db_path: str,
+    time_range: tuple[float, float] | None = None,
+) -> dict[str, Any]:
+    """聚合候选指标为隐私安全的统计摘要（不含敏感信息）。"""
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    # 构造时间范围过滤条件
+    time_filter = ""
+    time_params: tuple[Any, ...] = ()
+    if time_range is not None:
+        time_filter = " AND created_at BETWEEN ? AND ?"
+        time_params = time_range
+
+    # 1. 窗口级候选产出率（按 mode 分层）
+    # 口径：非零候选窗口 / 总窗口，不是 occurrence 级复用率。
+    reuse_rate: dict[str, dict[str, int | float]] = {}
+    for mode in ["observe", "top_k", "full", "off"]:
+        row = conn.execute(
+            f"SELECT COUNT(*) as n_windows, "
+            f"SUM(CASE WHEN n_candidates > 0 THEN 1 ELSE 0 END) as n_with "
+            f"FROM topic_candidate_metric_windows WHERE mode = ?{time_filter}",
+            (mode,) + time_params,
+        ).fetchone()
+        if row and row["n_windows"] > 0:
+            reuse_rate[mode] = {
+                "rate": row["n_with"] / row["n_windows"],
+                "n_windows": row["n_windows"],
+            }
+
+    # 2. provenance 覆盖率
+    prov_row = conn.execute(
+        f"SELECT SUM(n_candidates) as total, SUM(n_with_provenance) as with_prov "
+        f"FROM topic_candidate_metric_windows WHERE n_candidates > 0{time_filter}",
+        time_params,
+    ).fetchone()
+    # 缺失保持缺失（None），不以 0.0 伪装（评测 AGENTS 不变量 5）
+    provenance_coverage: dict[str, float | None] = {
+        "mean": (
+            prov_row["with_prov"] / prov_row["total"]
+            if prov_row and prov_row["total"] and prov_row["total"] > 0
+            else None
+        )
+    }
+
+    # 3. selector 延迟分布
+    latencies = [
+        row[0]
+        for row in conn.execute(
+            f"SELECT selector_latency_ms FROM topic_candidate_metric_windows "
+            f"WHERE selector_latency_ms IS NOT NULL{time_filter} "
+            f"ORDER BY selector_latency_ms",
+            time_params,
+        ).fetchall()
+    ]
+
+    # 无有效延迟样本时保持空 dict，不输出 0.0 伪装分位数
+    selector_latency_ms: dict[str, float | None] = {}
+    if latencies:
+        selector_latency_ms = {
+            "p50": _nearest_rank(latencies, 50.0),
+            "p90": _nearest_rank(latencies, 90.0),
+            "p95": _nearest_rank(latencies, 95.0),
+            "p99": _nearest_rank(latencies, 99.0),
+        }
+
+    # 4. baseline 降级原因分布
+    reason_rows = conn.execute(
+        f"SELECT reason, COUNT(*) as count FROM topic_candidate_metric_windows "
+        f"WHERE reason IS NOT NULL{time_filter} GROUP BY reason",
+        time_params,
+    ).fetchall()
+    baseline_reasons = {row["reason"]: row["count"] for row in reason_rows}
+
+    # 5. token 预算使用：mean 缺失时保持 None
+    token_row = conn.execute(
+        f"SELECT AVG(n_tokens) as mean, "
+        f"SUM(CASE WHEN n_tokens IS NULL THEN 1 ELSE 0 END) as n_missing, "
+        f"SUM(CASE WHEN n_tokens IS NOT NULL THEN 1 ELSE 0 END) as n_valid "
+        f"FROM topic_candidate_metric_windows"
+        f"{' WHERE created_at BETWEEN ? AND ?' if time_range else ''}",
+        time_params,
+    ).fetchone()
+    token_budget: dict[str, float | int | None] = {
+        "mean": (
+            token_row["mean"] if token_row and token_row["mean"] is not None else None
+        ),
+        "n_missing": token_row["n_missing"] if token_row else 0,
+        "n_valid": token_row["n_valid"] if token_row else 0,
+    }
+
+    conn.close()
+    return {
+        "candidate_metrics": {
+            "reuse_rate": reuse_rate,
+            "provenance_coverage": provenance_coverage,
+            "selector_latency_ms": selector_latency_ms,
+            "baseline_reasons": baseline_reasons,
+            "token_budget": token_budget,
+        }
+    }
+
+
 def _percentage_delta(baseline: object, candidate: object) -> float | None:
     """计算候选相对基线的百分比变化；基线零值或缺失返回未知。"""
 
     baseline_value = _safe_number(baseline)
     candidate_value = _safe_number(candidate)
-    if baseline_value in {None, 0.0} or candidate_value is None:
+    if baseline_value is None or baseline_value == 0.0 or candidate_value is None:
         return None
     return round((candidate_value - baseline_value) / baseline_value * 100.0, 6)
 
@@ -244,9 +350,14 @@ def _build_parser() -> argparse.ArgumentParser:
     """创建要求显式 A/B 输入和聚合输出路径的命令行解析器。"""
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--baseline", required=True, help="Prompt A 诊断 JSONL")
-    parser.add_argument("--candidate", required=True, help="Prompt B 诊断 JSONL")
+    parser.add_argument("--baseline", help="Prompt A 诊断 JSONL 或数据库路径")
+    parser.add_argument("--candidate", help="Prompt B 诊断 JSONL 或数据库路径")
     parser.add_argument("--output", required=True, help="聚合比较 JSON 输出路径")
+    parser.add_argument(
+        "--include-candidates",
+        action="store_true",
+        help="从数据库聚合候选指标（baseline/candidate 需为 .db 路径）",
+    )
     return parser
 
 
@@ -254,10 +365,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     """加载两组事件并写出只含聚合标量的比较报告。"""
 
     args = _build_parser().parse_args(argv)
-    report = compare(
-        summarize(load_events(args.baseline)),
-        summarize(load_events(args.candidate)),
-    )
+
+    # 支持两种模式：JSONL 事件或数据库候选指标
+    if args.include_candidates:
+        # 数据库模式：聚合候选指标；强制 .db 后缀防止误传生产
+        # conversations.db 为 JSONL 或反之（双语义参数的唯一防线）
+        if not args.baseline or not args.candidate:
+            print(
+                "错误：--include-candidates 需要 --baseline 和 --candidate 为 .db 路径"
+            )
+            return 1
+        for label, value in (
+            ("baseline", args.baseline),
+            ("candidate", args.candidate),
+        ):
+            if not value.endswith(".db"):
+                print(f"错误：{label} 在 --include-candidates 模式必须是 .db 文件")
+                return 1
+        report = {
+            "baseline": aggregate_candidate_metrics(args.baseline),
+            "candidate": aggregate_candidate_metrics(args.candidate),
+        }
+    else:
+        # JSONL 模式：现有反思事件聚合
+        if not args.baseline or not args.candidate:
+            print("错误：需要 --baseline 和 --candidate JSONL 路径")
+            return 1
+        report = compare(
+            summarize(load_events(args.baseline)),
+            summarize(load_events(args.candidate)),
+        )
+
     Path(args.output).write_text(
         json.dumps(report, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 import aiosqlite
 
 from ..domain.memory_atom import MemoryAtom
@@ -15,12 +18,18 @@ async def validate_atom_parent_sources(
     db: aiosqlite.Connection,
     atoms: list[MemoryAtom],
 ) -> None:
-    """当 canonical 表存在时，拒绝缺失或陈旧的 Atom 父来源。"""
+    """当 canonical 表存在时，拒绝缺失或陈旧的 Atom 父来源。
+
+    来源处于总结写入事务的 pending 暂态（``summary_source_pending`` 为真）
+    时视为可用：atom 与 parent canonical 属于同一次写入，收口阶段会把
+    orphan/pending 一并清除；只有真正的失效来源才拒绝派生写入。
+    """
 
     if not atoms or not await _documents_table_exists(db):
         return
     source_ids = tuple(sorted({atom.parent_memory_id for atom in atoms}))
     states = await load_canonical_source_states(db, source_ids)
+    pending_ids = await _pending_source_ids(db, source_ids)
     for atom in atoms:
         state = states.get(atom.parent_memory_id)
         has_provenance = bool(
@@ -34,7 +43,7 @@ async def validate_atom_parent_sources(
             continue
         if state is None:
             raise ValueError("source_not_found")
-        if not state.is_active:
+        if not state.is_active and atom.parent_memory_id not in pending_ids:
             raise ValueError("source_inactive")
         if atom.parent_revision != state.revision_token:
             raise ValueError("source_revision_mismatch")
@@ -80,6 +89,41 @@ async def filter_atoms_by_current_sources(
             states.get(atom.parent_memory_id),
         )
     ]
+
+
+async def _pending_source_ids(
+    db: aiosqlite.Connection, source_ids: tuple[int, ...]
+) -> frozenset[int]:
+    """返回仍处于总结写入 pending 暂态的 source ID 集合。"""
+
+    if not source_ids:
+        return frozenset()
+    placeholders = ",".join("?" for _ in source_ids)
+    cursor = await db.execute(
+        "SELECT id, metadata FROM documents "
+        f"WHERE id IN ({placeholders}) AND metadata LIKE '%summary_source_pending%'",
+        source_ids,
+    )
+    pending: set[int] = set()
+    for row in await cursor.fetchall():
+        metadata = _metadata_dict(row[1])
+        if metadata.get("summary_source_pending") is True:
+            pending.add(int(row[0]))
+    return frozenset(pending)
+
+
+def _metadata_dict(value: Any) -> dict[str, Any]:
+    """把 metadata 列安全解析为字典。"""
+
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return {}
+    try:
+        decoded = json.loads(value)
+    except (TypeError, ValueError):
+        return {}
+    return decoded if isinstance(decoded, dict) else {}
 
 
 async def _documents_table_exists(db: aiosqlite.Connection) -> bool:

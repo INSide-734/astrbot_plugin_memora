@@ -6,7 +6,12 @@ Memora 的所有重要变更都记录在此文件中。
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
 ## [Unreleased]
-### 改进
+### 新增
+
+- 新增 topic top-K 候选复用：总结窗口可从当前作用域的近期高频话题目录中选择固定数量候选，减少重复分类开销；支持 `off`、`observe`、`full` 和 `top_k` 模式，默认使用 `observe` 进行影子观测。
+- 新增话题目录的 generation 隔离、canonical watermark、dirty 队列和运行期周期收敛；目录映射按当前 source revision、scope、privacy、状态和 `mark_write` 语义复核，无法证明安全时回退 baseline。
+- 新增候选观测指标、HMAC 脱敏作用域聚合、窗口级终态去重、按规模桶覆盖和 Dashboard 配置面；`observe` 影子计算不会把动态话题写入 System Prompt。
+- 新增 `topic_segmentation.candidate_reuse` 配置叶，包括固定 K、候选数量与查询预算、observe 影子上限、指标保留天数和桶级覆盖；新增运行期目录收敛周期配置。
 
 - 自动反思、手动总结、旧 pending 恢复和启动扫描统一为 `conversations.db` 中的可恢复固定窗口任务；新增稳定 `message_seq`、session epoch、claim/lease/CAS、候选 ledger、连续 cursor、公平两层并发与共享物理 LLM 限流。
 - `/memora summarize` 改为即时入队确认，不再在命令协程内等待 Provider 或直接写 canonical；新增显式 `confirm-abandon` 管理确认，仅允许跳过无 canonical 副作用证据的阻塞窗口。

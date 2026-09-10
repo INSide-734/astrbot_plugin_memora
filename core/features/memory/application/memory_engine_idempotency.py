@@ -52,6 +52,24 @@ class MemoryEngineIdempotencyMixin:
                     "summary_source_pending": True,
                 }
             )
+            if source_fence.has_exact_scope:
+                for field_name, value in (
+                    ("scope_key", source_fence.scope_key),
+                    ("privacy_level", source_fence.privacy_level),
+                    ("resolver_revision", source_fence.resolver_revision),
+                ):
+                    if normalized_metadata.get(field_name) not in (None, value):
+                        raise RuntimeError("summary_scope_mismatch")
+                    normalized_metadata[field_name] = value
+                normalized_metadata["source_provenance_complete"] = True
+            else:
+                for field_name in (
+                    "scope_key",
+                    "privacy_level",
+                    "resolver_revision",
+                ):
+                    normalized_metadata.pop(field_name, None)
+                normalized_metadata["source_provenance_complete"] = False
 
         if not idempotency_key:
             memory_id = await self._add_memory_unchecked(

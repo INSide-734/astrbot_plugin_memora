@@ -37,7 +37,7 @@ from .memory_engine_atom_support import (
     successful_atoms,
 )
 from .memory_engine_idempotency import MemoryEngineIdempotencyMixin
-from .memory_engine_semantic_updates import has_semantic_metadata_change
+from .memory_engine_semantic_updates import prepare_semantic_metadata_update
 from .memory_engine_write_observability import MemoryEngineWriteObservabilityMixin
 from .retrieval_timing import RetrievalTimingSink
 
@@ -95,6 +95,8 @@ class MemoryEngineCRUDMixin(
             full_metadata.update(metadata)
         full_metadata["create_time"] = current_time
         full_metadata["last_access_time"] = current_time
+        if isinstance(full_metadata.get("topics"), (list, tuple)):
+            full_metadata["topic_observed_at"] = current_time
         if self.hybrid_retriever is None:
             self._record_add_memory_failure("not_initialized")
             raise RuntimeError("混合检索器未初始化")
@@ -647,19 +649,9 @@ class MemoryEngineCRUDMixin(
         if "metadata" in updates:
             metadata_updates.update(updates["metadata"])
         if metadata_updates:
-            semantic_metadata_changed = has_semantic_metadata_change(
-                current_metadata,
-                metadata_updates,
+            semantic_metadata_changed = prepare_semantic_metadata_update(
+                current_metadata, metadata_updates, observed_at=time.time()
             )
-            if not isinstance(current_metadata, dict):
-                try:
-                    current_metadata = (
-                        json.loads(current_metadata)
-                        if isinstance(current_metadata, str)
-                        else {}
-                    )
-                except (json.JSONDecodeError, TypeError):
-                    current_metadata = {}
             current_metadata.update(metadata_updates)
             current_metadata["updated_at"] = time.time()
             if self.hybrid_retriever is None:

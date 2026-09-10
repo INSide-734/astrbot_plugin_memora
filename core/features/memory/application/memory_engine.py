@@ -12,7 +12,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
-from .. import SchemaManager, WriteOpJournal
+from .. import SchemaManager, TopicCatalogStore, WriteOpJournal
 from .maintenance_operations import MaintenanceOperations
 from .memory_engine_batch import MemoryEngineBatchMixin
 from .memory_engine_crud import MemoryEngineCRUDMixin
@@ -105,6 +105,7 @@ class MemoryEngine(
             update_memory_cb=self.update_memory,
             create_tracked_task_cb=self._create_tracked_task,
         )
+        self.topic_catalog_store = TopicCatalogStore(db_connection=None)
         self._write_journal = WriteOpJournal(
             db_connection=None,
             graph_memory_manager=self.graph_memory_manager,
@@ -117,6 +118,7 @@ class MemoryEngine(
             invalidate_cache_cb=self._retrieval.invalidate_cache,
             delete_doc_indexes_batch_cb=self._delete_document_indexes_for_batch,
             delete_graph_atoms_batch_cb=self._delete_graph_and_atoms_for_batch,
+            topic_catalog_store=self.topic_catalog_store,
         )
         self._schema = SchemaManager(db_connection=None)
         self._maintenance = MaintenanceOperations(
@@ -172,6 +174,11 @@ class MemoryEngine(
 
     async def consolidate_memories(self) -> dict[str, int]:
         return await self._retrieval.consolidate()
+
+    async def count_canonical_created_on(self, day_ts: int) -> int:
+        """统计指定 UTC 日写入的 canonical 记忆数量（异常检测日聚合入口）。"""
+
+        return await self._maintenance.count_canonical_created_on(day_ts)
 
     async def get_statistics(self) -> dict[str, Any]:
         return await self._maintenance.get_statistics()

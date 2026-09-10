@@ -183,6 +183,13 @@ sequenceDiagram
 - `cleanup_old_memories()`、可选管理器和状态文件通常采用尽力而为语义；返回 0/空结果不等于数据一致性已验证。
 - `BackupManager` 只在 canonical SQLite 快照、manifest 和 quick check 全部成功后发布 `ready` 备份；失败不得发布半成品。`scheduled`、`pre_migration` 与 `pre_restore` 允许按保留期自动 prune，`manual` 和 `version_change` 必须显式删除。
 
+
+## Topic catalog 存储契约
+
+`TopicCatalogStore` 只拥有 canonical SQLite 中的派生 topic mapping、scope aggregate、generation state、dirty queue 与 metric-window 去重表。`documents` 的 INSERT/UPDATE/DELETE 触发器在同一 canonical 事务内递增 watermark 并登记只含 `memory_id`、操作和固定 reason 的 dirty 行；不得把正文、旧 metadata、scope 或 topic 快照写入 dirty/journal payload。
+
+目录 mapping 必须按 memory ID 重读当前 `documents`，并同时通过 `is_memory_recallable`、`mark_write`、orphan、scope provenance、privacy、chat type、revision 和 topic label 规范化校验；失效 source 只删除 mapping，不影响 canonical。BM25、FAISS、图和 catalog 回填均是可修复派生阶段，不能把 catalog 失败升级为 canonical 回滚。
+
 ## 测试定位与精确验证
 
 按修改范围选择最小命令；本模块文档初始化不执行测试。

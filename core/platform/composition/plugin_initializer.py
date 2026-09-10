@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 import time
-from pathlib import Path
 from typing import Any, cast
 
 from astrbot.api import logger
@@ -20,6 +19,9 @@ from ...features.injection.infrastructure.injection_decision_store import (
     InjectionDecisionStore,
 )
 from ...features.injection.infrastructure.recorder import InjectionDecisionRecorder
+from ...features.memory.application.catalog_reconcile_scheduler import (
+    TopicCatalogReconcileScheduler,
+)
 from ...features.memory.application.memory_engine import MemoryEngine
 from ...features.memory.infrastructure.validators import IndexValidator
 from ...features.observability.application import MemoryQualityScorer
@@ -35,10 +37,11 @@ from ...features.quality.infrastructure.quarantine_store import (
 from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...shared.contracts import PromptProtectionPort
 from ...shared.errors import InitializationError
-from ..config.feature_config import is_jargon_discovery_enabled
 from ..config.manager import ConfigManager
 from ..security import build_prompt_protection_port
 from ..transport.realtime_hub import RealtimeHub
+from .catalog_lifecycle import reconcile_catalog_for_shutdown
+from .cognitive_lifecycle import initialize_cognitive_components
 from .component_factory import ComponentFactory
 from .db_setup import DatabaseSetup
 from .faiss_checker import FaissChecker
@@ -87,7 +90,11 @@ class PluginInitializer(InitializerReadinessMixin):
         self.conversation_manager: ConversationManager | None = None
         self.identity_runtime: ProtocolIdentityRuntime | None = None
         self.index_validator: IndexValidator | None = None
+        self.derived_rebuild_coordinator: Any | None = None
         self.decay_scheduler: DecayScheduler | None = None
+        self.topic_catalog_reconcile_scheduler: (
+            TopicCatalogReconcileScheduler | None
+        ) = None
         self.backfill_scheduler: BackfillScheduler | None = None
         self.injection_decision_store: InjectionDecisionStore | None = None
         self.injection_decision_recorder: InjectionDecisionRecorder | None = None
@@ -124,7 +131,6 @@ class PluginInitializer(InitializerReadinessMixin):
             data_dir,
             backup_manager=backup_manager,
         )
-
         # 重试回调：Provider 后台重试结束后提交唯一终态
         self._provider_waiter.on_terminal_callback = self._on_providers_ready
 
@@ -296,7 +302,7 @@ class PluginInitializer(InitializerReadinessMixin):
             self.db = components["db"]
             self.graph_db = components["graph_db"]
             self.memory_engine = components["memory_engine"]
-            # MemoryEngine 是动态 facade，质量评分器由组合根在发布阶段挂载。
+            # MemoryEngine 是动态门面，质量评分器由组合根在发布阶段挂载。
             cast(Any, self.memory_engine)._quality_scorer = self.quality_scorer
             self.memory_processor = components["memory_processor"]
             self.memory_quarantine_store = components["memory_quarantine_store"]
@@ -305,7 +311,13 @@ class PluginInitializer(InitializerReadinessMixin):
             self.gate_runtime = components["gate_runtime"]
             self.identity_runtime = components["identity_runtime"]
             self.index_validator = components["index_validator"]
+            self.derived_rebuild_coordinator = components.get(
+                "derived_rebuild_coordinator"
+            )
             self.decay_scheduler = components["decay_scheduler"]
+            self.topic_catalog_reconcile_scheduler = components.get(
+                "catalog_reconcile_scheduler"
+            )
             self.injection_decision_store = components["injection_decision_store"]
             self.injection_decision_recorder = components["injection_decision_recorder"]
             self.memory_evolution_store = components.get("memory_evolution_store")
@@ -319,6 +331,7 @@ class PluginInitializer(InitializerReadinessMixin):
             owns_evolution_components = bool(
                 self.memory_evolution_store or self.memory_evolution_manager
             )
+            await self.ensure_catalog_readiness(components)
             if summary_scheduler is None:
                 raise InitializationError("总结调度器未初始化")
             self.prompt_protection = self._create_prompt_protection_service()
@@ -348,6 +361,7 @@ class PluginInitializer(InitializerReadinessMixin):
                 ("identity_runtime", self.identity_runtime),
                 ("index_validator", self.index_validator),
                 ("decay_scheduler", self.decay_scheduler),
+                ("catalog_reconcile_scheduler", self.topic_catalog_reconcile_scheduler),
                 ("injection_store", self.injection_decision_store),
                 ("injection_recorder", self.injection_decision_recorder),
                 ("memory_evolution_store", self.memory_evolution_store),
@@ -519,207 +533,7 @@ class PluginInitializer(InitializerReadinessMixin):
 
     async def _initialize_cognitive_components(self) -> None:
         """创建共享的 v1.0+ 认知组件实例。"""
-        db_path = str(Path(self.data_dir) / "memora.db")
-        initialization_started = time.perf_counter()
-        success_count = 0
-        failed_count = 0
-
-        component_started = time.perf_counter()
-        try:
-            from ...features.cognition.affection import AffectionManager, AffectionStore
-
-            self.affection_store = AffectionStore(db_path)
-            await self.affection_store.initialize()
-            self.affection_manager = AffectionManager(
-                self.affection_store,
-                # 宿主 Provider 的运行时能力由既有认知组件边界验证。
-                llm_adapter=cast(Any, self.llm_provider),
-            )
-            success_count += 1
-            report_debug_event(
-                "plugin_initialized",
-                component="initializer",
-                stage="cognitive_components",
-                status="completed",
-                reason_code="cognitive_component_ready",
-                capability="affection",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - component_started) * 1000.0
-                ),
-            )
-            logger.info("好感度管理器已初始化")
-        except Exception as exc:
-            failed_count += 1
-            report_debug_exception(
-                "plugin_initialized",
-                exc,
-                component="initializer",
-                stage="cognitive_components",
-                status="degraded",
-                reason_code="cognitive_component_unavailable",
-                capability="affection",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - component_started) * 1000.0
-                ),
-            )
-            logger.warning("好感度管理器初始化失败，已跳过: %s", exc, exc_info=True)
-            self.affection_store = None
-            self.affection_manager = None
-
-        component_started = time.perf_counter()
-        try:
-            from ...features.cognition.expression import (
-                ExpressionPatternLearner,
-                ExpressionPatternStore,
-            )
-
-            self.expression_store = ExpressionPatternStore(db_path)
-            await self.expression_store.initialize()
-            self.expression_learner = ExpressionPatternLearner(self.expression_store)
-            success_count += 1
-            report_debug_event(
-                "plugin_initialized",
-                component="initializer",
-                stage="cognitive_components",
-                status="completed",
-                reason_code="cognitive_component_ready",
-                capability="expression",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - component_started) * 1000.0
-                ),
-            )
-            logger.info("表达模式学习器已初始化")
-        except Exception as exc:
-            failed_count += 1
-            report_debug_exception(
-                "plugin_initialized",
-                exc,
-                component="initializer",
-                stage="cognitive_components",
-                status="degraded",
-                reason_code="cognitive_component_unavailable",
-                capability="expression",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - component_started) * 1000.0
-                ),
-            )
-            logger.warning("表达模式学习器初始化失败，已跳过: %s", exc, exc_info=True)
-            self.expression_store = None
-            self.expression_learner = None
-
-        if not is_jargon_discovery_enabled(self.config_manager):
-            self.jargon_filter = None
-            self.jargon_store = None
-            self.jargon_query_service = None
-            self.jargon_miner = None
-            logger.info("黑话自动发现功能已禁用")
-        else:
-            component_started = time.perf_counter()
-            try:
-                from ...features.cognition.jargon import (
-                    JargonMiner,
-                    JargonQueryService,
-                    JargonStatisticalFilter,
-                    JargonStore,
-                )
-
-                self.jargon_filter = JargonStatisticalFilter()
-                self.jargon_store = JargonStore(db_path)
-                assert self.jargon_store is not None
-                await self.jargon_store.initialize()
-                self.jargon_query_service = JargonQueryService(self.jargon_store)
-                self.jargon_miner = JargonMiner(
-                    self.llm_provider,
-                    self.jargon_filter,
-                    self.jargon_store,
-                )
-                success_count += 1
-                report_debug_event(
-                    "plugin_initialized",
-                    component="initializer",
-                    stage="cognitive_components",
-                    status="completed",
-                    reason_code="cognitive_component_ready",
-                    capability="jargon",
-                    duration_ms=max(
-                        0.0, (time.perf_counter() - component_started) * 1000.0
-                    ),
-                )
-                logger.info("黑话组件已初始化")
-            except Exception as exc:
-                failed_count += 1
-                report_debug_exception(
-                    "plugin_initialized",
-                    exc,
-                    component="initializer",
-                    stage="cognitive_components",
-                    status="degraded",
-                    reason_code="cognitive_component_unavailable",
-                    capability="jargon",
-                    duration_ms=max(
-                        0.0, (time.perf_counter() - component_started) * 1000.0
-                    ),
-                )
-                logger.warning("黑话组件初始化失败，已跳过: %s", exc, exc_info=True)
-                self.jargon_filter = None
-                self.jargon_store = None
-                self.jargon_query_service = None
-                self.jargon_miner = None
-
-        component_started = time.perf_counter()
-        try:
-            from ...features.cognition.social import RelationManager, RelationStore
-
-            self.relation_store = RelationStore(db_path)
-            await self.relation_store.initialize()
-            self.relation_manager = RelationManager(self.relation_store)
-            success_count += 1
-            report_debug_event(
-                "plugin_initialized",
-                component="initializer",
-                stage="cognitive_components",
-                status="completed",
-                reason_code="cognitive_component_ready",
-                capability="social",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - component_started) * 1000.0
-                ),
-            )
-            logger.info("关系管理器已初始化")
-        except Exception as exc:
-            failed_count += 1
-            report_debug_exception(
-                "plugin_initialized",
-                exc,
-                component="initializer",
-                stage="cognitive_components",
-                status="degraded",
-                reason_code="cognitive_component_unavailable",
-                capability="social",
-                duration_ms=max(
-                    0.0, (time.perf_counter() - component_started) * 1000.0
-                ),
-            )
-            logger.warning("关系管理器初始化失败，已跳过: %s", exc, exc_info=True)
-            self.relation_store = None
-            self.relation_manager = None
-
-        report_debug_event(
-            "plugin_initialized",
-            component="initializer",
-            stage="cognitive_components",
-            status="completed" if failed_count == 0 else "degraded",
-            reason_code=(
-                "cognitive_components_ready"
-                if failed_count == 0
-                else "cognitive_components_partial"
-            ),
-            duration_ms=max(
-                0.0, (time.perf_counter() - initialization_started) * 1000.0
-            ),
-            success_count=success_count,
-            failed_count=failed_count,
-        )
+        await initialize_cognitive_components(self)
 
     # ---- 关停 ----
 
@@ -738,13 +552,44 @@ class PluginInitializer(InitializerReadinessMixin):
             raise
 
     async def stop_scheduler(self) -> None:
-        """依次停止存量回填与衰减调度器。"""
+        """依次停止回填、衰减与目录收敛调度器，普通失败后继续剩余关闭。"""
+        first_error: Exception | None = None
         if self.backfill_scheduler:
-            await self._safe_step("停止存量回填调度器", self.backfill_scheduler.stop())
-            self.backfill_scheduler = None
+            try:
+                await self._safe_step(
+                    "停止存量回填调度器", self.backfill_scheduler.stop()
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                first_error = e
+            else:
+                self.backfill_scheduler = None
         if self.decay_scheduler:
-            await self._safe_step("停止衰减调度器", self.decay_scheduler.stop())
-            self.decay_scheduler = None
+            try:
+                await self._safe_step("停止衰减调度器", self.decay_scheduler.stop())
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if first_error is None:
+                    first_error = e
+            else:
+                self.decay_scheduler = None
+        if self.topic_catalog_reconcile_scheduler:
+            try:
+                await self._safe_step(
+                    "停止目录收敛调度器",
+                    self.topic_catalog_reconcile_scheduler.stop(),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if first_error is None:
+                    first_error = e
+            else:
+                self.topic_catalog_reconcile_scheduler = None
+        if first_error is not None:
+            raise first_error
 
     async def stop_summary_scheduler(self) -> None:
         """停止总结入队、领取循环与持有的 worker。"""
@@ -765,6 +610,10 @@ class PluginInitializer(InitializerReadinessMixin):
         result = stopper()
         if inspect.isawaitable(result):
             await result
+
+    async def reconcile_catalog_for_shutdown(self) -> dict[str, Any]:
+        """在 canonical 数据库关闭前收敛话题目录并保留可恢复状态。"""
+        return await reconcile_catalog_for_shutdown(self)
 
     async def close_realtime_hub(self) -> None:
         """先于共享 Store 关闭实时 Hub，唤醒旧 SSE 客户端并拒绝新订阅。"""

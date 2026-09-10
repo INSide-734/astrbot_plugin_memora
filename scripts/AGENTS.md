@@ -23,7 +23,8 @@
 | `benchmark_injection_decisions.py` | 对 100,000 条脱敏决策测量摘要、分页、入队和清理 | 仅使用临时目录中的 SQLite |
 | `analyze_reflection_ab.py` | 汇总 Prompt A/B 反思诊断的时延、token、成功率与互斥写入结果 | 只读 JSONL，写入不含原始事件的聚合 JSON |
 | `generate_feedback_learning_evidence.py` | 从受控匿名回放生成并投递反馈排序 Evidence artifact | 只写固定 Evidence Inbox；不读取 ConfigManager、不修改生产配置 |
-| `baselines/recall_total_path.json` | 固化全路径 p95 与注入契约基线 | 只应由受控基线记录流程更新 |
+| `benchmark_topic_candidates.py` | 离线 topic 候选证据门 K 网格基准：合成记录、证据门判定、无 ConfigManager | 仅使用临时 SQLite；写入指定 JSON 报告 |
+| `gradual_rollout.py` | 灰度切换 CLI：analyze/apply/rollback/audit 四子命令，基于证据门按桶更新配置 | 读取 EvidenceReport JSON；写入 ConfigManager 和审计日志 |
 
 不在本目录承担：运行时业务逻辑、生产配置默认值、测试 fixture、Dashboard 源码或普通文档。脚本发现问题时应让命令非零退出，不要在脚本中修补或吞掉被检对象的错误。
 
@@ -170,6 +171,23 @@ uv run --locked python scripts/generate_feedback_learning_evidence.py `
 
 输入必须是固定 `feedback-learning-evidence-input-v1` schema：case、query、文档和分组标识只能使用小写 SHA-256；stage、route、质量门和六项关键回归检查只能使用生产 allowlist。脚本只调用离线 `feedback_learning_pipeline`，artifact 固定写入 `<data-dir>/evaluation/feedback_learning_evidence/`；它不接受配置路径、ConfigManager、生产数据库、网络 Provider 或任何自动发布参数。完整 Gate 通过返回 0；Gate rejected 返回 1 且保留可审计 artifact；输入、JSON 重复键或持久化失败返回非零并只输出稳定 reason code。
 
+### `benchmark_topic_candidates.py`
+
+```bash
+python scripts/benchmark_topic_candidates.py \
+  --output reports/topic-candidates.json \
+  --oracle-max-topics 50 \
+  --oracle-max-prompt-tokens 8000 \
+  --misreuse-max-by-bucket '{"tiny":5,"small":10,"medium":15,"large":20,"huge":25}'
+```
+
+- 生成合成 topic 候选回放记录，每个 scale bucket × 6 variants（off、strict_full、top_k_4/8/12/16）。
+- 调用 `evaluate_evidence_gate()` 判定质量、token、延迟与误复用率。
+- 输出 JSON 报告包含配置、总记录数、证据门判定结果和推荐 K 值。
+- 默认每 bucket 每 variant 200 窗口 + 100 负样本；可用 `--windows-per-bucket` 和 `--negative-windows-per-bucket` 调整。
+- 该脚本不读生产数据库、不写 ConfigManager、不进入 `check_all.py` 统一门禁。
+- 用于测试证据门逻辑变更，不作为发布质量门。
+
 ## 精确验证命令
 
 脚本变更先验证最窄边界；不要为了检查一个解析函数直接启动完整仓库门禁。
@@ -188,7 +206,16 @@ python -m pytest tests/test_generate_release_notes.py -q
 python scripts/run_smoke.py -q
 
 # 修改产物检查器或 Dashboard bundle 契约后；先确保已有生产构建
-python scripts/check_dashboard_build_artifacts.py pages/dashboard
+
+# 修改 topic 候选证据门后
+python scripts/benchmark_topic_candidates.py \
+  --output /tmp/topic-candidates.json \
+  --oracle-max-topics 50 \
+  --oracle-max-prompt-tokens 8000 \
+  --misreuse-max-by-bucket '{"tiny":5,"small":10,"medium":15,"large":20,"huge":25}' \
+  --windows-per-bucket 10 \
+  --negative-windows-per-bucket 5
+
 
 # 修改注入策略、预算、执行器或全路径基准后
 python scripts/benchmark_recall_cost.py --all

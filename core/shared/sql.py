@@ -5,8 +5,7 @@
 或 AstrBot。
 """
 
-from __future__ import annotations
-
+from collections.abc import Sequence
 from typing import Any, Final
 
 # ---------------------------------------------------------------------------
@@ -139,6 +138,11 @@ async def apply_perf_pragmas(conn: Any) -> None:
         await conn.execute(statement)
 
 
+def build_fts5_or_query(tokens: Sequence[str]) -> str:
+    """把已分词 token 转成 FTS5 OR 查询；引号按 FTS5 规则加倍转义。"""
+    return " OR ".join(f'"{token.replace('"', '""')}"' for token in tokens)
+
+
 __all__ = [
     "DOCUMENTS_TABLE",
     "MEMORY_FTS_CLEAR_SQL",
@@ -154,4 +158,5 @@ __all__ = [
     "MEMORY_STATUS_SQL",
     "SOCIAL_RELATIONS_TABLE",
     "apply_perf_pragmas",
+    "build_fts5_or_query",
 ]

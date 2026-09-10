@@ -34,7 +34,10 @@ class WriteOpJournal(WriteOpRepairMixin):
         invalidate_cache_cb: Callable | None = None,
         delete_doc_indexes_batch_cb: Callable | None = None,
         delete_graph_atoms_batch_cb: Callable | None = None,
+        topic_catalog_store: Any | None = None,
     ) -> None:
+        """保存写日志依赖，并可选持有 topic catalog 修复端口。"""
+
         self._db = db_connection
         self._graph_memory_manager = graph_memory_manager
         self._atom_store = atom_store
@@ -44,6 +47,7 @@ class WriteOpJournal(WriteOpRepairMixin):
         self._invalidate_cache = invalidate_cache_cb
         self._delete_doc_indexes_batch = delete_doc_indexes_batch_cb
         self._delete_graph_atoms_batch = delete_graph_atoms_batch_cb
+        self._topic_catalog_store = topic_catalog_store
 
     # ---- 表创建 ----
 
@@ -103,7 +107,7 @@ class WriteOpJournal(WriteOpRepairMixin):
                 ),
             )
             await self._db.commit()
-            return int(cursor.lastrowid)
+            return int(cursor.lastrowid) if cursor.lastrowid is not None else None
         except asyncio.CancelledError:
             raise
         except Exception:

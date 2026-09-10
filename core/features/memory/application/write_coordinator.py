@@ -28,7 +28,7 @@ import asyncio
 import contextlib
 import random
 import weakref
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any, TypeVar
 
 import aiosqlite
@@ -304,7 +304,7 @@ async def write_transaction(
 
 
 @contextlib.asynccontextmanager
-async def coordinated_transaction(db: Any) -> AsyncIterator[Any]:
+async def coordinated_transaction(db: Any) -> AsyncGenerator[Any]:
     """在全局写锁内包住 BEGIN/业务写入/commit/rollback 的事务边界。"""
     lock = _get_write_lock()
     async with lock:
@@ -312,7 +312,7 @@ async def coordinated_transaction(db: Any) -> AsyncIterator[Any]:
         try:
             yield db
             await db.commit()
-        except Exception:
+        except BaseException:
             with contextlib.suppress(Exception):
                 await db.rollback()
             raise

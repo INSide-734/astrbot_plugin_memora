@@ -26,14 +26,7 @@ from ...features.evolution.application import (
     SemanticCompressor,
 )
 from ...features.evolution.infrastructure import MemoryEvolutionStore
-from ...features.identity.application.conversation_sync import (
-    ConversationIdentitySynchronizer,
-)
-from ...features.identity.application.enricher import MemoryIdentityEnricher
-from ...features.identity.application.runtime import ProtocolIdentityRuntime
-from ...features.identity.application.service import ProtocolIdentityService
-from ...features.identity.infrastructure.protocols import ProtocolIdentityResolver
-from ...features.identity.infrastructure.store import ProtocolIdentityStore
+from ...features.identity.application.scope_resolver import CanonicalScopeResolver
 from ...features.injection.infrastructure.injection_decision_store import (
     InjectionDecisionStore,
 )
@@ -45,8 +38,11 @@ from ...features.learning.infrastructure.feedback_learning_evidence_store import
     FeedbackLearningEvidenceInbox,
     FeedbackLearningEvidenceProvider,
 )
+from ...features.memory.application.catalog_reconcile_scheduler import (
+    TopicCatalogReconcileScheduler,
+)
 from ...features.memory.application.memory_engine import MemoryEngine
-from ...features.memory.infrastructure.validators import IndexValidator
+from ...features.memory.infrastructure.topic_metrics import build_metrics_recorder
 from ...features.notes.application import NoteProposalPipeline
 from ...features.notes.infrastructure import NoteGenerator
 from ...features.profiles.application import ProfileProposalPipeline
@@ -63,7 +59,11 @@ from ...features.quality.infrastructure.quarantine_store import (
 )
 from ...features.recall.processors.llm_client import LLMClient
 from ...features.recall.processors.memory_processor import MemoryProcessor
-from ...features.reflection.application import SummaryScheduler, TopicBatchPreparer
+from ...features.reflection.application import (
+    SummaryScheduler,
+    TopicBatchPreparer,
+    TopicCandidateSelector,
+)
 from ...features.reflection.domain.summary_models import SummaryWindowContext
 from ...features.retrieval.embedding_singleflight import InFlightEmbeddingProviderProxy
 from ...shared.cost_control import CostControlConfig
@@ -72,8 +72,9 @@ from ...shared.summary_llm_limiter import SummaryLlmLimiter
 from ..config.cost_control import build_cost_control_from_config
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..transport.realtime_hub import RealtimeHub
-from .derived_rebuild_coordinator import DerivedRebuildCoordinator
+from .catalog_lifecycle import build_catalog_components, finalize_catalog_lifecycle
 from .engine_runtime_config import build_engine_runtime_config
+from .identity_component_factory import build_identity_runtime
 
 
 class ComponentFactory:
@@ -446,13 +447,10 @@ class ComponentFactory:
                 auto_create_min_length=note_min_length,
                 max_tags=int(engine_config.get("notes.max_tags", 10)),
             )
-        index_validator = IndexValidator(str(db_path), db)
-        summary_scheduler = None
-        derived_rebuild_coordinator = DerivedRebuildCoordinator(
-            index_validator,
-            memory_engine,
-            memory_evolution_manager,
+        index_validator, derived_rebuild_coordinator = build_catalog_components(
+            db_path, db, memory_engine, memory_evolution_manager
         )
+
         await memory_quarantine_store.initialize()
         memory_quality_gate = MemoryQualityGate(
             memory_quarantine_store,
@@ -469,10 +467,8 @@ class ComponentFactory:
         conversation_store.set_summary_canonical_owner_lookup(
             memory_engine.find_memory_id_by_idempotency_key
         )
-        await db_setup.auto_rebuild_index_if_needed(
-            index_validator,
-            memory_engine,
-            derived_rebuild_coordinator,
+        catalog_maintenance_result = await finalize_catalog_lifecycle(
+            db_setup, index_validator, memory_engine, derived_rebuild_coordinator
         )
 
         summary_batch_preparer = TopicBatchPreparer(
@@ -481,6 +477,7 @@ class ComponentFactory:
             memory_processor=memory_processor,
             cost_control=cost_control,
         )
+        scope_resolver = CanonicalScopeResolver()
 
         async def startup_context_factory(
             session_id: str, epoch: int, cursor: int
@@ -492,6 +489,16 @@ class ComponentFactory:
                 scope_id,
                 persona_id,
             ) = await conversation_store.get_summary_scope(session_id)
+            persisted_reader = getattr(
+                conversation_store, "get_summary_scope_snapshot", None
+            )
+            reader = cast(Callable[[str], Any], persisted_reader)
+            persisted_snapshot = await reader(session_id) if callable(reader) else None
+            scope_resolution = (
+                scope_resolver.resolve_persisted(persisted_snapshot)
+                if isinstance(persisted_snapshot, dict)
+                else scope_resolver.resolve(None)
+            )
             snapshot = gate_runtime.snapshot()
             return SummaryWindowContext(
                 session_id=session_id,
@@ -514,7 +521,24 @@ class ComponentFactory:
                     )
                     * 2,
                 ),
+                scope_key=scope_resolution.scope_key,
+                privacy_level=scope_resolution.privacy_level,
+                resolver_revision=scope_resolution.resolver_revision,
+                scope_reason_code=(
+                    "scope_resolved"
+                    if scope_resolution.available
+                    else "scope_unavailable"
+                ),
+                scope_provenance_complete=(
+                    True if scope_resolution.available else None
+                ),
             )
+
+        candidate_selector = TopicCandidateSelector(
+            catalog_store=memory_engine.topic_catalog_store,
+            text_processor=memory_engine.text_processor,
+            conversation_formatter=memory_processor.formatter,
+        )
 
         summary_scheduler = SummaryScheduler(
             cast(Any, conversation_store),
@@ -522,6 +546,9 @@ class ComponentFactory:
             memory_quality_gate,
             cast(Any, memory_engine),
             summary_batch_preparer,
+            candidate_selector,
+            metrics_recorder=await build_metrics_recorder(memory_engine, data_dir_path),
+            config_manager=self.config_manager,
             max_parallel_summary_tasks=int(
                 self.config_manager.get(
                     "reflection_engine.max_parallel_summary_tasks", 4
@@ -581,9 +608,21 @@ class ComponentFactory:
             decay_scheduler = scheduler
             logger.info("DecayScheduler 已启动")
 
-        identity_runtime = await self._build_identity_runtime(conversation_manager)
+        identity_runtime = await build_identity_runtime(
+            self.data_dir, conversation_manager
+        )
         cleanup_state["identity_runtime"] = identity_runtime
         conversation_manager.identity_runtime = identity_runtime
+
+        catalog_reconcile_scheduler: TopicCatalogReconcileScheduler | None = None
+        if memory_engine.topic_catalog_store is not None:
+            catalog_reconcile_scheduler = TopicCatalogReconcileScheduler(
+                catalog_store=memory_engine.topic_catalog_store,
+                config_manager=self.config_manager,
+            )
+            cleanup_state["catalog_reconcile_scheduler"] = catalog_reconcile_scheduler
+            await catalog_reconcile_scheduler.start()
+            logger.info("TopicCatalogReconcileScheduler 已启动")
 
         injection_components = await self._build_injection_components(db_path)
         cleanup_state["injection_decision_store"] = injection_components.get(
@@ -606,11 +645,14 @@ class ComponentFactory:
             "identity_runtime": identity_runtime,
             "index_validator": index_validator,
             "decay_scheduler": decay_scheduler,
+            "catalog_reconcile_scheduler": catalog_reconcile_scheduler,
             "memory_evolution_store": memory_evolution_store,
             "memory_evolution_manager": memory_evolution_manager,
             "realtime_hub": realtime_hub,
             "summary_scheduler": summary_scheduler,
             "summary_llm_limiter": summary_llm_limiter,
+            "catalog_maintenance_result": catalog_maintenance_result,
+            "derived_rebuild_coordinator": derived_rebuild_coordinator,
             **injection_components,
         }
 
@@ -627,6 +669,7 @@ class ComponentFactory:
             cleanup_state.get("identity_runtime"),
             cleanup_state.get("realtime_hub"),
             cleanup_state.get("summary_scheduler"),
+            cleanup_state.get("catalog_reconcile_scheduler"),
             injection_decision_recorder=cleanup_state.get(
                 "injection_decision_recorder"
             ),
@@ -645,6 +688,7 @@ class ComponentFactory:
         identity_runtime=None,
         realtime_hub=None,
         summary_scheduler=None,
+        catalog_reconcile_scheduler=None,
         injection_decision_recorder=None,
         injection_decision_store=None,
     ) -> None:
@@ -653,9 +697,11 @@ class ComponentFactory:
                 memory_engine.graph_vector_db = None
         cleanup_steps = (
             ("SummaryScheduler", summary_scheduler, "close"),
+            ("DecayScheduler", decay_scheduler, "stop"),
+            ("TopicCatalogReconcileScheduler", catalog_reconcile_scheduler, "stop"),
+            ("MemoryEngine.stop_pending_tasks", memory_engine, "stop_pending_tasks"),
             ("MemoryEvolutionManager", memory_evolution_manager, "stop"),
             ("MemoryEvolutionStore", memory_evolution_store, "close"),
-            ("DecayScheduler", decay_scheduler, "stop"),
             ("ProtocolIdentityRuntime", identity_runtime, "close"),
             ("InjectionDecisionRecorder", injection_decision_recorder, "close"),
             ("InjectionDecisionStore", injection_decision_store, "close"),
@@ -685,47 +731,6 @@ class ComponentFactory:
                 )
         if cancellation is not None:
             raise cancellation
-
-    async def _build_identity_runtime(
-        self,
-        conversation_manager: ConversationManager,
-    ) -> ProtocolIdentityRuntime:
-        resolver = ProtocolIdentityResolver.default()
-        store = ProtocolIdentityStore(str(Path(self.data_dir) / "memora.db"))
-
-        async def close_store() -> None:
-            try:
-                await store.close()
-            except BaseException:
-                pass
-
-        try:
-            await store.initialize()
-        except asyncio.CancelledError:
-            await close_store()
-            raise
-        except Exception:
-            await close_store()
-            logger.warning("协议身份目录初始化失败，已降级为仅解析模式")
-            return ProtocolIdentityRuntime(resolver)
-
-        try:
-            service = ProtocolIdentityService(store)
-            synchronizer = ConversationIdentitySynchronizer(
-                conversation_manager.store,
-                service,
-                conversation_manager.invalidate_cache,
-            )
-            return ProtocolIdentityRuntime(
-                resolver,
-                service=service,
-                synchronizer=synchronizer,
-                store=store,
-                enricher=MemoryIdentityEnricher(store),
-            )
-        except BaseException:
-            await close_store()
-            raise
 
     async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
         """初始化注入决策存储与异步记录器。"""
