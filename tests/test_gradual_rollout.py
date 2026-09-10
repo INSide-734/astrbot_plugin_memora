@@ -204,12 +204,10 @@ def test_apply_uses_one_cas_update_and_canonical_audit(
     call = manager.calls[0]
     assert call["expected_revision"] == "rev-1"
     assert call["persist"] is True
-    assert call["changes"][
-        "topic_segmentation.candidate_reuse.activation_threshold"
-    ] == 10
-    overrides = call["changes"][
-        "topic_segmentation.candidate_reuse.bucket_overrides"
-    ]
+    assert (
+        call["changes"]["topic_segmentation.candidate_reuse.activation_threshold"] == 10
+    )
+    overrides = call["changes"]["topic_segmentation.candidate_reuse.bucket_overrides"]
     assert overrides["small"] == {"mode": "top_k", "fixed_k": 4}
     assert overrides["tiny"]["mode"] == "observe"
 
@@ -308,7 +306,9 @@ def test_rollback_rejects_stale_config_revision(
     assert manager.calls == []
 
 
-def test_platform_audit_reads_legacy_row_without_rollout_metadata(tmp_path: Path) -> None:
+def test_platform_audit_reads_legacy_row_without_rollout_metadata(
+    tmp_path: Path,
+) -> None:
     """P1-22：已有平台 JSONL 行缺少新增字段时仍可读取。"""
     path = tmp_path / "audit.jsonl"
     path.write_text(

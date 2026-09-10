@@ -20,7 +20,9 @@ from core.features.memory.infrastructure.topic_metrics import (
     read_topic_metrics_summary,
     rotate_topic_metrics_key,
 )
-from core.features.recall.processors import reflection_generation_observability as topic_obs
+from core.features.recall.processors import (
+    reflection_generation_observability as topic_obs,
+)
 from core.platform.transport.page_api import topic_segmentation_api
 from core.platform.transport.page_api.topic_segmentation_api import (
     TopicSegmentationApiMixin,
@@ -72,8 +74,7 @@ def test_metric_key_rotation_increments_version_and_preserves_permissions(
     assert rotated.version == 2
     assert rotated.key != first
     assert load_topic_metrics_key_state(tmp_path).version == 2
-    assert stat.S_IMODE(
-        (tmp_path / "topic_metrics.hmac.key").stat().st_mode) == 0o600
+    assert stat.S_IMODE((tmp_path / "topic_metrics.hmac.key").stat().st_mode) == 0o600
 
 
 @pytest.mark.asyncio
@@ -159,8 +160,10 @@ async def test_topic_api_reads_canonical_store_with_utc_wall_clock(
                 .isoformat(),
                 mode="observe",
                 topic_count_bucket="unknown",
-                values={"candidate_count_sum": index + 1,
-                        "selector_duration_ms": index + 1},
+                values={
+                    "candidate_count_sum": index + 1,
+                    "selector_duration_ms": index + 1,
+                },
                 now=observed,
             )
         from core.features.memory.infrastructure.topic_metrics import (
@@ -168,8 +171,7 @@ async def test_topic_api_reads_canonical_store_with_utc_wall_clock(
         )
 
         load_or_create_topic_metrics_key(tmp_path)
-        monkeypatch.setattr(topic_segmentation_api.time,
-                            "time", lambda: fixed_now)
+        monkeypatch.setattr(topic_segmentation_api.time, "time", lambda: fixed_now)
         api = _ApiStub(store, tmp_path)
         summary = await api._query_aggregated_metrics(
             {"memory_engine": SimpleNamespace(topic_catalog_store=store)}
@@ -192,8 +194,7 @@ def test_topic_event_accepts_only_typed_safe_scalars(
     monkeypatch.setattr(
         topic_obs,
         "report_debug_event",
-        lambda event_name, **fields: events.append(
-            {"event": event_name, **fields}),
+        lambda event_name, **fields: events.append({"event": event_name, **fields}),
     )
     assert topic_obs.report_topic_candidate_event(
         mode="top_k",
@@ -242,7 +243,9 @@ def test_topic_metrics_reader_keeps_missing_key_unavailable(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_startup_does_not_recreate_lost_key_over_metric_history(tmp_path: Path) -> None:
+async def test_startup_does_not_recreate_lost_key_over_metric_history(
+    tmp_path: Path,
+) -> None:
     """已有指标但 sidecar 丢失时停聚；不能新建版本一合并旧摘要。"""
     from core.features.memory.infrastructure.topic_metrics import build_metrics_recorder
 
@@ -273,9 +276,13 @@ async def test_startup_does_not_recreate_lost_key_over_metric_history(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_rotation_during_metric_read_discards_previous_version(tmp_path: Path) -> None:
+async def test_rotation_during_metric_read_discards_previous_version(
+    tmp_path: Path,
+) -> None:
     """读取期间发生轮换时丢弃旧版本摘要，不把它当作当前数据返回。"""
-    from core.features.memory.infrastructure.topic_metrics import load_or_create_topic_metrics_key
+    from core.features.memory.infrastructure.topic_metrics import (
+        load_or_create_topic_metrics_key,
+    )
 
     load_or_create_topic_metrics_key(tmp_path)
 

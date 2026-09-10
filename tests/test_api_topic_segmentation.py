@@ -54,12 +54,15 @@ def _make_stub(
 ):
     """组合真实 handler 与公共 Store 端口，不耦合实现内部 SQL。"""
     summary = {
-        "catalog_status": "unavailable" if catalog_gen is None else "degraded" if catalog_gen == -1 else "ready",
+        "catalog_status": "unavailable"
+        if catalog_gen is None
+        else "degraded"
+        if catalog_gen == -1
+        else "ready",
         "dirty_count": dirty_count,
         "scope_buckets": {"small": 10, "medium": 5, "large": 2},
     }
-    store = SimpleNamespace(
-        get_catalog_summary=AsyncMock(return_value=summary))
+    store = SimpleNamespace(get_catalog_summary=AsyncMock(return_value=summary))
 
     class Stub(TopicSegmentationApiMixin, ConfigApiMixin):
         """复用 API 真实方法，仅替换外部组件。"""

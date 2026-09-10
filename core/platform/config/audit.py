@@ -139,9 +139,7 @@ class ConfigAuditEntry:
                 raise ValueError("审计规模桶字段无效")
             sample_counts = data.get("sample_counts", {})
             if not isinstance(sample_counts, dict) or any(
-                not isinstance(name, str)
-                or type(count) is not int
-                or count < 0
+                not isinstance(name, str) or type(count) is not int or count < 0
                 for name, count in sample_counts.items()
             ):
                 raise ValueError("审计样本量字段无效")
@@ -154,12 +152,8 @@ class ConfigAuditEntry:
                 before=dict(before),
                 after=dict(after),
                 changed_buckets=list(changed_buckets),
-                config_revision_before=_optional_string(
-                    data, "config_revision_before"
-                ),
-                config_revision_after=_optional_string(
-                    data, "config_revision_after"
-                ),
+                config_revision_before=_optional_string(data, "config_revision_before"),
+                config_revision_after=_optional_string(data, "config_revision_after"),
                 report_sha256=_optional_string(data, "report_sha256"),
                 sample_counts=dict(sample_counts),
                 rollback_of=_optional_string(data, "rollback_of"),

@@ -161,13 +161,11 @@ def _aggregate_recommendations(
     groups: dict[tuple[str, str], list[tuple[int, str]]] = {}
     for result in bucket_results:
         key = (str(result["scale_bucket"]), str(result["chat_type"]))
-        groups.setdefault(key, []).append(
-            (int(result["k"]), str(result["decision"])))
+        groups.setdefault(key, []).append((int(result["k"]), str(result["decision"])))
 
     recommendations: dict[tuple[str, str], int | None] = {}
     for key, decisions in groups.items():
-        accepted = [fixed_k for fixed_k,
-                    decision in decisions if decision == "accept"]
+        accepted = [fixed_k for fixed_k, decision in decisions if decision == "accept"]
         recommendations[key] = min(accepted) if accepted else None
     return recommendations
 
@@ -191,8 +189,7 @@ def _build_rollout_recommendation(
         bucket = str(result["scale_bucket"])
         chat_type = str(result["chat_type"])
         fixed_k = int(result["k"])
-        grouped.setdefault(bucket, {}).setdefault(
-            chat_type, {})[fixed_k] = result
+        grouped.setdefault(bucket, {}).setdefault(chat_type, {})[fixed_k] = result
 
     recommendations: list[BucketRecommendation] = []
     selected_rows: list[dict[str, Any]] = []
@@ -202,9 +199,7 @@ def _build_rollout_recommendation(
             continue
         accepted = {
             chat_type: {
-                fixed_k
-                for fixed_k, row in rows.items()
-                if row["decision"] == "accept"
+                fixed_k for fixed_k, row in rows.items() if row["decision"] == "accept"
             }
             for chat_type, rows in chat_results.items()
         }
@@ -229,8 +224,7 @@ def _build_rollout_recommendation(
     if not recommendations:
         return None
     activation_threshold = min(
-        _BUCKET_THRESHOLDS[recommendation.bucket]
-        for recommendation in recommendations
+        _BUCKET_THRESHOLDS[recommendation.bucket] for recommendation in recommendations
     )
     return RolloutRecommendation(
         activation_threshold=activation_threshold,
@@ -251,8 +245,7 @@ def _audit_log_path(args: argparse.Namespace) -> Path:
 
 def _config_path(args: argparse.Namespace) -> Path:
     """解析并校验 AstrBot 插件专用 JSON 配置文件路径。"""
-    raw_path = getattr(args, "config_path", None) or os.getenv(
-        "MEMORA_CONFIG_PATH")
+    raw_path = getattr(args, "config_path", None) or os.getenv("MEMORA_CONFIG_PATH")
     if not isinstance(raw_path, str) or not raw_path:
         raise RolloutError("config_path_required")
     path = Path(raw_path).expanduser()
@@ -270,8 +263,7 @@ def _load_config_manager(config_path: Path) -> ConfigManager:
         schema = locator.load_schema()
         if not isinstance(schema, Mapping):
             raise RolloutError("plugin_schema_unavailable")
-        source = AstrBotConfig(config_path=str(
-            config_path), schema=dict(schema))
+        source = AstrBotConfig(config_path=str(config_path), schema=dict(schema))
         return ConfigManager(source, resource_locator=locator)
     except RolloutError:
         raise
@@ -305,12 +297,8 @@ def _control_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
             raise RolloutError("candidate_reuse_snapshot_invalid")
         override_mode = raw_override.get("mode", "observe")
         fixed_k = raw_override.get("fixed_k")
-        if (
-            override_mode not in {"off", "observe", "full", "top_k"}
-            or (
-                fixed_k is not None
-                and (type(fixed_k) is not int or not 1 <= fixed_k <= 20)
-            )
+        if override_mode not in {"off", "observe", "full", "top_k"} or (
+            fixed_k is not None and (type(fixed_k) is not int or not 1 <= fixed_k <= 20)
         ):
             raise RolloutError("candidate_reuse_snapshot_invalid")
         normalized_overrides[bucket] = {
@@ -329,8 +317,7 @@ def _rollout_snapshot(
 ) -> dict[str, Any]:
     """构造保守全局模式和显式证据桶覆盖的目标快照。"""
     overrides = {
-        bucket: {"mode": "observe", "fixed_k": None}
-        for bucket in _CANONICAL_BUCKETS
+        bucket: {"mode": "observe", "fixed_k": None} for bucket in _CANONICAL_BUCKETS
     }
     for bucket in recommendation.buckets:
         overrides[bucket.bucket] = {"mode": "top_k", "fixed_k": bucket.fixed_k}
@@ -362,9 +349,7 @@ def _control_changes(snapshot: Mapping[str, Any]) -> dict[str, Any]:
         f"{_CANDIDATE_REUSE_PATH}.activation_threshold": snapshot[
             "activation_threshold"
         ],
-        f"{_CANDIDATE_REUSE_PATH}.bucket_overrides": snapshot[
-            "bucket_overrides"
-        ],
+        f"{_CANDIDATE_REUSE_PATH}.bucket_overrides": snapshot["bucket_overrides"],
     }
 
 
@@ -409,7 +394,11 @@ async def _apply_recommendation(
                 expected_revision=result.revision,
                 persist=True,
             )
-        except (ConfigConflictError, ConfigPersistenceError, ConfigValidationError) as error:
+        except (
+            ConfigConflictError,
+            ConfigPersistenceError,
+            ConfigValidationError,
+        ) as error:
             raise RolloutError("audit_persistence_fallback_failed") from error
         raise RolloutError("audit_persistence_failed") from exc
     return entry, result.revision
@@ -424,7 +413,8 @@ async def _rollback_entry(
     if not entry.config_revision_after:
         raise RolloutError("rollback_revision_missing")
     target = _control_snapshot(
-        {"topic_segmentation": {"candidate_reuse": entry.before}})
+        {"topic_segmentation": {"candidate_reuse": entry.before}}
+    )
     current_snapshot, current_revision = await manager.get_config_snapshot_async()
     current = _control_snapshot(current_snapshot)
     if current_revision != entry.config_revision_after:
@@ -458,7 +448,11 @@ async def _rollback_entry(
                 expected_revision=result.revision,
                 persist=True,
             )
-        except (ConfigConflictError, ConfigPersistenceError, ConfigValidationError) as error:
+        except (
+            ConfigConflictError,
+            ConfigPersistenceError,
+            ConfigValidationError,
+        ) as error:
             raise RolloutError("rollback_audit_restore_failed") from error
         raise RolloutError("rollback_audit_persistence_failed") from exc
     return rollback_entry, result.revision
@@ -493,16 +487,13 @@ def cmd_apply(args: argparse.Namespace) -> int:
     """将证据支持的建议一次性持久化，并在成功后追加审计记录。"""
     try:
         report, report_sha256 = _load_report(args.report)
-        recommendation = _build_rollout_recommendation(
-            _extract_bucket_results(report))
+        recommendation = _build_rollout_recommendation(_extract_bucket_results(report))
         if recommendation is None:
             raise RolloutError("no_safe_recommendation")
         config_path = _config_path(args)
         audit_path = _audit_log_path(args)
         if not args.auto:
-            buckets = ",".join(
-                bucket.bucket for bucket in recommendation.buckets
-            )
+            buckets = ",".join(bucket.bucket for bucket in recommendation.buckets)
             prompt = (
                 "Apply evidence-backed rollout "
                 f"(threshold={recommendation.activation_threshold}, "

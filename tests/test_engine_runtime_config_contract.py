@@ -321,7 +321,11 @@ def test_runtime_mapping_fallbacks_match_pydantic_defaults() -> None:
 def test_every_schema_leaf_has_an_explicit_owner_classification() -> None:
     """每个公开配置叶都必须声明分类和唯一运行时责任方。"""
 
-    schema = json.loads((Path(__file__).resolve().parent.parent / "_conf_schema.json").read_text(encoding="utf-8"))
+    schema = json.loads(
+        (Path(__file__).resolve().parent.parent / "_conf_schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
     paths = _iter_schema_leaf_paths(schema)
     ownership = {path: resolve_config_ownership(path) for path in paths}
 
@@ -354,7 +358,11 @@ def test_every_schema_leaf_has_an_explicit_owner_classification() -> None:
 def test_removed_index_management_branch_is_not_published() -> None:
     """孤立索引控制面不得继续出现在默认配置、Schema 或所有权表。"""
 
-    schema = json.loads((Path(__file__).resolve().parent.parent / "_conf_schema.json").read_text(encoding="utf-8"))
+    schema = json.loads(
+        (Path(__file__).resolve().parent.parent / "_conf_schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
     assert "index_management" not in schema
     assert "index_management" not in get_default_config()

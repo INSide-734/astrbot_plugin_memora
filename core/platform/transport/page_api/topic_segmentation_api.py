@@ -11,7 +11,6 @@ from astrbot.api import logger
 from ....features.memory.infrastructure.topic_metrics import (
     read_topic_metrics_summary,
 )
-
 from ...config.manager import ConfigConflictError
 from .response_utils import error_response, ok_response
 
@@ -158,8 +157,7 @@ class TopicSegmentationApiMixin:
             "scope_buckets": None,
             "aggregated_metrics": None,
         }
-        store = getattr(engines.get("memory_engine"),
-                        "topic_catalog_store", None)
+        store = getattr(engines.get("memory_engine"), "topic_catalog_store", None)
         if store is None:
             return result
         try:

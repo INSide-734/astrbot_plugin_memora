@@ -212,8 +212,7 @@ class ConfigManager:
             and delivery_value in _INJECTION_DELIVERY_METHODS
         )
         override_numbers_valid = all(
-            type(recall.get(path, 0)) is int and 0 <= recall.get(
-                path, 0) <= maximum
+            type(recall.get(path, 0)) is int and 0 <= recall.get(path, 0) <= maximum
             for path, maximum in (
                 ("injection_budget_chars", 10_000),
                 ("injection_memory_max_chars", 2_000),
@@ -293,8 +292,7 @@ class ConfigManager:
         candidate = copy.deepcopy(merged_config)
         invalid_sections = self._extract_invalid_sections(validation_error)
         if not invalid_sections:
-            invalid_sections = self._probe_invalid_sections(
-                candidate, defaults)
+            invalid_sections = self._probe_invalid_sections(candidate, defaults)
 
         for section in sorted(invalid_sections):
             if section in defaults:
@@ -509,8 +507,7 @@ class ConfigManager:
             try:
                 candidate_obj = MemoraConfig(**candidate)
             except PydanticValidationError as exc:
-                raise ConfigValidationError(
-                    self._pydantic_field_errors(exc)) from exc
+                raise ConfigValidationError(self._pydantic_field_errors(exc)) from exc
             except Exception as exc:
                 raise ConfigValidationError({"*": str(exc)}) from exc
 

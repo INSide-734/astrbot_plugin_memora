@@ -298,8 +298,7 @@ class DerivedRebuildCoordinator:
         if not isinstance(state, dict) or state.get("status") != "ready":
             return None
         generation = state.get("active_generation")
-        verify = getattr(self.catalog_store,
-                         "verify_published_generation", None)
+        verify = getattr(self.catalog_store, "verify_published_generation", None)
         if (
             not isinstance(generation, int)
             or isinstance(generation, bool)
@@ -358,8 +357,7 @@ class DerivedRebuildCoordinator:
                 "success": False,
                 "reason_code": "catalog_generation_missing",
             }
-        verify = getattr(self.catalog_store,
-                         "verify_published_generation", None)
+        verify = getattr(self.catalog_store, "verify_published_generation", None)
         if not callable(verify):
             await self._restore_catalog_after_verify_failure(
                 generation_value,
@@ -413,8 +411,7 @@ class DerivedRebuildCoordinator:
                 raise
             except Exception:
                 logger.warning("旧话题目录 generation 清理失败")
-        cleanup = getattr(self.catalog_store,
-                          "cleanup_orphan_generations", None)
+        cleanup = getattr(self.catalog_store, "cleanup_orphan_generations", None)
         if callable(cleanup):
             try:
                 cleaned = cleanup()
@@ -455,8 +452,7 @@ class DerivedRebuildCoordinator:
                     int(previous_state.get("published_dirty_watermark") or 0),
                 )
                 revision = previous_state.get("canonical_snapshot_revision")
-                previous_revision = revision if isinstance(
-                    revision, str) else None
+                previous_revision = revision if isinstance(revision, str) else None
         restore = getattr(
             self.catalog_store,
             "restore_generation_after_verify_failure",
@@ -483,8 +479,7 @@ class DerivedRebuildCoordinator:
         """只读确认 canonical 文档可访问，并返回安全计数。"""
 
         try:
-            count_loader = getattr(self.index_validator,
-                                   "_get_document_count", None)
+            count_loader = getattr(self.index_validator, "_get_document_count", None)
             if callable(count_loader):
                 load_count = cast(Callable[[], Awaitable[int]], count_loader)
                 count = await load_count()
@@ -620,8 +615,7 @@ class DerivedRebuildCoordinator:
                 "success": True,
                 "reason_code": "evolution_rebuild_unavailable",
             }
-        rebuild_evolution = cast(
-            Callable[[], Awaitable[dict[str, Any]]], rebuild)
+        rebuild_evolution = cast(Callable[[], Awaitable[dict[str, Any]]], rebuild)
         return await rebuild_evolution()
 
     async def _rebuild_notes(self) -> dict[str, Any]:

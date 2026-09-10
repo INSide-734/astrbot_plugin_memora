@@ -47,8 +47,7 @@ KNOWN_ENDPOINT_ROOTS = {
     "stats",
     "system",
 }
-SINGLETON_ENDPOINTS = {"groups", "knowledge",
-                       "memories", "notes", "profiles", "stats"}
+SINGLETON_ENDPOINTS = {"groups", "knowledge", "memories", "notes", "profiles", "stats"}
 
 
 def _iter_dashboard_files() -> list[Path]:
@@ -117,7 +116,7 @@ def _collect_registered_routes() -> set[str]:
         route_path = call.args[0]
         if not route_path.startswith(PAGE_API_PREFIX):
             continue
-        suffix = route_path[len(PAGE_API_PREFIX):].lstrip("/")
+        suffix = route_path[len(PAGE_API_PREFIX) :].lstrip("/")
         routes.add(f"page/{suffix}")
     return routes
 
@@ -180,8 +179,7 @@ def test_backup_restore_status_and_cancel_routes_are_registered_under_both_prefi
 
     metadata = {item["path"]: item for item in api.get_route_metadata()}
     assert metadata[f"{PAGE_API_PREFIX}/backup/status"]["risk"] == "read"
-    assert metadata[f"{
-        PAGE_API_PREFIX}/backup/restore/cancel"]["risk"] == "destructive"
+    assert metadata[f"{PAGE_API_PREFIX}/backup/restore/cancel"]["risk"] == "destructive"
 
 
 def test_runtime_update_apply_and_status_routes_are_registered_under_both_prefixes() -> (
@@ -205,8 +203,7 @@ def test_runtime_update_apply_and_status_routes_are_registered_under_both_prefix
     metadata = {item["path"]: item for item in api.get_route_metadata()}
     assert metadata[f"{PAGE_API_PREFIX}/update/apply"]["risk"] == "maintenance"
     assert metadata[f"{PAGE_API_PREFIX}/update/status"]["risk"] == "read"
-    assert metadata[f"{
-        PAGE_API_PREFIX}/update/status"]["requires_ready"] is False
+    assert metadata[f"{PAGE_API_PREFIX}/update/status"]["requires_ready"] is False
 
 
 def test_social_write_contract_is_post_only_under_every_page_prefix() -> None:
@@ -324,8 +321,7 @@ def test_learning_action_is_one_post_handler_under_every_page_prefix() -> None:
         (call.args[0], tuple(call.args[2])): call.args[1]
         for call in plugin.context.register_web_api.call_args_list
     }
-    canonical_handler = registrations[(
-        f"{PAGE_API_PREFIX}/learning/action", ("POST",))]
+    canonical_handler = registrations[(f"{PAGE_API_PREFIX}/learning/action", ("POST",))]
     for prefix in (PAGE_API_PREFIX, *PAGE_API_ALIAS_PREFIXES):
         path = f"{prefix}/learning/action"
         assert (path, ("POST",)) in registrations
@@ -417,18 +413,15 @@ def test_candidate_reuse_status_response_schema() -> None:
     assert set(reuse.keys()) == required_keys
 
     assert reuse["catalog_status"] in {"ready", "degraded", "unavailable"}
-    assert isinstance(reuse["dirty_count"],
-                      int) or reuse["dirty_count"] is None
-    assert isinstance(reuse["scope_buckets"],
-                      dict) or reuse["scope_buckets"] is None
+    assert isinstance(reuse["dirty_count"], int) or reuse["dirty_count"] is None
+    assert isinstance(reuse["scope_buckets"], dict) or reuse["scope_buckets"] is None
     assert (
         isinstance(reuse["aggregated_metrics"], dict)
         or reuse["aggregated_metrics"] is None
     )
 
     if reuse["scope_buckets"] is not None:
-        assert set(reuse["scope_buckets"].keys()) == {
-            "small", "medium", "large"}
+        assert set(reuse["scope_buckets"].keys()) == {"small", "medium", "large"}
 
     if reuse["aggregated_metrics"] is not None:
         assert set(reuse["aggregated_metrics"].keys()) == {

@@ -380,11 +380,9 @@ async def test_shutdown_removes_only_routes_owned_by_current_page_instance() -> 
     current_alias_handler = current_page.route
     newer_handler = newer_page.route
     routes = [
-        ("/astrbot_plugin_memora/page/status",
-         current_handler, ["GET"], "owned"),
+        ("/astrbot_plugin_memora/page/status", current_handler, ["GET"], "owned"),
         ("/Memora/page/status", current_alias_handler, ["GET"], "owned alias"),
-        ("/astrbot_plugin_memora/page/status",
-         newer_handler, ["GET"], "newer"),
+        ("/astrbot_plugin_memora/page/status", newer_handler, ["GET"], "newer"),
         ("/other/status", foreign_route, ["GET"], "foreign"),
     ]
     context = SimpleNamespace(registered_web_apis=routes)
@@ -404,15 +402,13 @@ async def test_shutdown_removes_only_routes_owned_by_current_page_instance() -> 
 
     assert context.registered_web_apis is routes
     assert context.registered_web_apis == [
-        ("/astrbot_plugin_memora/page/status",
-         newer_handler, ["GET"], "newer"),
+        ("/astrbot_plugin_memora/page/status", newer_handler, ["GET"], "newer"),
         ("/other/status", foreign_route, ["GET"], "foreign"),
     ]
 
     await stop_runtime_producers(plugin, safe_step, lambda *_args: None, timeout=1.0)
     assert context.registered_web_apis == [
-        ("/astrbot_plugin_memora/page/status",
-         newer_handler, ["GET"], "newer"),
+        ("/astrbot_plugin_memora/page/status", newer_handler, ["GET"], "newer"),
         ("/other/status", foreign_route, ["GET"], "foreign"),
     ]
 

@@ -6,8 +6,8 @@ import inspect
 from pathlib import Path
 from typing import Any
 
-from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 from ...features.memory.infrastructure.validators import IndexValidator
+from .derived_rebuild_coordinator import DerivedRebuildCoordinator
 
 
 def build_catalog_components(
@@ -60,10 +60,14 @@ async def reconcile_catalog_for_shutdown(initializer: Any) -> dict[str, Any]:
     result = reconcile()
     if inspect.isawaitable(result):
         result = await result
-    return result if isinstance(result, dict) else {
-        "success": False,
-        "reason_code": "catalog_shutdown_reconcile_failed",
-    }
+    return (
+        result
+        if isinstance(result, dict)
+        else {
+            "success": False,
+            "reason_code": "catalog_shutdown_reconcile_failed",
+        }
+    )
 
 
 __all__ = [

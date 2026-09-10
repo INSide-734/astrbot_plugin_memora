@@ -25,6 +25,8 @@ from core.features.reflection.domain.summary_models import (
     ClaimedJob,
     SummaryJob,
     TopicCandidateContext,
+)
+from core.features.reflection.domain.summary_models import (
     render_topic_labels as model_render,
 )
 from core.features.reflection.domain.topic_label_renderer import (
@@ -127,8 +129,7 @@ def test_resolver_rejects_untrusted_or_conflicting_context() -> None:
 
     resolver = CanonicalScopeResolver()
 
-    assert not resolver.resolve(
-        _identity(trust=IdentityTrust.CONFLICT)).available
+    assert not resolver.resolve(_identity(trust=IdentityTrust.CONFLICT)).available
     assert not resolver.resolve(_identity(), scope_id="other-user").available
     assert not resolver.resolve(
         _identity(scope_type="group", scope_id="group-1"),

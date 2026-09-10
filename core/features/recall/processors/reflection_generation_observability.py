@@ -13,8 +13,9 @@ if TYPE_CHECKING:
     from ...reflection.domain.summary_models import TopicCandidateSelection
 
 _MODES = frozenset({"off", "observe", "full", "top_k"})
-_STATUSES = frozenset({"ready", "degraded", "unavailable",
-                      "backfilling", "empty", "unknown"})
+_STATUSES = frozenset(
+    {"ready", "degraded", "unavailable", "backfilling", "empty", "unknown"}
+)
 _BUCKETS = frozenset(
     {
         "0",
@@ -198,8 +199,7 @@ def report_generation_stage(
 ) -> None:
     """发射固定阶段和非空数值字段，不记录生成输入或输出正文。"""
 
-    fields = {key: value for key, value in numeric_fields.items()
-              if value is not None}
+    fields = {key: value for key, value in numeric_fields.items() if value is not None}
     report_debug_event(
         "storage_task",
         component="reflection",

@@ -41,9 +41,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             status="completed",
             reason_code="cognitive_component_ready",
             capability="affection",
-            duration_ms=max(
-                0.0, (time.perf_counter() - component_started) * 1000.0
-            ),
+            duration_ms=max(0.0, (time.perf_counter() - component_started) * 1000.0),
         )
         logger.info("好感度管理器已初始化")
     except Exception as exc:
@@ -56,9 +54,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             status="degraded",
             reason_code="cognitive_component_unavailable",
             capability="affection",
-            duration_ms=max(
-                0.0, (time.perf_counter() - component_started) * 1000.0
-            ),
+            duration_ms=max(0.0, (time.perf_counter() - component_started) * 1000.0),
         )
         logger.warning("好感度管理器初始化失败，已跳过: %s", exc, exc_info=True)
         initializer.affection_store = None
@@ -74,7 +70,8 @@ async def initialize_cognitive_components(initializer: Any) -> None:
         initializer.expression_store = ExpressionPatternStore(db_path)
         await initializer.expression_store.initialize()
         initializer.expression_learner = ExpressionPatternLearner(
-            initializer.expression_store)
+            initializer.expression_store
+        )
         success_count += 1
         report_debug_event(
             "plugin_initialized",
@@ -83,9 +80,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             status="completed",
             reason_code="cognitive_component_ready",
             capability="expression",
-            duration_ms=max(
-                0.0, (time.perf_counter() - component_started) * 1000.0
-            ),
+            duration_ms=max(0.0, (time.perf_counter() - component_started) * 1000.0),
         )
         logger.info("表达模式学习器已初始化")
     except Exception as exc:
@@ -98,9 +93,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             status="degraded",
             reason_code="cognitive_component_unavailable",
             capability="expression",
-            duration_ms=max(
-                0.0, (time.perf_counter() - component_started) * 1000.0
-            ),
+            duration_ms=max(0.0, (time.perf_counter() - component_started) * 1000.0),
         )
         logger.warning("表达模式学习器初始化失败，已跳过: %s", exc, exc_info=True)
         initializer.expression_store = None
@@ -127,7 +120,8 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             assert initializer.jargon_store is not None
             await initializer.jargon_store.initialize()
             initializer.jargon_query_service = JargonQueryService(
-                initializer.jargon_store)
+                initializer.jargon_store
+            )
             initializer.jargon_miner = JargonMiner(
                 initializer.llm_provider,
                 initializer.jargon_filter,
@@ -172,8 +166,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
 
         initializer.relation_store = RelationStore(db_path)
         await initializer.relation_store.initialize()
-        initializer.relation_manager = RelationManager(
-            initializer.relation_store)
+        initializer.relation_manager = RelationManager(initializer.relation_store)
         success_count += 1
         report_debug_event(
             "plugin_initialized",
@@ -182,9 +175,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             status="completed",
             reason_code="cognitive_component_ready",
             capability="social",
-            duration_ms=max(
-                0.0, (time.perf_counter() - component_started) * 1000.0
-            ),
+            duration_ms=max(0.0, (time.perf_counter() - component_started) * 1000.0),
         )
         logger.info("关系管理器已初始化")
     except Exception as exc:
@@ -197,9 +188,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             status="degraded",
             reason_code="cognitive_component_unavailable",
             capability="social",
-            duration_ms=max(
-                0.0, (time.perf_counter() - component_started) * 1000.0
-            ),
+            duration_ms=max(0.0, (time.perf_counter() - component_started) * 1000.0),
         )
         logger.warning("关系管理器初始化失败，已跳过: %s", exc, exc_info=True)
         initializer.relation_store = None
@@ -215,9 +204,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             if failed_count == 0
             else "cognitive_components_partial"
         ),
-        duration_ms=max(
-            0.0, (time.perf_counter() - initialization_started) * 1000.0
-        ),
+        duration_ms=max(0.0, (time.perf_counter() - initialization_started) * 1000.0),
         success_count=success_count,
         failed_count=failed_count,
     )

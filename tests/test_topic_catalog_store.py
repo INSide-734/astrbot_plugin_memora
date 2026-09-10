@@ -316,8 +316,7 @@ async def test_dirty_repair_rereads_current_canonical_source(tmp_path: Path) -> 
             resolver_revision="resolver-1",
             chat_type="private",
         )
-        assert [(item.memory_id, item.state)
-                for item in dirty] == [(1, "completed")]
+        assert [(item.memory_id, item.state) for item in dirty] == [(1, "completed")]
         assert [item["display_topic"] for item in topics] == ["当前话题"]
     finally:
         await db.close()

@@ -41,8 +41,7 @@ async def test_fenced_write_rejects_before_canonical_when_source_is_invalid() ->
     """来源已失效时不得开始可见 canonical 写入。"""
 
     engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
-    engine._add_memory_unchecked = AsyncMock(
-        return_value=17)  # type: ignore[method-assign]
+    engine._add_memory_unchecked = AsyncMock(return_value=17)  # type: ignore[method-assign]
     engine.set_summary_source_validator(AsyncMock(return_value=False))
 
     with pytest.raises(RuntimeError, match="summary_source_fenced"):
@@ -63,8 +62,7 @@ async def test_fenced_write_is_left_nonrecallable_when_source_expires_mid_write(
     """写入途中失去 fence 时，canonical 只能保留为不可召回 orphan。"""
 
     engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
-    engine._add_memory_unchecked = AsyncMock(
-        return_value=17)  # type: ignore[method-assign]
+    engine._add_memory_unchecked = AsyncMock(return_value=17)  # type: ignore[method-assign]
     # type: ignore[method-assign]
     engine._set_summary_source_orphan = AsyncMock()
     engine.set_summary_source_validator(AsyncMock(side_effect=(True, False)))
@@ -78,8 +76,7 @@ async def test_fenced_write_is_left_nonrecallable_when_source_expires_mid_write(
 
     # type: ignore[attr-defined]
     engine._add_memory_unchecked.assert_awaited_once()
-    engine._set_summary_source_orphan.assert_awaited_once_with(
-        17, True)  # type: ignore[attr-defined]
+    engine._set_summary_source_orphan.assert_awaited_once_with(17, True)  # type: ignore[attr-defined]
 
 
 def _message(session_id: str, index: int) -> Message:

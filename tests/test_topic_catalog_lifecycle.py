@@ -233,8 +233,7 @@ async def test_dirty_canonical_change_rebuilds_new_generation_and_clears_reconci
         assert state["status"] == "ready"
         assert state["active_generation"] == 2
         assert state["published_dirty_watermark"] == state["canonical_write_watermark"]
-        assert [(item.memory_id, item.state)
-                for item in dirty] == [(1, "completed")]
+        assert [(item.memory_id, item.state) for item in dirty] == [(1, "completed")]
         assert [item["display_topic"] for item in topics] == ["新话题"]
         assert await coordinator.catalog_needs_reconcile() is False
     finally:
@@ -434,8 +433,7 @@ async def test_post_publish_verification_failure_degrades_catalog() -> None:
 
     assert result["success"] is False
     assert result["stages"]["catalog"]["status"] == "failed"
-    catalog.mark_degraded.assert_awaited_once_with(
-        "catalog_post_publish_verify_failed")
+    catalog.mark_degraded.assert_awaited_once_with("catalog_post_publish_verify_failed")
 
 
 @pytest.mark.asyncio
@@ -521,14 +519,12 @@ async def test_rebuild_fences_canonical_write_before_publish(tmp_path) -> None:
         ).fetchone()
         pending = await store.list_dirty(states=("pending",))
 
-        assert result == {"success": False,
-                          "reason_code": "catalog_publish_fenced"}
+        assert result == {"success": False, "reason_code": "catalog_publish_fenced"}
         assert state["status"] == "degraded"
         assert state["active_generation"] is None
         assert state["staging_generation"] is None
         assert canonical_count == (2,)
-        assert [(item.memory_id, item.sequence)
-                for item in pending] == [(2, 2)]
+        assert [(item.memory_id, item.sequence) for item in pending] == [(2, 2)]
         assert await store.readable_generation() is None
     finally:
         await db.close()
@@ -557,8 +553,7 @@ async def test_catalog_publish_without_generation_degrades() -> None:
     ).rebuild_all()
 
     assert result["success"] is False
-    catalog.mark_degraded.assert_awaited_once_with(
-        "catalog_generation_missing")
+    catalog.mark_degraded.assert_awaited_once_with("catalog_generation_missing")
 
 
 @pytest.mark.asyncio
@@ -723,8 +718,7 @@ async def test_dirty_reconciliation_requires_staging_coverage(tmp_path) -> None:
             now=2.0,
         )
         dirty = await store.list_dirty(states=("pending",))
-        assert [(item.memory_id, item.sequence)
-                for item in dirty] == [(1, sequence)]
+        assert [(item.memory_id, item.sequence) for item in dirty] == [(1, sequence)]
     finally:
         await db.close()
 
@@ -777,8 +771,7 @@ async def test_initializer_blocks_scheduler_without_safe_catalog_decision(
         "topic_segmentation.legacy_backfill.max_backfill_per_run": 500,
     }.get(key, default)
     initializer = PluginInitializer(MagicMock(), config_manager, str(tmp_path))
-    initializer._faiss_checker.load_vec_db_class = MagicMock(
-        return_value=MagicMock())
+    initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
     scheduler = SimpleNamespace(start=AsyncMock(), close=AsyncMock())
     db = MagicMock()
     db.close = AsyncMock()
@@ -816,8 +809,7 @@ async def test_initializer_blocks_scheduler_without_safe_catalog_decision(
         }
     )
     initializer._initialize_cognitive_components = AsyncMock()
-    initializer._create_prompt_protection_service = MagicMock(
-        return_value=None)
+    initializer._create_prompt_protection_service = MagicMock(return_value=None)
 
     with pytest.raises(InitializationError, match="topic_catalog_startup_unresolved"):
         await initializer._run_full_init()

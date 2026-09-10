@@ -159,16 +159,13 @@ class TopicCatalogQueryMixin:
         max_count: int = 100,
     ) -> list[dict[str, Any]]:
         """执行 BM25 主排序，并对每个 scope source fail-closed 复核。"""
-        if (
-            not fts_query
-            or not self._valid_query_args(
-                scope_key,
-                privacy_level,
-                chat_type,
-                generation,
-                resolver_revision,
-                max_count,
-            )
+        if not fts_query or not self._valid_query_args(
+            scope_key,
+            privacy_level,
+            chat_type,
+            generation,
+            resolver_revision,
+            max_count,
         ):
             return []
         try:
@@ -273,8 +270,7 @@ class TopicCatalogQueryMixin:
             return []
         try:
             scan_limit = max_count * max(1, overfetch_factor)
-            excluded = tuple(
-                sorted({key for key in exclude_topic_keys if key}))
+            excluded = tuple(sorted({key for key in exclude_topic_keys if key}))
             exclude_clause = ""
             exclude_params: tuple[Any, ...] = ()
             if excluded:
@@ -340,8 +336,7 @@ class TopicCatalogQueryMixin:
             frequent_idx = 0
             recent_idx = 0
             while len(candidates) < max_count and (
-                frequent_idx < len(
-                    frequent_rows) or recent_idx < len(recent_rows)
+                frequent_idx < len(frequent_rows) or recent_idx < len(recent_rows)
             ):
                 if frequent_idx < len(frequent_rows):
                     candidate = self._validated_standard_candidate(
@@ -402,8 +397,7 @@ class TopicCatalogQueryMixin:
         ):
             return False
         return resolver_revision is None or (
-            isinstance(resolver_revision, str) and bool(
-                resolver_revision.strip())
+            isinstance(resolver_revision, str) and bool(resolver_revision.strip())
         )
 
     def _validated_standard_candidate(

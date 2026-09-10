@@ -53,19 +53,65 @@ EVENTS = frozenset(
 
 ALLOWED_FIELDS = frozenset(
     {
-        "component", "stage", "status", "reason_code", "operation_token",
-        "duration_ms", "count", "candidate_count", "selected_count", "injected_count",
-        "filtered_count", "configured_budget_chars", "effective_budget_chars", "payload_chars",
-        "task_type", "route", "delivery", "outcome", "exception_type", "exception_module",
-        "exception_function", "exception_line", "plugin_version", "python_major", "python_minor",
-        "capability", "function", "call_depth", "message_count", "batch_count", "success_count",
-        "canonical_count", "quarantine_count", "failed_count", "skipped_idempotent_count",
-        "retry_count", "attempt_count", "skipped_count", "queue_depth", "threshold_rounds",
-        "prompt_chars", "response_chars", "prompt_tokens", "completion_tokens",
-        "gate_mark_write_count", "gate_discard_count", "gate_quarantine_count",
-        "mode", "effective_mode", "catalog_status", "catalog_topic_count_bucket",
-        "budget_reason", "token_source_available", "bm25_hit_count", "recent_fill_count",
-        "identity_drop_count", "selector_duration_ms", "exact_reuse_count", "exact_topic_count",
+        "component",
+        "stage",
+        "status",
+        "reason_code",
+        "operation_token",
+        "duration_ms",
+        "count",
+        "candidate_count",
+        "selected_count",
+        "injected_count",
+        "filtered_count",
+        "configured_budget_chars",
+        "effective_budget_chars",
+        "payload_chars",
+        "task_type",
+        "route",
+        "delivery",
+        "outcome",
+        "exception_type",
+        "exception_module",
+        "exception_function",
+        "exception_line",
+        "plugin_version",
+        "python_major",
+        "python_minor",
+        "capability",
+        "function",
+        "call_depth",
+        "message_count",
+        "batch_count",
+        "success_count",
+        "canonical_count",
+        "quarantine_count",
+        "failed_count",
+        "skipped_idempotent_count",
+        "retry_count",
+        "attempt_count",
+        "skipped_count",
+        "queue_depth",
+        "threshold_rounds",
+        "prompt_chars",
+        "response_chars",
+        "prompt_tokens",
+        "completion_tokens",
+        "gate_mark_write_count",
+        "gate_discard_count",
+        "gate_quarantine_count",
+        "mode",
+        "effective_mode",
+        "catalog_status",
+        "catalog_topic_count_bucket",
+        "budget_reason",
+        "token_source_available",
+        "bm25_hit_count",
+        "recent_fill_count",
+        "identity_drop_count",
+        "selector_duration_ms",
+        "exact_reuse_count",
+        "exact_topic_count",
         "duplicate_topic_count",
     }
 )
@@ -74,15 +120,45 @@ _TOKEN_RE = re.compile(r"^[0-9a-f]{12}$")
 _SAFE_TEXT_RE = re.compile(r"^[A-Za-z0-9_.:+-]{1,128}$")
 _NUMERIC_FIELDS = frozenset(
     {
-        "duration_ms", "count", "candidate_count", "selected_count", "injected_count",
-        "filtered_count", "configured_budget_chars", "effective_budget_chars", "payload_chars",
-        "exception_line", "python_major", "python_minor", "call_depth", "message_count",
-        "batch_count", "success_count", "canonical_count", "quarantine_count", "failed_count",
-        "skipped_idempotent_count", "retry_count", "attempt_count", "skipped_count", "queue_depth",
-        "threshold_rounds", "prompt_chars", "response_chars", "prompt_tokens", "completion_tokens",
-        "gate_mark_write_count", "gate_discard_count", "gate_quarantine_count", "bm25_hit_count",
-        "recent_fill_count", "identity_drop_count", "selector_duration_ms", "exact_reuse_count",
-        "exact_topic_count", "duplicate_topic_count",
+        "duration_ms",
+        "count",
+        "candidate_count",
+        "selected_count",
+        "injected_count",
+        "filtered_count",
+        "configured_budget_chars",
+        "effective_budget_chars",
+        "payload_chars",
+        "exception_line",
+        "python_major",
+        "python_minor",
+        "call_depth",
+        "message_count",
+        "batch_count",
+        "success_count",
+        "canonical_count",
+        "quarantine_count",
+        "failed_count",
+        "skipped_idempotent_count",
+        "retry_count",
+        "attempt_count",
+        "skipped_count",
+        "queue_depth",
+        "threshold_rounds",
+        "prompt_chars",
+        "response_chars",
+        "prompt_tokens",
+        "completion_tokens",
+        "gate_mark_write_count",
+        "gate_discard_count",
+        "gate_quarantine_count",
+        "bm25_hit_count",
+        "recent_fill_count",
+        "identity_drop_count",
+        "selector_duration_ms",
+        "exact_reuse_count",
+        "exact_topic_count",
+        "duplicate_topic_count",
     }
 )
 _ENUM_FIELDS = {
@@ -164,8 +240,7 @@ _ENUM_FIELDS = {
         {"ready", "degraded", "unavailable", "backfilling", "empty", "unknown"}
     ),
     "catalog_topic_count_bucket": frozenset(
-        {"0", "1-8", "9-16", "17-32", "33-64",
-            "65-128", "129-256", "257+", "unknown"}
+        {"0", "1-8", "9-16", "17-32", "33-64", "65-128", "129-256", "257+", "unknown"}
     ),
     "budget_reason": frozenset(
         {"none", "count_exceeded", "token_exceeded", "token_truncated", "unknown"}
@@ -653,8 +728,7 @@ def _emit_rejection(reason_code: str) -> None:
         else "invalid_value",
     }
     _emit_serialized(
-        json.dumps(event, ensure_ascii=True,
-                   separators=(",", ":"), sort_keys=True)
+        json.dumps(event, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
     )
 
 
@@ -749,8 +823,7 @@ def report_debug_event(event_name: str, **fields: Any) -> None:
             return
         else:
             normalized[field] = value
-    normalized.setdefault(
-        "operation_token", _operation_token.get() or _new_token())
+    normalized.setdefault("operation_token", _operation_token.get() or _new_token())
     event = {
         "timestamp": _current_timestamp(),
         "schema_version": SCHEMA_VERSION,
