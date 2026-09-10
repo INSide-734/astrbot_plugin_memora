@@ -2196,9 +2196,9 @@ async function openBundledConfigPage(
  */
 async function waitForConfigReady(page, label) {
   // quality.gate 分支（enabled/default_profile 两片标量叶）加入 schema 后
-  // 配置页总 section 41→42、总字段 227→231；总结调度新增两个字段。
+  // 配置页总 section 41→42、总字段 227→231；候选重用与目录对账配置补齐后 231→255。
   const expectedSections = 42;
-  const expectedFields = 231;
+  const expectedFields = 255;
   await waitForRootText(
     page,
     ["配置", "单次召回数量", "recall_engine.top_k", "已同步"],
