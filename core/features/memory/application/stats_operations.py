@@ -85,10 +85,15 @@ class StatsOperationsMixin:
             该日创建的 canonical 记忆条数；数据库未初始化时返回 0。
         """
 
-        if self.db_connection is None:
+        connection = getattr(self, "db_connection", None)
+        if connection is None:
+            # 生产装配的 MaintenanceOperations 只注入私有 `_db`；
+            # 这里必须同时兼容两种宿主，否则日聚合会以 AttributeError 失败。
+            connection = getattr(self, "_db", None)
+        if connection is None:
             return 0
         day_str = datetime.fromtimestamp(day_ts, tz=UTC).strftime("%Y-%m-%d")
-        cursor = await self.db_connection.execute(
+        cursor = await connection.execute(
             "SELECT COUNT(*) FROM documents WHERE date(created_at) = ?",
             (day_str,),
         )

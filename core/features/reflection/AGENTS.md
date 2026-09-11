@@ -12,7 +12,7 @@
 - `application/summary_worker.py` 只读取 claim 固化来源，调用现有 Processor/质量门，并返回 `WindowOutcome`。
 - `topic_batch_preparer.py` 只处理 C/D 预分批；A/B/Hybrid 后置分段属于 [`recall/processors/AGENTS.md`](../recall/processors/AGENTS.md)。
 - 后台任务不继承 `ExtraLlmBudget`；物理 Provider attempt 统一由 Processor 的共享 `SummaryLlmLimiter` 限流。
-- `candidate_writer.py` 执行幂等候选写入和质量路由；质量门通过、canonical 插入之前按需调用近重复合并协调器（`memory_dedup`，默认关闭），命中时返回 `merged` 终态并跳过插入；`MemoryEngine` 是 canonical 写后演化唯一 owner。
+- `candidate_writer.py` 执行幂等候选写入和质量路由；质量门通过、canonical 插入之前按需调用近重复合并协调器（`memory_dedup`，默认关闭），命中时返回 `merged` 终态并跳过插入；可选指标记录端口由组合根经 `SummaryWorker` 注入协调器，缺省为 no-op，记录异常不得影响写入终态；`MemoryEngine` 是 canonical 写后演化唯一 owner。
 - `domain/summary_models.py` 与 `summary_ports.py` 定义不可变任务 DTO、闭集状态、安全投影和 Store 窄端口。
 
 

@@ -255,7 +255,13 @@ class TestMemoryDedupConfigContract:
         assert mismatches == {}
 
     @pytest.mark.parametrize(
-        "leaf", ["similarity_threshold", "candidate_limit", "min_tokens"]
+        "leaf",
+        [
+            "similarity_threshold",
+            "candidate_limit",
+            "min_tokens",
+            "metrics_retention_days",
+        ],
     )
     def test_schema_leaf_bounds_match_field_metadata(self, leaf: str):
         """数值叶 min/max 必须与 Field 约束一致。"""
@@ -284,12 +290,14 @@ class TestMemoryDedupConfigContract:
             {"candidate_limit": 51},
             {"min_tokens": 0},
             {"min_tokens": 1001},
+            {"metrics_retention_days": 0},
+            {"metrics_retention_days": 3651},
         ):
             with pytest.raises(ValueError):
                 validate_config({"memory_dedup": invalid})
 
     def test_runtime_projection_and_ownership(self):
-        """四叶必须投影到运行时映射并登记唯一责任方。"""
+        """每个 memory_dedup 叶必须投影到运行时映射并登记唯一责任方。"""
 
         projected = {
             field.source_path: field.default

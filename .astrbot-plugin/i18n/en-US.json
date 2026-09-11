@@ -1475,7 +1475,8 @@
         "evaluation": "Evaluation",
         "recallTrace": "Recall Trace",
         "diagnostics": "Diagnostics",
-        "reviewQueue": "Review Queue"
+        "reviewQueue": "Review Queue",
+        "topicGovernance": "Topic Governance"
       },
       "activeTab": "Active view",
       "status": {
@@ -1797,6 +1798,45 @@
       "catalogDegradedHint": "Mode selector disabled; forced to observe mode when catalog is not ready",
       "sizeBuckets": "Size Buckets",
       "metrics": "Aggregated Metrics"
+    },
+    "memoryDedup": {
+      "title": "Cross-window Dedup Metrics",
+      "description": "Windowed aggregates for near-duplicate detection: hit rate, merges, guard and failure counts; no data is recorded while mode=off.",
+      "windowLabel": "Window",
+      "window": {
+        "1h": "Last hour",
+        "24h": "Last 24 hours",
+        "7d": "Last 7 days",
+        "30d": "Last 30 days"
+      },
+      "refresh": "Refresh",
+      "state": {
+        "loading": "Loading dedup metrics",
+        "error": "Could not load dedup metrics",
+        "empty": "No dedup metrics in this window",
+        "emptyHint": "Nothing is detected or recorded while mode=off; enable observe to collect counts."
+      },
+      "checked": "Candidates Checked",
+      "hitRate": "Hit Rate",
+      "merged": "Merged",
+      "factMismatch": "Fact-guard Blocks",
+      "guardRate": "Guard Rate",
+      "failureRate": "Failure Rate",
+      "trend": "Hourly Trend",
+      "byMode": "By Mode",
+      "mode": {
+        "observe": "Observe",
+        "enforce": "Enforce"
+      },
+      "outcome": {
+        "checked": "Checked",
+        "hit": "Hit",
+        "merged": "Merged",
+        "fact_mismatch": "Fact Guard",
+        "conflict": "Conflict",
+        "failed": "Failed"
+      },
+      "outcomeHint": "Counts are aggregated by hourly bucket and mode only; no scope, session, or content is stored."
     },
     "category": {
       "fact": "Fact",

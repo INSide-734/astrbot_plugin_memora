@@ -25,6 +25,7 @@ Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection �
 - 并发：进程内按 `session + scope_key` 的 `asyncio.Lock` 串行化「检测 → 合并」，覆盖总结窗口的候选并发；跨进程并发不在支持范围（单实例单 DB）。
 - 失败语义：检测异常、目标正文在检测后被改写、CAS 冲突、写回异常一律 fail-open，由调用方回落普通 canonical 写入；写回返回 False 时以回读 `merged_idempotency_keys`/`merge_count` 判定是否已提交，避免在已合并的情况下插入重复 canonical。
 - 默认关闭：`memory_dedup.mode=off` 不发起任何近重复查询；`observe` 只记录 `dedup_observed`；`enforce` 才写回。
+- 观测：`infrastructure/dedup_metrics_store.py` 是独立 SQLite 小时桶聚合 `dedup_metrics(bucket_ms, mode, outcome, count)`，**只保存计数与时间桶/模式/outcome**，不含 scope、会话、正文、ID 或 reason 明细，因此不需要 HMAC 摘要键；六类终态由协调器的可选 `metrics_recorder` 端口（缺省 no-op）UPSERT 增量写入，`off` 不产生任何行。记录异常只降级 debug 日志且不影响合并结果，`asyncio.CancelledError` 继续传播；保留期由 `memory_dedup.metrics_retention_days`（默认 30，范围 1-3650）控制，在初始化后与写入节流（每 64 次写入或每小时至多一次）清理过期桶。只读消费方是 Page API `GET /memory-dedup/metrics`。
 
 ```mermaid
 graph TD

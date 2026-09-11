@@ -17,6 +17,14 @@ vi.mock("@/components/intelligence/RecallTracePanel", () => ({
   ),
 }));
 
+vi.mock("@/components/CandidateReuseConfig", () => ({
+  CandidateReuseConfig: () => <div>Candidate Reuse Config</div>,
+}));
+
+vi.mock("@/components/MemoryDedupMetrics", () => ({
+  MemoryDedupMetrics: () => <div>Memory Dedup Metrics</div>,
+}));
+
 import { IntelligencePage } from "./IntelligencePage";
 
 afterEach(() => {
@@ -61,4 +69,13 @@ it("selects Recall Trace and forwards a persisted trace target", () => {
   expect(screen.getByTestId("recall-trace-navigation-target").textContent).toBe(
     "42:recallTrace:trace-persisted",
   );
+});
+
+it("renders topic governance panels on the governance tab", () => {
+  render(<IntelligencePage showToast={() => undefined} />);
+
+  fireEvent.click(screen.getByRole("tab", { name: /Topic Governance|Topic 治理/ }));
+
+  expect(screen.getByText("Candidate Reuse Config")).toBeTruthy();
+  expect(screen.getByText("Memory Dedup Metrics")).toBeTruthy();
 });

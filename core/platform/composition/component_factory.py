@@ -42,6 +42,7 @@ from ...features.memory.application.catalog_reconcile_scheduler import (
     TopicCatalogReconcileScheduler,
 )
 from ...features.memory.application.memory_engine import MemoryEngine
+from ...features.memory.infrastructure.dedup_metrics_store import DedupMetricsStore
 from ...features.memory.infrastructure.topic_metrics import build_metrics_recorder
 from ...features.notes.application import NoteProposalPipeline
 from ...features.notes.infrastructure import NoteGenerator
@@ -531,6 +532,9 @@ class ComponentFactory:
                 ),
             )
 
+        dedup_metrics_store = await self._build_dedup_metrics_store(data_dir_path)
+        cleanup_state["dedup_metrics_store"] = dedup_metrics_store
+
         candidate_selector = TopicCandidateSelector(
             catalog_store=memory_engine.topic_catalog_store,
             text_processor=memory_engine.text_processor,
@@ -545,6 +549,9 @@ class ComponentFactory:
             summary_batch_preparer,
             candidate_selector,
             metrics_recorder=await build_metrics_recorder(memory_engine, data_dir_path),
+            dedup_metrics_recorder=(
+                dedup_metrics_store.record if dedup_metrics_store is not None else None
+            ),
             config_manager=self.config_manager,
             max_parallel_summary_tasks=int(
                 self.config_manager.get(
@@ -648,6 +655,7 @@ class ComponentFactory:
             "realtime_hub": realtime_hub,
             "summary_scheduler": summary_scheduler,
             "summary_llm_limiter": summary_llm_limiter,
+            "dedup_metrics_store": dedup_metrics_store,
             "catalog_maintenance_result": catalog_maintenance_result,
             "derived_rebuild_coordinator": derived_rebuild_coordinator,
             **injection_components,
@@ -671,6 +679,7 @@ class ComponentFactory:
                 "injection_decision_recorder"
             ),
             injection_decision_store=cleanup_state.get("injection_decision_store"),
+            dedup_metrics_store=cleanup_state.get("dedup_metrics_store"),
         )
 
     @staticmethod
@@ -688,6 +697,7 @@ class ComponentFactory:
         catalog_reconcile_scheduler=None,
         injection_decision_recorder=None,
         injection_decision_store=None,
+        dedup_metrics_store=None,
     ) -> None:
         if memory_engine is not None and graph_db is not None:
             if getattr(memory_engine, "graph_vector_db", None) is graph_db:
@@ -702,6 +712,7 @@ class ComponentFactory:
             ("ProtocolIdentityRuntime", identity_runtime, "close"),
             ("InjectionDecisionRecorder", injection_decision_recorder, "close"),
             ("InjectionDecisionStore", injection_decision_store, "close"),
+            ("DedupMetricsStore", dedup_metrics_store, "close"),
             ("RealtimeHub", realtime_hub, "close"),
             ("ConversationStore", conversation_store, "close"),
             ("MemoryEngine", memory_engine, "close"),
@@ -728,6 +739,34 @@ class ComponentFactory:
                 )
         if cancellation is not None:
             raise cancellation
+
+    async def _build_dedup_metrics_store(
+        self, data_dir_path: Path
+    ) -> DedupMetricsStore | None:
+        """构造近重复指标存储；失败时降级为不记录，不阻塞装配。"""
+
+        store: DedupMetricsStore | None = None
+        try:
+            store = DedupMetricsStore(
+                str(data_dir_path / "memory_dedup_metrics.sqlite3"),
+                retention_days=int(
+                    self.config_manager.get("memory_dedup.metrics_retention_days", 30)
+                ),
+            )
+            await store.initialize()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("近重复指标存储初始化失败，已停用 dedup 指标", exc_info=True)
+            if store is not None:
+                try:
+                    await store.close()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.debug("关闭未完成的近重复指标存储失败", exc_info=True)
+            return None
+        return store
 
     async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
         """初始化注入决策存储与异步记录器。"""

@@ -38,6 +38,12 @@ class MemoryDedupConfig(BaseModel):
         le=1000,
         description="短文本护栏：token 数低于该值的正文不参与比较",
     )
+    metrics_retention_days: int = Field(
+        default=30,
+        ge=1,
+        le=3650,
+        description="去重指标小时桶保留天数，过期桶在启动与写入节流时清理",
+    )
 
 
 __all__ = ["MemoryDedupConfig"]

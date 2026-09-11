@@ -1,4 +1,10 @@
-"""canonical 近重复合并协调器的 metadata 与失败语义契约。"""
+"""canonical 近重复合并协调器的 metadata、失败语义与指标记录契约。
+
+单文件覆盖同一协调器的全部行为契约，共享 `_Engine`/`_Search`/`_document` 夹具；
+物理行数已越过 AGENTS.md 的测试拆分评审线（700 行）。后续继续增长时的拆分点：
+把指标记录用例移到 `tests/test_canonical_merge_metrics.py`，并把上述夹具抽到
+共享测试辅助模块。
+"""
 
 from __future__ import annotations
 
@@ -18,6 +24,7 @@ from core.features.memory.application.canonical_merge import (
     MAX_SOURCE_REFS,
     MAX_TOPICS,
     CanonicalMergeCoordinator,
+    DedupMetricsRecorder,
     MergeCandidate,
     MergeStatus,
 )
@@ -156,11 +163,29 @@ def _candidate(
     )
 
 
+class _Recorder:
+    """收集 ``(mode, outcome)`` 记录的手算替身。"""
+
+    def __init__(self, *, failure: BaseException | None = None) -> None:
+        """保存注入异常与调用序列。"""
+
+        self.calls: list[tuple[str, str]] = []
+        self.failure = failure
+
+    async def __call__(self, mode: str, outcome: str) -> None:
+        """记录一次调用；注入异常时先记录再抛出。"""
+
+        self.calls.append((mode, outcome))
+        if self.failure is not None:
+            raise self.failure
+
+
 def _coordinator(
     engine: _Engine,
     search: _Search,
     *,
     mode: Literal["off", "observe", "enforce"] = "enforce",
+    recorder: DedupMetricsRecorder | _Recorder | None = None,
     clock=lambda: 1234.0,
 ) -> CanonicalMergeCoordinator:
     """装配使用替身端口的协调器。"""
@@ -170,6 +195,7 @@ def _coordinator(
         search_similar=search,
         load_memory=engine.get_memory,
         update_memory=engine.update_memory,
+        metrics_recorder=recorder,
         clock=clock,
     )
 
@@ -480,6 +506,214 @@ async def test_concurrent_same_scope_merges_serialize() -> None:
     metadata = engine.document["metadata"]
     assert metadata["merge_count"] == 2
     assert metadata["merged_idempotency_keys"] == ["key-1", "key-2"]
+
+
+@pytest.mark.asyncio
+async def test_enforce_records_checked_hit_and_merged() -> None:
+    """enforce 成功合并按 checked → hit → merged 顺序记录。"""
+
+    document = _document()
+    engine = _Engine(document)
+    recorder = _Recorder()
+
+    outcome = await _coordinator(
+        engine, _Search([_stored(document)]), recorder=recorder
+    ).merge(_candidate())
+
+    assert outcome.status is MergeStatus.MERGED
+    assert recorder.calls == [
+        ("enforce", "checked"),
+        ("enforce", "hit"),
+        ("enforce", "merged"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_observe_records_checked_and_hit_without_write_back() -> None:
+    """observe 命中记录 checked 与 hit，但不记录 merged。"""
+
+    document = _document()
+    engine = _Engine(document)
+    recorder = _Recorder()
+
+    outcome = await _coordinator(
+        engine, _Search([_stored(document)]), mode="observe", recorder=recorder
+    ).merge(_candidate())
+
+    assert outcome.status is MergeStatus.OBSERVED
+    assert recorder.calls == [("observe", "checked"), ("observe", "hit")]
+
+
+@pytest.mark.asyncio
+async def test_miss_records_checked_only() -> None:
+    """未命中只记录 checked（命中率分母包含未命中候选）。"""
+
+    document = _document()
+    engine = _Engine(document)
+    recorder = _Recorder()
+
+    outcome = await _coordinator(engine, _Search([]), recorder=recorder).merge(
+        _candidate()
+    )
+
+    assert outcome.status is MergeStatus.MISS
+    assert recorder.calls == [("enforce", "checked")]
+
+
+@pytest.mark.asyncio
+async def test_fact_mismatch_records_guard_outcome() -> None:
+    """事实护栏拦截记录 checked 与 fact_mismatch，不计命中。"""
+
+    document = _document(
+        metadata={"key_facts": ["数据库每周日凌晨三点做全量冷备份"]},
+        content=_CONTENT,
+    )
+    engine = _Engine(document)
+    recorder = _Recorder()
+
+    outcome = await _coordinator(
+        engine, _Search([_stored(document)]), recorder=recorder
+    ).merge(_candidate())
+
+    assert outcome.status is MergeStatus.FACT_MISMATCH
+    assert recorder.calls == [("enforce", "checked"), ("enforce", "fact_mismatch")]
+
+
+@pytest.mark.asyncio
+async def test_detector_failure_records_failed_outcome() -> None:
+    """检测异常记录 checked 与 failed，不影响回落结论。"""
+
+    document = _document()
+    engine = _Engine(document)
+    search = _Search([_stored(document)])
+    search.failure = RuntimeError("fts unavailable")
+    recorder = _Recorder()
+
+    outcome = await _coordinator(engine, search, recorder=recorder).merge(_candidate())
+
+    assert outcome.status is MergeStatus.FAILED
+    assert recorder.calls == [("enforce", "checked"), ("enforce", "failed")]
+
+
+@pytest.mark.asyncio
+async def test_conflict_records_conflict_outcome() -> None:
+    """检测后目标被改写的冲突记录 checked → hit → conflict。"""
+
+    document = _document()
+    engine = _Engine(document)
+    search = _Search([_stored(document)])
+    engine.document["text"] = "完全不同的正文，记录着另一件毫不相干的运维事项"
+    recorder = _Recorder()
+
+    outcome = await _coordinator(engine, search, recorder=recorder).merge(_candidate())
+
+    assert outcome.status is MergeStatus.CONFLICT
+    assert recorder.calls == [
+        ("enforce", "checked"),
+        ("enforce", "hit"),
+        ("enforce", "conflict"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_missing_scope_records_nothing() -> None:
+    """无法构造比较作用域时没有进入检测，因此不产生任何记录。"""
+
+    document = _document()
+    engine = _Engine(document)
+    recorder = _Recorder()
+
+    outcome = await _coordinator(
+        engine, _Search([_stored(document)]), recorder=recorder
+    ).merge(_candidate(metadata={"scope_key": None}))
+
+    assert outcome.status is MergeStatus.MISS
+    assert recorder.calls == []
+
+
+@pytest.mark.asyncio
+async def test_recorder_failure_does_not_break_merge() -> None:
+    """记录端口抛异常时必须吞掉，合并仍然完成。"""
+
+    document = _document()
+    engine = _Engine(document)
+    recorder = _Recorder(failure=RuntimeError("metrics store unavailable"))
+
+    outcome = await _coordinator(
+        engine, _Search([_stored(document)]), recorder=recorder
+    ).merge(_candidate())
+
+    assert outcome.status is MergeStatus.MERGED
+    assert engine.document["metadata"]["merge_count"] == 1
+    assert recorder.calls == [
+        ("enforce", "checked"),
+        ("enforce", "hit"),
+        ("enforce", "merged"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_off_mode_writes_no_metric_rows(tmp_path) -> None:
+    """``mode=off`` 不查询近邻，也不产生任何指标行。"""
+
+    from core.features.memory.infrastructure.dedup_metrics_store import (
+        DedupMetricsStore,
+    )
+
+    document = _document()
+    engine = _Engine(document)
+    search = _Search([_stored(document)])
+    store = DedupMetricsStore(str(tmp_path / "dedup_metrics.sqlite3"))
+    await store.initialize()
+    try:
+        outcome = await _coordinator(
+            engine, search, mode="off", recorder=store.record
+        ).merge(_candidate())
+
+        assert outcome.status is MergeStatus.MISS
+        assert search.queries == []
+        assert await store.row_count() == 0
+        assert (await store.summary("24h"))["checked"] == 0
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_observe_hit_persists_checked_and_hit_rows(tmp_path) -> None:
+    """记录端口接到真实 Store 时，observe 命中落一行 checked 与一行 hit。"""
+
+    from core.features.memory.infrastructure.dedup_metrics_store import (
+        DedupMetricsStore,
+    )
+
+    document = _document()
+    engine = _Engine(document)
+    store = DedupMetricsStore(str(tmp_path / "dedup_metrics.sqlite3"))
+    await store.initialize()
+    try:
+        outcome = await _coordinator(
+            engine,
+            _Search([_stored(document)]),
+            mode="observe",
+            recorder=store.record,
+        ).merge(_candidate())
+
+        assert outcome.status is MergeStatus.OBSERVED
+        assert await store.row_count() == 2
+        summary = await store.summary("24h")
+        assert summary["checked"] == 1
+        assert summary["hit"] == 1
+        assert summary["merged"] == 0
+        assert summary["by_mode"]["observe"] == {
+            "checked": 1,
+            "hit": 1,
+            "merged": 0,
+            "fact_mismatch": 0,
+            "conflict": 0,
+            "failed": 0,
+        }
+    finally:
+        await store.close()
 
 
 async def _rejecting_update(

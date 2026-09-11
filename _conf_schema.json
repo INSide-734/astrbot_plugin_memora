@@ -1989,6 +1989,14 @@
                 "default": 12,
                 "min": 1,
                 "max": 1000
+            },
+            "metrics_retention_days": {
+                "description": "观测数据保留天数",
+                "hint": "去重指标只保存小时桶计数；早于保留期的桶在启动后与随后的写入节流清理中删除。",
+                "type": "int",
+                "default": 30,
+                "min": 1,
+                "max": 3650
             }
         }
     }

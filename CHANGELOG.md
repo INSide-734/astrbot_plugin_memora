@@ -16,6 +16,7 @@ Memora 的所有重要变更都记录在此文件中。
 - 注入决策摘要补齐选择器收益与预算利用率：窗口聚合新增 `selected_count_total`、`dropped_count_total`、`truncated_count_total`、`effective_budget_chars_avg`、`budget_utilization_avg`、`budget_utilization_p95`，`cost_trend` 每小时桶同步带上选择/丢弃合计与利用率均值；Dashboard 概览页新增选择/丢弃卡片与预算利用率图表序列。
 - 新增跨窗口近重复合并（B5，默认关闭）：反思候选在写入 canonical 前，于同 scope（`scope_key` + `privacy_level` + 会话/人格 + 私聊主体交集）内做确定性 token 集合 Jaccard 近重复检测，命中且两侧 `key_facts` 词集 Jaccard ≥ 0.5 时把候选并入既有 canonical——`importance` 取最大、`source_refs`/`source_evidence`/`topics` 并集去重（各限 32/32/5）、`merge_count` +1、`last_merged_at`、`merged_idempotency_keys`（限 16，重放短路），不再插入第二条 canonical，正文与派生索引不重写。
 - 新增 `memory_dedup` 配置节：`mode`（`off`/`observe`/`enforce`，默认 `off`）、`similarity_threshold`（0.85）、`candidate_limit`（5）、`min_tokens`（12）；反思候选新增 `merged` 终态与 `ReflectionStoreSummary.merged` 计数，命中/观测/事实护栏/合并冲突/检测失败分别记录 `dedup_merged`、`dedup_observed`、`dedup_fact_mismatch`、`dedup_merge_conflict`、`dedup_detector_failed` reason code。
+- 新增跨窗口去重观测面（灰度前置）：独立 SQLite 小时桶聚合 `dedup_metrics(bucket_ms, mode, outcome, count)` 只保存计数与时间桶/模式/outcome（不含 scope、会话/人格、正文、记忆 ID 或 reason 明细），记录 `checked`/`hit`/`merged`/`fact_mismatch`/`conflict`/`failed` 六类终态；`mode=off` 零记录零查询，记录失败不影响候选写入与合并结果。新增只读 Page API `GET /memory-dedup/metrics?window=1h|24h|7d|30d`（窗口合计、命中率/护栏率/失败率、分模式计数与小时趋势；未知窗口返回 `invalid_window`，Store 不可用回落零值契约），Dashboard 洞察页新增「Topic 治理」页签展示同源面板（与 Topic 候选重用配置同页）与三语言文案；新增配置叶 `memory_dedup.metrics_retention_days`（默认 30，范围 1-3650）控制过期桶清理，Dashboard Schema 叶计数同步为 43/260。
 
 ### 变更
 
@@ -24,6 +25,7 @@ Memora 的所有重要变更都记录在此文件中。
 ### 修复
 
 - 修复持久化证据复核可能把证据交换给其它主体的问题：带 `message_id` 的证据只接受「消息标识 + 指纹」联合命中，未命中即按来源变更拒绝；只有缺少标识的旧证据才回退到指纹定位。
+- 修复 canonical 正文重复同一事实的问题：分段话题给出的摘要本身可能就是「[话题N] 事实A；事实B」，`StorageBuilder` 不再把已被摘要逐字包含的 key facts 重复追加到正文。
 - 注入载荷不再重复输出正文已经包含的 `key_facts`，消除重复注入带来的额外字符成本与噪声（#65）。
 
 ### 测试

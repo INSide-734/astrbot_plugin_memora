@@ -1538,6 +1538,95 @@ function handleInjectionSummary(params: Record<string, string>): ApiResponse {
   });
 }
 
+// ---- 跨窗口去重指标（observe 灰度观测面） ----
+
+/** 与后端闭集一致的去重指标窗口。 */
+const MEMORY_DEDUP_WINDOWS_MS: Record<string, number> = {
+  "1h": 3_600_000,
+  "24h": 86_400_000,
+  "7d": 604_800_000,
+  "30d": 2_592_000_000,
+};
+
+const MEMORY_DEDUP_HOUR_MS = 3_600_000;
+const MEMORY_DEDUP_OUTCOMES = [
+  "checked",
+  "hit",
+  "merged",
+  "fact_mismatch",
+  "conflict",
+  "failed",
+] as const;
+/** 固定基准时刻，使趋势桶与文档时间确定可复现。 */
+const MEMORY_DEDUP_NOW_MS = 1_750_000_000_000;
+
+/** 全零 outcome 计数模板；各聚合层级按需浅拷贝。 */
+const MEMORY_DEDUP_ZERO_COUNTS: Record<string, number> = Object.fromEntries(
+  MEMORY_DEDUP_OUTCOMES.map((outcome) => [outcome, 0]),
+);
+
+/** 确定性样本：按「小时桶偏移 × mode」给出 outcome 计数。 */
+const MEMORY_DEDUP_SAMPLE: Array<{
+  bucketOffset: number;
+  mode: "observe" | "enforce";
+  counts: Record<string, number>;
+}> = [
+  { bucketOffset: 2, mode: "observe", counts: { checked: 6, hit: 2, fact_mismatch: 1 } },
+  { bucketOffset: 1, mode: "observe", counts: { checked: 8, hit: 3, fact_mismatch: 1 } },
+  { bucketOffset: 0, mode: "observe", counts: { checked: 10, hit: 4, fact_mismatch: 1 } },
+  { bucketOffset: 2, mode: "enforce", counts: { checked: 5, hit: 2, merged: 2 } },
+  { bucketOffset: 1, mode: "enforce", counts: { checked: 7, hit: 3, merged: 2, conflict: 1 } },
+  { bucketOffset: 0, mode: "enforce", counts: { checked: 6, hit: 2, merged: 2, failed: 1 } },
+];
+
+/**
+ * 按后端口径聚合确定性样本：窗口合计、分模式计数、命中率/护栏率/失败率
+ * 与小时趋势。未知窗口返回稳定错误码 invalid_window。
+ */
+function handleMemoryDedupMetrics(params: Record<string, string>): ApiResponse {
+  const windowValue = params.window ?? "24h";
+  const windowMs = MEMORY_DEDUP_WINDOWS_MS[windowValue];
+  if (windowMs === undefined) {
+    return err("window must be one of 1h, 24h, 7d, 30d", "invalid_window");
+  }
+  const nowBucket = Math.floor(MEMORY_DEDUP_NOW_MS / MEMORY_DEDUP_HOUR_MS) * MEMORY_DEDUP_HOUR_MS;
+  const cutoff = Math.floor((MEMORY_DEDUP_NOW_MS - windowMs) / MEMORY_DEDUP_HOUR_MS) * MEMORY_DEDUP_HOUR_MS;
+  const totals = { ...MEMORY_DEDUP_ZERO_COUNTS };
+  const byMode: Record<string, Record<string, number>> = {
+    observe: { ...MEMORY_DEDUP_ZERO_COUNTS },
+    enforce: { ...MEMORY_DEDUP_ZERO_COUNTS },
+  };
+  const trend = new Map<number, Record<string, number>>();
+  for (const sample of MEMORY_DEDUP_SAMPLE) {
+    const bucketMs = nowBucket - sample.bucketOffset * MEMORY_DEDUP_HOUR_MS;
+    if (bucketMs < cutoff) continue;
+    let row = trend.get(bucketMs);
+    if (!row) {
+      row = { ...MEMORY_DEDUP_ZERO_COUNTS };
+      trend.set(bucketMs, row);
+    }
+    for (const outcome of MEMORY_DEDUP_OUTCOMES) {
+      const count = sample.counts[outcome] ?? 0;
+      totals[outcome] += count;
+      byMode[sample.mode][outcome] += count;
+      row[outcome] += count;
+    }
+  }
+  const rate = (numerator: number): number =>
+    totals.checked > 0 ? numerator / totals.checked : 0;
+  return ok({
+    window: windowValue,
+    ...totals,
+    hit_rate: rate(totals.hit),
+    guard_rate: rate(totals.fact_mismatch),
+    failure_rate: rate(totals.conflict + totals.failed),
+    by_mode: byMode,
+    trend: [...trend.entries()]
+      .sort(([left], [right]) => left - right)
+      .map(([bucket_ms, counts]) => ({ bucket_ms, ...counts })),
+  });
+}
+
 function injectionInteger(value: string, field: string): number {
   if (!/^-?\d+$/.test(value)) throw new Error(`${field} must be an integer`);
   const parsed = Number(value);
@@ -1678,6 +1767,9 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   }
   if (p === "injection-strategy/decisions" || p.startsWith("injection-strategy/decisions?")) {
     return handleInjectionDecisions(params);
+  }
+  if (p === "memory-dedup/metrics" || p.startsWith("memory-dedup/metrics?")) {
+    return handleMemoryDedupMetrics(params);
   }
   if (p === "stats") return handleStats();
   if (p === "metrics/summary") return handleMetricsSummary();

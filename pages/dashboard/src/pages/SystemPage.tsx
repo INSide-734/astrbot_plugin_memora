@@ -6,7 +6,6 @@ import { dashboardLocale, formatDashboardDate, formatDashboardNumber, translateE
 import { Button } from "@/components/ui/Button";
 import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select";
 import { TopicSegmentationConfig } from "@/components/TopicSegmentationConfig";
-import { CandidateReuseConfig } from "@/components/CandidateReuseConfig";
 import { QualityMonitorTab } from "@/components/system/QualityMonitorTab";
 import { DelegationTab } from "@/components/system/DelegationTab";
 import { UpdateNotice } from "@/components/system/UpdateNotice";
@@ -807,9 +806,6 @@ export function SystemPage({ showToast }: SystemPageProps) {
 
         {/* Legacy Backfill */}
         <TopicSegmentationConfig showToast={showToast} />
-
-        {/* Candidate Reuse Config */}
-        <CandidateReuseConfig showToast={showToast} />
 
         {/* Backups */}
         {pendingRestore && (

@@ -98,6 +98,7 @@ class PluginInitializer(InitializerReadinessMixin):
         self.backfill_scheduler: BackfillScheduler | None = None
         self.injection_decision_store: InjectionDecisionStore | None = None
         self.injection_decision_recorder: InjectionDecisionRecorder | None = None
+        self.dedup_metrics_store: Any | None = None
         self.memory_evolution_store: Any | None = None
         self.memory_evolution_manager: Any | None = None
         self.summary_scheduler: Any | None = None
@@ -320,6 +321,7 @@ class PluginInitializer(InitializerReadinessMixin):
             )
             self.injection_decision_store = components["injection_decision_store"]
             self.injection_decision_recorder = components["injection_decision_recorder"]
+            self.dedup_metrics_store = components.get("dedup_metrics_store")
             self.memory_evolution_store = components.get("memory_evolution_store")
             self.memory_evolution_manager = components.get("memory_evolution_manager")
             self.realtime_hub = components.get("realtime_hub")
@@ -364,6 +366,7 @@ class PluginInitializer(InitializerReadinessMixin):
                 ("catalog_reconcile_scheduler", self.topic_catalog_reconcile_scheduler),
                 ("injection_store", self.injection_decision_store),
                 ("injection_recorder", self.injection_decision_recorder),
+                ("dedup_metrics_store", self.dedup_metrics_store),
                 ("memory_evolution_store", self.memory_evolution_store),
                 ("memory_evolution_manager", self.memory_evolution_manager),
                 ("prompt_protection", self.prompt_protection),
@@ -641,6 +644,7 @@ class PluginInitializer(InitializerReadinessMixin):
         for label, obj in (
             ("AffectionStore", self.affection_store),
             ("JargonStore", self.jargon_store),
+            ("DedupMetricsStore", self.dedup_metrics_store),
         ):
             if obj and hasattr(obj, "close"):
                 await self._safe_step(f"关闭{label}", obj.close())

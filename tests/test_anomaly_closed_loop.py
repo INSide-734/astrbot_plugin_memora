@@ -200,6 +200,43 @@ async def test_sqlite_count_aggregates_canonical_created_at(tmp_path: Path) -> N
     assert count_yesterday == 1
 
 
+@pytest.mark.asyncio
+async def test_maintenance_host_resolves_connection_from_private_db(
+    tmp_path: Path,
+) -> None:
+    """生产装配的 MaintenanceOperations 只注入 _db，日聚合不得因此失败。"""
+
+    from core.features.memory.application.maintenance_operations import (
+        MaintenanceOperations,
+    )
+
+    db_path = tmp_path / "memora.db"
+    connection = await aiosqlite.connect(db_path)
+    try:
+        await connection.execute(
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY, doc_id TEXT, "
+            "text TEXT, metadata TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        today_iso = datetime.fromtimestamp(_day_ts(0), tz=timezone.utc).isoformat()
+        await connection.execute(
+            "INSERT INTO documents(doc_id, text, metadata, created_at, updated_at) "
+            "VALUES ('d1', '今日', '{}', ?, ?)",
+            (today_iso, today_iso),
+        )
+        await connection.commit()
+        maintenance = MaintenanceOperations(
+            config={},
+            db_connection=None,
+            db_path=str(db_path),
+        )
+        maintenance._db = connection
+
+        assert await maintenance.count_canonical_created_on(_day_ts(0)) == 1
+        assert await maintenance.count_canonical_created_on(_day_ts(1)) == 0
+    finally:
+        await connection.close()
+
+
 def test_alert_and_stats_carry_stable_reason_codes() -> None:
     """告警与最近状态必须输出稳定 reason code。"""
 

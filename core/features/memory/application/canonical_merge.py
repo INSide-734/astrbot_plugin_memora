@@ -9,6 +9,10 @@ topics 取并集、``merge_count``/``last_merged_at``/``merged_idempotency_keys`
 时都返回非 MERGED 终态，由调用方回落普通 canonical 写入。进程内按
 ``session + scope_key`` 的 ``asyncio.Lock`` 串行化「检测 → 合并」，覆盖
 同窗口候选并发写入。
+
+可选 ``metrics_recorder`` 把六类终态（``checked``/``hit``/``merged``/
+``fact_mismatch``/``conflict``/``failed``）计入独立指标 Store；缺省未注入
+即全部 no-op，``mode=off`` 在检测前返回，因此不产生任何指标行。
 """
 
 from __future__ import annotations
@@ -89,6 +93,8 @@ class MergeOutcome:
 LoadMemory = Callable[[int], Awaitable[Mapping[str, Any] | None]]
 UpdateMemory = Callable[[int, dict[str, Any], "str | None"], Awaitable[Any]]
 ConfigProvider = Callable[[], MemoryDedupConfig]
+# 指标记录端口：``(mode, outcome)`` → 持久化；缺省不注入 ⇒ 全部记录为 no-op。
+DedupMetricsRecorder = Callable[[str, str], Awaitable[object]]
 
 
 class CanonicalMergeCoordinator:
@@ -101,6 +107,7 @@ class CanonicalMergeCoordinator:
         search_similar: SimilarDocumentSearch,
         load_memory: LoadMemory,
         update_memory: UpdateMemory,
+        metrics_recorder: DedupMetricsRecorder | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
         """绑定配置读取器与 canonical 检索/读写端口。"""
@@ -109,6 +116,7 @@ class CanonicalMergeCoordinator:
         self._search_similar = search_similar
         self._load_memory = load_memory
         self._update_memory = update_memory
+        self._metrics_recorder = metrics_recorder
         self._clock = clock
         self._locks: dict[str, asyncio.Lock] = {}
 
@@ -172,17 +180,20 @@ class CanonicalMergeCoordinator:
                 extra={"reason_code": DEDUP_REASON_DETECTOR_FAILED},
             )
             logger.debug("近重复检测异常类型=%s", error.__class__.__name__)
+            await self._record_metrics(config.mode, "checked", "failed")
             return MergeOutcome(
                 MergeStatus.FAILED,
                 reason_code=DEDUP_REASON_DETECTOR_FAILED,
             )
         if detection.verdict is NearDuplicateVerdict.MISS:
+            await self._record_metrics(config.mode, "checked")
             return MergeOutcome(MergeStatus.MISS)
         if detection.verdict is NearDuplicateVerdict.FACT_MISMATCH:
             logger.info(
                 "同 scope 近重复候选的事实不同，不合并",
                 extra={"reason_code": DEDUP_REASON_FACT_MISMATCH},
             )
+            await self._record_metrics(config.mode, "checked", "fact_mismatch")
             return MergeOutcome(
                 MergeStatus.FACT_MISMATCH,
                 detection.memory_id,
@@ -191,6 +202,7 @@ class CanonicalMergeCoordinator:
             )
         document = detection.document
         if document is None:
+            await self._record_metrics(config.mode, "checked", "failed")
             return MergeOutcome(
                 MergeStatus.FAILED,
                 reason_code=DEDUP_REASON_DETECTOR_FAILED,
@@ -200,19 +212,24 @@ class CanonicalMergeCoordinator:
                 "观测到同 scope 近重复候选，observe 模式不合并",
                 extra={"reason_code": DEDUP_REASON_OBSERVED},
             )
+            await self._record_metrics(config.mode, "checked", "hit")
             return MergeOutcome(
                 MergeStatus.OBSERVED,
                 document.memory_id,
                 detection.score,
                 DEDUP_REASON_OBSERVED,
             )
-        return await self._apply_merge(candidate, document, detection.score)
+        await self._record_metrics(config.mode, "checked", "hit")
+        return await self._apply_merge(
+            candidate, document, detection.score, config.mode
+        )
 
     async def _apply_merge(
         self,
         candidate: MergeCandidate,
         document: DedupDocument,
         score: float,
+        mode: str,
     ) -> MergeOutcome:
         """把候选记账写回既有 canonical；CAS 失败或异常时回落。"""
 
@@ -227,6 +244,7 @@ class CanonicalMergeCoordinator:
                 extra={"reason_code": DEDUP_REASON_MERGE_CONFLICT},
             )
             logger.debug("近重复合并目标读取异常类型=%s", error.__class__.__name__)
+            await self._record_metrics(mode, "failed")
             return MergeOutcome(
                 MergeStatus.FAILED,
                 owner_id,
@@ -240,6 +258,7 @@ class CanonicalMergeCoordinator:
             or fresh.get("text") != document.content
         ):
             # 目标已被改写、失效或消失：不合并，交由调用方普通写入。
+            await self._record_metrics(mode, "conflict")
             return MergeOutcome(
                 MergeStatus.CONFLICT,
                 owner_id,
@@ -250,6 +269,7 @@ class CanonicalMergeCoordinator:
             metadata
         ):
             # 重放：同一候选已经并入过该 canonical，不再重复记账。
+            await self._record_metrics(mode, "merged")
             return MergeOutcome(
                 MergeStatus.MERGED,
                 owner_id,
@@ -258,6 +278,7 @@ class CanonicalMergeCoordinator:
             )
         expected_revision = memory_revision(dict(fresh))
         if not expected_revision:
+            await self._record_metrics(mode, "conflict")
             return MergeOutcome(
                 MergeStatus.CONFLICT,
                 owner_id,
@@ -289,6 +310,7 @@ class CanonicalMergeCoordinator:
                     "近重复合并 CAS 冲突，回落普通写入",
                     extra={"reason_code": DEDUP_REASON_MERGE_CONFLICT},
                 )
+                await self._record_metrics(mode, "conflict")
                 return MergeOutcome(
                     MergeStatus.CONFLICT,
                     owner_id,
@@ -299,12 +321,34 @@ class CanonicalMergeCoordinator:
             "近重复候选已并入既有 canonical",
             extra={"reason_code": DEDUP_REASON_MERGED},
         )
+        await self._record_metrics(mode, "merged")
         return MergeOutcome(
             MergeStatus.MERGED,
             owner_id,
             score,
             DEDUP_REASON_MERGED,
         )
+
+    async def _record_metrics(self, mode: str, *outcomes: str) -> None:
+        """按顺序写入持久化指标；记录失败绝不影响合并主流程。
+
+        ``mode=off`` 在 ``merge`` 入口提前返回，这里再防御一次，保证关闭
+        模式不产生任何指标行。``CancelledError`` 继续向上传播，其余异常
+        只降级为 debug 日志。
+        """
+
+        recorder = self._metrics_recorder
+        if recorder is None or mode == "off":
+            return
+        for outcome in outcomes:
+            try:
+                await recorder(mode, outcome)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.debug(
+                    "近重复指标记录失败，异常类型=%s", error.__class__.__name__
+                )
 
     async def _merge_landed(
         self,
@@ -363,6 +407,7 @@ def build_canonical_merge_coordinator(
     engine: Any,
     *,
     config_provider: ConfigProvider,
+    metrics_recorder: DedupMetricsRecorder | None = None,
     clock: Callable[[], float] = time.time,
 ) -> CanonicalMergeCoordinator:
     """按 MemoryEngine 既有能力装配生产端口。"""
@@ -385,6 +430,7 @@ def build_canonical_merge_coordinator(
         search_similar=build_recent_document_search(engine),
         load_memory=engine.get_memory,
         update_memory=_update_memory,
+        metrics_recorder=metrics_recorder,
         clock=clock,
     )
 
@@ -537,6 +583,7 @@ __all__ = [
     "MAX_SOURCE_REFS",
     "MAX_TOPICS",
     "CanonicalMergeCoordinator",
+    "DedupMetricsRecorder",
     "MergeCandidate",
     "MergeOutcome",
     "MergeStatus",
