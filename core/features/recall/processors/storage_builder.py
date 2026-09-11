@@ -19,12 +19,17 @@ class StorageBuilder:
             structured_data: LLM 结构化输出
             is_group_chat: 是否群聊
         """
-        summary = structured_data.get("summary", "")
+        summary = str(structured_data.get("summary", "") or "")
         key_facts = structured_data.get("key_facts", [])
+        facts = [str(item) for item in key_facts[:5] if str(item).strip()]
+
+        # 分段话题给出的摘要本身就是「[话题N] 事实A；事实B」，逐字包含于摘要的
+        # 事实不再重复追加，避免 canonical 正文出现两次同一事实。
+        missing_facts = [fact for fact in facts if fact not in summary]
 
         canonical_parts = [summary] if summary else []
-        if key_facts:
-            canonical_parts.append("；".join(str(f) for f in key_facts[:5]))
+        if missing_facts:
+            canonical_parts.append("；".join(missing_facts))
         canonical_summary = " | ".join(canonical_parts) if canonical_parts else ""
 
         content = canonical_summary or fallback_excerpt
