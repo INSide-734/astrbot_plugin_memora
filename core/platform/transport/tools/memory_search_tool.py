@@ -50,8 +50,7 @@ class MemorySearchTool(AgentFunctionTool):
                 },
                 "k": {
                     "type": "integer",
-                    "description": "Maximum number of memory items to return for one recall. Keep this small unless more evidence is needed.",
-                    "default": 5,
+                    "description": "Maximum number of memory items to return for one recall. Omit to use the configured recall count. Keep this small unless more evidence is needed.",
                 },
                 "emotion_context": {
                     "type": "array",
@@ -76,7 +75,7 @@ class MemorySearchTool(AgentFunctionTool):
         self,
         event: AstrMessageEvent,
         query: str,
-        k: int = 5,
+        k: int | None = None,
         emotion_context: list[str] | None = None,
         format_output: bool = True,
     ) -> str:
@@ -85,7 +84,7 @@ class MemorySearchTool(AgentFunctionTool):
         Args:
             event: AstrBot 注入的当前消息事件。
             query: 待检索的自然语言查询。
-            k: 期望返回的最大候选数。
+            k: 期望返回的最大候选数；省略或 None 时使用 recall_engine.top_k 配置。
             emotion_context: 可选情绪上下文标签。
             format_output: 是否附加规则格式化片段。
 
