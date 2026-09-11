@@ -868,6 +868,51 @@ class TestGateIntegration:
             assert result["metadata"]["grounding_status"] == "grounded"
 
     @pytest.mark.asyncio
+    async def test_gate_disabled_still_records_source_evidence(
+        self, make_gated_processor: Callable[..., MemoryProcessor]
+    ) -> None:
+        """主开关关闭时不判定，但仍为候选绑定带稳定身份的来源证据。"""
+        from core.features.quality.application.gate_runtime import build_gate_snapshot
+        from core.features.quality.domain.gate_config import GateConfig
+
+        runtime = _CountingGateRuntime(build_gate_snapshot(GateConfig(enabled=False)))
+        content = "我喜欢喝咖啡"
+        llm_response = (
+            '{"summary":"我喜欢喝咖啡","topics":["饮品"],'
+            '"key_facts":["我喜欢喝咖啡"],"sentiment":"positive","importance":0.7,'
+            '"source_refs":[{"message_index":0,"start":0,"end":6}]}'
+        )
+        proc = make_gated_processor(runtime, llm_response)
+        messages = [
+            Message(
+                id=7,
+                session_id="s1",
+                role="user",
+                content=content,
+                sender_id="user1",
+                sender_name="Alice",
+                timestamp=time.time(),
+            )
+        ]
+
+        results = await proc.process_conversation(messages, message_seqs=[5])
+
+        assert results
+        evidence = results[0]["metadata"]["source_evidence"]
+        assert evidence == [
+            {
+                "message_index": 0,
+                "message_id": 7,
+                "message_seq": 5,
+                "role": "user",
+                "start": 0,
+                "end": 6,
+                "message_fingerprint": evidence[0]["message_fingerprint"],
+                "inferred": False,
+            }
+        ]
+
+    @pytest.mark.asyncio
     async def test_window_uses_single_snapshot(
         self, make_gated_processor: Callable[..., MemoryProcessor]
     ) -> None:

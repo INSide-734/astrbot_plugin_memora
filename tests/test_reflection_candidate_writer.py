@@ -254,3 +254,39 @@ async def test_claimed_candidate_passes_complete_source_fence() -> None:
     assert source_fence.expected_count == 2
     assert source_fence.source_digest == "source-digest"
     assert source_fence.worker_generation == 2
+
+    metadata = memory_engine.add_memory.await_args.kwargs["metadata"]
+    assert metadata["source_start_seq"] == source_fence.start_seq == 0
+    assert metadata["source_end_seq"] == source_fence.end_seq == 2
+    assert metadata["source_digest"] == "source-digest"
+    assert metadata["source_epoch"] == 1
+    assert metadata["source_fence_generation"] == 2
+
+
+@pytest.mark.asyncio
+async def test_candidate_without_claim_fence_omits_source_seq_metadata() -> None:
+    """未领取窗口的候选不得写入 claim 窗口边界，保持既有 metadata 契约。"""
+
+    memory_engine = SimpleNamespace(
+        add_memory=AsyncMock(return_value=11),
+        continuity_tracker=None,
+    )
+
+    results = await feature_writer.store_reflection_candidates(
+        [{"content": "memory", "importance": 0.8, "metadata": {}}],
+        completed_idempotency_keys=set(),
+        session_id="session-1",
+        persona_id=None,
+        start_index=3,
+        end_index=7,
+        is_group_chat=False,
+        memory_engine=memory_engine,
+        memory_quality_gate=None,
+        schedule_evolution_after_write=AsyncMock(),
+    )
+
+    assert results[0].outcome is ReflectionStoreOutcome.CANONICAL
+    add_kwargs = memory_engine.add_memory.await_args.kwargs
+    assert "source_fence" not in add_kwargs
+    assert "source_start_seq" not in add_kwargs["metadata"]
+    assert "source_end_seq" not in add_kwargs["metadata"]

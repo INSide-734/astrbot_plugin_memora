@@ -2,45 +2,24 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
-import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from difflib import SequenceMatcher
 from typing import Any
 
 from ....shared.contracts.conversation import Message
 from ...quality.application.gate_runtime import GateSnapshot, default_gate_snapshot
-from ...quality.domain.gate_config import (
-    BUILTIN_NEGATION_MARKERS,
-    BUILTIN_NEGATION_WHITELIST,
-    GateProfile,
+from ...quality.domain.gate_config import GateProfile
+from .grounding_checks import (
+    support_score,
+    validate_group_subject,
+    validate_negation,
+    validate_numbers,
 )
-from .grounding_dates import _CJK_NUM_RE, _cjk_to_int, supported_claim_date_numbers
-
-_NUMBER_RE = re.compile(r"(?<![A-Za-z0-9_])\d+(?:\.\d+)?")
-_LATIN_TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9._-]*")
-_CJK_CHUNK_RE = re.compile(r"[\u3400-\u9fff]+")
-_GENERIC_TOKENS = {
-    "用户",
-    "对方",
-    "成员",
-    "群成员",
-    "表示",
-    "说道",
-    "提到",
-    "assistant",
-    "user",
-}
-_SYNONYM_REPLACEMENTS = (
-    ("星期五", "周五"),
-    ("礼拜五", "周五"),
-    ("准备", "计划"),
-    ("打算", "计划"),
-    ("前往", "去"),
-    ("喜爱", "喜欢"),
-    ("偏爱", "喜欢"),
-    ("更换", "换"),
+from .grounding_evidence import (
+    evidence_fingerprint,
+    infer_references,
+    match_stored_evidence,
+    resolve_references,
 )
 
 
@@ -122,8 +101,13 @@ class MemoryGroundingValidator:
         *,
         is_group_chat: bool,
         profile: GateProfile | None = None,
+        message_seqs: Sequence[int | None] | None = None,
     ) -> GroundingResult:
-        """验证候选声明、来源范围、关键锚点和群聊主体。"""
+        """验证候选声明、来源范围、角色、关键锚点和群聊主体。
+
+        ``message_seqs`` 是调用方给出的窗口稳定序号，与 ``messages`` 同序；
+        缺失时证据保留消息标识与指纹，但不带序号。
+        """
 
         if profile is None:
             profile = self._snapshot.resolve_profile(
@@ -138,11 +122,12 @@ class MemoryGroundingValidator:
 
         raw_refs = candidate.get("source_refs")
         if isinstance(raw_refs, list) and raw_refs:
-            resolved = self._resolve_references(
+            resolved = resolve_references(
                 raw_refs,
                 messages,
                 inferred=False,
                 max_refs=profile.references.max_references,
+                message_seqs=message_seqs,
             )
             if resolved is None:
                 return self._rejected(
@@ -150,17 +135,20 @@ class MemoryGroundingValidator:
                     claim_text=claim_text,
                 )
         else:
-            inferred_refs = self._infer_references(claim_text, messages, profile)
+            inferred_refs = infer_references(
+                claim_text, messages, profile, support_score
+            )
             if not inferred_refs:
                 return self._rejected(
                     "grounding_source_evidence_missing",
                     claim_text=claim_text,
                 )
-            resolved = self._resolve_references(
+            resolved = resolve_references(
                 inferred_refs,
                 messages,
                 inferred=True,
                 max_refs=profile.references.max_references,
+                message_seqs=message_seqs,
             )
             if resolved is None:
                 return self._rejected(
@@ -169,8 +157,14 @@ class MemoryGroundingValidator:
                 )
 
         evidence, source_text, referenced_messages = resolved
+        if not source_text.strip():
+            return self._rejected(
+                "grounding_user_source_missing",
+                evidence=evidence,
+                claim_text=claim_text,
+            )
         if profile.checks.group_subject_check:
-            subject_reason = self._validate_group_subject(
+            subject_reason = validate_group_subject(
                 candidate,
                 referenced_messages,
                 is_group_chat=is_group_chat,
@@ -185,7 +179,7 @@ class MemoryGroundingValidator:
                 )
 
         if profile.checks.numeric_check:
-            numeric_reason = self._validate_numbers(
+            numeric_reason = validate_numbers(
                 claim_text,
                 source_text,
                 referenced_messages,
@@ -198,7 +192,7 @@ class MemoryGroundingValidator:
                     claim_text=claim_text,
                 )
         if profile.checks.negation_check:
-            negation_reason = self._validate_negation(
+            negation_reason = validate_negation(
                 claim_text, profile, referenced_messages
             )
             if negation_reason:
@@ -209,8 +203,8 @@ class MemoryGroundingValidator:
                     claim_text=claim_text,
                 )
 
-        support_score = self._support_score(claim_text, source_text, profile)
-        if support_score >= profile.thresholds.min_deterministic_score:
+        score = support_score(claim_text, source_text, profile)
+        if score >= profile.thresholds.min_deterministic_score:
             return GroundingResult(
                 allowed=True,
                 status="grounded",
@@ -219,7 +213,7 @@ class MemoryGroundingValidator:
                 source_text=source_text,
                 claim_text=claim_text,
             )
-        if support_score >= profile.thresholds.min_judge_score:
+        if score >= profile.thresholds.min_judge_score:
             return GroundingResult(
                 allowed=False,
                 status="needs_judge",
@@ -235,6 +229,37 @@ class MemoryGroundingValidator:
             source_text=source_text,
             claim_text=claim_text,
         )
+
+    def resolve_evidence(
+        self,
+        candidate: dict[str, Any],
+        messages: list[Message],
+        *,
+        is_group_chat: bool,
+        profile: GateProfile | None = None,
+        message_seqs: Sequence[int | None] | None = None,
+    ) -> list[dict[str, Any]]:
+        """只把受控引用解析为证据，不做处置判定。
+
+        供门禁关闭但仍需为 canonical 绑定来源证据的路径使用：不推断引用、
+        不伪造条目，引用缺失或全部非法时返回空列表。
+        """
+
+        raw_refs = candidate.get("source_refs")
+        if not isinstance(raw_refs, list) or not raw_refs:
+            return []
+        if profile is None:
+            profile = self._snapshot.resolve_profile(
+                "group" if is_group_chat else "private", None, None
+            )
+        resolved = resolve_references(
+            raw_refs,
+            messages,
+            inferred=False,
+            max_refs=profile.references.max_references,
+            message_seqs=message_seqs,
+        )
+        return [] if resolved is None else resolved[0]
 
     def revalidate_stored_evidence(
         self,
@@ -255,22 +280,18 @@ class MemoryGroundingValidator:
             return self._rejected("grounding_source_evidence_missing")
         examined = evidence[: profile.references.max_references]
         refs: list[dict[str, Any]] = []
+        stored_seqs: dict[int, int] = {}
         well_formed = 0
         for item in examined:
             if not isinstance(item, dict):
                 continue  # 坏证据过滤化：单条畸形不再毁整条复核
             well_formed += 1
-            fingerprint = str(item.get("message_fingerprint") or "")
-            matched_index = next(
-                (
-                    index
-                    for index, message in enumerate(messages)
-                    if self.message_fingerprint(message) == fingerprint
-                ),
-                None,
-            )
+            matched_index = match_stored_evidence(item, messages)
             if matched_index is None:
                 continue  # 单项无法匹配时跳过，零条可复用才整体拒绝
+            stored_seq = item.get("message_seq")
+            if isinstance(stored_seq, int) and not isinstance(stored_seq, bool):
+                stored_seqs.setdefault(matched_index, stored_seq)
             refs.append(
                 {
                     "message_index": matched_index,
@@ -284,279 +305,24 @@ class MemoryGroundingValidator:
             return self._rejected("grounding_source_changed")
         replay = dict(candidate)
         replay["source_refs"] = refs
+        message_seqs = (
+            [stored_seqs.get(index) for index in range(len(messages))]
+            if stored_seqs
+            else None
+        )
         return self.validate(
-            replay, messages, is_group_chat=is_group_chat, profile=profile
+            replay,
+            messages,
+            is_group_chat=is_group_chat,
+            profile=profile,
+            message_seqs=message_seqs,
         )
 
     @staticmethod
     def message_fingerprint(message: Message) -> str:
         """生成不暴露正文或身份的稳定消息证据指纹。"""
 
-        content = Message.content_to_text(message.content)
-        payload = f"{message.role}\0{content}".encode("utf-8")
-        return hashlib.sha256(payload).hexdigest()
-
-    def _resolve_references(
-        self,
-        raw_refs: list[Any],
-        messages: list[Message],
-        *,
-        inferred: bool,
-        max_refs: int,
-    ) -> tuple[list[dict[str, Any]], str, list[Message]] | None:
-        """校验引用边界并构造内部证据，不接受布尔值冒充整数。"""
-
-        evidence: list[dict[str, Any]] = []
-        snippets: list[str] = []
-        referenced_messages: list[Message] = []
-        for raw_ref in raw_refs[:max_refs]:
-            if not isinstance(raw_ref, dict):
-                continue  # 坏引用过滤化：单条非法不再毁整条候选
-            message_index = raw_ref.get("message_index")
-            start = raw_ref.get("start")
-            end = raw_ref.get("end")
-            if (
-                isinstance(message_index, bool)
-                or isinstance(start, bool)
-                or isinstance(end, bool)
-                or not isinstance(message_index, int)
-                or not isinstance(start, int)
-                or not isinstance(end, int)
-            ):
-                continue
-            if message_index < 0 or message_index >= len(messages):
-                continue
-            message = messages[message_index]
-            content = Message.content_to_text(message.content)
-            if start < 0 or end <= start or end > len(content):
-                continue
-            snippet = content[start:end].strip()
-            if not snippet:
-                continue
-            evidence.append(
-                {
-                    "message_index": message_index,
-                    "start": start,
-                    "end": end,
-                    "message_fingerprint": self.message_fingerprint(message),
-                    "inferred": inferred,
-                }
-            )
-            snippets.append(snippet)
-            referenced_messages.append(message)
-        if not evidence:
-            return None
-        return evidence, "\n".join(snippets), referenced_messages
-
-    def _infer_references(
-        self,
-        claim_text: str,
-        messages: list[Message],
-        profile: GateProfile,
-    ) -> list[dict[str, int]]:
-        """仅在模型缺少引用时从当前窗口推断高相关受控引用。"""
-
-        min_score = profile.thresholds.min_inference_score
-        scored: list[tuple[float, int, str]] = []
-        for index, message in enumerate(messages):
-            content = Message.content_to_text(message.content)
-            if not content.strip():
-                continue
-            score = self._support_score(claim_text, content, profile)
-            scored.append((score, index, content))
-        if not scored:
-            return []
-        scored.sort(reverse=True)
-        best_score = scored[0][0]
-        if best_score < min_score:
-            return []
-        selected = [
-            item for item in scored if item[0] >= max(min_score, best_score - 0.08)
-        ]
-        return [
-            {"message_index": index, "start": 0, "end": len(content)}
-            for _, index, content in selected[:3]
-        ]
-
-    def _validate_group_subject(
-        self,
-        candidate: dict[str, Any],
-        referenced_messages: list[Message],
-        *,
-        is_group_chat: bool,
-        profile: GateProfile,
-    ) -> str | None:
-        """用真实引用消息验证群聊主体，禁止模型自行交换参与者。"""
-
-        if not is_group_chat:
-            return None
-        users: dict[str, set[str]] = {}
-        for message in referenced_messages:
-            if message.role != "user":
-                continue
-            sender_key = str(message.sender_id or message.sender_name or "").strip()
-            if not sender_key:
-                continue
-            labels = {
-                self._normalize_text(value, profile)
-                for value in (
-                    message.sender_id,
-                    message.sender_name,
-                    message.metadata.get("identity_label")
-                    if isinstance(message.metadata, dict)
-                    else None,
-                )
-                if isinstance(value, str) and value.strip()
-            }
-            users.setdefault(sender_key, set()).update(labels)
-        if len(users) <= 1:
-            return None
-        participants = {
-            self._normalize_text(item, profile)
-            for item in (candidate.get("participants") or [])
-            if isinstance(item, str) and item.strip()
-        }
-        if not participants:
-            return "grounding_subject_ambiguous"
-        if any(not labels.intersection(participants) for labels in users.values()):
-            return "grounding_subject_mismatch"
-        return None
-
-    @classmethod
-    def _validate_numbers(
-        cls,
-        claim_text: str,
-        source_text: str,
-        referenced_messages: list[Message],
-    ) -> str | None:
-        """严格匹配普通数值，仅放行可信身份标签与可靠日期规范化。"""
-
-        claim_without_identity_labels = claim_text
-        for label in cls._trusted_identity_labels(referenced_messages):
-            claim_without_identity_labels = claim_without_identity_labels.replace(
-                label, ""
-            )
-        claim_numbers = cls._canonical_numbers(claim_without_identity_labels)
-        source_numbers = cls._canonical_numbers(source_text)
-        supported_date_numbers = supported_claim_date_numbers(
-            claim_text,
-            source_text,
-            referenced_messages,
-        )
-        if claim_numbers - source_numbers - supported_date_numbers:
-            return "grounding_numeric_conflict"
-        return None
-
-    @staticmethod
-    def _trusted_identity_labels(messages: list[Message]) -> set[str]:
-        """返回引用消息中由运行时确认的稳定身份标签。"""
-
-        labels: set[str] = set()
-        for message in messages:
-            metadata = message.metadata if isinstance(message.metadata, dict) else {}
-            label = metadata.get("identity_label")
-            if metadata.get("identity_trusted") is True and isinstance(label, str):
-                normalized = label.strip()
-                if normalized:
-                    labels.add(normalized)
-        return labels
-
-    @staticmethod
-    def _canonical_numbers(text: str) -> set[str]:
-        """规范前导零和小数尾零，并把中文数字归一为阿拉伯数字。"""
-
-        converted = _CJK_NUM_RE.sub(
-            lambda match: str(_cjk_to_int(match.group(0))), text
-        )
-        canonical: set[str] = set()
-        for raw_value in _NUMBER_RE.findall(converted):
-            integer, separator, fraction = raw_value.partition(".")
-            integer = integer.lstrip("0") or "0"
-            if separator:
-                fraction = fraction.rstrip("0")
-            canonical.add(f"{integer}.{fraction}" if fraction else integer)
-        return canonical
-
-    @staticmethod
-    def _validate_negation(
-        claim_text: str,
-        profile: GateProfile,
-        referenced_messages: list[Message],
-    ) -> str | None:
-        """仅以 user 角色引用片段判定否定极性（白名单短语先剔除）。
-
-        取舍：assistant 片段不参与否定预检——assistant 的修辞性否定
-        （如“不亚于”“毫无悬念”）不是用户事实证据；用户真实否定翻转
-        仍由 user 片段极性对比捕捉。引用中无 user 片段时直接跳过检查。
-        """
-
-        user_snippets = [
-            snippet
-            for snippet in (
-                Message.content_to_text(message.content).strip()
-                for message in referenced_messages
-                if message.role == "user"
-            )
-            if snippet
-        ]
-        if not user_snippets:
-            return None
-        user_source_text = "\n".join(user_snippets)
-        whitelist = {
-            phrase.casefold()
-            for phrase in (
-                *BUILTIN_NEGATION_WHITELIST,
-                *profile.word_lists.negation_whitelist,
-            )
-        }
-        claim_clean = claim_text.casefold()
-        source_clean = user_source_text.casefold()
-        for phrase in sorted(whitelist, key=len, reverse=True):
-            claim_clean = claim_clean.replace(phrase, "")
-            source_clean = source_clean.replace(phrase, "")
-        marker_cfg = profile.word_lists.negation_markers
-        if marker_cfg.mode == "replace":
-            markers = tuple(item.casefold() for item in marker_cfg.items)
-        else:
-            markers = tuple(BUILTIN_NEGATION_MARKERS) + tuple(
-                item.casefold() for item in marker_cfg.items
-            )
-        claim_negative = any(marker in claim_clean for marker in markers)
-        source_negative = any(marker in source_clean for marker in markers)
-        if claim_negative != source_negative:
-            return "grounding_negation_conflict"
-        return None
-
-    def _support_score(
-        self,
-        claim_text: str,
-        source_text: str,
-        profile: GateProfile,
-    ) -> float:
-        """组合词元覆盖与字符序列相似度，权重由 profile 控制。"""
-
-        claim_normalized = self._normalize_text(claim_text, profile)
-        source_normalized = self._normalize_text(source_text, profile)
-        if not claim_normalized or not source_normalized:
-            return 0.0
-        if (
-            claim_normalized in source_normalized
-            or source_normalized in claim_normalized
-        ):
-            return 1.0
-        claim_tokens = self._tokens(claim_normalized)
-        source_tokens = self._tokens(source_normalized)
-        token_score = (
-            len(claim_tokens.intersection(source_tokens)) / len(claim_tokens)
-            if claim_tokens
-            else 0.0
-        ) * profile.scoring.token_weight
-        if not profile.scoring.sequence_enabled:
-            return token_score
-        sequence_score = SequenceMatcher(
-            None, claim_normalized, source_normalized
-        ).ratio()
-        return max(token_score, sequence_score * profile.scoring.sequence_weight)
+        return evidence_fingerprint(message)
 
     @staticmethod
     def _claim_text(candidate: dict[str, Any]) -> str:
@@ -570,33 +336,6 @@ class MemoryGroundingValidator:
             if isinstance(fact, str) and fact.strip() and fact.strip() not in parts:
                 parts.append(fact.strip())
         return " ".join(parts)
-
-    @staticmethod
-    def _normalize_text(value: str, profile: GateProfile | None = None) -> str:
-        """统一大小写、兼容字符和同义表达，并保留英文词元边界。"""
-
-        normalized = unicodedata.normalize("NFKC", str(value)).casefold()
-        replacements = _SYNONYM_REPLACEMENTS
-        if profile is not None:
-            replacements = replacements + tuple(
-                (pair.source.casefold(), pair.target.casefold())
-                for pair in profile.word_lists.synonym_pairs
-            )
-        for source, target in replacements:
-            normalized = normalized.replace(source, target)
-        return re.sub(r"[^a-z0-9\u3400-\u9fff]+", " ", normalized).strip()
-
-    @staticmethod
-    def _tokens(normalized: str) -> set[str]:
-        """提取英文词元与中文二元片段，过滤无信息泛称。"""
-
-        tokens = set(_LATIN_TOKEN_RE.findall(normalized))
-        for chunk in _CJK_CHUNK_RE.findall(normalized):
-            if len(chunk) == 1:
-                tokens.add(chunk)
-                continue
-            tokens.update(chunk[index : index + 2] for index in range(len(chunk) - 1))
-        return {token for token in tokens if token not in _GENERIC_TOKENS}
 
     @staticmethod
     def _rejected(

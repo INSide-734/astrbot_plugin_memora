@@ -5,7 +5,7 @@
 import asyncio
 import json
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -166,14 +166,20 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
         gate_snapshot_json: str | None = None,
         strict_summary: bool = False,
         candidate_selection: "TopicCandidateSelection | None" = None,
+        message_seqs: Sequence[int | None] | None = None,
     ) -> list[dict[str, Any]]:
         """处理对话并生成结构化记忆。
 
         ``strict_summary`` 只供统一总结 Worker 使用；结构无效时抛出
         :class:`SummaryParseError`，合法空候选返回空列表。
+
+        ``message_seqs`` 是窗口稳定序号，必须与 ``messages`` 同序等长；
+        缺失时来源证据仍带消息标识与指纹，但不带序号。
         """
         if not messages:
             raise ValueError("消息列表不能为空")
+        if message_seqs is not None and len(message_seqs) != len(messages):
+            raise ValueError("message_seqs 必须与 messages 等长")
         profile, gate_enabled = resolve_reflection_gate(
             self._gate_runtime,
             is_group_chat=is_group_chat,
@@ -433,6 +439,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                         messages,
                         is_group_chat=is_group_chat,
                         profile=profile,
+                        message_seqs=message_seqs,
                     )
                     if grounding.requires_judge:
                         grounding = await self.resolve_grounding_judge(
@@ -443,12 +450,18 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                             importance=mem_importance,
                         )
                 else:
-                    # 门禁关闭时跳过来源校验，候选按已接地放行。
+                    # 门禁关闭时跳过判定，但仍把受控引用解析为来源证据。
                     grounding = GroundingResult(
                         allowed=True,
                         status="grounded",
                         reason_codes=(),
-                        evidence=[],
+                        evidence=self.grounding_validator.resolve_evidence(
+                            mem,
+                            messages,
+                            is_group_chat=is_group_chat,
+                            profile=profile,
+                            message_seqs=message_seqs,
+                        ),
                     )
                 mem_metadata["grounding_status"] = grounding.status
                 mem_metadata["grounding_reason_codes"] = list(grounding.reason_codes)

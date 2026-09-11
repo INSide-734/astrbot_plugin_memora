@@ -369,6 +369,10 @@ async def store_reflection_candidates(
                             "source_provenance_complete"
                         ),
                     )
+                    # canonical metadata 固化 claim 窗口边界，使单条证据
+                    # 脱离 job 也能定位来源区间；取值只认已校验的 fence。
+                    metadata["source_start_seq"] = source_fence.start_seq
+                    metadata["source_end_seq"] = source_fence.end_seq
                 write_kwargs: dict[str, Any] = {
                     "content": memory["content"],
                     "session_id": session_id,

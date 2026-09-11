@@ -82,6 +82,8 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - `QualityValidator` 规范 `summary/topics/key_facts/sentiment/importance`；重要性范围为 `[0,1]`，非法值回退 `0.5`。
 - `ConversationFormatter` 的普通格式保留发送者、ID、秒级时间并给 bot 加前缀；compact 格式用于成本敏感路径。
 - `format_conversation_with_source_refs()` 增加稳定 `S0..S<n>` 标签和原始正文 `chars` 长度；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。抽取结果保持引用正文的主要语言；日期规范化只接受正文绝对日期、明确相对日期或消息时间戳锚定的确定性推导，普通数字继续严格匹配。
+- 来源证据必须带稳定身份与角色：`grounding_evidence.py` 把引用解析为 `message_id`、`message_seq`（调用方给出窗口序号时）、`role`、`start/end` 与 `message_fingerprint`；`grounding_checks.py` 只把 `user` 角色片段当作支持正文，群聊主体按稳定标识分组、同名标签在多主体间不可用于归属。仅由 `assistant`/`system` 片段支撑的声明以 `grounding_user_source_missing` 隔离，不得写 canonical。
+- `SummaryWorker` 把 `SourceWindow.message_seqs` 传给 `MemoryProcessor.process_conversation(message_seqs=...)`；长度不一致按来源不可信处理。门禁关闭时仍调用 `resolve_evidence()` 绑定证据，但沿用既有放行处置。
 - `StorageBuilder`：群聊 `privacy_level=public`，私聊 `confidential`；内容优先 canonical summary，否则使用对话摘录。
 
 ## 话题分割协议
