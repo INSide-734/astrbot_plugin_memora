@@ -13,10 +13,16 @@ Memora 的所有重要变更都记录在此文件中。
 - 新增来源角色门：只有 `user` 角色的引用片段可以作为事实的支持正文，仅由助手复述或系统内容支撑的声明以新原因码 `grounding_user_source_missing` 进入隔离，不再写入 canonical，也不生成 Atom 或图关系。
 - 群聊主体改为按稳定身份标识分组：显示名不再充当主体键，昵称相同但标识不同的成员无法互相顶替；`participants` 只有在能唯一对应某个稳定主体时才用于归属判定。
 - 门禁关闭（`security.guardrails_enabled=false`）时仍解析并绑定来源证据，使关闭该校验的部署同样保留消息标识、角色与窗口序号。
+- 注入决策摘要补齐选择器收益与预算利用率：窗口聚合新增 `selected_count_total`、`dropped_count_total`、`truncated_count_total`、`effective_budget_chars_avg`、`budget_utilization_avg`、`budget_utilization_p95`，`cost_trend` 每小时桶同步带上选择/丢弃合计与利用率均值；Dashboard 概览页新增选择/丢弃卡片与预算利用率图表序列。
+
+### 变更
+
+- `recall_engine.top_k` 默认检索条数由 5 调整为 6：检索结果是注入选择器的候选池，需要不小于各预设的 `max_memories`（quality 预设为 6），否则默认配置下该容量不可达。已持久化的配置不受影响。
 
 ### 修复
 
 - 修复持久化证据复核可能把证据交换给其它主体的问题：带 `message_id` 的证据只接受「消息标识 + 指纹」联合命中，未命中即按来源变更拒绝；只有缺少标识的旧证据才回退到指纹定位。
+- 注入载荷不再重复输出正文已经包含的 `key_facts`，消除重复注入带来的额外字符成本与噪声（#65）。
 
 ### 测试
 

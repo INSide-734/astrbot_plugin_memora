@@ -64,6 +64,9 @@ export interface InjectionCostPoint {
   decision_count: number;
   payload_chars_p95: number;
   provider_fallback_rate: number;
+  selected_count_total: number;
+  dropped_count_total: number;
+  budget_utilization_avg: number;
 }
 
 export interface InjectionStrategySummary {
@@ -71,6 +74,12 @@ export interface InjectionStrategySummary {
   decision_count: number;
   payload_chars_p95: number;
   provider_fallback_rate: number;
+  selected_count_total: number;
+  dropped_count_total: number;
+  truncated_count_total: number;
+  effective_budget_chars_avg: number;
+  budget_utilization_avg: number;
+  budget_utilization_p95: number;
   preset_distribution: Partial<Record<InjectionPresetName, number>>;
   cost_trend: InjectionCostPoint[];
   recent_events: InjectionRecentEvent[];

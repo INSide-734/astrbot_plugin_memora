@@ -368,6 +368,12 @@ async def test_empty_summary_has_complete_zero_shape(tmp_path) -> None:
             "decision_count": 0,
             "payload_chars_p95": 0,
             "provider_fallback_rate": 0.0,
+            "selected_count_total": 0,
+            "dropped_count_total": 0,
+            "truncated_count_total": 0,
+            "effective_budget_chars_avg": 0,
+            "budget_utilization_avg": 0.0,
+            "budget_utilization_p95": 0.0,
             "preset_distribution": {},
             "cost_trend": [],
             "recent_events": [],
@@ -407,6 +413,10 @@ async def test_summary_reports_deterministic_p95_distribution_fallback_and_event
                 "decision_count": 20,
                 "payload_chars_p95": 19,
                 "provider_fallback_rate": pytest.approx(4 / 20),
+                # 该用例的记录分母均为 0，不参与利用率统计
+                "selected_count_total": 0,
+                "dropped_count_total": 0,
+                "budget_utilization_avg": 0.0,
             }
         ]
         assert summary["recent_events"]
@@ -415,6 +425,92 @@ async def test_summary_reports_deterministic_p95_distribution_fallback_and_event
             "query" not in event and "content" not in event
             for event in summary["recent_events"]
         )
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_summary_aggregates_selector_yield_and_budget_utilization(
+    tmp_path,
+) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    now = 1_000_000
+    try:
+        await store.insert_many(
+            [
+                record(
+                    "yield-a",
+                    now - 1,
+                    selected_count=3,
+                    dropped_count=1,
+                    truncated_count=0,
+                    effective_budget_chars=1000,
+                    actual_payload_chars=500,
+                ),
+                record(
+                    "yield-b",
+                    now - 2,
+                    selected_count=1,
+                    dropped_count=4,
+                    truncated_count=2,
+                    effective_budget_chars=1001,
+                    actual_payload_chars=1000,
+                ),
+                record(
+                    "yield-c",
+                    now - 3,
+                    selected_count=0,
+                    dropped_count=0,
+                    truncated_count=0,
+                    effective_budget_chars=0,
+                    actual_payload_chars=0,
+                ),
+            ]
+        )
+        summary = await store.summary(window="24h", now_ms=now)
+
+        assert summary["selected_count_total"] == 4  # 3 + 1 + 0
+        assert summary["dropped_count_total"] == 5  # 1 + 4 + 0
+        assert summary["truncated_count_total"] == 2  # 0 + 2 + 0
+        assert summary["effective_budget_chars_avg"] == 667  # (1000 + 1001 + 0) / 3
+        # 千分比整数除法：(500 * 1000) / 1000 = 500、(1000 * 1000) / 1001 = 999；
+        # 分母为 0 的决定不参与统计，也不以 0 稀释均值。
+        assert summary["budget_utilization_avg"] == pytest.approx(0.7495)
+        # 两个比值取下标 max(0, ceil(2 * 0.95) - 1) = 1
+        assert summary["budget_utilization_p95"] == pytest.approx(0.999)
+        assert summary["cost_trend"] == [
+            {
+                "bucket_ms": 0,
+                "decision_count": 3,
+                "payload_chars_p95": 1000,
+                "provider_fallback_rate": 0.0,
+                "selected_count_total": 4,
+                "dropped_count_total": 5,
+                "budget_utilization_avg": pytest.approx(0.7495),
+            }
+        ]
+        assert summary["recent_events"][0]["decision_id"] == "yield-a"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_summary_rounds_effective_budget_average_half_up(tmp_path) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    now = 1_000_000
+    try:
+        await store.insert_many(
+            [
+                record("avg-a", now - 1, effective_budget_chars=1000),
+                record("avg-b", now - 2, effective_budget_chars=1001),
+            ]
+        )
+        summary = await store.summary(window="24h", now_ms=now)
+
+        # AVG(1000, 1001) = 1000.5 向上取整为 1001，而不是银行家舍入的 1000。
+        assert summary["effective_budget_chars_avg"] == 1001
     finally:
         await store.close()
 

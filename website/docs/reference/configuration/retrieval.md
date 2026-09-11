@@ -15,7 +15,7 @@ pageClass: config-reference-page
 
 | 配置项 | 类型 | 默认值 | 选项与范围 | 说明 |
 |---|---|---|---|---|
-| `"recall_engine.top_k"` | `"int"` | `5` | 最小值：`0`<br>最大值：`50` | 单次召回数量<br><small>每次检索返回的最相关记忆条数。设为 0 可跳过自动召回和注入，仅保留历史注入片段清理。建议 3-10。</small> |
+| `"recall_engine.top_k"` | `"int"` | `6` | 最小值：`0`<br>最大值：`50` | 单次召回数量<br><small>每次检索返回的最相关记忆条数，同时是注入选择器的候选池：需不小于各注入预设的 max_memories（最大为 quality 预设的 6），建议 6-10。设为 0 可跳过自动召回和注入，仅保留历史注入片段清理。</small> |
 | `"recall_engine.max_k"` | `"int"` | `10` | 最小值：`1`<br>最大值：`50` | 主动检索最大数量<br><small>Agent 主动调用长期记忆检索工具时允许返回的最大记忆条数。用于限制工具单次召回规模，建议 5-10。</small> |
 | `"recall_engine.importance_weight"` | `"float"` | `1` | 最小值：`0`<br>最大值：`10` | 重要性权重<br><small>混合评分中记忆重要性的占比系数。值越大，重要性高的记忆越优先被召回。</small> |
 | `"recall_engine.fallback_to_vector"` | `"bool"` | `true` | - | 降级到纯向量检索<br><small>混合检索失败或结果为空时，自动降级为纯向量检索。建议开启。</small> |

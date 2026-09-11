@@ -145,7 +145,7 @@ class MemorySearchTool(AgentFunctionTool):
             recall_session_id = session_id if use_session_filtering else None
             recall_persona_id = persona_id if use_persona_filtering else None
 
-            default_k = int(self.config_manager.get("recall_engine.top_k", 5))
+            default_k = int(self.config_manager.get("recall_engine.top_k", 6))
             max_k = int(self.config_manager.get("recall_engine.max_k", 10))
             requested_k = default_k if k is None else k
             try:

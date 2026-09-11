@@ -164,6 +164,12 @@ async def test_summary_validates_window_and_returns_allowlisted_store_result() -
         "decision_count": 1,
         "payload_chars_p95": 640,
         "provider_fallback_rate": 0.0,
+        "selected_count_total": 3,
+        "dropped_count_total": 2,
+        "truncated_count_total": 1,
+        "effective_budget_chars_avg": 1_200,
+        "budget_utilization_avg": 0.625,
+        "budget_utilization_p95": 0.75,
         "preset_distribution": {"balanced": 1},
         "cost_trend": [
             {
@@ -171,6 +177,9 @@ async def test_summary_validates_window_and_returns_allowlisted_store_result() -
                 "decision_count": 1,
                 "payload_chars_p95": 640,
                 "provider_fallback_rate": 0.0,
+                "selected_count_total": 3,
+                "dropped_count_total": 2,
+                "budget_utilization_avg": 0.625,
                 "query": "must be removed",
             }
         ],
@@ -201,10 +210,56 @@ async def test_summary_validates_window_and_returns_allowlisted_store_result() -
         "message": "window must be one of 1h, 24h, 7d, 30d",
     }
     assert valid["status"] == "ok"
+    assert set(valid["data"]) == {
+        "window",
+        "decision_count",
+        "payload_chars_p95",
+        "provider_fallback_rate",
+        "selected_count_total",
+        "dropped_count_total",
+        "truncated_count_total",
+        "effective_budget_chars_avg",
+        "budget_utilization_avg",
+        "budget_utilization_p95",
+        "preset_distribution",
+        "cost_trend",
+        "recent_events",
+    }
+    assert valid["data"]["selected_count_total"] == 3
+    assert valid["data"]["dropped_count_total"] == 2
+    assert valid["data"]["truncated_count_total"] == 1
+    assert valid["data"]["effective_budget_chars_avg"] == 1_200
+    assert valid["data"]["budget_utilization_avg"] == 0.625
+    assert valid["data"]["budget_utilization_p95"] == 0.75
+    assert valid["data"]["cost_trend"][0]["selected_count_total"] == 3
+    assert valid["data"]["cost_trend"][0]["dropped_count_total"] == 2
+    assert valid["data"]["cost_trend"][0]["budget_utilization_avg"] == 0.625
     assert "raw_rows" not in valid["data"]
     assert "query" not in valid["data"]["cost_trend"][0]
     assert "prompt" not in valid["data"]["recent_events"][0]
     store.summary.assert_awaited_once_with("24h")
+
+
+def test_safe_summary_fallback_keeps_the_stable_zero_contract() -> None:
+    from core.platform.transport.page_api.injection_strategy_api import (
+        InjectionStrategyApiMixin,
+    )
+
+    assert InjectionStrategyApiMixin._safe_summary(None) == {
+        "window": "24h",
+        "decision_count": 0,
+        "payload_chars_p95": 0,
+        "provider_fallback_rate": 0.0,
+        "selected_count_total": 0,
+        "dropped_count_total": 0,
+        "truncated_count_total": 0,
+        "effective_budget_chars_avg": 0,
+        "budget_utilization_avg": 0.0,
+        "budget_utilization_p95": 0.0,
+        "preset_distribution": {},
+        "cost_trend": [],
+        "recent_events": [],
+    }
 
 
 @pytest.mark.asyncio

@@ -219,7 +219,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                     )
                     await self._enforce_limit_cb(session_id)
 
-                top_k = self._config_manager.get("recall_engine.top_k", 5)
+                top_k = self._config_manager.get("recall_engine.top_k", 6)
                 if top_k <= 0:
                     recall_status = "skipped"
                     recall_reason = "top_k_disabled"

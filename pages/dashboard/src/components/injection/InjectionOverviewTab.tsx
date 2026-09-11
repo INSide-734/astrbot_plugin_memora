@@ -242,6 +242,20 @@ export function InjectionOverviewTab({
         maximumFractionDigits: 1,
       }),
     },
+    {
+      label: t("injection.overview.selectedTotal"),
+      value: formatDashboardNumber(data.selected_count_total, locale),
+    },
+    {
+      label: t("injection.overview.droppedTotal"),
+      value: formatDashboardNumber(data.dropped_count_total, locale),
+    },
+    {
+      label: t("injection.overview.budgetUtilization"),
+      value: formatDashboardPercent(data.budget_utilization_avg, locale, {
+        maximumFractionDigits: 1,
+      }),
+    },
   ];
 
   const presetRows = catalog.presets.map((item) => ({
@@ -276,6 +290,10 @@ export function InjectionOverviewTab({
     provider_fallback_rate: {
       label: t("injection.overview.fallbackRate"),
       color: "var(--destructive)",
+    },
+    budget_utilization_avg: {
+      label: t("injection.overview.budgetUtilization"),
+      color: "var(--chart-2)",
     },
   };
 
@@ -382,6 +400,7 @@ export function InjectionOverviewTab({
                     formatDashboardDateTime(point.bucket_ms, locale),
                     `${t("injection.overview.payloadP95")} ${formatDashboardNumber(point.payload_chars_p95, locale)}`,
                     `${t("injection.overview.fallbackRate")} ${formatDashboardPercent(point.provider_fallback_rate, locale, { maximumFractionDigits: 1 })}`,
+                    `${t("injection.overview.budgetUtilization")} ${formatDashboardPercent(point.budget_utilization_avg, locale, { maximumFractionDigits: 1 })}`,
                   ].join(": ")).join("; ")}
                 </p>
                 <ChartContainer
@@ -404,7 +423,7 @@ export function InjectionOverviewTab({
                       axisLine={false}
                     />
                     <YAxis
-                      yAxisId="fallback"
+                      yAxisId="ratio"
                       orientation="right"
                       domain={[0, 1]}
                       tickFormatter={(value) => formatDashboardPercent(
@@ -430,12 +449,23 @@ export function InjectionOverviewTab({
                       isAnimationActive={false}
                     />
                     <Line
-                      yAxisId="fallback"
+                      yAxisId="ratio"
                       type="monotone"
                       dataKey="provider_fallback_rate"
                       name={t("injection.overview.fallbackRate")}
                       stroke="var(--color-provider_fallback_rate)"
                       strokeWidth={2}
+                      dot={false}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      yAxisId="ratio"
+                      type="monotone"
+                      dataKey="budget_utilization_avg"
+                      name={t("injection.overview.budgetUtilization")}
+                      stroke="var(--color-budget_utilization_avg)"
+                      strokeWidth={2}
+                      strokeDasharray="4 4"
                       dot={false}
                       isAnimationActive={false}
                     />

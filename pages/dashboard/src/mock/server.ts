@@ -1316,11 +1316,31 @@ const INJECTION_LIST_QUERY_FIELDS = new Set([
   "outcome",
 ]);
 
-function payloadP95(rows: InjectionDecisionDetail[]): number {
-  const values = rows
-    .map((row) => row.actual_payload_chars)
-    .sort((left, right) => left - right);
-  return values[Math.max(0, Math.ceil(values.length * 0.95) - 1)] ?? 0;
+function p95(values: number[]): number {
+  const ordered = [...values].sort((left, right) => left - right);
+  return ordered[Math.max(0, Math.ceil(ordered.length * 0.95) - 1)] ?? 0;
+}
+
+/**
+ * 逐决策预算利用率（千分比整数），分母为 0 的记录不参与聚合。
+ *
+ * 与后端 SQLite `(actual_payload_chars * 1000) / effective_budget_chars`
+ * 的整数除法口径保持一致。
+ */
+function budgetUtilizationPerMille(
+  rows: InjectionDecisionDetail[],
+): number[] {
+  return rows
+    .map((row) => row.effective_budget_chars > 0
+      ? Math.trunc((row.actual_payload_chars * 1000) / row.effective_budget_chars)
+      : null)
+    .filter((value): value is number => value !== null);
+}
+
+function meanPerMille(values: number[]): number {
+  if (!values.length) return 0;
+  const total = values.reduce((sum, value) => sum + value, 0);
+  return total / values.length / 1000;
 }
 
 function toInjectionRecentEvent(
@@ -1386,9 +1406,18 @@ function buildInjectionCostTrend(
     .map(([bucket_ms, items]) => ({
       bucket_ms,
       decision_count: items.length,
-      payload_chars_p95: payloadP95(items),
+      payload_chars_p95: p95(items.map((item) => item.actual_payload_chars)),
       provider_fallback_rate: items.filter((item) => item.fallback_applied).length
         / items.length,
+      selected_count_total: items.reduce(
+        (total, item) => total + item.selected_count,
+        0,
+      ),
+      dropped_count_total: items.reduce(
+        (total, item) => total + item.dropped_count,
+        0,
+      ),
+      budget_utilization_avg: meanPerMille(budgetUtilizationPerMille(items)),
     }));
 }
 
@@ -1470,13 +1499,34 @@ function handleInjectionSummary(params: Record<string, string>): ApiResponse {
   const rows = INJECTION_DECISIONS.filter(
     (row) => row.created_at_ms >= INJECTION_MOCK_NOW_MS - INJECTION_WINDOWS_MS[window],
   );
+  const utilization = budgetUtilizationPerMille(rows);
   return ok({
     window,
     decision_count: rows.length,
-    payload_chars_p95: payloadP95(rows),
+    payload_chars_p95: p95(rows.map((row) => row.actual_payload_chars)),
     provider_fallback_rate: rows.length
       ? rows.filter((row) => row.fallback_applied).length / rows.length
       : 0,
+    selected_count_total: rows.reduce(
+      (total, row) => total + row.selected_count,
+      0,
+    ),
+    dropped_count_total: rows.reduce(
+      (total, row) => total + row.dropped_count,
+      0,
+    ),
+    truncated_count_total: rows.reduce(
+      (total, row) => total + row.truncated_count,
+      0,
+    ),
+    effective_budget_chars_avg: rows.length
+      ? Math.round(
+        rows.reduce((total, row) => total + row.effective_budget_chars, 0)
+        / rows.length,
+      )
+      : 0,
+    budget_utilization_avg: meanPerMille(utilization),
+    budget_utilization_p95: p95(utilization) / 1000,
     preset_distribution: Object.fromEntries(
       INJECTION_PRESETS.map((preset) => [
         preset,
