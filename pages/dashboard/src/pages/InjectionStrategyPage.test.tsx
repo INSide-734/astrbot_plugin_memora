@@ -126,12 +126,21 @@ function summaryFixture(
     decision_count: 1,
     payload_chars_p95: 600,
     provider_fallback_rate: 0,
+    selected_count_total: 12,
+    dropped_count_total: 5,
+    truncated_count_total: 1,
+    effective_budget_chars_avg: 1_200,
+    budget_utilization_avg: 0.375,
+    budget_utilization_p95: 0.625,
     preset_distribution: { balanced: 1 },
     cost_trend: [{
       bucket_ms: Date.UTC(2026, 6, 15, 8),
       decision_count: 1,
       payload_chars_p95: 600,
       provider_fallback_rate: 0,
+      selected_count_total: 12,
+      dropped_count_total: 5,
+      budget_utilization_avg: 0.375,
     }],
     recent_events: [decisionEvent()],
     ...overrides,
@@ -441,6 +450,9 @@ describe("InjectionStrategyPage", () => {
     expect(screen.getByText("42")).toBeTruthy();
     expect(screen.getByText("1,180")).toBeTruthy();
     expect(screen.getByText("12.5%")).toBeTruthy();
+    expect(screen.getByText("12")).toBeTruthy();
+    expect(screen.getByText("5")).toBeTruthy();
+    expect(screen.getByText("37.5%")).toBeTruthy();
 
     fireEvent.click(
       screen.getByRole("combobox", { name: "injection.overview.window" }),
@@ -495,6 +507,12 @@ describe("InjectionStrategyPage", () => {
       decision_count: 0,
       payload_chars_p95: 0,
       provider_fallback_rate: 0,
+      selected_count_total: 0,
+      dropped_count_total: 0,
+      truncated_count_total: 0,
+      effective_budget_chars_avg: 0,
+      budget_utilization_avg: 0,
+      budget_utilization_p95: 0,
       preset_distribution: {},
       cost_trend: [],
       recent_events: [],
@@ -516,6 +534,9 @@ describe("InjectionStrategyPage", () => {
           decision_count: 5,
           payload_chars_p95: 1_180,
           provider_fallback_rate: 0.125,
+          selected_count_total: 20,
+          dropped_count_total: 8,
+          budget_utilization_avg: 0.25,
         },
       ],
     });
@@ -535,8 +556,11 @@ describe("InjectionStrategyPage", () => {
     expect(costChart).toBeTruthy();
     expect(screen.getByText(/1,180/)).toBeTruthy();
     expect(screen.getByText(/12\.5%/)).toBeTruthy();
+    expect(screen.getByText(/injection\.overview\.budgetUtilization 25%/)).toBeTruthy();
     expect(screen.getAllByText("injection.overview.payloadP95").length).toBeGreaterThan(0);
     expect(screen.getAllByText("injection.overview.fallbackRate").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("injection.overview.budgetUtilization").length)
+      .toBeGreaterThan(0);
   });
 
   it("shows the cost data point nearest the hovered hour", async () => {
@@ -548,18 +572,27 @@ describe("InjectionStrategyPage", () => {
           decision_count: 1,
           payload_chars_p95: 111,
           provider_fallback_rate: 0,
+          selected_count_total: 1,
+          dropped_count_total: 0,
+          budget_utilization_avg: 0.1,
         },
         {
           bucket_ms: new Date(2026, 6, 15, 12).getTime(),
           decision_count: 1,
           payload_chars_p95: 222,
           provider_fallback_rate: 0.5,
+          selected_count_total: 2,
+          dropped_count_total: 1,
+          budget_utilization_avg: 0.2,
         },
         {
           bucket_ms: new Date(2026, 6, 15, 16).getTime(),
           decision_count: 1,
           payload_chars_p95: 333,
           provider_fallback_rate: 1,
+          selected_count_total: 3,
+          dropped_count_total: 2,
+          budget_utilization_avg: 0.3,
         },
       ],
     });

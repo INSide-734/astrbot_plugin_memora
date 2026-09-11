@@ -28,7 +28,7 @@ class RecallEngineConfig(BaseModel):
     """回忆引擎配置"""
 
     top_k: int = Field(
-        default=5, ge=0, le=50, description="返回记忆数量。设为 0 则跳过自动召回和注入"
+        default=6, ge=0, le=50, description="返回记忆数量。设为 0 则跳过自动召回和注入"
     )
     pre_llm_soft_budget_ms: int = Field(
         default=800,

@@ -5,6 +5,7 @@ import type {
   InjectionDecisionDetail,
   InjectionDecisionListItem,
   InjectionDecisionPage,
+  InjectionStrategySummary,
 } from "@/types/injection";
 import { handleApiGet } from "@/mock/server";
 import { INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS } from "@/mock/data";
@@ -295,6 +296,43 @@ describe("mock injection strategy API", () => {
     for (const row of INJECTION_DECISIONS) {
       expectSanitizedInjectionDetail(row);
     }
+  });
+
+  it("aggregates selector yield and budget utilization with backend semantics", async () => {
+    const hourly = await handleApiGet("page/injection-strategy/summary", {
+      window: "1h",
+    });
+    // 1h 窗口含 3 条决策：tool_first 分母为 0 不参与利用率，
+    // 另外两条千分比整数除法为 416 与 288。
+    expect(hourly.data).toMatchObject({
+      decision_count: 3,
+      selected_count_total: 3,
+      dropped_count_total: 3,
+      truncated_count_total: 1,
+      effective_budget_chars_avg: 667,
+      budget_utilization_avg: 0.352,
+      budget_utilization_p95: 0.416,
+    });
+
+    const daily = (await handleApiGet("page/injection-strategy/summary", {
+      window: "24h",
+    })).data as InjectionStrategySummary;
+    expect(daily.decision_count).toBe(49);
+    expect(daily.selected_count_total).toBe(69);
+    expect(daily.dropped_count_total).toBe(48);
+    expect(daily.truncated_count_total).toBe(24);
+    expect(daily.effective_budget_chars_avg).toBe(1_078);
+    expect(daily.budget_utilization_avg).toBeCloseTo(0.5171667, 6);
+    expect(daily.budget_utilization_p95).toBe(1);
+    // 最早的小时桶：一条 quality 决策（931/2400）与一条 tool_first 决策（分母为 0）。
+    expect(daily.cost_trend[0]).toMatchObject({
+      decision_count: 2,
+      payload_chars_p95: 931,
+      provider_fallback_rate: 0.5,
+      selected_count_total: 2,
+      dropped_count_total: 2,
+      budget_utilization_avg: 0.387,
+    });
   });
 
   it("applies all eight filters before true pagination", async () => {

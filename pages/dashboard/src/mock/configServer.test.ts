@@ -102,7 +102,7 @@ describe("createMockConfigServer", () => {
     const initial = fullState(server);
     const config = initial.config as ConfigObject;
     expect(config.recall_engine).toMatchObject({
-      top_k: 5,
+      top_k: 6,
       pre_llm_soft_budget_ms: 800,
     });
 
@@ -121,7 +121,7 @@ describe("createMockConfigServer", () => {
     });
     expect(
       (fullState(server).config.recall_engine as ConfigObject).top_k
-    ).toBe(5);
+    ).toBe(6);
   });
 
   it("exposes quality.gate scalar leaves and seeds the composite gate config", () => {

@@ -13,6 +13,9 @@ from ..domain.models import InjectionDecisionRecord
 
 _DAY_MS = 86_400_000
 _HOUR_MS = 3_600_000
+# Budget utilization is grouped as integer per-mille ratios so SQLite never
+# aggregates floating point payload/budget divisions.
+_RATIO_SCALE = 1000
 _WINDOW_MS = {
     "1h": _HOUR_MS,
     "24h": _DAY_MS,
@@ -52,6 +55,21 @@ _COLUMNS = (
 _SELECT_COLUMNS = ", ".join(_COLUMNS)
 _LIST_COLUMNS = tuple(column for column in _COLUMNS if column != "reason_codes_json")
 _SELECT_LIST_COLUMNS = ", ".join(_LIST_COLUMNS)
+_BUCKET_SUMMARY_SQL = (
+    "SELECT (created_at_ms / ?) * ? AS bucket_ms, "
+    "COUNT(*) AS decision_count, "
+    "SUM(fallback_applied) AS fallback_count, "
+    "SUM(selected_count) AS selected_count_total, "
+    "SUM(dropped_count) AS dropped_count_total, "
+    "SUM(truncated_count) AS truncated_count_total, "
+    "SUM(effective_budget_chars) AS effective_budget_chars_total, "
+    "GROUP_CONCAT(actual_payload_chars) AS payload_chars_csv, "
+    "GROUP_CONCAT(CASE WHEN effective_budget_chars > 0 THEN "
+    f"(actual_payload_chars * {_RATIO_SCALE}) / effective_budget_chars END) "
+    "AS budget_utilization_csv "
+    "FROM injection_decisions WHERE created_at_ms >= ? "
+    "GROUP BY bucket_ms ORDER BY bucket_ms"
+)
 INJECTION_DECISION_SORT_COLUMNS = {
     "created_at_ms": "created_at_ms",
     "routing_mode": "routing_mode COLLATE NOCASE",
@@ -113,6 +131,20 @@ class CleanupResult:
 
     deleted_expired: int
     deleted_overflow: int
+
+
+@dataclass(frozen=True, slots=True)
+class _BucketAggregate:
+    """Window totals and hourly rows derived from the bucket aggregation."""
+
+    payload_values: list[int]
+    fallback_count: int
+    cost_trend: list[dict[str, Any]]
+    selected_count_total: int
+    dropped_count_total: int
+    truncated_count_total: int
+    effective_budget_chars_total: int
+    budget_utilization_per_mille: list[int]
 
 
 class InjectionDecisionStore(BaseStore):
@@ -291,42 +323,91 @@ class InjectionDecisionStore(BaseStore):
         return ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)]
 
     @staticmethod
+    def _per_mille_values(csv: Any) -> list[int]:
+        text = str(csv or "")
+        if not text:
+            return []
+        return [int(value) for value in text.split(",")]
+
+    @staticmethod
+    def _mean_ratio(per_mille_values: list[int]) -> float:
+        if not per_mille_values:
+            return 0.0
+        return sum(per_mille_values) / len(per_mille_values) / _RATIO_SCALE
+
+    @staticmethod
+    def _rounded_mean(total: int, count: int) -> int:
+        if count <= 0:
+            return 0
+        return math.floor(total / count + 0.5)
+
+    @staticmethod
     def _empty_summary(window: str) -> dict[str, Any]:
         return {
             "window": window,
             "decision_count": 0,
             "payload_chars_p95": 0,
             "provider_fallback_rate": 0.0,
+            "selected_count_total": 0,
+            "dropped_count_total": 0,
+            "truncated_count_total": 0,
+            "effective_budget_chars_avg": 0,
+            "budget_utilization_avg": 0.0,
+            "budget_utilization_p95": 0.0,
             "preset_distribution": {},
             "cost_trend": [],
             "recent_events": [],
         }
 
     @classmethod
-    def _summarize_buckets(
-        cls,
-        bucket_rows: list[dict[str, Any]],
-    ) -> tuple[list[int], int, list[dict[str, Any]]]:
+    def _summarize_buckets(cls, bucket_rows: list[dict[str, Any]]) -> _BucketAggregate:
         payload_values: list[int] = []
+        utilization_values: list[int] = []
         fallback_count = 0
+        selected_count_total = 0
+        dropped_count_total = 0
+        truncated_count_total = 0
+        effective_budget_chars_total = 0
         cost_trend: list[dict[str, Any]] = []
         for row in bucket_rows:
             bucket_values = [
                 int(value) for value in str(row["payload_chars_csv"]).split(",")
             ]
+            bucket_utilization = cls._per_mille_values(row["budget_utilization_csv"])
             payload_values.extend(bucket_values)
+            utilization_values.extend(bucket_utilization)
             bucket_count = int(row["decision_count"])
             bucket_fallback_count = int(row["fallback_count"] or 0)
+            bucket_selected = int(row["selected_count_total"] or 0)
+            bucket_dropped = int(row["dropped_count_total"] or 0)
+            bucket_truncated = int(row["truncated_count_total"] or 0)
+            bucket_budget = int(row["effective_budget_chars_total"] or 0)
             fallback_count += bucket_fallback_count
+            selected_count_total += bucket_selected
+            dropped_count_total += bucket_dropped
+            truncated_count_total += bucket_truncated
+            effective_budget_chars_total += bucket_budget
             cost_trend.append(
                 {
                     "bucket_ms": int(row["bucket_ms"]),
                     "decision_count": bucket_count,
                     "payload_chars_p95": cls._p95(bucket_values),
                     "provider_fallback_rate": bucket_fallback_count / bucket_count,
+                    "selected_count_total": bucket_selected,
+                    "dropped_count_total": bucket_dropped,
+                    "budget_utilization_avg": cls._mean_ratio(bucket_utilization),
                 }
             )
-        return payload_values, fallback_count, cost_trend
+        return _BucketAggregate(
+            payload_values=payload_values,
+            fallback_count=fallback_count,
+            cost_trend=cost_trend,
+            selected_count_total=selected_count_total,
+            dropped_count_total=dropped_count_total,
+            truncated_count_total=truncated_count_total,
+            effective_budget_chars_total=effective_budget_chars_total,
+            budget_utilization_per_mille=utilization_values,
+        )
 
     async def summary(
         self, window: str = "24h", now_ms: int | None = None
@@ -340,18 +421,12 @@ class InjectionDecisionStore(BaseStore):
             now_ms = int(time.time() * 1000)
         cutoff_ms = now_ms - _WINDOW_MS[window]
         bucket_rows = await self._fetch_all(
-            "SELECT (created_at_ms / ?) * ? AS bucket_ms, "
-            "COUNT(*) AS decision_count, SUM(fallback_applied) AS fallback_count, "
-            "GROUP_CONCAT(actual_payload_chars) AS payload_chars_csv "
-            "FROM injection_decisions WHERE created_at_ms >= ? "
-            "GROUP BY bucket_ms ORDER BY bucket_ms",
+            _BUCKET_SUMMARY_SQL,
             (_HOUR_MS, _HOUR_MS, cutoff_ms),
         )
         if not bucket_rows:
             return self._empty_summary(window)
-        payload_values, fallback_count, cost_trend = self._summarize_buckets(
-            bucket_rows
-        )
+        aggregate = self._summarize_buckets(bucket_rows)
 
         preset_rows = await self._fetch_all(
             "SELECT resolved_preset, COUNT(*) AS decision_count "
@@ -366,17 +441,29 @@ class InjectionDecisionStore(BaseStore):
             "ORDER BY created_at_ms DESC, decision_id DESC LIMIT 15",
             (cutoff_ms,),
         )
-        count = len(payload_values)
+        count = len(aggregate.payload_values)
         return {
             "window": window,
             "decision_count": count,
-            "payload_chars_p95": self._p95(payload_values),
-            "provider_fallback_rate": fallback_count / count,
+            "payload_chars_p95": self._p95(aggregate.payload_values),
+            "provider_fallback_rate": aggregate.fallback_count / count,
+            "selected_count_total": aggregate.selected_count_total,
+            "dropped_count_total": aggregate.dropped_count_total,
+            "truncated_count_total": aggregate.truncated_count_total,
+            "effective_budget_chars_avg": self._rounded_mean(
+                aggregate.effective_budget_chars_total,
+                count,
+            ),
+            "budget_utilization_avg": self._mean_ratio(
+                aggregate.budget_utilization_per_mille
+            ),
+            "budget_utilization_p95": self._p95(aggregate.budget_utilization_per_mille)
+            / _RATIO_SCALE,
             "preset_distribution": {
                 str(row["resolved_preset"]): int(row["decision_count"])
                 for row in preset_rows
             },
-            "cost_trend": cost_trend,
+            "cost_trend": aggregate.cost_trend,
             "recent_events": [self._normalize_row(row) for row in recent_events],
         }
 

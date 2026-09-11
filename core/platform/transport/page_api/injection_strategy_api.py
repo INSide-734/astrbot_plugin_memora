@@ -76,6 +76,9 @@ _COST_POINT_FIELDS = (
     "decision_count",
     "payload_chars_p95",
     "provider_fallback_rate",
+    "selected_count_total",
+    "dropped_count_total",
+    "budget_utilization_avg",
 )
 
 
@@ -395,6 +398,12 @@ class InjectionStrategyApiMixin:
                 "decision_count": 0,
                 "payload_chars_p95": 0,
                 "provider_fallback_rate": 0.0,
+                "selected_count_total": 0,
+                "dropped_count_total": 0,
+                "truncated_count_total": 0,
+                "effective_budget_chars_avg": 0,
+                "budget_utilization_avg": 0.0,
+                "budget_utilization_p95": 0.0,
                 "preset_distribution": {},
                 "cost_trend": [],
                 "recent_events": [],
@@ -416,6 +425,12 @@ class InjectionStrategyApiMixin:
             "decision_count": summary.get("decision_count", 0),
             "payload_chars_p95": summary.get("payload_chars_p95", 0),
             "provider_fallback_rate": summary.get("provider_fallback_rate", 0.0),
+            "selected_count_total": summary.get("selected_count_total", 0),
+            "dropped_count_total": summary.get("dropped_count_total", 0),
+            "truncated_count_total": summary.get("truncated_count_total", 0),
+            "effective_budget_chars_avg": summary.get("effective_budget_chars_avg", 0),
+            "budget_utilization_avg": summary.get("budget_utilization_avg", 0.0),
+            "budget_utilization_p95": summary.get("budget_utilization_p95", 0.0),
             "preset_distribution": safe_distribution,
             "cost_trend": [
                 cls._allowlisted(item, _COST_POINT_FIELDS)

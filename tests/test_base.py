@@ -151,7 +151,7 @@ class TestGetDefaultConfig:
 
         config = get_default_config()
         re_cfg = config["recall_engine"]
-        assert re_cfg["top_k"] == 5
+        assert re_cfg["top_k"] == 6
         assert re_cfg["max_k"] == 10
         assert re_cfg["importance_weight"] == 1.0
         assert "injection_method" not in re_cfg
@@ -510,7 +510,7 @@ class TestConfigManager:
 
         mgr = ConfigManager()
         assert mgr.get("session_manager.max_sessions") == 100
-        assert mgr.get("recall_engine.top_k") == 5
+        assert mgr.get("recall_engine.top_k") == 6
 
     def test_merges_user_override_with_defaults(self) -> None:
         from core.platform.config import ConfigManager

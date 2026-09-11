@@ -343,6 +343,34 @@ class TestMemorySearchTool:
             assert second_call_k == 10
 
     @pytest.mark.asyncio
+    async def test_search_omitted_k_uses_configured_default(self):
+        """省略 k 时应使用 recall_engine.top_k，而不是固定在参数默认值。"""
+
+        mock_engine = MagicMock()
+        mock_engine.search_memories = AsyncMock(return_value=[])
+
+        event = _make_mock_event()
+        cm = _make_test_config_manager(
+            top_k=7, max_k=10, use_persona_filtering=False, use_session_filtering=False
+        )
+
+        with patch(
+            "core.platform.transport.tools.memory_search_tool.get_persona_id",
+            new_callable=AsyncMock,
+        ) as mock_gpi:
+            mock_gpi.return_value = "p-test"
+
+            tool = MemorySearchTool(
+                context=MagicMock(),
+                config_manager=cm,
+                memory_engine=mock_engine,
+            )
+
+            await _call_text(tool, event, query="q")
+
+        assert mock_engine.search_memories.call_args_list[0].kwargs["k"] == 7
+
+    @pytest.mark.asyncio
     async def test_search_catches_exceptions(self):
         """搜索普通异常应隔离为稳定错误。"""
         mock_engine = MagicMock()
