@@ -19,12 +19,6 @@ from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
 _ProcessorFactory = Callable[..., MemoryProcessor]
 
 
-def _quality_control() -> CostControl:
-    """构造允许一次人设解释额外调用的质量档成本门。"""
-
-    return CostControl(mode="quality", max_extra_llm_calls_per_turn=1)
-
-
 class TestMemoryProcessorInit:
     def test_init_default(self) -> None:
         proc = MemoryProcessor()
@@ -115,19 +109,6 @@ class TestBuildMemoryFromStructuredData:
         assert "importance" in result
         assert "atoms" in result
         assert result["metadata"]["schema_version"] == "v3"
-
-    def test_build_with_fallback_excerpt(self, processor: MemoryProcessor) -> None:
-        data = {
-            "summary": "摘要",
-            "key_facts": [],
-            "topics": [],
-            "sentiment": "neutral",
-            "importance": 0.5,
-        }
-        result = processor.build_memory_from_structured_data(
-            data, fallback_excerpt="fallback text here"
-        )
-        assert result["metadata"]["source_snippet"] is not None
 
     def test_build_group_chat(self, processor: MemoryProcessor) -> None:
         data = {
@@ -640,109 +621,6 @@ class TestMemoryProcessorTopicGuidance:
         guidance_file.write_text("Test guidance content", encoding="utf-8")
         result = MemoryProcessor._load_topic_guidance(tmp_path)
         assert result == "Test guidance content"
-
-
-class TestGeneratePersonaInterpretations:
-    @pytest.mark.asyncio
-    async def test_disabled_returns_empty(self) -> None:
-        proc = MemoryProcessor(config={"persona_interpretation.enabled": False})
-        result = await proc.generate_persona_interpretations(
-            "content", "conv_text", "primary", ["secondary"], {"secondary": "desc"}
-        )
-        assert result == {}
-
-    @pytest.mark.asyncio
-    async def test_empty_secondary_ids_returns_empty(self) -> None:
-        proc = MemoryProcessor(config={"persona_interpretation.enabled": True})
-        result = await proc.generate_persona_interpretations(
-            "content", "conv_text", "primary", [], {}
-        )
-        assert result == {}
-
-    @pytest.mark.asyncio
-    async def test_missing_persona_context_skips(self) -> None:
-        proc = MemoryProcessor(config={"persona_interpretation.enabled": True})
-        result = await proc.generate_persona_interpretations(
-            "content",
-            "conv_text",
-            "primary",
-            ["no_context_persona"],
-            {},  # no context for this persona
-        )
-        assert result == {}
-
-    @pytest.mark.asyncio
-    async def test_generates_interpretation(self) -> None:
-        ctx = MagicMock()
-        provider = MagicMock()
-        response = MagicMock()
-        response.completion_text = "这条记忆意味着需要关注用户的咖啡偏好"
-        provider.text_chat = AsyncMock(return_value=response)
-
-        proc = MemoryProcessor(
-            context=ctx,
-            llm_provider=provider,
-            config={"persona_interpretation.enabled": True},
-            cost_control=_quality_control(),
-        )
-        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
-            result = await proc.generate_persona_interpretations(
-                "用户喜欢喝咖啡",
-                "用户: 我喜欢喝咖啡",
-                "primary_persona",
-                ["coffee_expert"],
-                {"coffee_expert": "你是咖啡专家，关注用户的咖啡消费习惯"},
-            )
-        assert len(result) >= 1
-        assert "coffee_expert" in result
-
-    @pytest.mark.asyncio
-    async def test_interpretation_short_text_discarded(self) -> None:
-        ctx = MagicMock()
-        provider = MagicMock()
-        response = MagicMock()
-        response.completion_text = "ab"  # shorter than 3 chars
-        provider.text_chat = AsyncMock(return_value=response)
-
-        proc = MemoryProcessor(
-            context=ctx,
-            llm_provider=provider,
-            config={"persona_interpretation.enabled": True},
-            cost_control=_quality_control(),
-        )
-        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
-            result = await proc.generate_persona_interpretations(
-                "content",
-                "conv",
-                "primary",
-                ["secondary"],
-                {"secondary": "desc"},
-            )
-        # Short text (< 3 chars) is discarded
-        assert "secondary" not in result
-
-    @pytest.mark.asyncio
-    async def test_interpretation_llm_error_handled(self) -> None:
-        ctx = MagicMock()
-        provider = MagicMock()
-        provider.text_chat = AsyncMock(side_effect=RuntimeError("LLM error"))
-
-        proc = MemoryProcessor(
-            context=ctx,
-            llm_provider=provider,
-            config={"persona_interpretation.enabled": True},
-            cost_control=_quality_control(),
-        )
-        with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
-            result = await proc.generate_persona_interpretations(
-                "content",
-                "conv",
-                "primary",
-                ["secondary"],
-                {"secondary": "desc"},
-            )
-        # Error should be handled, should not raise
-        assert "secondary" not in result
 
 
 class _CountingGateRuntime:

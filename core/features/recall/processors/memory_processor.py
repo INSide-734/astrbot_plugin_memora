@@ -289,7 +289,6 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                 logger.warning(
                     "[MemoryProcessor] 总结质量不达标（low），候选将进入隔离队列"
                 )
-            structured_data["_quality"] = quality
             raw_candidates = structured_data.get("memories")
             _report_generation_stage(
                 "parse",
@@ -322,49 +321,6 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                     if len(conversation_text) > 200
                     else conversation_text
                 )
-            content, metadata = self.storage.build_storage_format(
-                fallback_excerpt, structured_data, is_group_chat
-            )
-            metadata["summary_quality"] = structured_data.get("_quality", "normal")
-            if structured_data.get("_guardrails_validated"):
-                metadata["guardrails_validated"] = True
-            if structured_data.get("_guardrail_fallback"):
-                metadata["guardrail_fallback"] = True
-
-            # 情感标签：优先使用 LLM 输出，外部传入值仅作为后备。
-            llm_emotion_tags = structured_data.get("emotion_tags") or []
-            llm_emotion_tags = [
-                t for t in llm_emotion_tags if isinstance(t, str) and t.strip()
-            ][:3]
-            if llm_emotion_tags:
-                metadata["emotion_tags"] = llm_emotion_tags
-                metadata["emotional_intensity"] = max(
-                    0.0, min(1.0, emotional_intensity)
-                )
-            elif emotion_tags:
-                metadata["emotion_tags"] = list(emotion_tags)
-                metadata["emotional_intensity"] = max(
-                    0.0, min(1.0, emotional_intensity)
-                )
-
-            # G2: 提取 LLM 输出的因果关系到 metadata
-            causal_relations = structured_data.get("causal_relations") or []
-            causal_relations = [
-                cr
-                for cr in causal_relations
-                if isinstance(cr, dict) and cr.get("cause") and cr.get("effect")
-            ][:3]
-            if causal_relations:
-                metadata["causal_relations"] = causal_relations
-
-            # M1: 记忆溯源 — 存储原始对话片段摘要 (~100 字)
-            snippet = conversation_text.strip()[:150]
-            if len(conversation_text) > 150:
-                snippet = snippet.rsplit("\n", 1)[0]  # 在换行处截断，保持句子完整
-                if len(snippet) < 80:
-                    snippet = conversation_text.strip()[:150]
-            metadata["source_snippet"] = snippet[:150].strip()
-
             current_stage = "grounding"
             stage_started = time.perf_counter()
             results: list[dict[str, Any]] = []
@@ -407,7 +363,6 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                     mem_metadata["guardrails_validated"] = True
                 if structured_data.get("_guardrail_fallback"):
                     mem_metadata["guardrail_fallback"] = True
-                mem_metadata["source_snippet"] = snippet[:150].strip()
                 mem_metadata["schema_version"] = "v3"
                 mem_metadata["emotional_intensity"] = intensity
                 if mem_emotion_tags:
@@ -769,7 +724,6 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
         """从结构化数据构建包含 Atom 分类结果的记忆字典。"""
         quality = self.quality.validate_summary_quality(structured_data)
         normalized = self.quality.normalize_parsed_data(structured_data, is_group_chat)
-        normalized["_quality"] = quality
 
         content, metadata = self.storage.build_storage_format(
             fallback_excerpt or normalized.get("summary", ""),
@@ -784,8 +738,6 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
         )
         if structured_data.get("atom_type"):
             metadata["atom_type"] = str(structured_data["atom_type"])
-        if fallback_excerpt and fallback_excerpt.strip():
-            metadata["source_snippet"] = fallback_excerpt.strip()[:150]
 
         importance = self.quality.validate_importance(normalized.get("importance"))
         atoms = self.classify_atoms_from_metadata(
@@ -841,75 +793,6 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
             ),
             atom_type_hint=metadata.get("atom_type"),
         )
-
-    async def generate_persona_interpretations(
-        self,
-        content: str,
-        conversation_text: str,
-        primary_persona_id: str | None,
-        secondary_persona_ids: list[str],
-        persona_contexts: dict[str, str],
-    ) -> dict[str, str]:
-        """为多个角色生成同一记忆的不同解读。
-
-        同一事实对不同角色有不同意义。例如：
-        - 侦探 persona: "线索：嫌疑人A在案发时出现在现场"
-        - 医生 persona: "患者A在症状出现前的活动轨迹"
-
-        参数:
-            content: 已生成的记忆内容
-            conversation_text: 原始对话文本
-            primary_persona_id: 主角色 ID（已用于主 LLM 调用，跳过）
-            secondary_persona_ids: 需要生成解读的次要角色 ID 列表
-            persona_contexts: {persona_id: persona_description} 角色描述字典
-
-        返回:
-            {persona_id: interpretation_text, ...}
-        """
-        if not secondary_persona_ids or not self.config.get(
-            "persona_interpretation.enabled", False
-        ):
-            return {}
-
-        interpretations: dict[str, str] = {}
-        for pid in secondary_persona_ids:
-            persona_desc = persona_contexts.get(pid, "")
-            if not persona_desc:
-                continue
-
-            prompt = (
-                f"你正在扮演以下角色：\n{persona_desc}\n\n"
-                f"原始对话：\n{conversation_text[:800]}\n\n"
-                f"已生成的记忆摘要：\n{content[:300]}\n\n"
-                f"请从你角色的视角，用一句话（不超过60字）解读这段记忆对你意味着什么。"
-                f"只输出解读文本，不要加任何前缀或引号。"
-            )
-
-            try:
-                async with budgeted_extra_llm_call(
-                    self.cost_control,
-                    "persona_interpretation",
-                ) as allowed:
-                    if not allowed:
-                        continue
-                    result = await self.llm_client.call_llm_with_retry(
-                        prompt=prompt,
-                        system_prompt=persona_desc[:500],
-                        max_retries=1,
-                    )
-                text = str(result).strip()[:120]
-                if text and len(text) >= 3:
-                    interpretations[pid] = text
-                    logger.debug("[MemoryProcessor] 人格解读生成成功")
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                logger.warning(
-                    "[MemoryProcessor] 人格解读生成失败，异常类型=%s",
-                    exc.__class__.__name__,
-                )
-
-        return interpretations
 
 
 def _resolved_generic_terms(profile: GateProfile) -> tuple[str, ...]:

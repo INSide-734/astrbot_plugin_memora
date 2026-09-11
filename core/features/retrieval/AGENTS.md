@@ -36,7 +36,7 @@ graph TD
     GVec --> RRF2
     MMR --> Merge[双路归一化融合]
     RRF2 --> Merge
-    Merge --> Personal[Persona / 画像]
+    Merge --> Personal[画像加权]
     Personal --> Rerank[可插拔重排]
     Rerank --> Privacy[群聊机密过滤]
     Privacy --> Result[HybridResult]
@@ -156,7 +156,7 @@ sequenceDiagram
 - RRF 以排名融合，不比较 BM25 与向量原始分数。
 - 双路融合先按各路最大分归一化，再按路权重相加并加 cross-route bonus，最终上限 1.0。
 - `memory_types` 当前是未匹配候选乘 `0.1` 的软降权，不是硬过滤。
-- persona boost、画像 boost 和重排会原地修改 `HybridResult.final_score`；缓存结果必须复制，避免跨请求串分。
+- 画像 boost 和重排会原地修改 `HybridResult.final_score`；缓存结果必须复制，避免跨请求串分。
 - 情绪与季节加权位于 managers 的 `RetrievalOptimizer`；不要在 retrieval 再加第二套相同增强。
 
 ## 测试定位与精确验证

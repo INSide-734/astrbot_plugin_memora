@@ -53,7 +53,6 @@ _ALLOWED_FEATURES = frozenset(
         "llm_query_rewrite",
         "llm_reranker",
         "memory_grounding_judge",
-        "persona_interpretation",
         "profile_extraction",
         "knowledge_extraction",
         "note_generation",

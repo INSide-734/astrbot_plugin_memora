@@ -191,10 +191,6 @@ class DualRouteRetriever:
             )
         merge_ms = (time.perf_counter() - _t_merge_start) * 1000.0
 
-        # 人格感知记忆解读 — 当前 persona 匹配的记忆获得加权
-        if persona_id and merged:
-            merged = self._apply_persona_boost(merged, persona_id)
-
         # v2.5 个性化排序 — 基于用户画像标签加权
         _t_profile_start = time.perf_counter()
         if user_id and self.personalized_ranker and self.profile_manager and merged:
@@ -441,10 +437,6 @@ class DualRouteRetriever:
             per_query_merged,
             sum(len(results) for results in per_query_merged),
         )
-
-        # 人格感知记忆解读
-        if persona_id and fused:
-            fused = self._apply_persona_boost(fused, persona_id)
 
         # 个性化排序
         _t_profile_start = time.perf_counter()
@@ -723,22 +715,6 @@ class DualRouteRetriever:
     ) -> list[HybridResult]:
         """群聊场景过滤机密记忆（私聊秘密不在群聊暴露）。"""
         return filter_confidential_from_group(results, chat_type)
-
-    def _apply_persona_boost(
-        self,
-        results: list[HybridResult],
-        persona_id: str,
-    ) -> list[HybridResult]:
-        """人格感知记忆解读 — 匹配当前 persona 的记忆获得 boost 加权。"""
-        if not self.config.get("persona_interpretation.enabled", False):
-            return results
-        boost = float(self.config.get("persona_interpretation.boost", 1.2))
-        for r in results:
-            meta = r.metadata or {}
-            interpretations = meta.get("persona_interpretations", {}) or {}
-            if isinstance(interpretations, dict) and persona_id in interpretations:
-                r.final_score = min(1.0, r.final_score * boost)
-        return results
 
     async def _merge_dual_results(
         self,
