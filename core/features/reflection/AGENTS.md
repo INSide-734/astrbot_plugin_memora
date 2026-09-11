@@ -12,7 +12,7 @@
 - `application/summary_worker.py` 只读取 claim 固化来源，调用现有 Processor/质量门，并返回 `WindowOutcome`。
 - `topic_batch_preparer.py` 只处理 C/D 预分批；A/B/Hybrid 后置分段属于 [`recall/processors/AGENTS.md`](../recall/processors/AGENTS.md)。
 - 后台任务不继承 `ExtraLlmBudget`；物理 Provider attempt 统一由 Processor 的共享 `SummaryLlmLimiter` 限流。
-- `candidate_writer.py` 执行幂等候选写入和质量路由；`MemoryEngine` 是 canonical 写后演化唯一 owner。
+- `candidate_writer.py` 执行幂等候选写入和质量路由；质量门通过、canonical 插入之前按需调用近重复合并协调器（`memory_dedup`，默认关闭），命中时返回 `merged` 终态并跳过插入；`MemoryEngine` 是 canonical 写后演化唯一 owner。
 - `domain/summary_models.py` 与 `summary_ports.py` 定义不可变任务 DTO、闭集状态、安全投影和 Store 窄端口。
 
 
@@ -40,7 +40,7 @@ flowchart LR
 
 1. 反思窗口使用稳定 `message_seq` 和持久化 job；同一会话按连续完成前缀推进，跨会话由 `SummaryScheduler` 有界并发且公平领取。
 2. 基础反思不消耗在线请求的“额外批次”额度；后台恢复任务只执行固定基础批次。
-3. 每条候选终态只能是 `canonical`、`quarantined`、`discard`、`mark_write`、`failed` 或 `skipped_idempotent`；未知结果进入 `unknown`。
+3. 每条候选终态只能是 `canonical`、`quarantined`、`discard`、`mark_write`、`merged`、`failed` 或 `skipped_idempotent`；未知结果进入 `unknown`。`merged` 表示候选已并入同 scope 的既有 canonical（不新增 canonical），在 ledger 中与 `canonical` 同槽消费。
 4. 幂等键绑定 session、窗口索引、批次/候选序号和内容摘要；重试同一窗口不得重复写 canonical。
 5. 只有通过质量门的候选调用 `MemoryEngine.add_memory()`；隔离候选留在 quality feature，不能提前生成可召回 Atom。
 6. canonical 写入成功后才能安排 Memory Evolution；演化调度失败不回滚 canonical。

@@ -10,6 +10,12 @@ from typing import Any, cast
 from astrbot.api import logger
 
 from ....shared.summary_source_fence import SummarySourceFence
+from ...memory.application.canonical_merge import (
+    DEDUP_REASON_MERGE_CONFLICT,
+    CanonicalMergeCoordinator,
+    MergeCandidate,
+    MergeOutcome,
+)
 from ..domain.storage_outcomes import ReflectionStoreOutcome, ReflectionStoreResult
 from .continuity import record_continuity_topics
 
@@ -146,6 +152,7 @@ async def store_reflection_candidates(
     memory_engine: Any,
     memory_quality_gate: Any | None,
     schedule_evolution_after_write: Callable[[int], Awaitable[None]],
+    canonical_merge: CanonicalMergeCoordinator | None = None,
 ) -> list[ReflectionStoreResult]:
     """并发执行候选质量门与写入，并返回与输入一一对应的终态。
 
@@ -178,6 +185,8 @@ async def store_reflection_candidates(
         memory_engine: canonical 记忆引擎。
         memory_quality_gate: 可选的候选质量路由器。
         schedule_evolution_after_write: canonical 写后的兼容演化调度回调。
+        canonical_merge: 可选的跨窗口近重复合并协调器；缺省时不检测近重复，
+            命中时返回 ``MERGED`` 并跳过 canonical 插入。
 
     Returns:
         与候选顺序一致的互斥存储终态。取消会继续向上传播，普通失败转为
@@ -339,6 +348,48 @@ async def store_reflection_candidates(
                     ReflectionStoreOutcome.FAILED,
                     idempotency_key,
                 )
+
+            async def _merge_near_duplicate(
+                coordinator: CanonicalMergeCoordinator,
+            ) -> MergeOutcome | None:
+                """在 canonical 插入前执行近重复合并；失败回落普通写入。"""
+
+                try:
+                    return await coordinator.merge(
+                        MergeCandidate(
+                            content=memory["content"],
+                            metadata=metadata,
+                            importance=memory["importance"],
+                            session_id=session_id,
+                            persona_id=persona_id,
+                            idempotency_key=idempotency_key,
+                        )
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    logger.error(
+                        "跨窗口近重复合并失败，回落普通写入",
+                        extra={"reason_code": DEDUP_REASON_MERGE_CONFLICT},
+                    )
+                    logger.debug("近重复合并异常类型=%s", error.__class__.__name__)
+                    return None
+
+            # mark_write 是低置信候选，不得强化既有可信 canonical。
+            if canonical_merge is not None and not is_mark_write:
+                merge_outcome = await _merge_near_duplicate(canonical_merge)
+                if (
+                    merge_outcome is not None
+                    and merge_outcome.merged
+                    and not isinstance(merge_outcome.memory_id, bool)
+                    and isinstance(merge_outcome.memory_id, int)
+                    and merge_outcome.memory_id > 0
+                ):
+                    return ReflectionStoreResult(
+                        ReflectionStoreOutcome.MERGED,
+                        idempotency_key,
+                        merge_outcome.memory_id,
+                    )
 
             async def _write_canonical() -> int:
                 """在来源 fence 内执行 canonical 写入和其后处理。"""

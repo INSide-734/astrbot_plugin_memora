@@ -676,6 +676,37 @@ class TestBudgetedInjectionFormatting:
         assert text.count("用户偏好拿铁") == 1
         assert text.count("用户每天午休后喝咖啡") == 1
 
+    def test_key_facts_take_metadata_budget_before_labels(self):
+        """metadata 预算不足时优先保留 Key facts，Topics/Participants 让位。"""
+
+        facts_line = "Key facts: fact-0"
+        text, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(
+                ContentLevel.COMPACT,
+                1200,
+                metadata_max_chars=len(facts_line),
+            ),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert facts_line in text
+        assert "Topics:" not in text
+        assert "Participants:" not in text
+
+    def test_key_facts_precede_topics_in_payload(self):
+        """预算充足时 Key facts 行出现在 Topics 之前，事实优先于标签。"""
+
+        text, _ = format_memories_for_injection(
+            [_rich_memory(0)],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts: fact-0" in text
+        assert "Topics: topic-0" in text
+        assert text.index("Key facts:") < text.index("Topics:")
+
     def test_detailed_may_emit_all_supported_metadata(self):
         text, _ = format_memories_for_injection(
             [_rich_memory(0)],

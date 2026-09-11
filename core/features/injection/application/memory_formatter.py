@@ -267,6 +267,16 @@ def format_memories_for_injection(
                 else:
                     entry_parts.append(content)
             else:
+                # 事实优先于主题/参与者标签：metadata 预算不足时先保住 key_facts；
+                # content 已包含全部 key_facts 时不再重复输出，避免同一事实二次占用预算。
+                facts_embedded = bool(facts) and all(fact in content for fact in facts)
+                if (
+                    (not use_budget or budget.include_key_facts)
+                    and facts
+                    and not facts_embedded
+                ):
+                    append_metadata(f"Key facts: {'; '.join(facts)}")
+
                 if not use_budget or budget.include_topics:
                     topics = metadata.get("topics", [])
                     if isinstance(topics, list):
@@ -284,15 +294,6 @@ def format_memories_for_injection(
                         )
                         if participants_text:
                             append_metadata(f"Participants: {participants_text}")
-
-                # content 已包含全部 key_facts 时不再重复输出，避免同一事实二次占用预算
-                facts_embedded = bool(facts) and all(fact in content for fact in facts)
-                if (
-                    (not use_budget or budget.include_key_facts)
-                    and facts
-                    and not facts_embedded
-                ):
-                    append_metadata(f"Key facts: {'; '.join(facts)}")
 
                 entry_parts.append(content)
 

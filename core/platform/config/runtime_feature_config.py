@@ -13,6 +13,7 @@ from .feature_contributions import (
     FlashbulbConfig,
     HumanLikeMemoryConfig,
     HybridScoringConfig,
+    MemoryDedupConfig,
     PersonaDecayConfig,
     WriteReliabilityConfig,
 )
@@ -158,6 +159,7 @@ class RuntimeFeatureConfigSections(BaseModel):
     )
     hybrid_scoring: HybridScoringConfig = Field(default_factory=HybridScoringConfig)
     knowledge_base: KnowledgeBaseConfig = Field(default_factory=KnowledgeBaseConfig)
+    memory_dedup: MemoryDedupConfig = Field(default_factory=MemoryDedupConfig)
     notes: NotesConfig = Field(default_factory=NotesConfig)
     persona_decay: PersonaDecayConfig = Field(default_factory=PersonaDecayConfig)
     prompt_templates: PromptTemplatesConfig = Field(

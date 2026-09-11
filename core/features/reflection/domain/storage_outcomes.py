@@ -14,6 +14,7 @@ class ReflectionStoreOutcome(str, Enum):
     QUARANTINED = "quarantined"
     DISCARDED = "discarded"
     MARK_WRITE = "mark_write"
+    MERGED = "merged"
     FAILED = "failed"
     SKIPPED_IDEMPOTENT = "skipped_idempotent"
 
@@ -35,6 +36,7 @@ class ReflectionStoreSummary:
     quarantine_count: int
     discard_count: int
     mark_write_count: int
+    merged: int
     failed_count: int
     skipped_idempotent_count: int
     completed_idempotency_keys: frozenset[str]
@@ -66,6 +68,7 @@ def summarize_store_results(
         quarantine_count=counts[ReflectionStoreOutcome.QUARANTINED],
         discard_count=counts[ReflectionStoreOutcome.DISCARDED],
         mark_write_count=counts[ReflectionStoreOutcome.MARK_WRITE],
+        merged=counts[ReflectionStoreOutcome.MERGED],
         failed_count=counts[ReflectionStoreOutcome.FAILED],
         skipped_idempotent_count=counts[ReflectionStoreOutcome.SKIPPED_IDEMPOTENT],
         completed_idempotency_keys=frozenset(completed_keys),

@@ -8,7 +8,14 @@ import time
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
+from astrbot.api import logger
+
 from ....shared.summary_source import source_window_digest
+from ...memory.application.canonical_merge import (
+    CanonicalMergeCoordinator,
+    build_canonical_merge_coordinator,
+)
+from ...memory.domain.memory_dedup_config import MemoryDedupConfig
 from ...quality.application.gate_runtime import gate_snapshot_from_json
 from ...recall.processors.json_parser import SummaryParseError
 from ..domain.summary_models import (
@@ -76,6 +83,38 @@ class SummaryWorker(
         self._batch_preparer = batch_preparer
         self._candidate_selector = candidate_selector
         self._config_manager = config_manager
+        self._canonical_merge: CanonicalMergeCoordinator | None = None
+
+    def _get_memory_dedup_config(self) -> MemoryDedupConfig:
+        """获取跨窗口近重复合并配置快照，异常时保持关闭。"""
+
+        if self._config_manager is None:
+            return MemoryDedupConfig()
+        try:
+            snapshot = self._config_manager.get_config_snapshot()[0]
+            memory_dedup = snapshot.get("memory_dedup")
+            if isinstance(memory_dedup, dict):
+                return MemoryDedupConfig.model_validate(memory_dedup)
+        except Exception:
+            pass
+        return MemoryDedupConfig()
+
+    def _resolve_canonical_merge(self) -> CanonicalMergeCoordinator | None:
+        """按需装配近重复合并协调器；引擎缺少既有端口时保持未启用。"""
+
+        if self._canonical_merge is not None:
+            return self._canonical_merge
+        if getattr(self._memory_engine, "db_connection", None) is None:
+            return None
+        try:
+            self._canonical_merge = build_canonical_merge_coordinator(
+                self._memory_engine,
+                config_provider=self._get_memory_dedup_config,
+            )
+        except Exception as error:
+            logger.debug("近重复合并协调器装配失败: %s", error.__class__.__name__)
+            return None
+        return self._canonical_merge
 
     async def execute(self, claim: ClaimedJob) -> WindowOutcome:
         """校验固定来源、调用 selector、抽取候选、持久化 intent 并生成窗口结果。"""
@@ -245,6 +284,7 @@ class SummaryWorker(
                 memory_engine=self._memory_engine,
                 memory_quality_gate=fixed_quality_gate,
                 schedule_evolution_after_write=_canonical_hook_already_owned,
+                canonical_merge=self._resolve_canonical_merge(),
             )
         except asyncio.CancelledError:
             raise
