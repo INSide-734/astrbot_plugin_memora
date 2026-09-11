@@ -632,6 +632,50 @@ class TestBudgetedInjectionFormatting:
         assert "Complete memory 0." in text
         assert stats.memory_count == 1
 
+    def test_compact_skips_key_facts_already_embedded_in_content(self):
+        """content 已含全部 facts 时不再重复输出 Key facts 行。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "用户讨论咖啡 | 用户偏好拿铁；用户每天午休后喝咖啡"
+        memory["metadata"]["key_facts"] = [
+            "用户偏好拿铁",
+            "用户每天午休后喝咖啡",
+        ]
+
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts:" not in text
+        assert text.count("用户偏好拿铁") == 1
+        assert text.count("用户每天午休后喝咖啡") == 1
+
+    def test_compact_keeps_key_facts_when_truncated_content_drops_them(self):
+        """facts 已进入 content 但被截断切掉时仍输出 Key facts 行，避免事实丢失。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = (
+            "用户在咖啡店讨论周末计划 | 用户偏好拿铁；用户每天午休后喝咖啡"
+        )
+        memory["metadata"]["key_facts"] = [
+            "用户偏好拿铁",
+            "用户每天午休后喝咖啡",
+        ]
+
+        text, stats = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200, memory_max_chars=20),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert stats.truncated_count == 1
+        # 截断只保留 "用户在咖啡店讨论周末计划 |"，全部 facts 被切掉。
+        assert "Key facts: 用户偏好拿铁; 用户每天午休后喝咖啡" in text
+        assert text.count("用户偏好拿铁") == 1
+        assert text.count("用户每天午休后喝咖啡") == 1
+
     def test_detailed_may_emit_all_supported_metadata(self):
         text, _ = format_memories_for_injection(
             [_rich_memory(0)],

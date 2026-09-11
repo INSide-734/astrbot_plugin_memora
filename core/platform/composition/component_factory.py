@@ -355,9 +355,6 @@ class ComponentFactory:
                         3,
                     )
                 ),
-                "persona_interpretation.enabled": self.config_manager.get(
-                    "persona_interpretation.enabled", False
-                ),
             },
             limiter=summary_llm_limiter,
             cost_control=cost_control,

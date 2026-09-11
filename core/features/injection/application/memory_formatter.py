@@ -285,7 +285,13 @@ def format_memories_for_injection(
                         if participants_text:
                             append_metadata(f"Participants: {participants_text}")
 
-                if (not use_budget or budget.include_key_facts) and facts:
+                # content 已包含全部 key_facts 时不再重复输出，避免同一事实二次占用预算
+                facts_embedded = bool(facts) and all(fact in content for fact in facts)
+                if (
+                    (not use_budget or budget.include_key_facts)
+                    and facts
+                    and not facts_embedded
+                ):
                     append_metadata(f"Key facts: {'; '.join(facts)}")
 
                 entry_parts.append(content)

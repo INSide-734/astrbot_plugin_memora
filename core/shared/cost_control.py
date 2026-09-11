@@ -60,7 +60,6 @@ class CostControl:
             "llm_reranker": self.allow_llm_reranker_in_passive_recall,
             "topic_strategy_d": self.allow_llm_topic_strategy_d,
             "reflection_extra_batch": self.allow_llm_topic_strategy_d,
-            "persona_interpretation": False,
             "profile_extraction": False,
             "knowledge_extraction": False,
             "note_generation": False,

@@ -11,7 +11,6 @@ class StorageBuilder:
         fallback_excerpt: str,
         structured_data: dict[str, Any],
         is_group_chat: bool,
-        persona_interpretations: dict[str, str] | None = None,
     ) -> tuple[str, dict[str, Any]]:
         """构建标准化存储格式。
 
@@ -19,10 +18,6 @@ class StorageBuilder:
             fallback_excerpt: 回退文本摘要
             structured_data: LLM 结构化输出
             is_group_chat: 是否群聊
-            persona_interpretations:— 多角色解读字典
-                {persona_id: interpretation_text, ...}
-                同一事实对不同角色有不同意义，存储时保留所有解读，
-                检索时按当前 persona 匹配加权。
         """
         summary = structured_data.get("summary", "")
         key_facts = structured_data.get("key_facts", [])
@@ -47,12 +42,6 @@ class StorageBuilder:
             "persona_summary": summary,
             "summary_schema_version": "v2",
         }
-
-        # 人格感知记忆解读 — 多版本存储
-        if persona_interpretations:
-            metadata["persona_interpretations"] = {
-                str(k): str(v) for k, v in persona_interpretations.items() if v
-            }
 
         if is_group_chat and "participants" in structured_data:
             metadata["participants"] = structured_data["participants"]

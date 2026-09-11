@@ -56,6 +56,8 @@ flowchart LR
 
 分层顺序为前瞻计划、普通记忆、认知上下文；包装开销也计入预算。候选按确定性 utility、稳定 ID 和原始顺序排序，并受 `max_memories`、单条估算与总字符预算共同约束。超预算时从最低优先级候选开始移除，不得截断安全边界标签。
 
+非 `FACTS` 内容级别下，formatter 只在 `content` 未完整包含 `key_facts` 时输出独立 `Key facts` 行，避免同一事实二次占用预算；`content` 同时是 FTS5/FAISS 索引文本与 Page API 展示源，禁止为消除重复而从存储层剥离 `key_facts`。
+
 ### 不可违反的 System Prompt 边界
 
 **动态记忆注入永远不得写入或改动 `req.system_prompt`。** `DeliveryMode` 不包含 `system_prompt`，`InjectionAdapter.resolve()` 对字符串 `system_prompt` 会拒绝。允许的临时载体只有：
