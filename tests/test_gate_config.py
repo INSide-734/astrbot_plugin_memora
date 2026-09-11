@@ -638,6 +638,7 @@ def test_empty_judge_template_allowed():
             "grounding_reference_invalid",
             "grounding_source_evidence_missing",
             "grounding_source_evidence_invalid",
+            "grounding_user_source_missing",
             "grounding_source_changed",
             "grounding_subject_ambiguous",
             "grounding_subject_mismatch",

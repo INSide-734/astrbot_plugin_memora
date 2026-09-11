@@ -45,7 +45,7 @@ flowchart LR
 5. 只有通过质量门的候选调用 `MemoryEngine.add_memory()`；隔离候选留在 quality feature，不能提前生成可召回 Atom。
 6. canonical 写入成功后才能安排 Memory Evolution；演化调度失败不回滚 canonical。
 7. 任一来源缺失、digest 不符、claim/epoch 失效或真实存储失败都不得推进 cursor；失败任务保留可恢复状态。
-8. Prompt protection scope、可信稳定身份、GateSnapshot 和 source evidence 必须从事件链传入；日志与观测只能记录计数、阶段和 reason code。
+8. Prompt protection scope、可信稳定身份、GateSnapshot 和 source evidence 必须从事件链传入；日志与观测只能记录计数、阶段和 reason code。`SummaryWorker` 把 `SourceWindow.message_seqs` 一并交给 Processor，使来源证据带稳定窗口序号；证据缺失或角色不支持时由质量门隔离，不落 canonical。
 9. `asyncio.CancelledError` 穿透批次、写入和关闭流程；组合根负责停止调度器并等待或回收所有已登记 worker。
 
 ## Topic candidate contract

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,6 +29,7 @@ def _message(
     group_id: str | None = None,
     timestamp: float | None = None,
     role: str = "user",
+    metadata: dict[str, Any] | None = None,
 ) -> Message:
     """构造带稳定顺序的测试消息。"""
 
@@ -39,6 +42,7 @@ def _message(
         sender_name=sender_name,
         group_id=group_id,
         timestamp=time.time() + index if timestamp is None else timestamp,
+        metadata=metadata or {},
     )
 
 
@@ -942,3 +946,301 @@ def test_revalidate_negation_matches_validate_verdict() -> None:
     assert direct.status == "grounded"
     assert replay.status == direct.status
     assert "grounding_negation_conflict" not in replay.reason_codes
+
+
+def test_evidence_carries_stable_message_identity() -> None:
+    """证据必须带稳定消息标识、窗口序号与角色。"""
+
+    source = "我喜欢喝咖啡。"
+    messages = [_message(0, source)]
+
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            source,
+            source_refs=[{"message_index": 0, "start": 0, "end": len(source)}],
+        ),
+        messages,
+        is_group_chat=False,
+        message_seqs=[42],
+    )
+
+    assert result.allowed is True
+    evidence = result.evidence[0]
+    assert evidence["message_id"] == messages[0].id
+    assert evidence["message_seq"] == 42
+    assert evidence["role"] == "user"
+    assert evidence["message_index"] == 0
+
+
+def test_assistant_restatement_alone_is_quarantined() -> None:
+    """仅由助手复述支撑的声明不得进入 canonical。"""
+
+    assistant_source = "用户说他下周六要搬家。"
+    messages = [_assistant_message(0, assistant_source)]
+
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "用户下周六要搬家。",
+            source_refs=[
+                {"message_index": 0, "start": 0, "end": len(assistant_source)}
+            ],
+        ),
+        messages,
+        is_group_chat=False,
+    )
+
+    assert result.allowed is False
+    assert result.status == "quarantine"
+    assert "grounding_user_source_missing" in result.reason_codes
+    assert result.evidence[0]["role"] == "assistant"
+
+
+def test_system_role_evidence_cannot_support_fact() -> None:
+    """系统内容不能充当用户事实的唯一来源。"""
+
+    system_source = "系统记录：该用户已订阅会员。"
+    messages = [_message(0, system_source, role="system")]
+
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "该用户已订阅会员。",
+            source_refs=[{"message_index": 0, "start": 0, "end": len(system_source)}],
+        ),
+        messages,
+        is_group_chat=False,
+    )
+
+    assert result.allowed is False
+    assert "grounding_user_source_missing" in result.reason_codes
+
+
+def test_user_expression_supports_fact_beside_restatement() -> None:
+    """用户直接表达与助手复述同时出现时，按用户片段判定并保留全部证据。"""
+
+    user_source = "我下周六要搬家。"
+    assistant_source = "好的，下周六搬家，我先记下来。"
+    messages = [
+        _message(0, user_source),
+        _assistant_message(1, assistant_source),
+    ]
+
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            user_source,
+            source_refs=[
+                {"message_index": 0, "start": 0, "end": len(user_source)},
+                {"message_index": 1, "start": 0, "end": len(assistant_source)},
+            ],
+        ),
+        messages,
+        is_group_chat=False,
+    )
+
+    assert result.allowed is True
+    assert {item["role"] for item in result.evidence} == {"user", "assistant"}
+
+
+def test_group_same_name_members_are_not_merged_by_display_name() -> None:
+    """群聊同名成员不能因昵称相同被当成同一主体。"""
+
+    first = "我周五有空。"
+    second = "我周五没空。"
+    messages = [
+        _message(0, first, sender_id="u-1", sender_name="小明", group_id="g-1"),
+        _message(1, second, sender_id="u-2", sender_name="小明", group_id="g-1"),
+    ]
+
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "群成员周五有空。",
+            source_refs=[
+                {"message_index": 0, "start": 0, "end": len(first)},
+                {"message_index": 1, "start": 0, "end": len(second)},
+            ],
+            participants=["小明"],
+        ),
+        messages,
+        is_group_chat=True,
+    )
+
+    assert result.allowed is False
+    assert "grounding_subject_ambiguous" in result.reason_codes
+
+
+def test_group_same_name_members_are_distinguished_by_stable_label() -> None:
+    """带稳定身份标签的同名成员可按标识分别归属，不误放行错误主体。"""
+
+    first = "我周五有空。"
+    second = "我周五没空。"
+    messages = [
+        _message(
+            0,
+            first,
+            sender_id="qq-1",
+            sender_name="小明",
+            group_id="g-1",
+            metadata={
+                "identity_trusted": True,
+                "identity_label": "QQ:1001",
+                "canonical_user_id": "qq-1",
+            },
+        ),
+        _message(
+            1,
+            second,
+            sender_id="qq-2",
+            sender_name="小明",
+            group_id="g-1",
+            metadata={
+                "identity_trusted": True,
+                "identity_label": "QQ:1002",
+                "canonical_user_id": "qq-2",
+            },
+        ),
+    ]
+
+    result = MemoryGroundingValidator().validate(
+        _candidate(
+            "群成员周五有空。",
+            source_refs=[
+                {"message_index": 0, "start": 0, "end": len(first)},
+                {"message_index": 1, "start": 0, "end": len(second)},
+            ],
+            participants=["QQ:1001"],
+        ),
+        messages,
+        is_group_chat=True,
+    )
+
+    assert result.allowed is False
+    assert "grounding_subject_mismatch" in result.reason_codes
+
+
+def test_revalidate_detects_changed_message_content() -> None:
+    """同一消息标识但正文被改写时，旧证据不得继续生效。"""
+
+    validator = MemoryGroundingValidator()
+    original = "我养了两只猫"
+    message = _message(0, original)
+    stored = [
+        {
+            "message_index": 0,
+            "message_id": message.id,
+            "role": "user",
+            "start": 0,
+            "end": len(original),
+            "message_fingerprint": validator.message_fingerprint(message),
+        }
+    ]
+
+    result = validator.revalidate_stored_evidence(
+        {"summary": original, "key_facts": [original]},
+        [_message(0, "我养了三只狗")],
+        stored,
+        is_group_chat=False,
+    )
+
+    assert result.allowed is False
+    assert "grounding_source_changed" in result.reason_codes
+
+
+def test_revalidate_does_not_substitute_same_text_from_other_subject() -> None:
+    """带稳定标识的证据不得回退到正文相同的另一条消息。"""
+
+    validator = MemoryGroundingValidator()
+    content = "我周五有空。"
+    original = _message(0, content, sender_id="u-1", sender_name="小明")
+    stored = [
+        {
+            "message_index": 0,
+            "message_id": original.id,
+            "role": "user",
+            "start": 0,
+            "end": len(content),
+            "message_fingerprint": validator.message_fingerprint(original),
+        }
+    ]
+    other_subject = _message(1, content, sender_id="u-2", sender_name="小红")
+
+    result = validator.revalidate_stored_evidence(
+        {"summary": content, "key_facts": [content]},
+        [other_subject],
+        stored,
+        is_group_chat=True,
+    )
+
+    assert result.allowed is False
+    assert "grounding_source_changed" in result.reason_codes
+
+
+def test_revalidate_keeps_persisted_window_sequence() -> None:
+    """复核重建的证据保留已持久化的窗口序号。"""
+
+    validator = MemoryGroundingValidator()
+    source = "我养了两只猫"
+    message = _message(0, source)
+    stored = [
+        {
+            "message_index": 0,
+            "message_id": message.id,
+            "message_seq": 11,
+            "role": "user",
+            "start": 0,
+            "end": len(source),
+            "message_fingerprint": validator.message_fingerprint(message),
+        }
+    ]
+
+    result = validator.revalidate_stored_evidence(
+        {"summary": source, "key_facts": [source]},
+        [message],
+        stored,
+        is_group_chat=False,
+    )
+
+    assert result.allowed is True
+    assert result.evidence[0]["message_seq"] == 11
+
+
+@pytest.mark.asyncio
+async def test_assistant_only_window_produces_quarantine_candidate() -> None:
+    """助手单方面声称只能产出隔离候选，不能产出可写候选。"""
+
+    assistant_source = "用户说他下周六要搬家。"
+    provider = MagicMock()
+    response = MagicMock(
+        completion_text=json.dumps(
+            {
+                "memories": [
+                    {
+                        "content": "用户下周六要搬家。",
+                        "key_facts": ["用户下周六要搬家。"],
+                        "topics": ["搬家"],
+                        "importance": 0.7,
+                        "sentiment": "neutral",
+                        "source_refs": [
+                            {
+                                "message_index": 0,
+                                "start": 0,
+                                "end": len(assistant_source),
+                            }
+                        ],
+                    }
+                ],
+                "confidence": 0.8,
+                "extraction_quality": "high",
+            },
+            ensure_ascii=False,
+        )
+    )
+    provider.text_chat = AsyncMock(return_value=response)
+    processor = MemoryProcessor(llm_provider=provider)
+    messages = [_assistant_message(0, assistant_source)]
+
+    results = await processor.process_conversation(messages)
+
+    assert len(results) == 1
+    metadata = results[0]["metadata"]
+    assert metadata["quality_gate_action"] == "quarantine"
+    assert "grounding_user_source_missing" in metadata["grounding_reason_codes"]
+    assert metadata["source_evidence"][0]["role"] == "assistant"

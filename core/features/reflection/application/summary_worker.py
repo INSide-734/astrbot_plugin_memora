@@ -156,6 +156,7 @@ class SummaryWorker(
             is_group_chat,
             snapshot_payload,
             candidate_selection,
+            message_seqs=source.message_seqs,
         )
         if not memories:
             return WindowOutcome(
@@ -416,6 +417,8 @@ class SummaryWorker(
         is_group_chat: bool,
         snapshot_payload: Mapping[str, object],
         candidate_selection,
+        *,
+        message_seqs: Sequence[int] | None = None,
     ) -> list[dict[str, Any]]:
         """使用固定身份和可恢复门禁快照执行唯一基础 Processor 调用。"""
 
@@ -434,6 +437,7 @@ class SummaryWorker(
                 llm_max_retries=1,
                 strict_summary=True,
                 candidate_selection=candidate_selection,
+                message_seqs=message_seqs,
                 **snapshot_kwargs,
             )
         except asyncio.CancelledError:
