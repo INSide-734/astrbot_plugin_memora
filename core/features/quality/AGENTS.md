@@ -10,6 +10,7 @@
 1. `MemoryQualityGate` 在 canonical 写入前按门禁配置路由候选：`quarantine` 进入隔离状态机，人工批准后重新取证并走正常 `MemoryEngine.add_memory()`；`discard` 不落库；`mark_write` 写 canonical 但默认不参与召回与演化。
 2. `ReviewDetector`/`ReviewStore` 扫描已有 canonical 记忆的低置信度、重复、陈旧、敏感、噪声或来源缺失迹象，维护独立人工复核队列。
 3. 可配置门禁运行时：`gate_config.py` 定义 `GateConfig`/`GateProfile`/`GateBinding` 域模型与校验；`gate_runtime.py` 的 `GateRuntime` 持有不可变 `GateSnapshot`，热重载为原子替换；`gate_rule_engine.py` 在 profile 内评估 AND/OR/NOT 规则树并应用六类动作；`gate_disposition_filter.py` 默认过滤 mark_write 召回结果。
+4. `near_duplicate_detector.py` 提供写入前的确定性近重复检测：token 集合 Jaccard + `min_tokens` 短文本护栏 + `key_facts` 事实护栏，近邻候选由调用方注入的检索端口给出，比较范围先收敛到同 `scope_key`/privacy/会话与主体边界。检测器只读不写，合并决策属于 [`memory/AGENTS.md`](../memory/AGENTS.md) 的 `canonical_merge`。
 
 它不执行结构化抽取、不拥有 canonical 表，也不把检测信号自动当作删除或授权决定。
 

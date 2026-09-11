@@ -15,13 +15,14 @@ summarize_store_results = feature_outcomes.summarize_store_results
 
 
 def test_summarize_store_results_counts_mutually_exclusive_outcomes() -> None:
-    """六种终态必须互斥计数，失败项不得提交幂等键。"""
+    """七种终态必须互斥计数，失败项不得提交幂等键。"""
 
     results = [
         ReflectionStoreResult(ReflectionStoreOutcome.CANONICAL, "a"),
         ReflectionStoreResult(ReflectionStoreOutcome.QUARANTINED, "b"),
         ReflectionStoreResult(ReflectionStoreOutcome.DISCARDED, "c"),
         ReflectionStoreResult(ReflectionStoreOutcome.MARK_WRITE, "d"),
+        ReflectionStoreResult(ReflectionStoreOutcome.MERGED, "merged", 7),
         ReflectionStoreResult(ReflectionStoreOutcome.FAILED, "failed-key"),
         ReflectionStoreResult(ReflectionStoreOutcome.SKIPPED_IDEMPOTENT, "e"),
     ]
@@ -32,9 +33,12 @@ def test_summarize_store_results_counts_mutually_exclusive_outcomes() -> None:
     assert summary.quarantine_count == 1
     assert summary.discard_count == 1
     assert summary.mark_write_count == 1
+    assert summary.merged == 1
     assert summary.failed_count == 1
     assert summary.skipped_idempotent_count == 1
-    assert summary.completed_idempotency_keys == frozenset({"a", "b", "c", "d", "e"})
+    assert summary.completed_idempotency_keys == frozenset(
+        {"a", "b", "c", "d", "merged", "e"}
+    )
 
 
 def test_summarize_store_results_accepts_empty_window() -> None:
@@ -46,6 +50,7 @@ def test_summarize_store_results_accepts_empty_window() -> None:
     assert summary.quarantine_count == 0
     assert summary.discard_count == 0
     assert summary.mark_write_count == 0
+    assert summary.merged == 0
     assert summary.failed_count == 0
     assert summary.skipped_idempotent_count == 0
     assert summary.completed_idempotency_keys == frozenset()

@@ -1949,5 +1949,47 @@
                 "max": 1.0
             }
         }
+    },
+    "memory_dedup": {
+        "description": "跨窗口近重复合并",
+        "hint": "反思候选写入 canonical 前，在同 scope 内做确定性 token Jaccard 近重复检测；命中且事实一致时并入既有 canonical（importance 取最大、来源证据/主题取并集、合并计数 +1），不再插入第二条。默认关闭，observe 只记录命中不写回。",
+        "type": "object",
+        "items": {
+            "mode": {
+                "description": "运行模式",
+                "hint": "off: 不检测；observe: 只记录命中与将要执行的合并，不写回；enforce: 命中则合并进既有 canonical 并跳过插入。",
+                "type": "string",
+                "options": [
+                    "off",
+                    "observe",
+                    "enforce"
+                ],
+                "default": "off"
+            },
+            "similarity_threshold": {
+                "description": "近重复阈值",
+                "hint": "两侧正文 token 集合 Jaccard 达到该值才视为近重复候选。建议 0.8-0.95；过高漏检、过低误合并。",
+                "type": "float",
+                "default": 0.85,
+                "min": 0.0,
+                "max": 1.0
+            },
+            "candidate_limit": {
+                "description": "每次比较的候选数",
+                "hint": "每次检测读取的最近同会话 canonical 条数上限，按 id 倒序有界查询。",
+                "type": "int",
+                "default": 5,
+                "min": 1,
+                "max": 50
+            },
+            "min_tokens": {
+                "description": "短文本护栏（token 数）",
+                "hint": "两侧正文 token 数低于该值时不参与比较，避免短句被误判为重复。",
+                "type": "int",
+                "default": 12,
+                "min": 1,
+                "max": 1000
+            }
+        }
     }
 }

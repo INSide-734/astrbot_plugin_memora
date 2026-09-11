@@ -17,6 +17,15 @@ Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection �
 
 本层负责“何时、按什么顺序、失败后如何补偿”；canonical/graph/索引表 CRUD 位于本 feature infrastructure，候选召回和排序属于 [`features/retrieval`](../retrieval/AGENTS.md)，定时维护由 [`features/decay`](../decay/AGENTS.md) 与 [`features/backfill`](../backfill/AGENTS.md) 触发。Memory Evolution 的关系/Projection 事务与 revision 校验由 evolution feature 编排。
 
+### 跨窗口近重复合并
+
+`application/canonical_merge.py` 把反思候选并入同 scope 的既有 canonical（B5）：命中由 [`quality`](../quality/AGENTS.md) 的 `near_duplicate_detector` 判定，合并只做 reinforce——`importance` 取 max、`source_refs`/`source_evidence`/`topics` 并集去重（各限 32/32/5）、`merge_count`+1、`last_merged_at`、`merged_idempotency_keys`（限 16，重放短路），**正文永不改写**；revision 推进沿用 `update_memory` 的既有语义（含乐观校验、派生失效重算）。
+
+- 生产端口：`build_recent_document_search` 用 `documents` 表已有的 `json_extract(metadata, '$.session_id')` 索引做 `ORDER BY id DESC LIMIT N` 有界查询，scope/privacy/主体过滤留在 Python 侧，不新增索引；`load_memory`/`update_memory` 复用 `MemoryEngine` 既有方法。
+- 并发：进程内按 `session + scope_key` 的 `asyncio.Lock` 串行化「检测 → 合并」，覆盖总结窗口的候选并发；跨进程并发不在支持范围（单实例单 DB）。
+- 失败语义：检测异常、目标正文在检测后被改写、CAS 冲突、写回异常一律 fail-open，由调用方回落普通 canonical 写入；写回返回 False 时以回读 `merged_idempotency_keys`/`merge_count` 判定是否已提交，避免在已合并的情况下插入重复 canonical。
+- 默认关闭：`memory_dedup.mode=off` 不发起任何近重复查询；`observe` 只记录 `dedup_observed`；`enforce` 才写回。
+
 ```mermaid
 graph TD
     Caller[插件/API/处理器] --> Engine[MemoryEngine]

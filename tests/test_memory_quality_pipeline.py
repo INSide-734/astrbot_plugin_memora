@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
@@ -169,12 +171,14 @@ async def _claim(
     group_id: str | None = None,
     message_count: int = 2,
     window_size: int = 2,
+    scope: tuple[str, str, str] | None = None,
 ) -> ClaimedJob:
     """写入固定来源、规划窗口并返回唯一 claim。"""
     store.set_summary_clock(lambda: 100.0)
     for index in range(message_count):
         await store.add_message(_message(session_id, index, group_id))
     snapshot = default_gate_snapshot()
+    scope_key, privacy_level, resolver_revision = scope or ("", "", "")
     context = SummaryWindowContext(
         session_id=session_id,
         session_epoch=1,
@@ -186,6 +190,11 @@ async def _claim(
         gate_revision=snapshot.revision,
         gate_snapshot_json=gate_snapshot_to_json(snapshot),
         window_size=window_size,
+        scope_key=scope_key,
+        privacy_level=privacy_level or None,
+        resolver_revision=resolver_revision,
+        scope_reason_code="scope_resolved" if scope else "scope_unavailable",
+        scope_provenance_complete=True if scope else None,
     )
     assert (await store.plan_and_enqueue_windows(context, message_count)).queued == 1
     claims = await store.claim_ready(100.0, "scheduler", 1)
@@ -458,5 +467,201 @@ async def test_worker_propagates_processor_cancellation(tmp_db_path: str) -> Non
         with pytest.raises(asyncio.CancelledError):
             await worker.execute(claim)
         assert await store.get_summary_epoch("processor-cancel") == (1, 0)
+    finally:
+        await store.close()
+
+
+_OWNER_CONTENT = (
+    "项目使用 SQLite 存储会话记录，每周五发布一次版本，发布前必须跑完回归测试"
+)
+_OWNER_SCOPE_KEY = "group:group-dedup:topic-a"
+
+
+class _Cursor:
+    """返回固定行的最小游标替身。"""
+
+    def __init__(self, rows: list[tuple]) -> None:
+        """保存行副本。"""
+
+        self._rows = rows
+
+    async def fetchall(self) -> list[tuple]:
+        """返回全部行。"""
+
+        return list(self._rows)
+
+    async def close(self) -> None:
+        """关闭游标（无副作用）。"""
+
+        return None
+
+
+class _Connection:
+    """记录 SQL 并返回固定 canonical 行的连接替身。"""
+
+    def __init__(self, rows: list[tuple]) -> None:
+        """保存行与查询记录。"""
+
+        self.rows = rows
+        self.calls: list[tuple[str, tuple | None]] = []
+
+    async def execute(self, sql: str, params: tuple | None = None) -> _Cursor:
+        """记录查询并返回全部行。"""
+
+        self.calls.append((sql, params))
+        return _Cursor(self.rows)
+
+
+class _DedupEngine(_Engine):
+    """在幂等写端口之外提供近重复合并端口的引擎替身。"""
+
+    def __init__(self, owner_metadata: dict[str, Any]) -> None:
+        """初始化既有 canonical 与查询连接。"""
+
+        super().__init__()
+        self.owner_metadata = owner_metadata
+        self.owner_revision = 5.0
+        self.db_connection = _Connection(
+            [(900, _OWNER_CONTENT, json.dumps(owner_metadata))]
+        )
+
+    async def get_memory(self, memory_id: int) -> dict[str, Any] | None:
+        """返回既有 canonical 记录。"""
+
+        if memory_id != 900:
+            return None
+        return {
+            "id": 900,
+            "text": _OWNER_CONTENT,
+            "metadata": dict(self.owner_metadata),
+            "created_at": 1.0,
+            "updated_at": self.owner_revision,
+        }
+
+    async def update_memory(
+        self,
+        memory_id: int,
+        updates: dict[str, Any],
+        expected_revision: str | None = None,
+    ) -> bool:
+        """按 revision 校验并原地应用合并增量。"""
+
+        if memory_id != 900 or expected_revision != str(self.owner_revision):
+            return False
+        metadata = dict(self.owner_metadata)
+        metadata.update(updates.get("metadata", {}))
+        if "importance" in updates:
+            metadata["importance"] = updates["importance"]
+        self.owner_metadata = metadata
+        self.owner_revision += 1.0
+        return True
+
+
+def _dedup_metadata(session_id: str) -> dict[str, Any]:
+    """构造同 scope 的既有 canonical metadata。"""
+
+    return {
+        "scope_key": _OWNER_SCOPE_KEY,
+        "privacy_level": "public",
+        "chat_type": "group",
+        "session_id": session_id,
+        "persona_id": None,
+        "participant_ids": ["user-1", "user-2"],
+        "key_facts": ["项目使用 SQLite 存储会话记录", "每周五发布一次版本"],
+        "status": "active",
+        "importance": 0.3,
+    }
+
+
+def _dedup_candidate(content: str) -> dict[str, Any]:
+    """构造带事实证据的近重复候选。"""
+
+    candidate = _candidate(content)
+    candidate["metadata"] = {
+        "key_facts": ["项目使用 SQLite 存储会话记录"],
+        "participant_ids": ["user-1"],
+        "source_refs": [{"message_index": 0, "start": 0, "end": 3}],
+    }
+    return candidate
+
+
+@pytest.mark.asyncio
+async def test_worker_merges_near_duplicate_instead_of_inserting(
+    tmp_db_path: str,
+) -> None:
+    """enforce 模式下同 scope 近重复候选只强化 owner 并正常推进窗口。"""
+
+    store = ConversationStore(tmp_db_path)
+    await store.initialize()
+    engine = _DedupEngine(_dedup_metadata("dedup-session"))
+    worker = SummaryWorker(
+        cast(Any, store),
+        cast(Any, _Processor([_dedup_candidate(_OWNER_CONTENT + "已")])),
+        cast(Any, _Gate(["allow"])),
+        cast(Any, engine),
+        cast(Any, _BatchPreparer()),
+        None,
+        SimpleNamespace(
+            get_config_snapshot=lambda: ({"memory_dedup": {"mode": "enforce"}}, "rev-1")
+        ),
+    )
+    try:
+        claim = await _claim(
+            store,
+            session_id="dedup-session",
+            group_id="group-dedup",
+            scope=(_OWNER_SCOPE_KEY, "public", "revision-1"),
+        )
+        outcome = await worker.execute(claim)
+        committed = await store.commit_window(claim, outcome)
+
+        assert engine.write_count == 0
+        assert outcome.canonical_count == 1
+        assert outcome.failed_count == 0
+        assert outcome.unknown_count == 0
+        assert outcome.can_advance is True
+        assert committed.accepted is True
+        assert engine.owner_metadata["merge_count"] == 1
+        assert engine.owner_metadata["importance"] == pytest.approx(0.8)
+        assert engine.owner_metadata["source_refs"] == [
+            {"message_index": 0, "start": 0, "end": 3}
+        ]
+        assert engine.owner_metadata["merged_idempotency_keys"]
+        sql, params = engine.db_connection.calls[0]
+        assert "ORDER BY id DESC LIMIT ?" in sql
+        assert params == ("dedup-session", 5)
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_worker_writes_normally_when_dedup_disabled(tmp_db_path: str) -> None:
+    """缺省配置（mode=off）不得发起近重复查询，窗口行为保持不变。"""
+
+    store = ConversationStore(tmp_db_path)
+    await store.initialize()
+    engine = _DedupEngine(_dedup_metadata("plain-session"))
+    worker = SummaryWorker(
+        cast(Any, store),
+        cast(Any, _Processor([_dedup_candidate(_OWNER_CONTENT + "已")])),
+        cast(Any, _Gate(["allow"])),
+        cast(Any, engine),
+        cast(Any, _BatchPreparer()),
+        None,
+        SimpleNamespace(get_config_snapshot=lambda: ({}, "rev-1")),
+    )
+    try:
+        claim = await _claim(
+            store,
+            session_id="plain-session",
+            group_id="group-dedup",
+            scope=(_OWNER_SCOPE_KEY, "public", "revision-1"),
+        )
+        outcome = await worker.execute(claim)
+
+        assert engine.write_count == 1
+        assert engine.db_connection.calls == []
+        assert engine.owner_metadata.get("merge_count") is None
+        assert outcome.canonical_count == 1
     finally:
         await store.close()

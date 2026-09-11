@@ -131,6 +131,11 @@ CONFIG_SECTION_OWNERSHIP: dict[str, ConfigSectionOwnership] = {
     "quality": _ownership(
         "quality", ConfigOwnershipKind.RUNTIME, "core.features.quality"
     ),
+    "memory_dedup": _ownership(
+        "memory_dedup",
+        ConfigOwnershipKind.RUNTIME,
+        "core.features.memory.application.canonical_merge",
+    ),
     "memory_evolution": _ownership(
         "memory_evolution",
         ConfigOwnershipKind.RUNTIME,

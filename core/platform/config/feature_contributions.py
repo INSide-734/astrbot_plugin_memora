@@ -11,6 +11,7 @@ from ...features.memory.domain.atom_classifier_config import AtomClassifierConfi
 from ...features.memory.domain.atom_quality_config import AtomQualityFilterConfig
 from ...features.memory.domain.export_config import ExportConfig
 from ...features.memory.domain.graph_memory_config import GraphMemoryConfig
+from ...features.memory.domain.memory_dedup_config import MemoryDedupConfig
 from ...features.memory.domain.migration_config import MigrationSettings
 from ...features.memory.domain.persona_decay_config import PersonaDecayConfig
 from ...features.memory.domain.write_reliability_config import WriteReliabilityConfig
@@ -49,6 +50,7 @@ __all__ = [
     "HumanLikeMemoryConfig",
     "ImportanceDecayConfig",
     "LegacyBackfillConfig",
+    "MemoryDedupConfig",
     "MemoryEvolutionConfig",
     "MigrationSettings",
     "PersonaDecayConfig",

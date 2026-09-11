@@ -5,9 +5,14 @@ from pathlib import Path
 
 import pytest
 
+from core.features.memory.domain.memory_dedup_config import MemoryDedupConfig
 from core.features.reflection.domain.config import CandidateReuseConfig
 from core.platform.composition.engine_runtime_config import ENGINE_RUNTIME_FIELDS
-from core.platform.config.config_validator import MemoraConfig
+from core.platform.config.config_validator import (
+    MemoraConfig,
+    get_default_config,
+    validate_config,
+)
 from core.platform.config.ownership import resolve_config_ownership
 
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent / "_conf_schema.json"
@@ -221,3 +226,80 @@ class TestCandidateReuseSchemaSyncContract:
                 ownership.owner
                 == "core.features.reflection.application.topic_candidate_selector"
             )
+
+
+def _memory_dedup_schema_leaves() -> dict:
+    """读取公开 Schema 中 memory_dedup 分支的叶子声明。"""
+
+    schema = json.loads(_SCHEMA_PATH.read_text(encoding="utf-8"))
+    return schema["memory_dedup"]["items"]
+
+
+class TestMemoryDedupConfigContract:
+    """跨窗口近重复合并配置的全链契约。"""
+
+    def test_schema_leaf_set_matches_model_fields(self):
+        """Schema memory_dedup 叶集合必须与模型字段集合完全一致。"""
+
+        assert set(_memory_dedup_schema_leaves()) == set(MemoryDedupConfig.model_fields)
+
+    def test_schema_leaf_defaults_match_model_defaults(self):
+        """每叶 default 必须与模型字段默认值一致。"""
+
+        defaults = MemoraConfig().memory_dedup
+        mismatches = {
+            leaf: (node["default"], getattr(defaults, leaf))
+            for leaf, node in _memory_dedup_schema_leaves().items()
+            if node["default"] != getattr(defaults, leaf)
+        }
+        assert mismatches == {}
+
+    @pytest.mark.parametrize(
+        "leaf", ["similarity_threshold", "candidate_limit", "min_tokens"]
+    )
+    def test_schema_leaf_bounds_match_field_metadata(self, leaf: str):
+        """数值叶 min/max 必须与 Field 约束一致。"""
+
+        node = _memory_dedup_schema_leaves()[leaf]
+        metadata = MemoryDedupConfig.model_fields[leaf].metadata
+        ge = next(
+            (m.ge for m in metadata if hasattr(m, "ge") and m.ge is not None), None
+        )
+        le = next(
+            (m.le for m in metadata if hasattr(m, "le") and m.le is not None), None
+        )
+        assert (node["min"], node["max"]) == (ge, le)
+
+    def test_mode_enum_and_ranges(self):
+        """mode 只接受闭集；数值叶拒绝越界值。"""
+
+        for mode in ("off", "observe", "enforce"):
+            config = validate_config({"memory_dedup": {"mode": mode}})
+            assert config.memory_dedup.mode == mode
+        for invalid in (
+            {"mode": "enabled"},
+            {"similarity_threshold": 1.01},
+            {"similarity_threshold": -0.01},
+            {"candidate_limit": 0},
+            {"candidate_limit": 51},
+            {"min_tokens": 0},
+            {"min_tokens": 1001},
+        ):
+            with pytest.raises(ValueError):
+                validate_config({"memory_dedup": invalid})
+
+    def test_runtime_projection_and_ownership(self):
+        """四叶必须投影到运行时映射并登记唯一责任方。"""
+
+        projected = {
+            field.source_path: field.default
+            for field in ENGINE_RUNTIME_FIELDS
+            if field.source_path.startswith("memory_dedup.")
+        }
+        defaults = get_default_config()["memory_dedup"]
+        assert projected == {
+            f"memory_dedup.{leaf}": value for leaf, value in defaults.items()
+        }
+        for leaf in defaults:
+            ownership = resolve_config_ownership(f"memory_dedup.{leaf}")
+            assert ownership.owner == "core.features.memory.application.canonical_merge"

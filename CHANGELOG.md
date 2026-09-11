@@ -14,6 +14,8 @@ Memora 的所有重要变更都记录在此文件中。
 - 群聊主体改为按稳定身份标识分组：显示名不再充当主体键，昵称相同但标识不同的成员无法互相顶替；`participants` 只有在能唯一对应某个稳定主体时才用于归属判定。
 - 门禁关闭（`security.guardrails_enabled=false`）时仍解析并绑定来源证据，使关闭该校验的部署同样保留消息标识、角色与窗口序号。
 - 注入决策摘要补齐选择器收益与预算利用率：窗口聚合新增 `selected_count_total`、`dropped_count_total`、`truncated_count_total`、`effective_budget_chars_avg`、`budget_utilization_avg`、`budget_utilization_p95`，`cost_trend` 每小时桶同步带上选择/丢弃合计与利用率均值；Dashboard 概览页新增选择/丢弃卡片与预算利用率图表序列。
+- 新增跨窗口近重复合并（B5，默认关闭）：反思候选在写入 canonical 前，于同 scope（`scope_key` + `privacy_level` + 会话/人格 + 私聊主体交集）内做确定性 token 集合 Jaccard 近重复检测，命中且两侧 `key_facts` 词集 Jaccard ≥ 0.5 时把候选并入既有 canonical——`importance` 取最大、`source_refs`/`source_evidence`/`topics` 并集去重（各限 32/32/5）、`merge_count` +1、`last_merged_at`、`merged_idempotency_keys`（限 16，重放短路），不再插入第二条 canonical，正文与派生索引不重写。
+- 新增 `memory_dedup` 配置节：`mode`（`off`/`observe`/`enforce`，默认 `off`）、`similarity_threshold`（0.85）、`candidate_limit`（5）、`min_tokens`（12）；反思候选新增 `merged` 终态与 `ReflectionStoreSummary.merged` 计数，命中/观测/事实护栏/合并冲突/检测失败分别记录 `dedup_merged`、`dedup_observed`、`dedup_fact_mismatch`、`dedup_merge_conflict`、`dedup_detector_failed` reason code。
 
 ### 变更
 
@@ -33,6 +35,7 @@ Memora 的所有重要变更都记录在此文件中。
 
 - 无需迁移配置、canonical memory、索引或数据库；`source_evidence` 新增字段对旧记录按缺失处理，人工批准路径会优先按 `message_id` 复核。
 - 角色门生效后，仅由助手复述支撑的候选会从「写入 canonical」变为「进入隔离队列」，升级后隔离量可能上升；这些候选可在 Dashboard 人工复核后再决定是否写入，也可通过门禁 profile 调整处置。
+- 跨窗口近重复合并默认 `memory_dedup.mode=off`，行为与升级前一致；建议先切 `observe` 观测命中率与误伤样本，再切 `enforce`。检测或合并失败一律 fail-open 回落普通写入，不阻断候选落库；该功能只作用于自动反思产线，人工批准、导入与工具直写路径不受影响。
 
 
 ## [1.3.0] — 2026-09-10

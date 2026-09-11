@@ -38,6 +38,9 @@ _RESULT_DISPOSITIONS = {
     ReflectionStoreOutcome.QUARANTINED: CandidateDisposition.QUARANTINED,
     ReflectionStoreOutcome.DISCARDED: CandidateDisposition.DISCARD,
     ReflectionStoreOutcome.MARK_WRITE: CandidateDisposition.MARK_WRITE,
+    # 合并同普通写入一样消费该候选 slot（canonical_id 指向被强化的 owner）：
+    # ledger 的 disposition 是含 DB CHECK 的闭集，不为近重复新增取值。
+    ReflectionStoreOutcome.MERGED: CandidateDisposition.CANONICAL,
     ReflectionStoreOutcome.SKIPPED_IDEMPOTENT: CandidateDisposition.SKIPPED_IDEMPOTENT,
     ReflectionStoreOutcome.FAILED: CandidateDisposition.FAILED,
 }
