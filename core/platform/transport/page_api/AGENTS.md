@@ -84,7 +84,7 @@ flowchart TD
 - `/review/reconsolidation` 在功能关闭时返回 `enabled=false` 的空页，供 Dashboard 展示禁用态；配置已启用但 Store 缺失仍返回 `reconsolidation_unavailable`。详情和人工动作在关闭态继续 fail-closed，不能把未装配功能伪装成可写。
 - 注入策略目录与决策 API 是只读的：目录来自不可变 registry，不查询 SQLite；列表/详情只返回 allowlist 脱敏字段，绝不返回 query、记忆内容或会话身份。`InjectionStrategyApiMixin` 的决策列表只接受 `offset>=0`、`1<=limit<=100`、固定筛选枚举与 allowlist `sort_by`，`sort_order` 只能是小写 `asc/desc`。
 - `InjectionDecisionStore.list_decisions()` 返回稳定的 `{items,total,offset,limit}` 页面；`total` 是筛选后的未分页总数，排序列来自固定 SQL allowlist，并以 `decision_id ASC` 作为确定性并列键。列表/详情均不得把 `reason_codes_json` 原文、内部 query/prompt、正文、ID 列表、身份或堆栈带出响应。
-- 跨窗口去重指标端点 `GET /memory-dedup/metrics` 是只读计数聚合：只返回窗口合计、命中/护栏/失败率、分模式计数与小时趋势；不得返回 scope、会话/人格、正文、记忆 ID 或 reason 明细。未知窗口稳定返回 `invalid_window`，Store 缺失、已关闭或读取异常一律回落零值契约而不是 500。
+- 跨窗口去重指标端点 `GET /memory-dedup/metrics` 是只读计数聚合：只返回窗口合计、命中/护栏/重叠/失败率、分模式计数与小时趋势；不得返回 scope、会话/人格、正文、记忆 ID 或 reason 明细。未知窗口稳定返回 `invalid_window`，Store 缺失、已关闭或读取异常一律回落零值契约而不是 500。
 - 召回 trace 只预览路由/检索，不执行 `InjectionExecutor`、不写决策记录；空白 `session_id`、`persona_id`、`user_id` 必须规范化为未提供，不能下传为空字符串过滤器。创建和详情端点只返回 `sanitize_trace_payload()` 的安全 DTO，不得返回 query、正文/preview、canonical ID、候选 ID、request metadata、source/revision/scope/privacy/role/job 信息。
 - trace metadata 中 `debug_reporting_enabled` 表示插件问题报告记录器是否开启，`debug_trace_available` 只表示本次候选评分明细是否存在；零候选时后者为 `false` 不代表配置开关失效。控制台追踪完成或失败时也要写入脱敏问题报告事件，普通 INFO 日志仅包含候选计数和两个布尔状态。
 - Diagnostics 事件列表/详情只能返回 Store 标量 allowlist；历史行也必须在读取时重新脱敏。Diagnostics 与 Recall Trace 普通失败只返回稳定错误码，日志只记录异常类型，不得回显 action 输入、`str(exc)`、异常 `repr` 或 traceback。
