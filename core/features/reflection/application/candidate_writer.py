@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, cast
+from typing import Any, Final, cast
 
 from astrbot.api import logger
 
@@ -20,6 +21,71 @@ from ..domain.storage_outcomes import ReflectionStoreOutcome, ReflectionStoreRes
 from .continuity import record_continuity_topics
 
 _MAX_CONCURRENT_WRITES = 3
+
+# canonical 写入失败分类：区分「来源/claim 已失效的 fail-closed 预期跳过」与真实失败。
+# 只读取 ``str(error)`` 中的稳定标识符，异常文本本身绝不写入日志、指标或返回值。
+_STORE_FAILURE_SKIPPED_FENCED = "skipped_fenced"
+_STORE_FAILURE_FAILED = "failed"
+_STORE_FAILURE_UNKNOWN_CODE = "canonical_write_failed"
+
+_EXPECTED_FENCED_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "claim_lost",
+        "epoch_fenced",
+        "generation_fenced",
+        "summary_source_fenced",
+        # 由质量门在路由候选前做会话 epoch 校验时抛出
+        # （memory_quality_gate），与 canonical 来源 fence 同属按设计失效。
+        "summary_epoch_fenced",
+    }
+)
+_KNOWN_FAILURE_CODES: Final[frozenset[str]] = frozenset(
+    {
+        "summary_scope_mismatch",
+        "summary_source_activation_failed",
+        "canonical_idempotency_mapping_invalid",
+        "source_validation_unavailable",
+    }
+)
+# 既有实现下不做 canonical owner 复核的 fence 码：保持既有终态语义不变。
+_NO_OWNER_LOOKUP_FENCED_CODES: Final[frozenset[str]] = frozenset(
+    {"claim_lost", "epoch_fenced", "generation_fenced"}
+)
+_SAFE_CODE: Final = re.compile(r"^[a-z][a-z0-9_]{2,64}$")
+
+# 复用 MemoryEngine 既有写入失败指标的 stage 取值（同族：atom/graph/document）。
+_STORE_FAILURE_STAGE_FENCED = "candidate_fenced"
+_STORE_FAILURE_STAGE_FAILED = "candidate_write"
+
+
+def classify_store_failure(error: BaseException) -> tuple[str, str]:
+    """把 canonical 写入异常归约为 ``(终态类别, 稳定原因码)``。
+
+    只把 ``str(error)`` 当作稳定标识符读取：命中 ``_EXPECTED_FENCED_CODES``
+    视为 fail-closed 的预期跳过；命中 ``_KNOWN_FAILURE_CODES`` 或满足
+    ``_SAFE_CODE`` 的原样作为原因码；其余（含任何携带正文、ID 或 scope 的
+    文本）一律回落 ``canonical_write_failed``。
+    """
+
+    code = str(error)
+    if code in _EXPECTED_FENCED_CODES:
+        return _STORE_FAILURE_SKIPPED_FENCED, code
+    if code in _KNOWN_FAILURE_CODES or _SAFE_CODE.fullmatch(code):
+        return _STORE_FAILURE_FAILED, code
+    return _STORE_FAILURE_FAILED, _STORE_FAILURE_UNKNOWN_CODE
+
+
+def _record_store_write_failure(stage: str) -> None:
+    """累加既有写入失败计数；观测自身失败只降级 debug，不影响写入终态。"""
+
+    try:
+        from ...observability.infrastructure.metrics import (
+            MEMORY_WRITE_FAILURES_TOTAL,
+        )
+
+        MEMORY_WRITE_FAILURES_TOTAL.labels(stage=stage).inc()
+    except Exception:
+        logger.debug("candidate_writer 写入失败指标记录失败", exc_info=True)
 
 
 def build_reflection_idempotency_key(
@@ -464,15 +530,28 @@ async def store_reflection_candidates(
         except asyncio.CancelledError:
             raise
         except Exception as error:
-            if str(error) in {
-                "claim_lost",
-                "epoch_fenced",
-                "generation_fenced",
-            }:
-                return ReflectionStoreResult(
-                    ReflectionStoreOutcome.FAILED,
-                    idempotency_key,
+            category, reason_code = classify_store_failure(error)
+            if category == _STORE_FAILURE_SKIPPED_FENCED:
+                logger.warning(
+                    "记忆写入按来源 fence 跳过，reason_code=%s",
+                    reason_code,
+                    extra={"reason_code": reason_code},
                 )
+                _record_store_write_failure(_STORE_FAILURE_STAGE_FENCED)
+                if reason_code in _NO_OWNER_LOOKUP_FENCED_CODES:
+                    # 既有语义：这三个 fence 码不复核 canonical owner。
+                    return ReflectionStoreResult(
+                        ReflectionStoreOutcome.FAILED,
+                        idempotency_key,
+                    )
+            else:
+                logger.error(
+                    "记忆写入失败，reason_code=%s, 异常类型=%s",
+                    reason_code,
+                    error.__class__.__name__,
+                    extra={"reason_code": reason_code},
+                )
+                _record_store_write_failure(_STORE_FAILURE_STAGE_FAILED)
             try:
                 canonical_id = await _find_owner()
             except asyncio.CancelledError:
@@ -485,10 +564,6 @@ async def store_reflection_candidates(
                     idempotency_key,
                     canonical_id,
                 )
-            logger.error(
-                "记忆写入失败，异常类型=%s",
-                error.__class__.__name__,
-            )
             return ReflectionStoreResult(
                 ReflectionStoreOutcome.FAILED,
                 idempotency_key,
@@ -518,9 +593,12 @@ async def store_reflection_candidates(
         if isinstance(result, asyncio.CancelledError):
             raise result
         if isinstance(result, BaseException):
+            _, reason_code = classify_store_failure(result)
             logger.error(
-                "批量写入异常，异常类型=%s",
+                "批量写入异常，reason_code=%s, 异常类型=%s",
+                reason_code,
                 result.__class__.__name__,
+                extra={"reason_code": reason_code},
             )
             results.append(ReflectionStoreResult(ReflectionStoreOutcome.FAILED))
         else:
@@ -528,4 +606,8 @@ async def store_reflection_candidates(
     return results
 
 
-__all__ = ["build_reflection_idempotency_key", "store_reflection_candidates"]
+__all__ = [
+    "build_reflection_idempotency_key",
+    "classify_store_failure",
+    "store_reflection_candidates",
+]

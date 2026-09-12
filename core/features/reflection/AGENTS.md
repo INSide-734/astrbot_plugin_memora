@@ -13,6 +13,7 @@
 - `topic_batch_preparer.py` 只处理 C/D 预分批；A/B/Hybrid 后置分段属于 [`recall/processors/AGENTS.md`](../recall/processors/AGENTS.md)。
 - 后台任务不继承 `ExtraLlmBudget`；物理 Provider attempt 统一由 Processor 的共享 `SummaryLlmLimiter` 限流。
 - `candidate_writer.py` 执行幂等候选写入和质量路由；质量门通过、canonical 插入之前按需调用近重复合并协调器（`memory_dedup`，默认关闭），命中时返回 `merged` 终态并跳过插入；可选指标记录端口由组合根经 `SummaryWorker` 注入协调器，缺省为 no-op，记录异常不得影响写入终态；`MemoryEngine` 是 canonical 写后演化唯一 owner。
+- 候选写入异常统一由 `classify_store_failure` 归约为稳定原因码：`claim_lost`/`epoch_fenced`/`generation_fenced`/`summary_source_fenced`/`summary_epoch_fenced` 属按设计 fail-closed 的预期跳过，记 WARN 与 `MEMORY_WRITE_FAILURES_TOTAL{stage="candidate_fenced"}`（`claim_lost`/`epoch_fenced`/`generation_fenced` 不改既有语义：不复核 canonical owner，终态仍是 `failed`）；其余稳定标识符或无法识别（回落 `canonical_write_failed`）记 ERROR 与 `stage="candidate_write"`。异常原文、正文、ID、scope、revision 一律不进日志、指标与返回值。
 - `domain/summary_models.py` 与 `summary_ports.py` 定义不可变任务 DTO、闭集状态、安全投影和 Store 窄端口。
 
 

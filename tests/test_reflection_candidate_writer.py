@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 from typing import Any, Literal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+import core.features.observability.infrastructure.metrics as monitoring_metrics
 from core.features.memory.application.canonical_merge import CanonicalMergeCoordinator
 from core.features.memory.domain.memory_dedup_config import MemoryDedupConfig
 from core.features.memory.domain.revision import memory_revision
@@ -436,6 +437,7 @@ async def _store_candidate(
     content: str = _MERGE_CONTENT + "已",
     metadata: dict[str, Any] | None = None,
     quality_gate: Any | None = None,
+    run_claim_side_effect: Any | None = None,
 ):
     """以固定 scope 调用一次候选写入。"""
 
@@ -465,6 +467,7 @@ async def _store_candidate(
         memory_quality_gate=quality_gate,
         schedule_evolution_after_write=AsyncMock(),
         canonical_merge=canonical_merge,
+        run_claim_side_effect=run_claim_side_effect,
         scope_key="group:group-1:topic-a",
         privacy_level="public",
         resolver_revision="revision-1",
@@ -622,5 +625,296 @@ async def test_broken_merge_port_falls_back_to_canonical_write(
     assert results[0].outcome is ReflectionStoreOutcome.CANONICAL
     assert len(engine.add_calls) == 1
     assert "dedup_merge_conflict" in {
+        getattr(record, "reason_code", "") for record in caplog.records
+    }
+
+
+class _FailingEngine:
+    """canonical 写入固定失败的替身，并可返回固定既有 owner。"""
+
+    def __init__(self, error: Exception, *, owner: int | None = None) -> None:
+        """保存固定异常与可选既有 canonical owner。"""
+
+        self.error = error
+        self.owner = owner
+        self.add_calls = 0
+        self.continuity_tracker = None
+
+    async def add_memory(self, **_payload: Any) -> int:
+        """记录调用次数后抛出固定异常。"""
+
+        self.add_calls += 1
+        raise self.error
+
+    async def find_memory_id_by_idempotency_key(self, _key: str) -> int | None:
+        """返回固定既有 owner；``None`` 表示不存在。"""
+
+        return self.owner
+
+
+class _RecordingFailureCounter:
+    """记录 stage 取值的写入失败计数器替身。"""
+
+    def __init__(self) -> None:
+        """初始化 stage 记录列表。"""
+
+        self.stages: list[str] = []
+
+    def labels(self, *, stage: str) -> "_RecordingFailureCounter":
+        """记录标签取值并返回自身以便计数。"""
+
+        self.stages.append(stage)
+        return self
+
+    def inc(self) -> None:
+        """忽略计数增量。"""
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (RuntimeError("claim_lost"), ("skipped_fenced", "claim_lost")),
+        (RuntimeError("epoch_fenced"), ("skipped_fenced", "epoch_fenced")),
+        (RuntimeError("generation_fenced"), ("skipped_fenced", "generation_fenced")),
+        (
+            RuntimeError("summary_source_fenced"),
+            ("skipped_fenced", "summary_source_fenced"),
+        ),
+        (
+            RuntimeError("summary_epoch_fenced"),
+            ("skipped_fenced", "summary_epoch_fenced"),
+        ),
+        (
+            ValueError("summary_scope_mismatch"),
+            ("failed", "summary_scope_mismatch"),
+        ),
+        (
+            RuntimeError("summary_source_activation_failed"),
+            ("failed", "summary_source_activation_failed"),
+        ),
+        (
+            RuntimeError("canonical_idempotency_mapping_invalid"),
+            ("failed", "canonical_idempotency_mapping_invalid"),
+        ),
+        (
+            RuntimeError("source_validation_unavailable"),
+            ("failed", "source_validation_unavailable"),
+        ),
+        (
+            RuntimeError("canonical_owner_invalid"),
+            ("failed", "canonical_owner_invalid"),
+        ),
+        (RuntimeError("boom 正文片段"), ("failed", "canonical_write_failed")),
+        (
+            RuntimeError("summary_source_fenced: 用户原文"),
+            ("failed", "canonical_write_failed"),
+        ),
+        (RuntimeError(""), ("failed", "canonical_write_failed")),
+    ],
+)
+def test_classify_store_failure_only_accepts_stable_identifiers(
+    error: BaseException, expected: tuple[str, str]
+) -> None:
+    """只把稳定标识符当作原因码，含正文或凭据的文本一律回落固定未知码。"""
+
+    assert feature_writer.classify_store_failure(error) == expected
+
+
+def test_classify_store_failure_rejects_non_code_text() -> None:
+    """带换行或长于白名单上限的文本不得成为原因码。"""
+
+    for message in (
+        "canonical_write_failed\n",
+        "a" * 80,
+        "AValid_Looking_Code",
+        " token=secret-canary",
+    ):
+        assert feature_writer.classify_store_failure(RuntimeError(message)) == (
+            "failed",
+            "canonical_write_failed",
+        )
+
+
+@pytest.mark.asyncio
+async def test_claim_lost_after_side_effect_reports_fence_reason_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """claim 在副作用后失效：只记 WARN + 稳定原因码，终态保持既有 FAILED。"""
+
+    engine = _MergeEngine(_owner_document())
+
+    async def _claim_lost_runner(operation: Any) -> Any:
+        """执行副作用后模拟 claim 失效。"""
+
+        await operation()
+        raise RuntimeError("claim_lost")
+
+    with caplog.at_level("WARNING"):
+        results = await _store_candidate(
+            engine, run_claim_side_effect=_claim_lost_runner
+        )
+
+    assert results[0].outcome is ReflectionStoreOutcome.FAILED
+    assert len(engine.add_calls) == 1
+    assert [
+        record.levelname
+        for record in caplog.records
+        if getattr(record, "reason_code", "") == "claim_lost"
+    ] == ["WARNING"]
+    assert not [
+        record for record in caplog.records if "记忆写入失败" in record.getMessage()
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error_code", "owner"),
+    [
+        ("summary_source_fenced", None),
+        ("summary_source_fenced", 770),
+        # 质量门 epoch 校验抛出的 fence 同样属预期跳过，不得报 ERROR。
+        ("summary_epoch_fenced", None),
+    ],
+)
+async def test_fenced_failure_never_logs_error_and_counts_fenced(
+    error_code: str,
+    owner: int | None,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fence 失效属预期跳过：只记 WARN + 原因码并计入 candidate_fenced，不报 ERROR。"""
+
+    recorder = _RecordingFailureCounter()
+    monkeypatch.setattr(monitoring_metrics, "MEMORY_WRITE_FAILURES_TOTAL", recorder)
+    engine = _FailingEngine(RuntimeError(error_code), owner=owner)
+
+    with caplog.at_level("WARNING"):
+        results = await _store_candidate(engine)
+
+    assert results[0].outcome is (
+        ReflectionStoreOutcome.SKIPPED_IDEMPOTENT
+        if owner is not None
+        else ReflectionStoreOutcome.FAILED
+    )
+    assert results[0].canonical_id == owner
+    assert error_code in {
+        getattr(record, "reason_code", "") for record in caplog.records
+    }
+    assert recorder.stages == ["candidate_fenced"]
+    assert not [
+        record for record in caplog.records if "记忆写入失败" in record.getMessage()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unknown_store_failure_logs_error_reason_code_without_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """未知失败必须记 ERROR + 原因码 + 异常类型，且不得回显异常文本。"""
+
+    engine = _FailingEngine(RuntimeError("boom 正文片段"))
+
+    with caplog.at_level("ERROR"):
+        results = await _store_candidate(engine)
+
+    assert results[0].outcome is ReflectionStoreOutcome.FAILED
+    failures = [
+        record for record in caplog.records if "记忆写入失败" in record.getMessage()
+    ]
+    assert [record.levelname for record in failures] == ["ERROR"]
+    assert getattr(failures[0], "reason_code", "") == "canonical_write_failed"
+    assert "reason_code=canonical_write_failed" in failures[0].getMessage()
+    assert "异常类型=RuntimeError" in failures[0].getMessage()
+    for record in caplog.records:
+        assert "boom" not in record.getMessage()
+        assert "正文片段" not in record.getMessage()
+
+
+@pytest.mark.asyncio
+async def test_store_failures_record_new_metric_stages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """fence 跳过与真实失败分别以新增 stage 取值累加既有写入失败计数。"""
+
+    recorder = _RecordingFailureCounter()
+    monkeypatch.setattr(monitoring_metrics, "MEMORY_WRITE_FAILURES_TOTAL", recorder)
+
+    await _store_candidate(_FailingEngine(RuntimeError("claim_lost")))
+    await _store_candidate(_FailingEngine(RuntimeError("boom 正文片段")))
+
+    assert recorder.stages == ["candidate_fenced", "candidate_write"]
+
+
+@pytest.mark.asyncio
+async def test_metric_recording_failure_keeps_store_outcome(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """观测通道异常必须 fail-open：不得升级为批量异常或丢失原有原因码归因。"""
+
+    monkeypatch.setattr(
+        monitoring_metrics,
+        "MEMORY_WRITE_FAILURES_TOTAL",
+        SimpleNamespace(labels=MagicMock(side_effect=RuntimeError("metrics-down"))),
+    )
+    engine = _FailingEngine(RuntimeError("summary_scope_mismatch"))
+
+    with caplog.at_level("DEBUG"):
+        results = await _store_candidate(engine)
+
+    assert results[0].outcome is ReflectionStoreOutcome.FAILED
+    assert engine.add_calls == 1
+    assert [
+        record.levelname
+        for record in caplog.records
+        if getattr(record, "reason_code", "") == "summary_scope_mismatch"
+    ] == ["ERROR"]
+    assert not [
+        record for record in caplog.records if "批量写入异常" in record.getMessage()
+    ]
+    assert not [
+        record
+        for record in caplog.records
+        if getattr(record, "reason_code", "") == "canonical_write_failed"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error_code", ["claim_lost", "epoch_fenced", "generation_fenced"]
+)
+async def test_fenced_claim_codes_never_reconcile_existing_owner(
+    error_code: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """claim/epoch/generation 失效不复核既有 owner：终态保持 FAILED，仍按 fence 计数。"""
+
+    recorder = _RecordingFailureCounter()
+    monkeypatch.setattr(monitoring_metrics, "MEMORY_WRITE_FAILURES_TOTAL", recorder)
+    engine = _FailingEngine(RuntimeError(error_code), owner=770)
+
+    results = await _store_candidate(engine)
+
+    assert results[0].outcome is ReflectionStoreOutcome.FAILED
+    assert results[0].canonical_id is None
+    assert recorder.stages == ["candidate_fenced"]
+
+
+@pytest.mark.asyncio
+async def test_batch_level_failure_surfaces_stable_reason_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """逃逸到批量边界的候选失败仍须给出稳定原因码，且不写 canonical。"""
+
+    engine = _MergeEngine(_owner_document())
+
+    with caplog.at_level("ERROR"):
+        results = await _store_candidate(
+            engine, metadata={"scope_key": "scope-conflict"}
+        )
+
+    assert results[0].outcome is ReflectionStoreOutcome.FAILED
+    assert engine.add_calls == []
+    assert "scope_snapshot_conflict" in {
         getattr(record, "reason_code", "") for record in caplog.records
     }
