@@ -12,10 +12,12 @@ function summary(window: MemoryDedupSummary["window"], checked = 4): MemoryDedup
     hit: 2,
     merged: 1,
     fact_mismatch: 0,
+    fact_overlap: 0,
     conflict: 0,
     failed: 0,
     hit_rate: checked > 0 ? 2 / checked : 0,
     guard_rate: 0,
+    overlap_rate: 0,
     failure_rate: 0,
     by_mode: {
       observe: {
@@ -23,6 +25,7 @@ function summary(window: MemoryDedupSummary["window"], checked = 4): MemoryDedup
         hit: 2,
         merged: 1,
         fact_mismatch: 0,
+        fact_overlap: 0,
         conflict: 0,
         failed: 0,
       },
@@ -31,6 +34,7 @@ function summary(window: MemoryDedupSummary["window"], checked = 4): MemoryDedup
         hit: 0,
         merged: 0,
         fact_mismatch: 0,
+        fact_overlap: 0,
         conflict: 0,
         failed: 0,
       },
@@ -118,6 +122,8 @@ describe("useMemoryDedupMetrics", () => {
     const data = hook.result.current.data;
     expect(data?.trend).toEqual([]);
     expect(data?.checked).toBe(0);
+    expect(data?.fact_overlap).toBe(0);
+    expect(data?.overlap_rate).toBe(0);
     expect(data?.by_mode.observe.checked).toBe(0);
     expect(data?.by_mode.enforce.failed).toBe(0);
   });

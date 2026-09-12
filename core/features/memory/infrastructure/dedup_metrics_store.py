@@ -5,9 +5,9 @@
 ——本 Store 不存在可直接还原主体的维度，泄露面为零。
 
 写入是候选级单条 UPSERT 增量（频次与反思窗口候选数同阶）；读取按窗口聚合出
-totals、by_mode、trend 与命中率/护栏率/失败率。保留期清理在初始化后执行一次，
-之后按写入次数或时间节流（默认 64 次写入或 1 小时至多一次）；清理失败只降级
-日志，不影响已经落库的计数。
+totals、by_mode、trend 与命中率/护栏率/重叠率/失败率。保留期清理在初始化后
+执行一次，之后按写入次数或时间节流（默认 64 次写入或 1 小时至多一次）；清理
+失败只降级日志，不影响已经落库的计数。
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ DEDUP_METRIC_OUTCOMES: Final = (
     "hit",
     "merged",
     "fact_mismatch",
+    "fact_overlap",
     "conflict",
     "failed",
 )
@@ -182,7 +183,7 @@ class DedupMetricsStore(BaseStore):
         window: str = "24h",
         now_ms: int | None = None,
     ) -> dict[str, Any]:
-        """聚合窗口内的合计、分模式计数、小时趋势与三个比率。
+        """聚合窗口内的合计、分模式计数、小时趋势与四个比率。
 
         Args:
             window: ``1h``/``24h``/``7d``/``30d`` 之一。
@@ -265,6 +266,7 @@ class DedupMetricsStore(BaseStore):
             **totals,
             "hit_rate": cls._rate(totals["hit"], totals["checked"]),
             "guard_rate": cls._rate(totals["fact_mismatch"], totals["checked"]),
+            "overlap_rate": cls._rate(totals["fact_overlap"], totals["checked"]),
             "failure_rate": cls._rate(
                 totals["conflict"] + totals["failed"], totals["checked"]
             ),

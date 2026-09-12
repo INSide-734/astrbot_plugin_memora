@@ -10,10 +10,12 @@ const SUMMARY = {
   hit: 7,
   merged: 3,
   fact_mismatch: 1,
+  fact_overlap: 3,
   conflict: 1,
   failed: 1,
   hit_rate: 0.7,
   guard_rate: 0.1,
+  overlap_rate: 0.3,
   failure_rate: 0.2,
   by_mode: {
     observe: {
@@ -21,6 +23,7 @@ const SUMMARY = {
       hit: 3,
       merged: 0,
       fact_mismatch: 1,
+      fact_overlap: 2,
       conflict: 0,
       failed: 0,
     },
@@ -29,6 +32,7 @@ const SUMMARY = {
       hit: 4,
       merged: 3,
       fact_mismatch: 0,
+      fact_overlap: 1,
       conflict: 1,
       failed: 1,
     },
@@ -40,6 +44,7 @@ const SUMMARY = {
       hit: 7,
       merged: 3,
       fact_mismatch: 1,
+      fact_overlap: 3,
       conflict: 1,
       failed: 1,
     },
@@ -52,10 +57,12 @@ const EMPTY_SUMMARY = {
   hit: 0,
   merged: 0,
   fact_mismatch: 0,
+  fact_overlap: 0,
   conflict: 0,
   failed: 0,
   hit_rate: 0,
   guard_rate: 0,
+  overlap_rate: 0,
   failure_rate: 0,
   by_mode: {
     observe: {
@@ -63,6 +70,7 @@ const EMPTY_SUMMARY = {
       hit: 0,
       merged: 0,
       fact_mismatch: 0,
+      fact_overlap: 0,
       conflict: 0,
       failed: 0,
     },
@@ -71,6 +79,7 @@ const EMPTY_SUMMARY = {
       hit: 0,
       merged: 0,
       fact_mismatch: 0,
+      fact_overlap: 0,
       conflict: 0,
       failed: 0,
     },
@@ -133,10 +142,14 @@ describe("MemoryDedupMetrics", () => {
       window: "24h",
     });
     expect(screen.getByText(/跨窗口去重指标|Cross-window Dedup Metrics/i)).toBeDefined();
-    // 命中率 7/10、护栏率 1/10、失败率 (1+1)/10。
+    // 命中率 7/10、护栏率 1/10、重叠率 3/10、失败率 (1+1)/10。
     expect(screen.getByText("70%")).toBeDefined();
     expect(screen.getByText("10%")).toBeDefined();
+    expect(screen.getByText("30%")).toBeDefined();
     expect(screen.getByText("20%")).toBeDefined();
+    expect(
+      screen.getAllByText(/事实重叠|Fact Overlap/i).length
+    ).toBeGreaterThan(0);
     expect(screen.getByText(/按模式分列|By Mode/i)).toBeDefined();
     expect(screen.getByText(/观察模式|Observe/i)).toBeDefined();
     expect(screen.getByText(/执行模式|Enforce/i)).toBeDefined();

@@ -1820,7 +1820,9 @@
       "hitRate": "命中率",
       "merged": "合并数",
       "factMismatch": "事实护栏拦截",
+      "factOverlap": "事实重叠",
       "guardRate": "护栏率",
+      "overlapRate": "重叠率",
       "failureRate": "失败率",
       "trend": "小时趋势",
       "byMode": "按模式分列",
@@ -1833,6 +1835,7 @@
         "hit": "命中",
         "merged": "合并",
         "fact_mismatch": "事实护栏",
+        "fact_overlap": "事实重叠",
         "conflict": "冲突",
         "failed": "失败"
       },

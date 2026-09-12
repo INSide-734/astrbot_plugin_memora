@@ -1554,6 +1554,7 @@ const MEMORY_DEDUP_OUTCOMES = [
   "hit",
   "merged",
   "fact_mismatch",
+  "fact_overlap",
   "conflict",
   "failed",
 ] as const;
@@ -1571,17 +1572,17 @@ const MEMORY_DEDUP_SAMPLE: Array<{
   mode: "observe" | "enforce";
   counts: Record<string, number>;
 }> = [
-  { bucketOffset: 2, mode: "observe", counts: { checked: 6, hit: 2, fact_mismatch: 1 } },
-  { bucketOffset: 1, mode: "observe", counts: { checked: 8, hit: 3, fact_mismatch: 1 } },
-  { bucketOffset: 0, mode: "observe", counts: { checked: 10, hit: 4, fact_mismatch: 1 } },
+  { bucketOffset: 2, mode: "observe", counts: { checked: 6, hit: 2, fact_mismatch: 1, fact_overlap: 1 } },
+  { bucketOffset: 1, mode: "observe", counts: { checked: 8, hit: 3, fact_mismatch: 1, fact_overlap: 1 } },
+  { bucketOffset: 0, mode: "observe", counts: { checked: 10, hit: 4, fact_mismatch: 1, fact_overlap: 2 } },
   { bucketOffset: 2, mode: "enforce", counts: { checked: 5, hit: 2, merged: 2 } },
-  { bucketOffset: 1, mode: "enforce", counts: { checked: 7, hit: 3, merged: 2, conflict: 1 } },
-  { bucketOffset: 0, mode: "enforce", counts: { checked: 6, hit: 2, merged: 2, failed: 1 } },
+  { bucketOffset: 1, mode: "enforce", counts: { checked: 7, hit: 3, merged: 2, fact_overlap: 1, conflict: 1 } },
+  { bucketOffset: 0, mode: "enforce", counts: { checked: 6, hit: 2, merged: 2, fact_overlap: 1, failed: 1 } },
 ];
 
 /**
- * 按后端口径聚合确定性样本：窗口合计、分模式计数、命中率/护栏率/失败率
- * 与小时趋势。未知窗口返回稳定错误码 invalid_window。
+ * 按后端口径聚合确定性样本：窗口合计、分模式计数、命中率/护栏率/重叠率/
+ * 失败率与小时趋势。未知窗口返回稳定错误码 invalid_window。
  */
 function handleMemoryDedupMetrics(params: Record<string, string>): ApiResponse {
   const windowValue = params.window ?? "24h";
@@ -1619,6 +1620,7 @@ function handleMemoryDedupMetrics(params: Record<string, string>): ApiResponse {
     ...totals,
     hit_rate: rate(totals.hit),
     guard_rate: rate(totals.fact_mismatch),
+    overlap_rate: rate(totals.fact_overlap),
     failure_rate: rate(totals.conflict + totals.failed),
     by_mode: byMode,
     trend: [...trend.entries()]

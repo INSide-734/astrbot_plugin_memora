@@ -27,6 +27,7 @@ const MEMORY_DEDUP_OUTCOMES: MemoryDedupOutcome[] = [
   "hit",
   "merged",
   "fact_mismatch",
+  "fact_overlap",
   "conflict",
   "failed",
 ];
@@ -79,6 +80,7 @@ export function normalizeMemoryDedupSummary(value: unknown): MemoryDedupSummary 
     ...asCounts(record),
     hit_rate: asRate(record.hit_rate),
     guard_rate: asRate(record.guard_rate),
+    overlap_rate: asRate(record.overlap_rate),
     failure_rate: asRate(record.failure_rate),
     by_mode: {
       observe: asCounts(byModeRecord.observe),

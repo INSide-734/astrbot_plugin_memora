@@ -7,6 +7,7 @@ export type MemoryDedupOutcome =
   | "hit"
   | "merged"
   | "fact_mismatch"
+  | "fact_overlap"
   | "conflict"
   | "failed";
 
@@ -20,6 +21,7 @@ export interface MemoryDedupSummary extends MemoryDedupCounts {
   window: MemoryDedupSummaryWindow;
   hit_rate: number;
   guard_rate: number;
+  overlap_rate: number;
   failure_rate: number;
   by_mode: Record<MemoryDedupMode, MemoryDedupCounts>;
   trend: MemoryDedupTrendPoint[];

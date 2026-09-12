@@ -1820,7 +1820,9 @@
       "hitRate": "Hit Rate",
       "merged": "Merged",
       "factMismatch": "Fact-guard Blocks",
+      "factOverlap": "Fact Overlap",
       "guardRate": "Guard Rate",
+      "overlapRate": "Overlap Rate",
       "failureRate": "Failure Rate",
       "trend": "Hourly Trend",
       "byMode": "By Mode",
@@ -1833,6 +1835,7 @@
         "hit": "Hit",
         "merged": "Merged",
         "fact_mismatch": "Fact Guard",
+        "fact_overlap": "Fact Overlap",
         "conflict": "Conflict",
         "failed": "Failed"
       },

@@ -49,6 +49,7 @@ export function MemoryDedupMetrics() {
     ["hit", t("memoryDedup.outcome.hit")],
     ["merged", t("memoryDedup.outcome.merged")],
     ["fact_mismatch", t("memoryDedup.outcome.fact_mismatch")],
+    ["fact_overlap", t("memoryDedup.outcome.fact_overlap")],
     ["conflict", t("memoryDedup.outcome.conflict")],
     ["failed", t("memoryDedup.outcome.failed")],
   ];
@@ -79,8 +80,18 @@ export function MemoryDedupMetrics() {
           value: formatDashboardNumber(data.fact_mismatch, locale),
         },
         {
+          label: t("memoryDedup.factOverlap"),
+          value: formatDashboardNumber(data.fact_overlap, locale),
+        },
+        {
           label: t("memoryDedup.guardRate"),
           value: formatDashboardPercent(data.guard_rate, locale, {
+            maximumFractionDigits: 1,
+          }),
+        },
+        {
+          label: t("memoryDedup.overlapRate"),
+          value: formatDashboardPercent(data.overlap_rate, locale, {
             maximumFractionDigits: 1,
           }),
         },

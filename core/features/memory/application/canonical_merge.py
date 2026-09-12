@@ -10,9 +10,20 @@ topics 取并集、``merge_count``/``last_merged_at``/``merged_idempotency_keys`
 ``session + scope_key`` 的 ``asyncio.Lock`` 串行化「检测 → 合并」，覆盖
 同窗口候选并发写入。
 
-可选 ``metrics_recorder`` 把六类终态（``checked``/``hit``/``merged``/
-``fact_mismatch``/``conflict``/``failed``）计入独立指标 Store；缺省未注入
-即全部 no-op，``mode=off`` 在检测前返回，因此不产生任何指标行。
+可选 ``metrics_recorder`` 把七类终态（``checked``/``hit``/``merged``/
+``fact_mismatch``/``fact_overlap``/``conflict``/``failed``）计入独立指标
+Store；缺省未注入即全部 no-op，``mode=off`` 在检测前返回，因此不产生任何
+指标行。``fact_overlap`` 是叠加在 ``checked`` 之上的观测信号（整段无命中但
+候选事实已被既有 canonical 覆盖到阈值），``observe``/``enforce`` 都记录，
+且不写回任何 canonical。
+
+模块物理行数已越过 AGENTS.md 生产代码的 600 行拆分评审线（低于 700 行硬上限）；
+``_merge_locked`` 82 行、``_apply_merge`` 104 行也越过 80 行函数评审线（低于
+120 行硬上限）。本次只追加 ``fact_overlap`` 观测分支与本节说明，未顺带做结构
+迁移。后续拆分点：把 9 个纯 metadata 合并助手（``_load_metadata`` /
+``_normalize_metadata`` / ``_importance`` / ``_merge_count`` / ``_items`` /
+``_identity`` / ``_union`` / ``_merged_keys`` / ``_merge_keys``）抽到独立模块；
+再把「检测 + 终态分派」从 ``_merge_locked`` 前半段抽成单独方法降到 80 行内。
 """
 
 from __future__ import annotations
@@ -44,6 +55,7 @@ DEDUP_REASON_OBSERVED: Final = "dedup_observed"
 DEDUP_REASON_DETECTOR_FAILED: Final = "dedup_detector_failed"
 DEDUP_REASON_MERGE_CONFLICT: Final = "dedup_merge_conflict"
 DEDUP_REASON_FACT_MISMATCH: Final = "dedup_fact_mismatch"
+DEDUP_REASON_FACT_OVERLAP: Final = "dedup_fact_overlap"
 
 MAX_SOURCE_REFS: Final = 32
 MAX_SOURCE_EVIDENCE: Final = 32
@@ -199,6 +211,19 @@ class CanonicalMergeCoordinator:
                 detection.memory_id,
                 detection.score,
                 DEDUP_REASON_FACT_MISMATCH,
+            )
+        if detection.verdict is NearDuplicateVerdict.FACT_OVERLAP:
+            # 事实粒度重叠只作观测：追加 fact_overlap 计数，绝不写回。
+            logger.info(
+                "同 scope 候选与既有 canonical 部分共享事实，仅观测记录",
+                extra={"reason_code": DEDUP_REASON_FACT_OVERLAP},
+            )
+            await self._record_metrics(config.mode, "checked", "fact_overlap")
+            return MergeOutcome(
+                MergeStatus.OBSERVED,
+                detection.memory_id,
+                detection.score,
+                DEDUP_REASON_FACT_OVERLAP,
             )
         document = detection.document
         if document is None:
@@ -575,6 +600,7 @@ def _merge_keys(metadata: Mapping[str, Any], key: str) -> list[str]:
 __all__ = [
     "DEDUP_REASON_DETECTOR_FAILED",
     "DEDUP_REASON_FACT_MISMATCH",
+    "DEDUP_REASON_FACT_OVERLAP",
     "DEDUP_REASON_MERGED",
     "DEDUP_REASON_MERGE_CONFLICT",
     "DEDUP_REASON_OBSERVED",

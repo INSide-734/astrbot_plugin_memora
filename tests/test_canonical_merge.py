@@ -1,9 +1,9 @@
 """canonical 近重复合并协调器的 metadata、失败语义与指标记录契约。
 
 单文件覆盖同一协调器的全部行为契约，共享 `_Engine`/`_Search`/`_document` 夹具；
-物理行数已越过 AGENTS.md 的测试拆分评审线（700 行）。后续继续增长时的拆分点：
-把指标记录用例移到 `tests/test_canonical_merge_metrics.py`，并把上述夹具抽到
-共享测试辅助模块。
+物理行数已越过 AGENTS.md 的测试拆分评审线（700 行），仍低于 800 行硬上限。
+下一次改动前必须先执行拆分：把「记录端口/Store 落库」用例移到
+`tests/test_canonical_merge_metrics.py`，并把上述共享夹具抽到测试辅助模块。
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import pytest
 from core.features.memory.application.canonical_merge import (
     DEDUP_REASON_DETECTOR_FAILED,
     DEDUP_REASON_FACT_MISMATCH,
+    DEDUP_REASON_FACT_OVERLAP,
     DEDUP_REASON_MERGE_CONFLICT,
     DEDUP_REASON_MERGED,
     DEDUP_REASON_OBSERVED,
@@ -38,6 +39,8 @@ from core.features.quality.application.near_duplicate_detector import (
 _OWNER_ID = 100
 _CONTENT = "项目使用 SQLite 存储会话记录，每周五发布一次版本，发布前必须跑完回归测试"
 _NEAR_DUPLICATE = _CONTENT + "已"
+# 与 _CONTENT 整段相似度 0.10：用于构造「无整段命中但事实共享」的观测场景。
+_PARTIAL_OVERLAP = "团队改用 PostgreSQL 保存日志快照，每天审阅两次文档并归档历史指标"
 
 
 class _Engine:
@@ -580,6 +583,29 @@ async def test_fact_mismatch_records_guard_outcome() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["observe", "enforce"])
+async def test_fact_overlap_records_overlap_outcome_without_write_back(
+    mode: Literal["observe", "enforce"],
+) -> None:
+    """事实重叠只观测：记录 checked + fact_overlap，任何模式都不写回。"""
+
+    document = _document(content=_PARTIAL_OVERLAP)
+    engine = _Engine(document)
+    recorder = _Recorder()
+
+    outcome = await _coordinator(
+        engine, _Search([_stored(document)]), mode=mode, recorder=recorder
+    ).merge(_candidate())
+
+    assert outcome.status is MergeStatus.OBSERVED
+    assert outcome.merged is False
+    assert outcome.reason_code == DEDUP_REASON_FACT_OVERLAP
+    assert outcome.memory_id == _OWNER_ID
+    assert recorder.calls == [(mode, "checked"), (mode, "fact_overlap")]
+    assert engine.updates == []
+
+
+@pytest.mark.asyncio
 async def test_detector_failure_records_failed_outcome() -> None:
     """检测异常记录 checked 与 failed，不影响回落结论。"""
 
@@ -709,9 +735,43 @@ async def test_observe_hit_persists_checked_and_hit_rows(tmp_path) -> None:
             "hit": 1,
             "merged": 0,
             "fact_mismatch": 0,
+            "fact_overlap": 0,
             "conflict": 0,
             "failed": 0,
         }
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_fact_overlap_persists_overlap_rows(tmp_path) -> None:
+    """记录端口接到真实 Store 时，事实重叠落 checked + fact_overlap 两行。"""
+
+    from core.features.memory.infrastructure.dedup_metrics_store import (
+        DedupMetricsStore,
+    )
+
+    document = _document(content=_PARTIAL_OVERLAP)
+    engine = _Engine(document)
+    store = DedupMetricsStore(str(tmp_path / "dedup_metrics.sqlite3"))
+    await store.initialize()
+    try:
+        outcome = await _coordinator(
+            engine,
+            _Search([_stored(document)]),
+            mode="observe",
+            recorder=store.record,
+        ).merge(_candidate())
+
+        assert outcome.status is MergeStatus.OBSERVED
+        assert await store.row_count() == 2
+        summary = await store.summary("24h")
+        assert summary["checked"] == 1
+        assert summary["fact_overlap"] == 1
+        assert summary["overlap_rate"] == 1.0
+        assert summary["hit"] == 0
+        assert summary["merged"] == 0
+        assert summary["by_mode"]["observe"]["fact_overlap"] == 1
     finally:
         await store.close()
 

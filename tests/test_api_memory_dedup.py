@@ -24,10 +24,12 @@ EXPECTED_KEYS = {
     "hit",
     "merged",
     "fact_mismatch",
+    "fact_overlap",
     "conflict",
     "failed",
     "hit_rate",
     "guard_rate",
+    "overlap_rate",
     "failure_rate",
     "by_mode",
     "trend",
@@ -84,12 +86,15 @@ async def _seeded_store(tmp_path) -> DedupMetricsStore:
     for _ in range(3):
         await store.record("observe", "hit", now_ms=NOW_MS)
     await store.record("observe", "fact_mismatch", now_ms=NOW_MS)
+    for _ in range(2):
+        await store.record("observe", "fact_overlap", now_ms=NOW_MS)
     for _ in range(6):
         await store.record("enforce", "checked", now_ms=NOW_MS)
     for _ in range(4):
         await store.record("enforce", "hit", now_ms=NOW_MS)
     for _ in range(3):
         await store.record("enforce", "merged", now_ms=NOW_MS)
+    await store.record("enforce", "fact_overlap", now_ms=NOW_MS)
     await store.record("enforce", "conflict", now_ms=NOW_MS)
     await store.record("enforce", "failed", now_ms=NOW_MS)
     return store
@@ -119,10 +124,12 @@ async def test_store_missing_returns_zero_value_contract() -> None:
         "hit": 0,
         "merged": 0,
         "fact_mismatch": 0,
+        "fact_overlap": 0,
         "conflict": 0,
         "failed": 0,
         "hit_rate": 0.0,
         "guard_rate": 0.0,
+        "overlap_rate": 0.0,
         "failure_rate": 0.0,
         "by_mode": {
             "observe": {
@@ -130,6 +137,7 @@ async def test_store_missing_returns_zero_value_contract() -> None:
                 "hit": 0,
                 "merged": 0,
                 "fact_mismatch": 0,
+                "fact_overlap": 0,
                 "conflict": 0,
                 "failed": 0,
             },
@@ -138,6 +146,7 @@ async def test_store_missing_returns_zero_value_contract() -> None:
                 "hit": 0,
                 "merged": 0,
                 "fact_mismatch": 0,
+                "fact_overlap": 0,
                 "conflict": 0,
                 "failed": 0,
             },
@@ -194,6 +203,7 @@ async def test_summary_is_whitelisted_and_matches_hand_computed_values(
             "hit",
             "merged",
             "fact_mismatch",
+            "fact_overlap",
             "conflict",
             "failed",
             "by_mode",
@@ -205,6 +215,7 @@ async def test_summary_is_whitelisted_and_matches_hand_computed_values(
         "hit": 7,
         "merged": 3,
         "fact_mismatch": 1,
+        "fact_overlap": 3,
         "conflict": 1,
         "failed": 1,
         "by_mode": {
@@ -213,6 +224,7 @@ async def test_summary_is_whitelisted_and_matches_hand_computed_values(
                 "hit": 3,
                 "merged": 0,
                 "fact_mismatch": 1,
+                "fact_overlap": 2,
                 "conflict": 0,
                 "failed": 0,
             },
@@ -221,6 +233,7 @@ async def test_summary_is_whitelisted_and_matches_hand_computed_values(
                 "hit": 4,
                 "merged": 3,
                 "fact_mismatch": 0,
+                "fact_overlap": 1,
                 "conflict": 1,
                 "failed": 1,
             },
@@ -232,6 +245,7 @@ async def test_summary_is_whitelisted_and_matches_hand_computed_values(
                 "hit": 7,
                 "merged": 3,
                 "fact_mismatch": 1,
+                "fact_overlap": 3,
                 "conflict": 1,
                 "failed": 1,
             }
@@ -239,6 +253,7 @@ async def test_summary_is_whitelisted_and_matches_hand_computed_values(
     }
     assert data["hit_rate"] == pytest.approx(0.7)
     assert data["guard_rate"] == pytest.approx(0.1)
+    assert data["overlap_rate"] == pytest.approx(0.3)
     assert data["failure_rate"] == pytest.approx(0.2)
     serialized = json.dumps(data)
     for marker in _SENSITIVE_MARKERS:

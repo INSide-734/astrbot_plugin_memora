@@ -1034,15 +1034,17 @@ describe("memory dedup metrics mock", () => {
       hit: 16,
       merged: 6,
       fact_mismatch: 3,
+      fact_overlap: 6,
       conflict: 1,
       failed: 1,
     });
     expect(data.hit_rate).toBeCloseTo(16 / 42, 10);
     expect(data.guard_rate).toBeCloseTo(3 / 42, 10);
+    expect(data.overlap_rate).toBeCloseTo(6 / 42, 10);
     expect(data.failure_rate).toBeCloseTo(2 / 42, 10);
     expect(data.by_mode).toMatchObject({
-      observe: { checked: 24, hit: 9, merged: 0, fact_mismatch: 3 },
-      enforce: { checked: 18, hit: 7, merged: 6, conflict: 1, failed: 1 },
+      observe: { checked: 24, hit: 9, merged: 0, fact_mismatch: 3, fact_overlap: 4 },
+      enforce: { checked: 18, hit: 7, merged: 6, fact_overlap: 2, conflict: 1, failed: 1 },
     });
     const trend = data.trend as JsonObject[];
     expect(trend).toHaveLength(3);
@@ -1051,6 +1053,7 @@ describe("memory dedup metrics mock", () => {
       hit: 4,
       merged: 2,
       fact_mismatch: 1,
+      fact_overlap: 1,
       conflict: 0,
       failed: 0,
     });
@@ -1062,6 +1065,7 @@ describe("memory dedup metrics mock", () => {
     // 边界桶按桶起点纳入：1h 窗口包含当前桶与前一个桶。
     expect(data.window).toBe("1h");
     expect(data.checked).toBe(31);
+    expect(data.fact_overlap).toBe(5);
     expect((data.trend as JsonObject[])).toHaveLength(2);
   });
 

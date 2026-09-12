@@ -52,21 +52,25 @@ async def _seed_window(store: DedupMetricsStore) -> None:
     for _ in range(3):
         await store.record("observe", "hit", now_ms=NOW_MS)
     await store.record("observe", "fact_mismatch", now_ms=NOW_MS)
+    await store.record("observe", "fact_overlap", now_ms=NOW_MS)
     for _ in range(6):
         await store.record("enforce", "checked", now_ms=NOW_MS)
     for _ in range(4):
         await store.record("enforce", "hit", now_ms=NOW_MS)
     for _ in range(3):
         await store.record("enforce", "merged", now_ms=NOW_MS)
+    for _ in range(2):
+        await store.record("enforce", "fact_overlap", now_ms=NOW_MS)
     await store.record("enforce", "conflict", now_ms=NOW_MS)
     await store.record("enforce", "failed", now_ms=NOW_MS)
     await store.record("observe", "checked", now_ms=_OLDER_BUCKET_MS)
+    await store.record("observe", "fact_overlap", now_ms=_OLDER_BUCKET_MS)
     await store.record("observe", "checked", now_ms=_EXPIRED_BUCKET_MS)
 
 
 @pytest.mark.asyncio
 async def test_summary_matches_hand_computed_totals_and_rates(store_factory) -> None:
-    """24h 合计、分模式计数与三个比率必须等于手算值。"""
+    """24h 合计、分模式计数与四个比率必须等于手算值。"""
 
     store = store_factory()
     await store.initialize()
@@ -80,11 +84,13 @@ async def test_summary_matches_hand_computed_totals_and_rates(store_factory) -> 
         "hit": 7,
         "merged": 3,
         "fact_mismatch": 1,
+        "fact_overlap": 4,
         "conflict": 1,
         "failed": 1,
     }
     assert summary["hit_rate"] == pytest.approx(7 / 11)
     assert summary["guard_rate"] == pytest.approx(1 / 11)
+    assert summary["overlap_rate"] == pytest.approx(4 / 11)
     assert summary["failure_rate"] == pytest.approx(2 / 11)
     assert summary["by_mode"] == {
         "observe": {
@@ -92,6 +98,7 @@ async def test_summary_matches_hand_computed_totals_and_rates(store_factory) -> 
             "hit": 3,
             "merged": 0,
             "fact_mismatch": 1,
+            "fact_overlap": 2,
             "conflict": 0,
             "failed": 0,
         },
@@ -100,6 +107,7 @@ async def test_summary_matches_hand_computed_totals_and_rates(store_factory) -> 
             "hit": 4,
             "merged": 3,
             "fact_mismatch": 0,
+            "fact_overlap": 2,
             "conflict": 1,
             "failed": 1,
         },
@@ -111,6 +119,7 @@ async def test_summary_matches_hand_computed_totals_and_rates(store_factory) -> 
             "hit": 0,
             "merged": 0,
             "fact_mismatch": 0,
+            "fact_overlap": 1,
             "conflict": 0,
             "failed": 0,
         },
@@ -120,6 +129,7 @@ async def test_summary_matches_hand_computed_totals_and_rates(store_factory) -> 
             "hit": 7,
             "merged": 3,
             "fact_mismatch": 1,
+            "fact_overlap": 3,
             "conflict": 1,
             "failed": 1,
         },
@@ -155,6 +165,7 @@ async def test_empty_window_returns_zero_value_contract(store_factory) -> None:
     assert summary == DedupMetricsStore.empty_summary("24h")
     assert summary["hit_rate"] == 0.0
     assert summary["guard_rate"] == 0.0
+    assert summary["overlap_rate"] == 0.0
     assert summary["failure_rate"] == 0.0
     assert summary["trend"] == []
     assert summary["by_mode"]["observe"]["checked"] == 0

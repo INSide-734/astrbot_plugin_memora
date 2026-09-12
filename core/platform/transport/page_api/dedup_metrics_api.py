@@ -1,6 +1,6 @@
 """近重复合并观测面的只读 Page API。
 
-字段全部来自显式键映射白名单：响应只含窗口合计、三个比率、分模式计数与
+字段全部来自显式键映射白名单：响应只含窗口合计、四个比率、分模式计数与
 小时趋势，不含 scope/session/正文/记忆 ID。未知窗口返回稳定错误码
 ``invalid_window``；Store 缺失或读取失败时返回零值契约而不是 500。
 """
@@ -27,14 +27,16 @@ _SUMMARY_FIELDS = (
     "hit",
     "merged",
     "fact_mismatch",
+    "fact_overlap",
     "conflict",
     "failed",
     "hit_rate",
     "guard_rate",
+    "overlap_rate",
     "failure_rate",
 )
 _TREND_FIELDS = ("bucket_ms", *_OUTCOME_FIELDS)
-_RATE_FIELDS = frozenset({"hit_rate", "guard_rate", "failure_rate"})
+_RATE_FIELDS = frozenset({"hit_rate", "guard_rate", "overlap_rate", "failure_rate"})
 
 
 class DedupMetricsApiMixin:
