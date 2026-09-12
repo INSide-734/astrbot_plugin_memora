@@ -500,7 +500,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                 stage_started,
             )
             raise
-        except SummaryParseError:
+        except SummaryParseError as error:
             _report_generation_stage(
                 current_stage,
                 "failed",
@@ -514,7 +514,11 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                 total_started,
             )
             logger.error(
-                "[MemoryProcessor] 总结结构无效，reason_code=summary_invalid，异常类型=SummaryParseError"
+                "[MemoryProcessor] 总结结构无效，sub_reason=%s，detail=%s，异常类型=%s",
+                error.reason,
+                error.detail or "none",
+                error.__class__.__name__,
+                extra={"reason_code": "summary_invalid", "sub_reason": error.reason},
             )
             raise
         except Exception as e:

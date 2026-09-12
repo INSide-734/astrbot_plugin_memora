@@ -49,7 +49,7 @@ class TestJsonParserFix:
 
 
 class TestStrictSummaryJsonParser:
-    """严格总结解析只接受完整 JSON 对象外壳。"""
+    """严格总结解析只接受完整 JSON 对象外壳，允许对象前后混有解释文本。"""
 
     @pytest.fixture
     def parser(self) -> JsonParser:
@@ -61,7 +61,6 @@ class TestStrictSummaryJsonParser:
         "response",
         [
             '{"memories": [],}',
-            'prefix {"memories": []}',
             '[{"memories": []}]',
             "{}",
             '{"memories": "none"}',
@@ -75,8 +74,99 @@ class TestStrictSummaryJsonParser:
     ) -> None:
         """严格路径不得修复、提取或补齐无效总结结构。"""
 
-        with pytest.raises(SummaryParseError, match="summary_invalid"):
+        with pytest.raises(SummaryParseError) as raised:
             parser.parse_summary_response(response)
+
+        assert str(raised.value) == "summary_invalid"
+
+    @pytest.mark.parametrize(
+        ("response", "reason", "detail_prefix"),
+        [
+            ('```json\n{"memories": []}', "fence_invalid", ""),
+            ("这不是 JSON", "json_invalid", "char_offset="),
+            ('{"memories": "none"}', "schema_invalid", "memories"),
+            (
+                '{"memories": [{"summary": "这是稳定事实", "key_facts": []}]}',
+                "facts_missing",
+                "",
+            ),
+        ],
+    )
+    def test_reports_sub_reason_per_failure_stage(
+        self,
+        parser: JsonParser,
+        response: str,
+        reason: str,
+        detail_prefix: str,
+    ) -> None:
+        """四类失败阶段必须产出不同子原因码，且 str(error) 保持 summary_invalid。"""
+
+        with pytest.raises(SummaryParseError) as raised:
+            parser.parse_summary_response(response)
+
+        error = raised.value
+        assert error.reason == reason
+        assert str(error) == "summary_invalid"
+        assert error.detail.startswith(detail_prefix)
+
+    def test_schema_invalid_detail_carries_only_field_path(
+        self, parser: JsonParser
+    ) -> None:
+        """pydantic 校验失败的定位只含字段路径与错误类型，不含输入值。"""
+
+        canary = "PARSE-SECRET-BODY-CANARY"
+        response = (
+            '{"memories":[{"summary":"稳定事实","key_facts":["事实"],'
+            f'"content":"{canary * 100}"}}]}}'
+        )
+
+        with pytest.raises(SummaryParseError) as raised:
+            parser.parse_summary_response(response)
+
+        error = raised.value
+        assert error.reason == "schema_invalid"
+        assert error.detail == "memories.0.content.string_too_long"
+        assert canary not in error.detail
+        assert canary not in repr(error)
+
+    def test_json_invalid_detail_records_only_offset(self, parser: JsonParser) -> None:
+        """JSON 解析失败只记录字符偏移，不记录原文片段。"""
+
+        canary = "PARSE-SECRET-BODY-CANARY"
+        with pytest.raises(SummaryParseError) as raised:
+            parser.parse_summary_response(f"{canary} " + '{"memories": [}')
+
+        error = raised.value
+        assert error.reason == "json_invalid"
+        assert error.detail.startswith("char_offset=")
+        assert canary not in error.detail
+        assert canary not in repr(error)
+
+    def test_rejects_whitespace_only_key_facts(self, parser: JsonParser) -> None:
+        """空白 key_facts 仍按缺失事实处理。"""
+
+        with pytest.raises(SummaryParseError) as raised:
+            parser.parse_summary_response(
+                '{"memories":[{"summary":"这是稳定事实","key_facts":["  "]}]}'
+            )
+
+        assert raised.value.reason == "facts_missing"
+        assert str(raised.value) == "summary_invalid"
+
+    def test_accepts_prose_around_json_object(self, parser: JsonParser) -> None:
+        """对象前后混有解释文本时按首个 JSON 对象解析并保留严格契约。"""
+
+        response = (
+            "好的，以下是我抽取的记忆：\n"
+            '{"memories":[{"summary":"用户偏好手冲咖啡",'
+            '"key_facts":["用户喜欢手冲咖啡"]}]}\n'
+            "以上。"
+        )
+
+        result = parser.parse_summary_response(response)
+
+        assert len(result.memories) == 1
+        assert result.memories[0].key_facts == ["用户喜欢手冲咖啡"]
 
     @pytest.mark.parametrize(
         "response",
@@ -92,6 +182,17 @@ class TestStrictSummaryJsonParser:
         response: str,
     ) -> None:
         assert parser.parse_summary_response(response).memories == []
+
+
+def test_sub_reason_rejects_untrusted_text() -> None:
+    """非固定集合的原因文本必须回退 summary_invalid，不得进入异常或日志字段。"""
+
+    canary = "PARSE-SECRET-REASON-CANARY"
+    error = SummaryParseError(canary)
+
+    assert error.reason == "summary_invalid"
+    assert str(error) == "summary_invalid"
+    assert canary not in repr(error)
 
 
 def test_strict_summary_accepts_integer_numeric_fields() -> None:

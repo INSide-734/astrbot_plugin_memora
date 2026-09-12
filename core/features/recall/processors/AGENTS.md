@@ -79,6 +79,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - `LLMClient.get_current_llm_provider()`：固定对象优先；字符串 ID 动态查找；之后使用当前默认 Provider，避免持有过期引用。Provider 实例变化时重新构建并缓存 `LLMProviderAdapter`，调用阶段不再反复探测入口。
 - `call_llm_with_retry(prompt, system_prompt, max_retries=3)`：通过冻结的 `text_chat` 入口调用，普通异常按 $2^{attempt}+jitter$ 退避，最后一次原样抛出；无 Provider 是 `RuntimeError`。取消继续传播，日志只记录异常类型。
 - `JsonParser` 顺序：直接 JSON → 补括号/引号与去尾逗号后解析 → 正则提取 → `QualityValidator` 默认结构。
+- 严格总结路径 `JsonParser.parse_summary_response()` 不做修复、正则或默认回退：完整代码围栏、`MemoryExtractionResult.model_validate(strict=True)` 与每条 `key_facts` 非空且非空白缺一不可，只容忍 JSON 对象前后混有解释文本（`raw_decode` 从首个 `{` 起解析）。失败抛 `SummaryParseError`：`str(error)` 与 job 级 reason 固定 `summary_invalid`，`reason` 仅取 `fence_invalid`/`json_invalid`/`schema_invalid`/`facts_missing`，`detail` 只允许字段路径、错误类型或字符偏移；`MemoryProcessor` 的失败日志写 `reason_code=summary_invalid` 与 `sub_reason=<reason>`。
 - `QualityValidator` 规范 `summary/topics/key_facts/sentiment/importance`；重要性范围为 `[0,1]`，非法值回退 `0.5`。
 - `ConversationFormatter` 的普通格式保留发送者、ID、秒级时间并给 bot 加前缀；compact 格式用于成本敏感路径。
 - `format_conversation_with_source_refs()` 增加稳定 `S0..S<n>` 标签和原始正文 `chars` 长度；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。抽取结果保持引用正文的主要语言；日期规范化只接受正文绝对日期、明确相对日期或消息时间戳锚定的确定性推导，普通数字继续严格匹配。
