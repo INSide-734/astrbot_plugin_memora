@@ -9,7 +9,24 @@ from typing import Any
 import aiosqlite
 from astrbot.api import logger
 
+from ....shared.sql import build_fts5_or_query
 from ..domain.memory_atom import MemoryAtom
+
+
+def _build_match_expression(query: str) -> str | None:
+    """把用户查询转换为仅由双引号短语组成的 FTS5 MATCH 表达式。
+
+    空白切分后的每个非空片段都作为短语处理（内部 ``"`` 按 FTS5 规则双写），
+    使 ``OR``/``AND``/``NEAR`` 等关键字、标点与纯数字一律按词面匹配，
+    不会再进入 FTS5 语法位置；加引号不改变 unicode61 下的分词口径，
+    因此既有命中语义不变。查询为空或只含空白时返回 ``None``：
+    ``search_fts`` 据此直接返回空结果，``search_fts_by_type`` 退化为
+    「无查询词」分支并按类型返回。
+    """
+    fragments = [fragment for fragment in (query or "").split() if fragment]
+    if not fragments:
+        return None
+    return build_fts5_or_query(fragments)
 
 
 class AtomFTSMixin:
@@ -24,20 +41,13 @@ class AtomFTSMixin:
         include_expired: bool = False,
     ) -> list[MemoryAtom]:
         """检索原子内容，并返回结合时间分数排序的结果。"""
-        if not query or not query.strip():
+        # 用户文本一律作为双引号短语进入 FTS5，避免污染 MATCH 语法位置
+        fts_query = _build_match_expression(query)
+        if fts_query is None:
             return []
 
-        # 为兼容中日韩语言，默认使用裸词；仅多词短语使用引号
-        tokens = [token for token in query.strip().split() if token]
-        if not tokens:
-            return []
-        escaped = [token.replace('"', '""') for token in tokens]
-        # 较长 token 或包含空格的 token 使用引号包裹
-        fts_tokens = [
-            f'"{token}"' if (" " in token or len(token) > 3) else token
-            for token in escaped
-        ]
-        fts_query = " OR ".join(fts_tokens)
+        # LIKE 回退仍沿用原始空白切分口径
+        tokens = [token for token in query.split() if token]
 
         params = {
             "fts_query": fts_query,
@@ -66,8 +76,13 @@ class AtomFTSMixin:
                     params,
                 )
                 rows = await cursor.fetchall()
-            except Exception as e:
-                logger.warning(f"BM25 FTS 全文搜索失败: {e}")
+            except Exception as exc:
+                # sqlite 的异常 message 会回显查询片段（fts5: syntax error near "…"），
+                # 因此只记异常类型，不记原始 message。
+                logger.warning(
+                    "BM25 FTS 全文搜索失败，异常类型=%s",
+                    exc.__class__.__name__,
+                )
                 rows = []
 
             # 当 FTS 无结果时，回退到 LIKE 检索
@@ -135,20 +150,11 @@ class AtomFTSMixin:
         atom_types: list[str] | None = None,
         include_expired: bool = False,
     ) -> list[MemoryAtom]:
-        has_query = bool(query and query.strip())
-        tokens: list[str] = []
-        fts_query = ""
-        if has_query:
-            tokens = [token for token in query.strip().split() if token]
-            if not tokens:
-                has_query = False
-            else:
-                escaped = [token.replace('"', '""') for token in tokens]
-                fts_tokens = [
-                    f'"{token}"' if (" " in token or len(token) > 3) else token
-                    for token in escaped
-                ]
-                fts_query = " OR ".join(fts_tokens)
+        # 用户文本一律作为双引号短语进入 FTS5，避免污染 MATCH 语法位置；
+        # 无可用片段时退化为「无查询」分支，按类型返回。
+        fts_query = _build_match_expression(query) or ""
+        has_query = bool(fts_query)
+        tokens = [token for token in query.split() if token] if has_query else []
 
         atom_type_values = list(atom_types or [])
         params = {
@@ -189,8 +195,13 @@ class AtomFTSMixin:
                         params,
                     )
                     rows = await cursor.fetchall()
-                except Exception as e:
-                    logger.warning(f"BM25 FTS 全文搜索失败: {e}")
+                except Exception as exc:
+                    # sqlite 的异常 message 会回显查询片段（fts5: syntax error near "…"），
+                    # 因此只记异常类型，不记原始 message。
+                    logger.warning(
+                        "BM25 FTS 全文搜索失败，异常类型=%s",
+                        exc.__class__.__name__,
+                    )
                     rows = []
 
             if not rows:
