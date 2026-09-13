@@ -34,6 +34,7 @@ from ...features.quality.application.memory_quality_gate import MemoryQualityGat
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
+from ...features.recall.processors.llm_client import LLMClient
 from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...shared.contracts import PromptProtectionPort
 from ...shared.errors import InitializationError
@@ -79,6 +80,7 @@ class PluginInitializer(InitializerReadinessMixin):
         # AstrBot 4.27.2 未公开 EmbeddingProvider 类型，能力由下游适配器验证。
         self.embedding_provider: Any | None = None
         self.llm_provider: Provider | None = None
+        self.auxiliary_llm_client: LLMClient | None = None
         self.db: Any | None = None
         self.graph_db: Any | None = None
         self.memory_engine: MemoryEngine | None = None
@@ -305,6 +307,14 @@ class PluginInitializer(InitializerReadinessMixin):
             self.db = components["db"]
             self.graph_db = components["graph_db"]
             self.memory_engine = components["memory_engine"]
+            self.auxiliary_llm_client = components["auxiliary_llm_client"]
+            owns_injection_components = True
+            owns_evolution_components = bool(
+                components.get("memory_evolution_store")
+                or components.get("memory_evolution_manager")
+            )
+            if self.auxiliary_llm_client is None:
+                raise RuntimeError("辅助 LLM 客户端未初始化")
             # MemoryEngine 是动态门面，质量评分器由组合根在发布阶段挂载。
             cast(Any, self.memory_engine)._quality_scorer = self.quality_scorer
             self.memory_processor = components["memory_processor"]
@@ -331,10 +341,6 @@ class PluginInitializer(InitializerReadinessMixin):
             self.summary_scheduler = None
             self.summary_llm_limiter = components.get("summary_llm_limiter")
             self.backup_manager = components.get("backup_manager")
-            owns_injection_components = True
-            owns_evolution_components = bool(
-                self.memory_evolution_store or self.memory_evolution_manager
-            )
             await self.ensure_catalog_readiness(components)
             if summary_scheduler is None:
                 raise InitializationError("总结调度器未初始化")
@@ -373,6 +379,7 @@ class PluginInitializer(InitializerReadinessMixin):
                 ("memory_evolution_manager", self.memory_evolution_manager),
                 ("prompt_protection", self.prompt_protection),
                 ("realtime_hub", self.realtime_hub),
+                ("auxiliary_llm_client", self.auxiliary_llm_client),
                 ("summary_scheduler", self.summary_scheduler),
             ):
                 is_ready = instance is not None

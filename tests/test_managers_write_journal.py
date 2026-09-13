@@ -9,7 +9,17 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
+from core.features.memory.infrastructure.schema_manager import SchemaManager
 from core.features.memory.infrastructure.write_op_journal import WriteOpJournal
+
+
+async def _create_test_schema(
+    db: aiosqlite.Connection,
+    journal: WriteOpJournal,
+) -> None:
+    """使用生产 Schema 能力创建 canonical 与写操作日志表。"""
+
+    await SchemaManager(db).create_tables(journal.create_table)
 
 
 @pytest.mark.asyncio
@@ -29,7 +39,7 @@ class TestWriteOpJournalDBOps:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
 
             # Verify table exists
             cursor = await db.execute(
@@ -51,7 +61,7 @@ class TestWriteOpJournalDBOps:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
 
             op_id = await journal.start_op("add", {"content": "test"}, memory_id=1)
             assert op_id is not None
@@ -74,7 +84,7 @@ class TestWriteOpJournalDBOps:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
 
             op_id = await journal.start_op("delete")
             assert op_id is not None
@@ -107,7 +117,7 @@ class TestWriteOpJournalDBOps:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("add", {"init": True})
 
             await journal.advance_op(
@@ -136,7 +146,7 @@ class TestWriteOpJournalDBOps:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("add")
 
             # First advance with error
@@ -175,7 +185,7 @@ class TestWriteOpRepairMixinBasics:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             result = await journal.repair_incomplete()
             assert result == 0
 
@@ -186,7 +196,7 @@ class TestWriteOpRepairMixinBasics:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("add", memory_id=None)
 
             # Force the record to pending state via direct update
@@ -215,7 +225,7 @@ class TestWriteOpRepairMixinBasics:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("add", memory_id=1)
 
             # Force to be picked up by repair
@@ -241,7 +251,7 @@ class TestWriteOpRepairMixinBasics:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("delete", memory_id=None)
 
             await db.execute(
@@ -260,7 +270,7 @@ class TestWriteOpRepairMixinBasics:
             journal = WriteOpJournal(
                 db_connection=db, graph_memory_manager=None, atom_store=None
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("batch_delete", {"memory_ids": []})
 
             await db.execute(
@@ -284,7 +294,7 @@ class TestWriteOpRepairMixinBasics:
                 graph_memory_manager=mock_graph,
                 atom_store=mock_atom,
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("delete", memory_id=42)
 
             await db.execute(
@@ -322,7 +332,7 @@ class TestWriteOpRepairMixinBasics:
                 delete_doc_indexes_batch_cb=mock_del_idx,
                 delete_graph_atoms_batch_cb=mock_del_ga,
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("batch_delete", {"memory_ids": [1, 2, 3]})
 
             await db.execute(
@@ -356,7 +366,7 @@ class TestWriteOpRepairMixinBasics:
                 atom_store=None,
                 get_memory_cb=mock_get,
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("add", memory_id=42)
 
             await db.execute(
@@ -408,7 +418,7 @@ class TestWriteOpRepairAddIntegration:
                 atom_enabled=True,
                 get_memory_cb=mock_get,
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
 
             atom_payload = {
                 "content": "atom content",
@@ -467,7 +477,7 @@ class TestWriteOpRepairAddIntegration:
                 atom_store=None,
                 get_memory_cb=mock_get,
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("add", memory_id=42)
 
             await db.execute(
@@ -524,7 +534,7 @@ class TestWriteOpRepairAddIntegration:
                 atom_enabled=True,
                 get_memory_cb=mock_get,
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
 
             now = time.time()
             atom_payload = {
@@ -582,7 +592,7 @@ class TestWriteOpRepairAddIntegration:
                 atom_store=None,
                 get_memory_cb=mock_get,
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op(
                 "graph_reindex",
                 {"metadata": {"kind": "from_payload"}},
@@ -630,7 +640,7 @@ class TestWriteOpRepairAddIntegration:
                 atom_store=None,
                 get_memory_cb=mock_get,
             )
-            await journal.create_table()
+            await _create_test_schema(db, journal)
             op_id = await journal.start_op("graph_reindex", memory_id=42)
             await db.execute(
                 "UPDATE memory_write_ops SET status='needs_repair', step='graph_reindex_failed' WHERE id = ?",

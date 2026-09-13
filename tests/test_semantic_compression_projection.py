@@ -574,6 +574,7 @@ async def test_component_factory_wires_semantic_compression_sentinels(
     db_type = MagicMock(return_value=db)
     engine = MagicMock()
     engine.initialize = AsyncMock()
+    engine.recover_persisted_operations = AsyncMock()
     engine.text_processor = None
     engine.profile_manager = None
     engine.knowledge_manager = None

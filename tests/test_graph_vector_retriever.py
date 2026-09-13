@@ -9,6 +9,42 @@ from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 
 
+class _RejectingBatchBackend:
+    """模拟宿主在单次 embedding 请求超过十条时拒绝调用。"""
+
+    def __init__(self) -> None:
+        self.next_id = 100
+        self.embedding_request_sizes: list[int] = []
+        self.insert_call_sizes: list[int] = []
+        self.records: dict[int, tuple[str, dict[str, Any]]] = {}
+
+    async def insert_batch(
+        self,
+        *,
+        contents: list[str],
+        metadatas: list[dict[str, Any]],
+        batch_size: int,
+    ) -> list[int]:
+        self.insert_call_sizes.append(len(contents))
+        ids: list[int] = []
+        for start in range(0, len(contents), batch_size):
+            request_contents = contents[start : start + batch_size]
+            request_metadata = metadatas[start : start + batch_size]
+            if len(request_contents) > 10:
+                raise RuntimeError("embedding_request_too_large")
+            self.embedding_request_sizes.append(len(request_contents))
+            for content, metadata in zip(
+                request_contents,
+                request_metadata,
+                strict=True,
+            ):
+                vector_id = self.next_id
+                self.next_id += 1
+                ids.append(vector_id)
+                self.records[vector_id] = (content, dict(metadata))
+        return ids
+
+
 class TestGraphVectorRetriever:
     """验证图向量检索、元数据规范化和底层维护委托。"""
 
@@ -109,6 +145,50 @@ class TestGraphVectorRetriever:
         faiss_db.insert.assert_called_once_with(
             content="new entry", metadata={"key": "val"}
         )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("entry_count", "expected_request_sizes"),
+        ((11, [10, 1]), (32, [10, 10, 10, 2])),
+    )
+    async def test_add_entries_limits_embedding_requests_and_preserves_mapping(
+        self,
+        entry_count: int,
+        expected_request_sizes: list[int],
+    ) -> None:
+        """大批图条目在宿主内按十条切分，返回映射仍与输入逐项对应。"""
+
+        from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
+
+        backend = _RejectingBatchBackend()
+        retriever = GraphVectorRetriever(backend)
+        entries = [
+            (f"entry-{index}", {"rank": index, "kind": "synthetic"})
+            for index in range(entry_count)
+        ]
+
+        vector_ids = await retriever.add_entries(entries)
+
+        assert backend.insert_call_sizes == [entry_count]
+        assert backend.embedding_request_sizes == expected_request_sizes
+        assert [backend.records[vector_id] for vector_id in vector_ids] == entries
+
+    @pytest.mark.asyncio
+    async def test_add_entries_keeps_empty_and_small_batch_behavior(self) -> None:
+        """空输入不访问后端，小批输入保持单请求及逐项映射。"""
+
+        from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
+
+        backend = _RejectingBatchBackend()
+        retriever = GraphVectorRetriever(backend)
+
+        assert await retriever.add_entries([]) == []
+        entries = [("a", {"rank": 1}), ("b", {"rank": 2}), ("c", {"rank": 3})]
+        vector_ids = await retriever.add_entries(entries)
+
+        assert backend.insert_call_sizes == [3]
+        assert backend.embedding_request_sizes == [3]
+        assert [backend.records[vector_id] for vector_id in vector_ids] == entries
 
     def test_coerce_metadata_string(self, retriever: Any) -> None:
         """_coerce_metadata 能解析 JSON 字符串。"""

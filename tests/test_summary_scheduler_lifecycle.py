@@ -253,6 +253,7 @@ async def test_scheduler_start_failure_closes_published_core_resources(
         return_value={
             "db": db,
             "graph_db": graph_db,
+            "auxiliary_llm_client": MagicMock(),
             "memory_engine": engine,
             "memory_processor": MagicMock(),
             "memory_quarantine_store": MagicMock(),

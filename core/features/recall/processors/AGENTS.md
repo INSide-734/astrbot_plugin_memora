@@ -1,4 +1,4 @@
-[根级 AGENTS.md](../../../../../../../../AGENTS.md) / core / features / recall / processors
+[根级 AGENTS.md](../../../../AGENTS.md) / core / features / recall / processors
 
 # 对话到结构化记忆处理管道
 
@@ -23,7 +23,7 @@
 Provider，没有预算、功能门关闭或结构不可用时由该管线生成确定性来源 fallback。
 重建路径强制关闭 Provider，并在写入前二次验证 source revision、scope 和 privacy。
 
-本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`../handlers/AGENTS.md`](../../../../handlers/AGENTS.md)；消息组件标准化见 [`../extractors/AGENTS.md`](../../../../extractors/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
+本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`recall feature`](../AGENTS.md)；消息组件标准化见 [`conversation feature`](../../conversation/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
 
 ## 真实主管道
 
@@ -69,6 +69,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - Prompt 模板优先级由 `PromptBuilder` 实现：配置自定义模板 > `core/prompts/*.txt` > 最小硬编码回退；系统提示可含当前时间、人格、连续性、兴趣与话题引导。
 - 输出解析优先 `MemoryExtractionResult` guardrail；验证失败才进入旧 JSON 解析器，并写入 `_guardrail_fallback`。不要把“回退成功”误标为已通过 guardrail。
 - 每条模型结果必须带当前窗口的匿名 `S<n>` source offset；旧输出仅允许由当前窗口唯一推断受控引用。数字、否定极性、群聊主体和引用边界先走确定性校验，不确定路径才使用请求级预算保护的 Judge。
+- Grounding Judge 只有在 profile 显式开启后才可进入成本/请求预算分支；unavailable 只使用 `judge_disabled`、`budget_denied`、`budget_scope_missing`、`budget_exhausted`、`response_invalid`、`call_failed`、`unknown`，普通异常不猜测 Provider 原因，结果继续 fail-closed。
 - 低质量或来源未通过的候选仍返回，但写 `quality_gate_action=quarantine`、稳定原因码和内部证据；此时不提前生成 Atom。生产调用方必须交给 `MemoryQualityGate` 按门禁配置路由（quarantine/discard/mark_write），不得直接写 canonical、FTS、FAISS、图或 Evolution；mark_write 处置由门禁补齐 `gate_disposition`/`gate_reason_codes` 并按需重建 Atom。
 - 每条记忆写 `schema_version=v3`；`StorageBuilder` 同时维护 `summary_schema_version=v2` 的摘要元数据，这是不同层级的版本字段。
 - 重要性可受情感强度、首因/近因和兴趣命中影响，并始终上限钳制到 1.0。
@@ -128,6 +129,7 @@ Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM pro
 - `asyncio.CancelledError` 属于控制流，必须穿透处理器与 LLM 重试。新增异步异常处理时先单独 `except asyncio.CancelledError: raise`，不要把关闭取消转成重试、空结果或 pending 业务失败。
 - LLM 文本是不可信输入：优先 guardrail，回退解析后仍需规范字段、长度、枚举与数值范围。Prompt 中只放完成抽取所需的对话片段，避免在日志输出正文或人格秘密。
 - 来源 Judge 服从同一请求的 `ExtraLlmBudget`；普通失败保守隔离，取消必须继续传播。不得把窗口外消息、会话身份、Provider 配置或内部证据映射传给 Judge。
+- Judge 与质量门 unavailable 日志只记录静态 component/stage、闭集 cause、归一化异常类别和计数；不得记录 claim/source、人格/会话标识、Provider 配置、异常正文或堆栈。
 - 图、画像、知识、笔记属于不同派生模型；不要把它们加入 `MemoryProcessor` 的关键同步路径，除非上游契约明确要求。
 - `TextProcessor` 是检索预处理边界；不要在抽取模块另造分词规则。
 - 包级 `__init__.py` 只导出已列出的六个符号。内部类需要成为稳定 API 时同步更新导出契约和测试。

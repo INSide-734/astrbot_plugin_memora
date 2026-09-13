@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
@@ -112,8 +113,10 @@ async def _stage_quarantine(quarantine, claim, key: str, content: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_gate_exception_persists_safe_exception_type(tmp_path) -> None:
-    """门禁异常仍保留 UNKNOWN，并只保存闭集异常类型。"""
+async def test_gate_exception_persists_safe_exception_type(
+    tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """门禁异常仍保留 UNKNOWN，并在 debug 关闭时输出安全常规日志。"""
     store, _, _, claim, intent, _ = await _prepare_claim(tmp_path)
     try:
         worker = cast(Any, object.__new__(SummaryWorker))
@@ -122,7 +125,7 @@ async def test_gate_exception_persists_safe_exception_type(tmp_path) -> None:
             (),
             {
                 "route_candidate": AsyncMock(
-                    side_effect=RuntimeError("sensitive gate detail")
+                    side_effect=RuntimeError("SUMMARY_EXCEPTION_CANARY")
                 )
             },
         )()
@@ -160,6 +163,10 @@ async def test_gate_exception_persists_safe_exception_type(tmp_path) -> None:
         ).fetchone()
         assert row is not None
         assert tuple(row) == ("unknown", "ledger_unresolved", "unknown")
+        caplog.set_level(logging.WARNING, logger="astrbot.test")
+        assert "stage=commit" in caplog.text
+        assert "component=summary_store" in caplog.text
+        assert "SUMMARY_EXCEPTION_CANARY" not in caplog.text
     finally:
         await store.close()
 
@@ -251,8 +258,10 @@ async def test_absent_quarantine_evidence_keeps_unknown_cursor_blocked(
 
 
 @pytest.mark.asyncio
-async def test_quarantine_lookup_failure_keeps_unknown_and_safe_type(tmp_path) -> None:
-    """隔离查询失败时只记录异常类型，异常正文不能进入任务行。"""
+async def test_quarantine_lookup_failure_keeps_unknown_and_safe_type(
+    tmp_path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """隔离查询失败时保留异常类别，重复启动不得覆盖已有归因。"""
     store, _, _, claim, _, _ = await _prepare_claim(tmp_path)
     store.set_summary_canonical_owner_lookup(AsyncMock(return_value=None))
 
@@ -270,6 +279,15 @@ async def test_quarantine_lookup_failure_keeps_unknown_and_safe_type(tmp_path) -
             )
         ).fetchone()
         assert row is not None and tuple(row) == ("unknown", "RuntimeError")
+        assert await store.reconcile_startup_candidates() == 1
+        row = await (
+            await store.connection.execute(
+                "SELECT status,exception_type FROM summary_jobs"
+            )
+        ).fetchone()
+        assert row is not None and tuple(row) == ("unknown", "RuntimeError")
+        assert "quarantine database secret" not in caplog.text
+        assert "stage=startup_reconcile" in caplog.text
     finally:
         await store.close()
 

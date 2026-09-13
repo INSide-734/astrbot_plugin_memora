@@ -24,7 +24,7 @@ class WriteOpRepairMixin:
     # ---- 崩溃修复 ----
 
     async def repair_incomplete(self) -> int:
-        """对未完成的添加/删除操作进行尽力重放修复。"""
+        """重放未完成操作及 canonical 仍存在的误标 source_missing。"""
         if self._db is None:
             return 0
 
@@ -33,8 +33,19 @@ class WriteOpRepairMixin:
                 """
                 SELECT id, op_type, memory_id, status, step, payload, retry_count
                 FROM memory_write_ops
-                WHERE status IN ('pending', 'needs_repair')
-                  AND retry_count < ?
+                WHERE retry_count < ?
+                  AND (
+                    status IN ('pending', 'needs_repair')
+                    OR (
+                      status = 'failed'
+                      AND step = 'source_missing'
+                      AND op_type IN ('add', 'graph_reindex')
+                      AND EXISTS (
+                        SELECT 1 FROM documents
+                        WHERE documents.id = memory_write_ops.memory_id
+                      )
+                    )
+                  )
                 ORDER BY id ASC
                 LIMIT 25
                 """,
@@ -150,12 +161,12 @@ class WriteOpRepairMixin:
             )
             return False
 
-        metadata = memory.get("metadata") or payload.get("metadata") or {}
+        metadata = memory.get("metadata")
         if not isinstance(metadata, dict):
             metadata = safe_json_dict(metadata)
         content = str(memory.get("text") or "")
-        session_id = metadata.get("session_id") or payload.get("session_id")
-        persona_id = metadata.get("persona_id") or payload.get("persona_id")
+        session_id = metadata.get("session_id")
+        persona_id = metadata.get("persona_id")
 
         atom_payloads = payload.get("failed_atoms") or payload.get("atoms", []) or []
         atoms: list[MemoryAtom] = []
@@ -300,7 +311,7 @@ class WriteOpRepairMixin:
             return False
 
         content = str(memory.get("text") or "")
-        metadata = memory.get("metadata") or payload.get("metadata") or {}
+        metadata = memory.get("metadata")
         if not isinstance(metadata, dict):
             metadata = safe_json_dict(metadata)
 

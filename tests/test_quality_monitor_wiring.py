@@ -43,6 +43,7 @@ async def test_runtime_write_and_quality_api_share_one_scorer(
         return_value={
             "db": MagicMock(),
             "graph_db": None,
+            "auxiliary_llm_client": MagicMock(),
             "memory_engine": engine,
             "memory_processor": memory_processor,
             "memory_quarantine_store": MagicMock(),

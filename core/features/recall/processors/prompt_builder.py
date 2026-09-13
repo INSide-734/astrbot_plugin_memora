@@ -1,5 +1,6 @@
 """提示词构建器 — 支持自定义提示词模板（配置覆盖文件模板）"""
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -174,29 +175,25 @@ class PromptBuilder:
         try:
             persona_manager = getattr(context, "persona_manager", None)
             if not persona_manager:
-                logger.warning(
-                    "[MemoryProcessor] persona_manager 不可用，使用基础提示词"
-                )
+                logger.warning("[MemoryProcessor] 人格管理器不可用，使用基础提示词")
                 return base_prompt
 
-            persona = await persona_manager.get_persona(persona_id)
+            persona = persona_manager.get_persona_v3_by_id(persona_id)
             if not persona:
-                logger.warning(
-                    f"[MemoryProcessor] 人格 '{persona_id}' 不存在，使用基础提示词"
-                )
+                logger.warning("[MemoryProcessor] 人格未找到，使用基础提示词")
+                return base_prompt
+            if not isinstance(persona, Mapping):
+                logger.warning("[MemoryProcessor] 人格数据无效，使用基础提示词")
                 return base_prompt
 
-            if not persona.system_prompt:
-                logger.debug(
-                    f"[MemoryProcessor] 人格 '{persona_id}' 无 system_prompt，使用基础提示词"
-                )
+            persona_prompt = persona.get("prompt")
+            if not isinstance(persona_prompt, str):
+                logger.debug("[MemoryProcessor] 人格提示词缺失，使用基础提示词")
                 return base_prompt
 
-            persona_prompt = persona.system_prompt.strip()
+            persona_prompt = persona_prompt.strip()
             if not persona_prompt:
-                logger.debug(
-                    f"[MemoryProcessor] 人格 '{persona_id}' 的 system_prompt 为空，使用基础提示词"
-                )
+                logger.debug("[MemoryProcessor] 人格提示词为空，使用基础提示词")
                 return base_prompt
 
             # 人格提示词预算控制（默认 800 字符）
@@ -205,8 +202,7 @@ class PromptBuilder:
                 persona_prompt = persona_prompt[: persona_budget - 3] + "..."
 
             logger.info(
-                f"[MemoryProcessor] 成功加载人格 '{persona_id}' 的提示词 "
-                f"(长度={len(persona_prompt)}字符)"
+                f"[MemoryProcessor] 人格提示词加载成功（长度={len(persona_prompt)}字符）"
             )
 
             return (
@@ -226,11 +222,9 @@ class PromptBuilder:
                 f"- 如果你是幽默风趣的性格,记忆中可以包含轻松的表达和有趣的观察"
             )
 
-        except ValueError as e:
-            logger.warning(f"[MemoryProcessor] 人格 '{persona_id}' 不存在: {e}")
+        except ValueError:
+            logger.warning("[MemoryProcessor] 人格未找到，使用基础提示词")
             return base_prompt
-        except Exception as e:
-            logger.error(
-                f"[MemoryProcessor] 获取人格提示词时发生错误: {e}", exc_info=True
-            )
+        except Exception:
+            logger.error("[MemoryProcessor] 获取人格提示词失败，使用基础提示词")
             return base_prompt

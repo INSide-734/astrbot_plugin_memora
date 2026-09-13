@@ -785,6 +785,7 @@ async def test_initializer_blocks_scheduler_without_safe_catalog_decision(
         return_value={
             "db": db,
             "graph_db": None,
+            "auxiliary_llm_client": MagicMock(),
             "memory_engine": engine,
             "memory_processor": MagicMock(),
             "memory_quarantine_store": MagicMock(),

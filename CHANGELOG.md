@@ -27,6 +27,10 @@ Memora 的所有重要变更都记录在此文件中。
 - 修复持久化证据复核可能把证据交换给其它主体的问题：带 `message_id` 的证据只接受「消息标识 + 指纹」联合命中，未命中即按来源变更拒绝；只有缺少标识的旧证据才回退到指纹定位。
 - 修复 canonical 正文重复同一事实的问题：分段话题给出的摘要本身可能就是「[话题N] 事实A；事实B」，`StorageBuilder` 不再把已被摘要逐字包含的 key facts 重复追加到正文。
 - 注入载荷不再重复输出正文已经包含的 `key_facts`，消除重复注入带来的额外字符成本与噪声（#65）。
+- 修复总结副作用 fence 在其他会话持有合法事务时的误拒，并保留启动 reconcile 已有明确异常类别；提交成功后的 unknown、reconcile 与启动汇总日志只记录安全的静态类别和计数。
+- 修复图 embedding 宿主单请求超过供应商上限的问题，并将持久化操作恢复移到 canonical/图文档存储就绪之后；符合重试预算的历史 `source_missing` 操作可在 canonical 仍存在时恢复。
+- 为 Grounding Judge unavailable 增加闭集原因归因；显式关闭 Judge 时不再因成本模式允许而调用 Provider，质量门 profile 缺失继续 fail-closed。
+- 修复好感度分类使用现有 `LLMClient.complete()`，并改用宿主 v3 人格 API 读取 `prompt`；不改变配置、版本或生产数据。
 
 ### 测试
 

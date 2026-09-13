@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -182,11 +182,9 @@ class TestPromptBuilder:
         assert "machine learning" in prompt
 
     def test_build_system_prompt_with_persona(self) -> None:
-        persona = MagicMock()
-        persona.system_prompt = "你是一个活泼可爱的助手"
-
-        persona_manager = AsyncMock()
-        persona_manager.get_persona = AsyncMock(return_value=persona)
+        persona = {"prompt": "你是一个活泼可爱的助手"}
+        persona_manager = MagicMock()
+        persona_manager.get_persona_v3_by_id = MagicMock(return_value=persona)
 
         context = MagicMock()
         context.persona_manager = persona_manager
@@ -199,10 +197,11 @@ class TestPromptBuilder:
         )
         assert "你的人格设定" in prompt
         assert "活泼可爱" in prompt
+        persona_manager.get_persona_v3_by_id.assert_called_once_with("test-persona")
 
     def test_build_system_prompt_persona_not_found(self) -> None:
-        persona_manager = AsyncMock()
-        persona_manager.get_persona = AsyncMock(return_value=None)
+        persona_manager = MagicMock()
+        persona_manager.get_persona_v3_by_id = MagicMock(return_value=None)
 
         context = MagicMock()
         context.persona_manager = persona_manager
@@ -228,8 +227,10 @@ class TestPromptBuilder:
         assert "你的人格设定" not in prompt
 
     def test_build_system_prompt_persona_exception(self) -> None:
-        persona_manager = AsyncMock()
-        persona_manager.get_persona = AsyncMock(side_effect=RuntimeError("db error"))
+        persona_manager = MagicMock()
+        persona_manager.get_persona_v3_by_id = MagicMock(
+            side_effect=RuntimeError("db error")
+        )
 
         context = MagicMock()
         context.persona_manager = persona_manager

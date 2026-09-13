@@ -467,6 +467,7 @@ async def test_component_factory_wires_note_pipeline_with_runtime_sentinels(
     note_manager = MagicMock()
     engine = MagicMock()
     engine.initialize = AsyncMock()
+    engine.recover_persisted_operations = AsyncMock()
     engine.text_processor = None
     engine.profile_manager = None
     engine.knowledge_manager = None

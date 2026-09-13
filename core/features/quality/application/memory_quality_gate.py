@@ -12,6 +12,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
+from astrbot.api import logger
+
 from ....shared.summary_source import source_window_digest
 from ...recall.processors.memory_grounding import MemoryGroundingValidator
 from ..infrastructure.quarantine_store import MemoryQuarantineStore
@@ -436,6 +438,14 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                 else None
             )
             if profile is None:
+                try:
+                    logger.warning(
+                        "[MemoryQualityGate] 评估不可用 component=memory_quality_gate "
+                        "stage=approval cause=profile_unresolved "
+                        "exception_type=unknown count=1"
+                    )
+                except Exception:
+                    pass
                 validation = validation.with_unavailable_judge()
             else:
                 try:

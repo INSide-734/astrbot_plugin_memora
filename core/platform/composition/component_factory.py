@@ -284,6 +284,7 @@ class ComponentFactory:
             await asyncio.gather(db.initialize(), graph_db.initialize())
         else:
             await db.initialize()
+        await memory_engine.recover_persisted_operations()
         await memory_evolution_store.initialize()
         logger.info("数据库与索引组件已初始化")
         logger.info("MemoryEngine 已初始化")
@@ -655,6 +656,7 @@ class ComponentFactory:
             "graph_db": graph_db,
             "memory_engine": memory_engine,
             "memory_processor": memory_processor,
+            "auxiliary_llm_client": auxiliary_llm_client,
             "memory_quarantine_store": memory_quarantine_store,
             "memory_quality_gate": memory_quality_gate,
             "gate_runtime": gate_runtime,

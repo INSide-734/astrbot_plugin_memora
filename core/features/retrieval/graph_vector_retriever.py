@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from ...shared.adapter_capabilities import (
     ASTRBOT_FAISS_CAPABILITIES,
@@ -35,6 +36,7 @@ class GraphVectorRetriever:
     _DELETE_BATCH_SIZE = 200
     _MAX_INSERT_BATCH_SIZE = 200
     _DEFAULT_INSERT_BATCH_SIZE = 32
+    _MAX_EMBEDDING_REQUEST_ITEMS = 10
 
     adapter_capabilities = AdapterCapabilityContract(
         kind=AdapterKind.VECTOR_RETRIEVER,
@@ -87,7 +89,7 @@ class GraphVectorRetriever:
         *,
         batch_size: int | None = None,
     ) -> list[int]:
-        """按有界批次写入图条目，并保留输入到内部 ID 的顺序。"""
+        """按外层批次写入，限制宿主 embedding 子请求并保留 ID 顺序。"""
 
         if not entries:
             return []
@@ -106,10 +108,10 @@ class GraphVectorRetriever:
         vector_doc_ids: list[int] = []
         for start in range(0, len(entries), limit):
             chunk = entries[start : start + limit]
-            ids = await insert_batch(
+            ids = await cast(Callable[..., Awaitable[Any]], insert_batch)(
                 contents=[content for content, _metadata in chunk],
                 metadatas=[dict(metadata) for _content, metadata in chunk],
-                batch_size=len(chunk),
+                batch_size=min(len(chunk), self._MAX_EMBEDDING_REQUEST_ITEMS),
             )
             if not isinstance(ids, (list, tuple)) or len(ids) != len(chunk):
                 raise RuntimeError("图向量批量插入返回的标识数量不匹配")

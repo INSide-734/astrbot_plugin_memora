@@ -36,6 +36,7 @@ flowchart LR
 6. LRU cache 受 `_cache_lock` 保护，容量、context window 和 TTL 有界；关闭时不创建新 I/O 或后台任务。
 7. conversation feature 不把正文写入日志；消息、sender/group/session/persona、participants 均为敏感数据。
 8. `asyncio.CancelledError` 穿透 Store、cache 和事件适配；失败事务必须 rollback，不得留下锁或半提交计数。
+9. 总结外部副作用由 session 来源锁包围；需要隔离保护的路径遵循“来源锁 → quarantine guard → Store 写锁”。claim snapshot 只在写锁内检查真实事务并重新验证 claim；通用 runner 不重复持有 quarantine guard，具体隔离写入由 `MemoryQuarantineStore.stage_candidate()` 自身取得其 guard，避免同一把不可重入锁死锁。提交后的 unknown/reconcile 常规日志只保留静态 stage、闭集 reason、异常类别和计数，不含正文或标识。
 
 ## 依赖方向
 

@@ -153,9 +153,10 @@ class InitializerReadinessMixin:
     _initialization_failed: bool
     _initialization_error: str | None
     _provider_waiter: Any
+    db: Any | None
     embedding_provider: Any | None
     llm_provider: Any | None
-    db: Any | None
+    auxiliary_llm_client: Any | None
     graph_db: Any | None
     memory_engine: Any | None
     memory_processor: Any | None
@@ -256,6 +257,7 @@ class InitializerReadinessMixin:
                 "memory_quality_gate": self.memory_quality_gate is not None,
                 "conversation_manager": self.conversation_manager is not None,
                 "identity_runtime": self.identity_runtime is not None,
+                "auxiliary_llm_client": self.auxiliary_llm_client is not None,
                 "capture_runtime": self.capture_runtime is not None,
                 "index_validator": self.index_validator is not None,
                 "memory_evolution_store": self.memory_evolution_store is not None,

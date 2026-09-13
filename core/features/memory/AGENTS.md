@@ -58,8 +58,8 @@ graph TD
 
 | 入口 | 语义 |
 |---|---|
-| `initialize()` / `close()` | 打开/关闭 SQLite 与图向量库，创建索引组件和可选子系统，追踪并取消后台任务 |
-| `add_memory(...) -> int` | 写文档/向量、BM25、原子、图产物并记录可恢复写日志 |
+| `initialize()` / `close()` | 打开/关闭 SQLite 与图向量库，创建索引组件和可选子系统；`initialize()` 不执行持久化操作恢复，追踪并取消 `_pending_tasks` |
+| `recover_persisted_operations()` | 在 canonical 与图文档存储就绪后，按既有重试与取消语义恢复 WriteOpJournal 和 reconsolidation；未就绪时静态失败且不产生副作用 |
 | `search_memories(...)` | 经缓存、双路/混合检索、触发词、情绪/季节和链式扩展返回 `HybridResult` |
 | `update_memory(...) -> bool` | 元数据原地更新；内容更新采用“新建后删除旧项”，删除失败则删除新项补偿 |
 | `delete_memory(...) -> bool` | 先删文档索引，再清理图和原子；子资源失败进入修复队列 |
@@ -75,7 +75,7 @@ graph TD
 2. `SchemaMigrationCoordinator` 只读检查版本；fresh install 直接建当前结构，旧库按 `migration_settings` 决定阻断或先创建 `pre_migration` 快照再迁移，同时创建 `memory_write_ops`。迁移成功后才注册可重连连接。
 3. 构建 `TextProcessor → BM25Retriever → VectorRetriever → HybridRetriever`。
 4. 仅在 `graph_enabled` 且存在 `graph_vector_db` 时构建 `GraphStore`、`AtomStore`、层级存储、图双路检索和 `GraphMemoryManager`。
-5. 可选执行 `WriteOpJournal.repair_incomplete()`。
+5. `initialize()` 只构建上述组件；组合根在 canonical/图文档存储各自 `initialize()` 成功后调用 `recover_persisted_operations()`，再继续发布后续子系统与 worker。
 6. 按配置构建画像、知识、笔记、自动学习、性格追踪、重排序器等；复用工厂注入的 typed `CostControl`，高成本 `llm`/`hybrid` 重排未通过功能门时降级为 `mmr`，成功创建的实例写回 `MemoryEngine.reranker` 并传给图双路检索器。
 7. 图路可用时构建 `DualRouteRetriever`，最后创建 `RealtimeSSE`。
 8. 若注入了 `projection_reader`，`MemoryEngine` 只把它作为召回阶段的派生注解读取器；它不改变 canonical 写入和整数 `doc_id` 语义。

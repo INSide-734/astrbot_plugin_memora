@@ -14,6 +14,7 @@ from ...reflection.domain.summary_models import (
     SummaryJobStatus,
     normalize_exception_type,
 )
+from .summary_store_observability import log_summary_startup_reconcile
 
 if TYPE_CHECKING:
     pass
@@ -76,6 +77,20 @@ def _quarantine_evidence_matches(
             return False
     digest = source.get("source_digest")
     return isinstance(digest, str) and digest == job.get("source_digest")
+
+
+def _reconcile_exception_type(current: object, fallback: object = None) -> str:
+    """保留安全的持久化异常类别，拒绝旧值中的异常正文。"""
+    normalized = normalize_exception_type(current)
+    if normalized and normalized != "unknown":
+        return normalized
+    return normalize_exception_type(fallback) or "unknown"
+
+
+def _completed_exception_type(current: object) -> str | None:
+    """完成任务时保留明确类别，清除 unknown/空值。"""
+    normalized = normalize_exception_type(current)
+    return normalized if normalized and normalized != "unknown" else None
 
 
 class SummaryStoreStartupMixin:
@@ -231,6 +246,9 @@ class SummaryStoreStartupMixin:
                     quarantine[(job_id, slot["slot"])] = candidate
 
         touched = 0
+        scanned = recovered = preserved_unknown = fenced = 0
+        fenced_reason: str | None = None
+        evidence_error_count = len(evidence_errors)
         now = self._summary_now()
         try:
             async with self._write_lock:
@@ -241,7 +259,7 @@ class SummaryStoreStartupMixin:
                         SELECT session_id,session_epoch,status,
                                canonical_count,quarantine_count,discard_count,
                                mark_write_count,failed_count,skipped_count,
-                               start_seq,end_seq,expected_count,source_digest
+                               start_seq,end_seq,expected_count,source_digest,exception_type
                         FROM summary_jobs WHERE job_id=?
                         """,
                         (job_id,),
@@ -249,6 +267,8 @@ class SummaryStoreStartupMixin:
                     job_row = await current.fetchone()
                     if job_row is None:
                         continue
+                    scanned += 1
+                    persisted_exception_type = _row(job_row, "exception_type", 13)
                     session_id = str(_row(job_row, "session_id", 0))
                     epoch = int(_row(job_row, "session_epoch", 1))
                     current_status = str(_row(job_row, "status", 2))
@@ -286,13 +306,19 @@ class SummaryStoreStartupMixin:
                             """
                             UPDATE summary_jobs
                             SET status='unknown',reason_code='epoch_fenced',
-                                failed_stage='startup_reconcile',exception_type='unknown',
+                                failed_stage='startup_reconcile',exception_type=?,
                                 claim_token=NULL,lease_until=NULL,updated_at=?
                             WHERE job_id=?
                             """,
-                            (now, job_id),
+                            (
+                                _reconcile_exception_type(persisted_exception_type),
+                                now,
+                                job_id,
+                            ),
                         )
+                        fenced += 1
                         touched += 1
+                        fenced_reason = fenced_reason or "epoch_fenced"
                         continue
                     if current_source != initial_source:
                         await connection.execute(
@@ -308,12 +334,20 @@ class SummaryStoreStartupMixin:
                             """
                             UPDATE summary_jobs
                             SET status='unknown',reason_code='source_digest_mismatch',
-                                failed_stage='startup_reconcile',exception_type='unknown',
+                                failed_stage='startup_reconcile',exception_type=?,
                                 claim_token=NULL,lease_until=NULL,updated_at=?
                             WHERE job_id=? AND session_id=? AND session_epoch=?
                             """,
-                            (now, job_id, session_id, epoch),
+                            (
+                                _reconcile_exception_type(persisted_exception_type),
+                                now,
+                                job_id,
+                                session_id,
+                                epoch,
+                            ),
                         )
+                        fenced += 1
+                        fenced_reason = fenced_reason or "source_digest_mismatch"
                         touched += 1
                         continue
 
@@ -336,13 +370,17 @@ class SummaryStoreStartupMixin:
                                 WHERE job_id=? AND session_id=? AND session_epoch=?
                                 """,
                                 (
-                                    evidence_errors.get(job_id, "unknown"),
+                                    _reconcile_exception_type(
+                                        persisted_exception_type,
+                                        evidence_errors.get(job_id),
+                                    ),
                                     now,
                                     job_id,
                                     session_id,
                                     epoch,
                                 ),
                             )
+                            preserved_unknown += 1
                             touched += 1
                         continue
 
@@ -485,7 +523,6 @@ class SummaryStoreStartupMixin:
                             )
                         ):
                             unresolved = True
-
                     if unresolved:
                         await connection.execute(
                             """
@@ -496,7 +533,10 @@ class SummaryStoreStartupMixin:
                             WHERE job_id=? AND session_id=? AND session_epoch=?
                             """,
                             (
-                                evidence_errors.get(job_id, "unknown"),
+                                _reconcile_exception_type(
+                                    persisted_exception_type,
+                                    evidence_errors.get(job_id),
+                                ),
                                 now,
                                 job_id,
                                 session_id,
@@ -504,6 +544,7 @@ class SummaryStoreStartupMixin:
                             ),
                         )
                         touched += 1
+                        preserved_unknown += 1
                         continue
 
                     counts = defaultdict(int)
@@ -529,7 +570,7 @@ class SummaryStoreStartupMixin:
                         """
                         UPDATE summary_jobs
                         SET status='completed',reason_code='completed',failed_stage=NULL,
-                            exception_type=NULL,claim_token=NULL,lease_until=NULL,
+                            exception_type=?,claim_token=NULL,lease_until=NULL,
                             canonical_count=?,quarantine_count=?,discard_count=?,
                             mark_write_count=?,failed_count=0,skipped_count=?,updated_at=?
                         WHERE job_id=? AND session_id=? AND session_epoch=?
@@ -538,6 +579,7 @@ class SummaryStoreStartupMixin:
                           AND status IN ('running','unknown','failed','queued')
                         """,
                         (
+                            _completed_exception_type(persisted_exception_type),
                             values["canonical_count"],
                             values["quarantine_count"],
                             values["discard_count"],
@@ -555,6 +597,7 @@ class SummaryStoreStartupMixin:
                     )
                     if updated.rowcount != 1:
                         continue
+                    recovered += 1
                     old_values = {
                         "canonical_count": int(
                             _row(job_row, "canonical_count", 3) or 0
@@ -587,6 +630,14 @@ class SummaryStoreStartupMixin:
                     await self._advance_cursor(session_id, epoch, now)
                     touched += 1
                 await connection.commit()
+                log_summary_startup_reconcile(
+                    scanned=scanned,
+                    recovered=recovered,
+                    preserved_unknown=preserved_unknown,
+                    fenced=fenced,
+                    evidence_error=evidence_error_count,
+                    reason_code=fenced_reason,
+                )
         except asyncio.CancelledError:
             await self._rollback_summary()
             raise

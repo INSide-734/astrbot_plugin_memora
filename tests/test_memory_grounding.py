@@ -11,7 +11,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.features.quality.domain.gate_config import GateProfile
+from core.features.quality.application.gate_runtime import (
+    GateRuntime,
+    build_gate_snapshot,
+)
+from core.features.quality.domain.gate_config import GateConfig, GateJudge, GateProfile
 from core.features.recall.processors.conversation_formatter import ConversationFormatter
 from core.features.recall.processors.memory_grounding import MemoryGroundingValidator
 from core.features.recall.processors.memory_processor import MemoryProcessor
@@ -427,6 +431,16 @@ async def test_grounding_judge_only_receives_current_referenced_scope() -> None:
         llm_provider=provider,
         cost_control=CostControl(mode="quality", max_extra_llm_calls_per_turn=1),
         grounding_judge=judge,
+        gate_runtime=GateRuntime(
+            build_gate_snapshot(
+                GateConfig(
+                    bindings=(),
+                    profiles=(
+                        GateProfile(name="private", judge=GateJudge(enabled=True)),
+                    ),
+                )
+            )
+        ),
     )
     messages = [
         _message(0, "我最近在考虑换工作。"),
@@ -464,6 +478,16 @@ async def test_grounding_judge_cancellation_propagates() -> None:
         llm_provider=provider,
         cost_control=CostControl(mode="quality", max_extra_llm_calls_per_turn=1),
         grounding_judge=judge,
+        gate_runtime=GateRuntime(
+            build_gate_snapshot(
+                GateConfig(
+                    bindings=(),
+                    profiles=(
+                        GateProfile(name="private", judge=GateJudge(enabled=True)),
+                    ),
+                )
+            )
+        ),
     )
 
     with extra_llm_budget_scope(ExtraLlmBudget(1)):

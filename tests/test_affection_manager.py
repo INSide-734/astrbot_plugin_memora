@@ -1500,11 +1500,11 @@ class TestAffectionManagerWithLLM:
         await store.initialize()
         try:
             llm = AsyncMock()
-            llm.chat_completion.return_value = "compliment"
+            llm.complete.return_value = "compliment"
             mgr = AffectionManager(store, llm_adapter=llm)
             result = await mgr.process_interaction("u1", "g1", "某条消息", "回复")
             assert result["interaction_type"] == "compliment"
-            llm.chat_completion.assert_called_once()
+            llm.complete.assert_called_once()
         finally:
             await store.close()
 
@@ -1514,7 +1514,7 @@ class TestAffectionManagerWithLLM:
         await store.initialize()
         try:
             llm = AsyncMock()
-            llm.chat_completion.return_value = "bogus_type"
+            llm.complete.return_value = "bogus_type"
             mgr = AffectionManager(store, llm_adapter=llm)
             result = await mgr.process_interaction("u1", "g1", "普通聊天内容", "")
             assert result["interaction_type"] == "chat"
@@ -1527,7 +1527,7 @@ class TestAffectionManagerWithLLM:
         await store.initialize()
         try:
             llm = AsyncMock()
-            llm.chat_completion.side_effect = RuntimeError("LLM down")
+            llm.complete.side_effect = RuntimeError("LLM down")
             mgr = AffectionManager(store, llm_adapter=llm)
             result = await mgr.process_interaction("u1", "g1", "普通聊天内容", "")
             assert result["interaction_type"] == "chat"
@@ -1540,7 +1540,7 @@ class TestAffectionManagerWithLLM:
         await store.initialize()
         try:
             llm = AsyncMock()
-            llm.chat_completion.return_value = "flirt"
+            llm.complete.return_value = "flirt"
             mgr = AffectionManager(store, llm_adapter=llm)
             await mgr.set_mood("g1", MoodType.CALM, 0.5)
             result = await mgr.process_interaction("u1", "g1", "撩你一下~", "")
@@ -1556,7 +1556,7 @@ class TestAffectionManagerWithLLM:
         await store.initialize()
         try:
             llm = AsyncMock()
-            llm.chat_completion.return_value = "flirt"
+            llm.complete.return_value = "flirt"
             mgr = AffectionManager(store, llm_adapter=llm)
             await mgr.set_mood("g1", MoodType.HAPPY, 0.7)
             result = await mgr.process_interaction("u1", "g1", "撩你一下~", "")
@@ -1571,7 +1571,7 @@ class TestAffectionManagerWithLLM:
         await store.initialize()
         try:
             llm = AsyncMock()
-            llm.chat_completion.return_value = "comfort"
+            llm.complete.return_value = "comfort"
             mgr = AffectionManager(store, llm_adapter=llm)
             await mgr.set_mood("g1", MoodType.HAPPY, 0.8)
             result = await mgr.process_interaction("u1", "g1", "别难过", "")
@@ -1586,7 +1586,7 @@ class TestAffectionManagerWithLLM:
         await store.initialize()
         try:
             llm = AsyncMock()
-            llm.chat_completion.return_value = "comfort"
+            llm.complete.return_value = "comfort"
             mgr = AffectionManager(store, llm_adapter=llm)
             await mgr.set_mood("g1", MoodType.SAD, 0.6)
             result = await mgr.process_interaction("u1", "g1", "别难过", "")
@@ -1600,7 +1600,7 @@ class TestAffectionManagerWithLLM:
         await store.initialize()
         try:
             llm = AsyncMock()
-            llm.chat_completion.return_value = "gift"
+            llm.complete.return_value = "gift"
             mgr = AffectionManager(store, llm_adapter=llm)
             await mgr.set_mood("g1", MoodType.CALM, 0.5)
             result = await mgr.process_interaction("u1", "g1", "送你礼物！", "")
