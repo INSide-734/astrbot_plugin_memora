@@ -247,7 +247,11 @@ class SummaryWorker(
                 reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
                 candidate_metrics=candidate_metrics,
             )
-        fixed_quality_gate, gate_reason = await self._route_quality(
+        (
+            fixed_quality_gate,
+            gate_reason,
+            gate_exception_type,
+        ) = await self._route_quality(
             claim,
             candidates,
             completed_canonical_ids,
@@ -258,6 +262,7 @@ class SummaryWorker(
                 intents,
                 stage="quality_gate",
                 reason_code=gate_reason,
+                exception_type=gate_exception_type,
                 candidate_metrics=candidate_metrics,
             )
         try:
@@ -296,11 +301,12 @@ class SummaryWorker(
             raise
         except SummaryWorkerFailure:
             raise
-        except Exception:
+        except Exception as error:
             return self._unknown_outcome(
                 intents,
                 stage="candidate_write",
                 reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
+                exception_type=error.__class__.__name__,
                 candidate_metrics=candidate_metrics,
             )
         expected_snapshots = tuple(map(_fixed_quality_key, candidates))

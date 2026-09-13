@@ -198,6 +198,61 @@ class MemoryQuarantineStore:
             row = await cursor.fetchone()
         return self._row_to_candidate(row) if row is not None else None
 
+    async def find_quarantine_candidate_by_key(
+        self, candidate_key: str
+    ) -> dict[str, object] | None:
+        """按精确 candidate_key 返回仅供总结对账的来源证据。"""
+        if not isinstance(candidate_key, str):
+            return None
+        normalized_key = candidate_key.strip()
+        if not normalized_key or normalized_key.startswith("quality:"):
+            return None
+        async with self._connect() as db:
+            cursor = await db.execute(
+                """
+                SELECT candidate_key,status,session_id,source_window_json
+                FROM memory_quarantine_candidates
+                WHERE candidate_key=?
+                LIMIT 1
+                """,
+                (normalized_key,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        try:
+            source = self._from_json(row["source_window_json"])
+        except (TypeError, ValueError):
+            source = {}
+        if not isinstance(source, Mapping):
+            source = {}
+
+        def source_int(*names: str) -> int | None:
+            """读取受限来源整数，不把原始 JSON 透传给调用方。"""
+            for name in names:
+                value = source.get(name)
+                if (
+                    isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and 0 <= value <= 2**63 - 1
+                ):
+                    return value
+            return None
+
+        digest = source.get("source_digest")
+        return {
+            "candidate_key": str(row["candidate_key"]),
+            "status": str(row["status"]),
+            "session_id": str(row["session_id"]),
+            "start_seq": source_int("start_seq", "start_index"),
+            "end_seq": source_int("end_seq", "end_index"),
+            "expected_count": source_int("expected_count", "message_count"),
+            "session_epoch": source_int("session_epoch"),
+            "source_digest": (
+                digest if isinstance(digest, str) and 0 < len(digest) <= 128 else None
+            ),
+        }
+
     async def list_candidates(
         self,
         *,

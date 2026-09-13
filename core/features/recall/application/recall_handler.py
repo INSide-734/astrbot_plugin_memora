@@ -199,6 +199,8 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
 
                 is_group = event.get_message_type() == MessageType.GROUP_MESSAGE
                 should_store_private_user = (
+                    getattr(event, "_memora_early_capture_persisted", False) is not True
+                ) and (
                     identity is None
                     or identity.trust_status
                     in {IdentityTrust.TRUSTED, IdentityTrust.UNSUPPORTED}

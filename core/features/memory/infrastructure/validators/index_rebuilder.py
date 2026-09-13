@@ -1,10 +1,18 @@
 """IndexValidator 的索引重建操作。"""
 
+import asyncio
+import time
 from typing import Any
 
 import aiosqlite
 from astrbot.api import logger
 
+from ...rebuild_metrics import record_rebuild_metrics
+from ...rebuild_observability import (
+    attach_rebuild_observability,
+    current_rebuild_measurement,
+    rebuild_measurement_scope,
+)
 from ..base import apply_perf_pragmas
 from .bm25_rebuilder import Bm25RebuilderMixin
 from .embedding_retry import EmbeddingRetryMixin
@@ -19,22 +27,50 @@ class IndexRebuilderMixin(
     async def rebuild_indexes(
         self, memory_engine: Any, progress_callback=None
     ) -> dict[str, Any]:
-        """
-        分批安全重建索引
+        """在保留既有索引结果字段的同时记录安全重建测量。"""
 
-        安全策略：
-        1. documents 表只读，始终作为原始数据源。
-        2. BM25 直接按 documents 分批重建。
-        3. 向量索引优先增量补缺；需要全量重建时先构建临时 FAISS 索引。
-        4. 失败率超过阈值时不切换全量重建的新向量索引。
+        measurement = current_rebuild_measurement()
+        owns_measurement = measurement is None
+        started = time.perf_counter()
+        try:
+            with rebuild_measurement_scope(
+                measurement.trigger_reason
+                if measurement is not None
+                else "indexes_inconsistent"
+            ) as active_measurement:
+                measurement = active_measurement
+                result = await self._rebuild_indexes_impl(
+                    memory_engine, progress_callback
+                )
+        except asyncio.CancelledError:
+            elapsed = time.perf_counter() - started
+            assert measurement is not None
+            measurement.record_stage("indexes", elapsed, status="cancelled")
+            if owns_measurement:
+                output = attach_rebuild_observability(
+                    {"success": False, "reason_code": "rebuild_cancelled"},
+                    measurement,
+                    duration_seconds=elapsed,
+                )
+                self._observability = output["observability"]
+                record_rebuild_metrics(output["observability"])
+            raise
+        elapsed = time.perf_counter() - started
+        assert measurement is not None
+        status = "completed" if result.get("success", False) else "failed"
+        measurement.record_stage("indexes", elapsed, result, status=status)
+        output = attach_rebuild_observability(
+            result, measurement, duration_seconds=elapsed
+        )
+        if owns_measurement:
+            self._observability = output["observability"]
+            record_rebuild_metrics(output["observability"])
+        return output
 
-        Args:
-            memory_engine: MemoryEngine实例
-            progress_callback: 进度回调函数 (current, total, message)
-
-        Returns:
-            Dict: 重建结果
-        """
+    async def _rebuild_indexes_impl(
+        self, memory_engine: Any, progress_callback=None
+    ) -> dict[str, Any]:
+        """执行原有 BM25/FAISS 重建逻辑。"""
         try:
             logger.info("开始分批安全重建索引。")
             options = self._get_rebuild_options(memory_engine)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 from enum import Enum
 from typing import Any
 
@@ -107,6 +107,43 @@ def _reason(value: SummaryReasonCode | str | None) -> SummaryReasonCode:
         return SummaryReasonCode(str(value))
     except (TypeError, ValueError):
         return SummaryReasonCode.UNKNOWN
+
+
+_SAFE_EXCEPTION_TYPES = frozenset(
+    {
+        "unknown",
+        "CancelledError",
+        "TypeError",
+        "ValueError",
+        "KeyError",
+        "RuntimeError",
+        "LookupError",
+        "OSError",
+        "TimeoutError",
+        "OperationalError",
+        "IntegrityError",
+        "JSONDecodeError",
+        "SummaryParseError",
+        "MissingSnapshot",
+        "IncompleteSnapshot",
+        "SnapshotRevisionMismatch",
+        "SnapshotUnrecoverable",
+        "SnapshotAdapterUnavailable",
+    }
+)
+
+
+def normalize_exception_type(value: object) -> str | None:
+    """将异常类型压缩为不含正文的有限安全集合。"""
+    if value is None:
+        return None
+    try:
+        normalized = str(value).strip()
+    except Exception:
+        return "unknown"
+    if not normalized:
+        return None
+    return normalized if normalized in _SAFE_EXCEPTION_TYPES else "unknown"
 
 
 _FAILURE_REASON_CODES = frozenset(
@@ -353,6 +390,9 @@ class SummaryJob:
         )
         object.__setattr__(self, "status", status)
         object.__setattr__(self, "reason_code", _reason(self.reason_code))
+        object.__setattr__(
+            self, "exception_type", normalize_exception_type(self.exception_type)
+        )
         object.__setattr__(self, "persona_id", _text(self.persona_id, "persona_id"))
         object.__setattr__(self, "chat_type", _text(self.chat_type, "chat_type"))
         object.__setattr__(self, "group_id", _text(self.group_id, "group_id"))
@@ -594,6 +634,7 @@ class WindowOutcome:
     failed_stage: str | None = None
     candidate_metrics: CandidateMetrics | None = None
     reason_code: SummaryReasonCode = SummaryReasonCode.COMPLETED
+    exception_type: str | None = None
 
     def __post_init__(self) -> None:
         """校验结果计数、唯一 slot 与合法无事实结果形状。"""
@@ -623,6 +664,9 @@ class WindowOutcome:
         ):
             raise ValueError("no_facts 结果必须推进且不含候选或写入计数")
         object.__setattr__(self, "reason_code", reason_code)
+        object.__setattr__(
+            self, "exception_type", normalize_exception_type(self.exception_type)
+        )
 
     @property
     def slots(self) -> tuple[CandidateIntent, ...]:
@@ -644,7 +688,7 @@ class SummaryFailure:
         """不允许异常正文进入失败 DTO。"""
         stage = _text(self.failed_stage, "failed_stage", optional=False)
         assert stage is not None
-        exception_type = _text(self.exception_type, "exception_type") or ""
+        exception_type = normalize_exception_type(self.exception_type) or ""
         object.__setattr__(self, "failed_stage", stage)
         object.__setattr__(self, "exception_type", exception_type)
         reason_code = _reason(self.reason_code)
@@ -769,7 +813,7 @@ class TrimResult:
 
 @dataclass(frozen=True, slots=True)
 class SummaryTaskSnapshot:
-    """诊断、Page 和命令共用的有限非负标量投影。"""
+    """诊断、Page 和命令共用的有限安全总结任务投影。"""
 
     queued: int = 0
     running: int = 0
@@ -786,11 +830,29 @@ class SummaryTaskSnapshot:
     mark_write_total: int = 0
     failed_candidate_total: int = 0
     skipped_idempotent_total: int = 0
+    candidate_total: int = 0
+    oldest_unresolved_age_seconds: int = 0
+    unresolved_reason_counts: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        """把所有快照字段限制为有限、非负整数。"""
+        """把快照字段限制为有限非负标量和固定原因计数。"""
         for item in fields(self):
             value = getattr(self, item.name)
+            if item.name == "unresolved_reason_counts":
+                if not isinstance(value, Mapping):
+                    value = {}
+                safe_reasons: dict[str, int] = {}
+                for reason, count in value.items():
+                    if not isinstance(reason, str) or not reason or len(reason) > 64:
+                        continue
+                    try:
+                        number = int(count)
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+                    if number >= 0:
+                        safe_reasons[reason] = min(number, _MAX_SNAPSHOT_VALUE)
+                object.__setattr__(self, item.name, safe_reasons)
+                continue
             if isinstance(value, bool):
                 value = int(value)
             elif isinstance(value, float):
@@ -804,25 +866,34 @@ class SummaryTaskSnapshot:
         """只从 allowlist 字段构造安全快照，非法值降级为零。"""
         if not isinstance(value, Mapping):
             return cls()
-        values: dict[str, int] = {}
+        values: dict[str, Any] = {}
         for item in fields(cls):
+            raw = (
+                value.get(item.name, {})
+                if item.name == "unresolved_reason_counts"
+                else value.get(item.name, 0)
+            )
+            if item.name == "unresolved_reason_counts":
+                values[item.name] = raw if isinstance(raw, Mapping) else {}
+                continue
             try:
-                raw = value.get(item.name, 0)
-                if isinstance(raw, bool):
-                    values[item.name] = int(raw)
-                elif isinstance(raw, (int, float, str)):
-                    values[item.name] = int(raw)
-                else:
-                    values[item.name] = 0
+                values[item.name] = (
+                    int(raw) if isinstance(raw, (bool, int, float, str)) else 0
+                )
             except (TypeError, ValueError, OverflowError):
                 values[item.name] = 0
         return cls(**values)
 
-    def to_dict(self) -> dict[str, int]:
-        """返回可公开的有限标量字典。"""
-        return {item.name: int(getattr(self, item.name)) for item in fields(self)}
+    def to_dict(self) -> dict[str, object]:
+        """返回可公开的有限投影副本。"""
+        return {
+            item.name: dict(getattr(self, item.name))
+            if item.name == "unresolved_reason_counts"
+            else int(getattr(self, item.name))
+            for item in fields(self)
+        }
 
-    def safe_summary(self) -> dict[str, int]:
+    def safe_summary(self) -> dict[str, object]:
         """返回与 to_dict 相同的安全诊断投影。"""
         return self.to_dict()
 
@@ -876,6 +947,7 @@ __all__ = [
     "TrimResult",
     "WindowFailure",
     "WindowOutcome",
+    "normalize_exception_type",
     "normalize_topic_key",
     "normalize_topic_label",
     "render_topic_labels",

@@ -13,7 +13,7 @@
 
 ### LLM
 
-`LLMProviderAdapter.from_provider()` 只接受存在可调用 `text_chat` 的对象，并冻结该 callable。`generate()` 保持纯文本契约；`generate_result()` 返回不可变 `LLMGenerationResult(text, prompt_tokens, completion_tokens)`。只有 Provider 明确给出非负整数 token 用量时才填充 token 字段；非法、布尔或缺失值保持 `None`。
+`LLMProviderAdapter.from_provider()` 只接受存在可调用 `text_chat` 的对象，并冻结该 callable。`generate()` 保持纯文本契约；`generate_result()` 返回不可变 `LLMGenerationResult(text, prompt_tokens, completion_tokens, finish_reason)`。`finish_reason` 只允许 `unknown`、`stop`、`length`、`tool_call`、`content_filter`、`error`；只有 Provider 明确给出非负整数 token 用量时才填充 token 字段；非法、布尔或缺失值保持 `None`。AstrBot 4.28 的 `Provider.text_chat` 没有跨 Provider 的结构化输出能力声明，adapter 不盲传结构化请求参数。
 
 调用必须是异步且返回带字符串 `completion_text` 的响应；非 awaitable 或缺少字符串正文抛 `AdapterResponseError(reason_code="adapter_response_invalid")`。Adapter 不负责判断文本是否安全，生成结果仍须经过 [`../security/AGENTS.md`](../security/AGENTS.md) 所述保护链。
 

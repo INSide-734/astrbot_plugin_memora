@@ -368,6 +368,8 @@ async def test_empty_summary_has_complete_zero_shape(tmp_path) -> None:
             "decision_count": 0,
             "payload_chars_p95": 0,
             "provider_fallback_rate": 0.0,
+            "memory_present_count": 0,
+            "payload_injected_count": 0,
             "selected_count_total": 0,
             "dropped_count_total": 0,
             "truncated_count_total": 0,

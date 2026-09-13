@@ -408,7 +408,7 @@ class StatsOperationsMixin:
     async def rebuild_graph_index(self) -> dict[str, int]:
         """从存储的文档重建图记忆工件。"""
         if self._graph_memory_manager is None:
-            return {"rebuilt": 0, "skipped": 0}
+            return {"rebuilt": 0, "skipped": 0, "total": 0}
 
         total_count = await self._faiss_db.document_storage.count_documents(
             metadata_filters={}
@@ -445,8 +445,12 @@ class StatsOperationsMixin:
                 )
                 rebuilt += 1
 
-            offset += batch_size
+            offset += len(docs)
 
         if self._invalidate_cache:
             self._invalidate_cache()
-        return {"rebuilt": rebuilt, "skipped": skipped}
+        return {
+            "rebuilt": rebuilt,
+            "skipped": skipped,
+            "total": rebuilt + skipped,
+        }

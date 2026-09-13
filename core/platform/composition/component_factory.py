@@ -1,6 +1,7 @@
 """组合根的共享运行时组件构造工厂。"""
 
 import asyncio
+import inspect
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -101,6 +102,8 @@ class ComponentFactory:
         faiss_vec_db_cls,
         faiss_checker,
         db_setup,
+        *,
+        capture_ready_cb: Callable[[ConversationManager, Any], Any] | None = None,
     ) -> dict:
         """构造共享组件，并在失败时回滚本次已拥有的资源。"""
         cleanup_state: dict[str, object] = {}
@@ -112,6 +115,7 @@ class ComponentFactory:
                 faiss_checker,
                 db_setup,
                 cleanup_state,
+                capture_ready_cb,
             )
         except BaseException:
             try:
@@ -130,6 +134,7 @@ class ComponentFactory:
         faiss_checker,
         db_setup,
         cleanup_state: dict[str, object],
+        capture_ready_cb: Callable[[ConversationManager, Any], Any] | None = None,
     ) -> dict:
         """按固定顺序构造全部共享组件。"""
 
@@ -296,6 +301,18 @@ class ComponentFactory:
             session_ttl=session_config.get("session_ttl", 3600),
         )
         logger.info("ConversationManager 已初始化")
+        identity_runtime = await build_identity_runtime(
+            self.data_dir, conversation_manager
+        )
+        cleanup_state["identity_runtime"] = identity_runtime
+        conversation_manager.identity_runtime = identity_runtime
+        if capture_ready_cb is not None:
+            capture_runtime = capture_ready_cb(conversation_manager, identity_runtime)
+            if inspect.isawaitable(capture_runtime):
+                capture_runtime = await capture_runtime
+            if capture_runtime is None:
+                raise RuntimeError("capture_runtime_publish_failed")
+            cleanup_state["capture_runtime"] = capture_runtime
 
         await db_setup.repair_message_counts(conversation_store)
 
@@ -465,6 +482,9 @@ class ComponentFactory:
         conversation_store.set_summary_canonical_owner_lookup(
             memory_engine.find_memory_id_by_idempotency_key
         )
+        conversation_store.set_summary_quarantine_candidate_lookup(
+            memory_quarantine_store.find_quarantine_candidate_by_key
+        )
         catalog_maintenance_result = await finalize_catalog_lifecycle(
             db_setup, index_validator, memory_engine, derived_rebuild_coordinator
         )
@@ -612,12 +632,6 @@ class ComponentFactory:
             decay_scheduler = scheduler
             logger.info("DecayScheduler 已启动")
 
-        identity_runtime = await build_identity_runtime(
-            self.data_dir, conversation_manager
-        )
-        cleanup_state["identity_runtime"] = identity_runtime
-        conversation_manager.identity_runtime = identity_runtime
-
         catalog_reconcile_scheduler: TopicCatalogReconcileScheduler | None = None
         if memory_engine.topic_catalog_store is not None:
             catalog_reconcile_scheduler = TopicCatalogReconcileScheduler(
@@ -680,6 +694,7 @@ class ComponentFactory:
             ),
             injection_decision_store=cleanup_state.get("injection_decision_store"),
             dedup_metrics_store=cleanup_state.get("dedup_metrics_store"),
+            capture_runtime=cleanup_state.get("capture_runtime"),
         )
 
     @staticmethod
@@ -698,11 +713,13 @@ class ComponentFactory:
         injection_decision_recorder=None,
         injection_decision_store=None,
         dedup_metrics_store=None,
+        capture_runtime=None,
     ) -> None:
         if memory_engine is not None and graph_db is not None:
             if getattr(memory_engine, "graph_vector_db", None) is graph_db:
                 memory_engine.graph_vector_db = None
         cleanup_steps = (
+            ("CaptureRuntime", capture_runtime, "close"),
             ("SummaryScheduler", summary_scheduler, "close"),
             ("DecayScheduler", decay_scheduler, "stop"),
             ("TopicCatalogReconcileScheduler", catalog_reconcile_scheduler, "stop"),

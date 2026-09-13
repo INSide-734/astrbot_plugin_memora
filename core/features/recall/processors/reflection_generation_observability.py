@@ -8,6 +8,13 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from ...observability.infrastructure.debug_reporter import report_debug_event
+from ...observability.infrastructure.metrics import (
+    REFLECTION_LLM_CALLS,
+    SUMMARY_FINISH_REASONS,
+    SUMMARY_PARSE_ATTEMPTS,
+    SUMMARY_PARSE_FAILURES,
+    SUMMARY_PARSE_SUCCESSES,
+)
 
 if TYPE_CHECKING:
     from ...reflection.domain.summary_models import TopicCandidateSelection
@@ -28,6 +35,12 @@ _BUCKETS = frozenset(
         "257+",
         "unknown",
     }
+)
+_LLM_FINISH_REASONS = frozenset(
+    {"unknown", "stop", "length", "tool_call", "content_filter", "error"}
+)
+_PARSE_SUB_REASONS = frozenset(
+    {"fence_invalid", "json_invalid", "schema_invalid", "facts_missing", "unknown"}
 )
 _BUDGET_REASONS = frozenset(
     {"none", "count_exceeded", "token_exceeded", "token_truncated", "unknown"}
@@ -190,6 +203,58 @@ def report_topic_candidate_selection(selection: TopicCandidateSelection) -> bool
     )
 
 
+def _safe_metric_inc(metric: Any, **labels: str) -> None:
+    """安全递增可选 Prometheus 指标；监控故障不得影响主链。"""
+
+    try:
+        if labels:
+            metric.labels(**labels).inc()
+        else:
+            metric.inc()
+    except Exception:
+        return
+
+
+def report_generation_attempt() -> None:
+    """记录一次真实的总结抽取物理调用。"""
+
+    _safe_metric_inc(REFLECTION_LLM_CALLS)
+
+
+def report_generation_finish_reason(finish_reason: str | None) -> None:
+    """记录归约后的闭集 Provider 终止原因。"""
+
+    reason = (
+        finish_reason
+        if isinstance(finish_reason, str) and finish_reason in _LLM_FINISH_REASONS
+        else "unknown"
+    )
+    _safe_metric_inc(SUMMARY_FINISH_REASONS, finish_reason=reason)
+
+
+def report_parse_attempt() -> None:
+    """记录一次结构化总结解析尝试。"""
+
+    _safe_metric_inc(SUMMARY_PARSE_ATTEMPTS)
+
+
+def report_parse_success() -> None:
+    """记录一次成功的结构化总结解析。"""
+
+    _safe_metric_inc(SUMMARY_PARSE_SUCCESSES)
+
+
+def report_parse_failure(sub_reason: str | None) -> None:
+    """记录带闭集子原因的结构化总结解析失败。"""
+
+    reason = (
+        sub_reason
+        if isinstance(sub_reason, str) and sub_reason in _PARSE_SUB_REASONS
+        else "unknown"
+    )
+    _safe_metric_inc(SUMMARY_PARSE_FAILURES, sub_reason=reason)
+
+
 def report_generation_stage(
     stage: str,
     status: str,
@@ -214,7 +279,12 @@ def report_generation_stage(
 
 __all__ = [
     "TopicCandidateObservation",
+    "report_generation_attempt",
+    "report_generation_finish_reason",
     "report_generation_stage",
+    "report_parse_attempt",
+    "report_parse_failure",
+    "report_parse_success",
     "report_topic_candidate_event",
     "report_topic_candidate_selection",
 ]

@@ -94,6 +94,8 @@ const INJECTION_COPY = {
   "injection.overview.payloadP95": ["Payload 字符数 p95", "Payload characters p95", "Символы payload p95"],
   "injection.overview.fallbackRate": ["Provider 降级率", "Provider fallback rate", "Доля резервного режима провайдера"],
   "injection.overview.selectedTotal": ["选择条数合计", "Selected total", "Всего выбрано"],
+  "injection.overview.payloadInjected": ["已注入载荷", "Payload injected", "Внедрённый payload"],
+  "injection.overview.memoryPresent": ["含记忆候选", "Memories present", "С кандидатами памяти"],
   "injection.overview.droppedTotal": ["丢弃条数合计", "Dropped total", "Всего отброшено"],
   "injection.overview.budgetUtilization": ["预算利用率", "Budget utilization", "Использование бюджета"],
   "injection.overview.presetDistribution": ["预设选择分布", "Preset distribution", "Распределение пресетов"],

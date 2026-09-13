@@ -42,6 +42,15 @@ from .quality_validator import QualityValidator
 from .reflection_generation_observability import (
     report_generation_stage as _report_generation_stage,
 )
+from .reflection_generation_observability import (
+    report_parse_attempt as _report_parse_attempt,
+)
+from .reflection_generation_observability import (
+    report_parse_failure as _report_parse_failure,
+)
+from .reflection_generation_observability import (
+    report_parse_success as _report_parse_success,
+)
 from .storage_builder import StorageBuilder
 from .topic_segmentation_pipeline import (
     TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS,
@@ -251,6 +260,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                 prompt=prompt,
                 system_prompt=system_prompt,
                 max_retries=max(1, int(llm_max_retries)),
+                operation="summary_extraction",
             )
             llm_response_text = generation_result.text
             _report_generation_stage(
@@ -270,11 +280,23 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
 
             current_stage = "parse"
             stage_started = time.perf_counter()
-            structured_data = self._parse_llm_response(
-                llm_response_text,
-                is_group_chat,
-                strict_summary=strict_summary,
-            )
+            _report_parse_attempt()
+            try:
+                structured_data = self._parse_llm_response(
+                    llm_response_text,
+                    is_group_chat,
+                    strict_summary=strict_summary,
+                )
+            except asyncio.CancelledError:
+                raise
+            except SummaryParseError as error:
+                _report_parse_failure(error.reason)
+                raise
+            except Exception:
+                _report_parse_failure("unknown")
+                raise
+            else:
+                _report_parse_success()
 
             quality = (
                 "normal"

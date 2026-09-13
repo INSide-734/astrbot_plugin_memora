@@ -15,6 +15,7 @@ from ...reflection.domain.summary_models import (
     CompletionResult,
     SummaryJobStatus,
     SummaryReasonCode,
+    normalize_exception_type,
 )
 from .summary_store_keys import owned_slot_key, source_epoch_guarded, source_guarded
 
@@ -209,8 +210,9 @@ class SummaryStoreReconcileMixin:
         claim: ClaimedJob,
         now: float,
         reason_code: SummaryReasonCode = SummaryReasonCode.LEDGER_UNRESOLVED,
+        exception_type: str | None = "unknown",
     ) -> CompletionResult:
-        """用 claim CAS 将不确定 job 与候选固定为 unknown，不推进游标。"""
+        """用 claim CAS 将不确定 job 与未收口候选固定为 unknown。"""
         if not await self._claim_matches(claim):
             await self._rollback_summary()
             return CompletionResult(
@@ -221,21 +223,22 @@ class SummaryStoreReconcileMixin:
         await self.connection.execute(
             """
             UPDATE summary_job_candidates
-            SET status='unknown', disposition=NULL, updated_at=?
-            WHERE job_id=?
+            SET status='unknown', disposition=NULL, canonical_id=NULL, updated_at=?
+            WHERE job_id=? AND status NOT IN ('committed','failed')
             """,
             (now, claim.job_id),
         )
         updated = await self.connection.execute(
             """
             UPDATE summary_jobs SET status='unknown', reason_code=?,
-              failed_stage='candidate_reconcile', lease_until=NULL,
+              failed_stage='candidate_reconcile', exception_type=?, lease_until=NULL,
               claim_token=NULL, updated_at=?
             WHERE job_id=? AND session_id=? AND session_epoch=?
               AND status='running' AND claim_token=? AND worker_generation=?
             """,
             (
                 reason_code.value,
+                normalize_exception_type(exception_type) or "unknown",
                 now,
                 claim.job_id,
                 claim.session_id,
@@ -244,6 +247,7 @@ class SummaryStoreReconcileMixin:
                 claim.worker_generation,
             ),
         )
+
         if updated.rowcount != 1:
             await self._rollback_summary()
             return CompletionResult(
@@ -255,21 +259,24 @@ class SummaryStoreReconcileMixin:
         return CompletionResult(True, SummaryJobStatus.UNKNOWN, 0, reason_code)
 
     async def _mark_unknown_completed(
-        self, claim: ClaimedJob, now: float
+        self,
+        claim: ClaimedJob,
+        now: float,
+        exception_type: str | None = "unknown",
     ) -> CompletionResult:
         """将已完成但无法核对的同 epoch job 降级为 unknown。"""
         await self.connection.execute(
             """
             UPDATE summary_job_candidates
-            SET status='unknown', disposition=NULL, updated_at=?
-            WHERE job_id=?
+            SET status='unknown', disposition=NULL, canonical_id=NULL, updated_at=?
+            WHERE job_id=? AND status NOT IN ('committed','failed')
             """,
             (now, claim.job_id),
         )
         updated = await self.connection.execute(
             """
             UPDATE summary_jobs SET status='unknown', reason_code=?,
-              failed_stage='candidate_reconcile', updated_at=?
+              failed_stage='candidate_reconcile', exception_type=?, updated_at=?
             WHERE job_id=? AND session_id=? AND session_epoch=?
               AND status='completed' AND worker_generation=?
               AND EXISTS (
@@ -279,6 +286,7 @@ class SummaryStoreReconcileMixin:
             """,
             (
                 SummaryReasonCode.LEDGER_UNRESOLVED.value,
+                normalize_exception_type(exception_type) or "unknown",
                 now,
                 claim.job_id,
                 claim.session_id,

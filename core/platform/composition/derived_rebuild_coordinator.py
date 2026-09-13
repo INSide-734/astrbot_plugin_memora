@@ -1,16 +1,24 @@
 """统一协调 canonical 派生索引的安全重建顺序。"""
 
-from __future__ import annotations
-
 import asyncio
 import inspect
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 from astrbot.api import logger
 
+from ...features.memory.rebuild_metrics import record_rebuild_metrics
+from ...features.memory.rebuild_observability import (
+    current_rebuild_measurement,
+    finalize_rebuild_observability,
+    normalize_rebuild_trigger,
+    rebuild_measurement_scope,
+)
+from .derived_rebuild_catalog import DerivedRebuildCatalogMixin
 
-class DerivedRebuildCoordinator:
+
+class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
     """按固定顺序重建所有可丢弃派生数据。
 
     该协调器只持有已经装配好的组件，不创建新的 canonical 存储，也不把
@@ -206,274 +214,150 @@ class DerivedRebuildCoordinator:
                 raise RuntimeError("catalog_shutdown_reconcile_failed")
             return result
 
-    async def rebuild_all(self, *, rebuild_indexes: bool = True) -> dict[str, Any]:
-        """按 canonical、FTS/向量、catalog、graph、evolution 顺序执行一次重建。
-
-        返回:
-            只包含计数、状态和稳定 reason code 的结果字典。canonical 阶段
-            失败时不会触碰任何派生数据；其他阶段失败会返回 ``success=False``
-            和 ``degraded=True``，但不会删除 canonical。
-
-        异常:
-            asyncio.CancelledError: 调用方取消重建时继续传播取消信号。
-        """
+    async def rebuild_all(
+        self,
+        *,
+        rebuild_indexes: bool = True,
+        trigger_reason: str | None = None,
+    ) -> dict[str, Any]:
+        """按 canonical、FTS/向量、catalog、graph、evolution 顺序重建。"""
 
         async with self._lock:
-            stages: dict[str, dict[str, Any]] = {}
+            pending_trigger = getattr(self, "_pending_rebuild_trigger_reason", None)
+            trigger = normalize_rebuild_trigger(
+                trigger_reason
+                or pending_trigger
+                or ("indexes_inconsistent" if rebuild_indexes else "catalog_dirty")
+            )
+            setattr(self, "_pending_rebuild_trigger_reason", None)
+            started = time.perf_counter()
+            measurement = None
+            try:
+                with rebuild_measurement_scope(trigger) as active_measurement:
+                    measurement = active_measurement
+                    result = await self._rebuild_stages(rebuild_indexes)
+                    output = finalize_rebuild_observability(
+                        result,
+                        active_measurement,
+                        duration_seconds=time.perf_counter() - started,
+                    )
+                    self._publish_rebuild_observability(output)
+                    return output
+            except asyncio.CancelledError:
+                if measurement is not None:
+                    measurement.record_stage(
+                        "rebuild",
+                        time.perf_counter() - started,
+                        status="cancelled",
+                    )
+                    cancelled = finalize_rebuild_observability(
+                        {
+                            "success": False,
+                            "degraded": True,
+                            "reason_code": "rebuild_cancelled",
+                            "stages": {},
+                            "errors": 1,
+                        },
+                        measurement,
+                        duration_seconds=time.perf_counter() - started,
+                    )
+                    self._publish_rebuild_observability(cancelled)
+                raise
+
+    async def _rebuild_stages(self, rebuild_indexes: bool) -> dict[str, Any]:
+        """执行 canonical-first 的固定派生阶段序列。"""
+
+        measurement = current_rebuild_measurement()
+        if measurement is None:
+            raise RuntimeError("rebuild_measurement_missing")
+        stages: dict[str, dict[str, Any]] = {}
+        canonical_started = time.perf_counter()
+        try:
             canonical = await self._verify_canonical()
-            if not canonical["success"]:
-                return {
-                    "success": False,
-                    "degraded": True,
-                    "reason_code": canonical["reason_code"],
-                    "canonical": canonical,
-                    "stages": {},
-                    "errors": 1,
-                }
+        except asyncio.CancelledError:
+            measurement.record_stage(
+                "canonical",
+                time.perf_counter() - canonical_started,
+                status="cancelled",
+            )
+            raise
+        canonical_elapsed = time.perf_counter() - canonical_started
+        canonical = dict(canonical)
+        canonical["duration_seconds"] = max(0.0, canonical_elapsed)
+        measurement.record_stage(
+            "canonical",
+            canonical_elapsed,
+            canonical,
+            status=("completed" if canonical.get("success") else "failed"),
+        )
+        if not canonical["success"]:
+            return {
+                "success": False,
+                "degraded": True,
+                "reason_code": canonical["reason_code"],
+                "canonical": canonical,
+                "stages": {},
+                "errors": 1,
+            }
 
-            if rebuild_indexes:
-                stages["indexes"] = await self._run_stage(
-                    "indexes",
-                    self._rebuild_indexes,
-                    failure_reason="index_rebuild_failed",
-                )
-            else:
-                stages["indexes"] = {
-                    "status": "skipped",
-                    "success": True,
-                    "reason_code": "indexes_consistent",
-                }
-            stages["catalog"] = await self._run_stage(
-                "catalog",
-                self._rebuild_catalog,
-                failure_reason="catalog_rebuild_failed",
+        if rebuild_indexes:
+            stages["indexes"] = await self._run_stage(
+                "indexes", self._rebuild_indexes, failure_reason="index_rebuild_failed"
             )
-            stages["graph"] = await self._run_stage(
-                "graph",
-                self._rebuild_graph,
-                failure_reason="graph_rebuild_failed",
+        else:
+            stages["indexes"] = {
+                "status": "skipped",
+                "success": True,
+                "reason_code": "indexes_consistent",
+                "duration_seconds": 0.0,
+            }
+            measurement.record_stage(
+                "indexes", 0.0, stages["indexes"], status="skipped"
             )
-            stages["evolution"] = await self._run_stage(
-                "evolution",
-                self._rebuild_evolution,
-                failure_reason="derived_rebuild_failed",
-            )
-            stages["semantic_compression"] = await self._run_stage(
-                "semantic_compression",
-                self._rebuild_semantic_compression,
-                failure_reason="semantic_compression_rebuild_failed",
-            )
-            stages["notes"] = await self._run_stage(
-                "notes",
-                self._rebuild_notes,
-                failure_reason="note_rebuild_failed",
-            )
-
-            failed_stages = [
-                name
-                for name, stage in stages.items()
-                if stage.get("status") == "failed"
-            ]
-            success = not failed_stages
-            reason_code = (
+        stages["catalog"] = await self._run_stage(
+            "catalog", self._rebuild_catalog, failure_reason="catalog_rebuild_failed"
+        )
+        stages["graph"] = await self._run_stage(
+            "graph", self._rebuild_graph, failure_reason="graph_rebuild_failed"
+        )
+        stages["evolution"] = await self._run_stage(
+            "evolution",
+            self._rebuild_evolution,
+            failure_reason="derived_rebuild_failed",
+        )
+        stages["semantic_compression"] = await self._run_stage(
+            "semantic_compression",
+            self._rebuild_semantic_compression,
+            failure_reason="semantic_compression_rebuild_failed",
+        )
+        stages["notes"] = await self._run_stage(
+            "notes", self._rebuild_notes, failure_reason="note_rebuild_failed"
+        )
+        failed_stages = [
+            name for name, stage in stages.items() if stage.get("status") == "failed"
+        ]
+        success = not failed_stages
+        return {
+            "success": success,
+            "degraded": not success,
+            "reason_code": (
                 "derived_rebuild_completed"
                 if success
                 else str(stages[failed_stages[0]].get("reason_code"))
-            )
-            return {
-                "success": success,
-                "degraded": not success,
-                "reason_code": reason_code,
-                "canonical": canonical,
-                "stages": stages,
-                "errors": len(failed_stages),
-            }
+            ),
+            "canonical": canonical,
+            "stages": stages,
+            "errors": len(failed_stages),
+        }
 
-    async def _safe_active_catalog_state(
-        self,
-        state: dict[str, Any] | None,
-    ) -> dict[str, Any] | None:
-        """仅保留经当前聚合复核通过的旧 active generation 状态。"""
+    def _publish_rebuild_observability(self, result: dict[str, Any]) -> None:
+        """发布到既有 validator 快照并投影固定 Prometheus 指标。"""
 
-        if not isinstance(state, dict) or state.get("status") != "ready":
-            return None
-        generation = state.get("active_generation")
-        verify = getattr(self.catalog_store, "verify_published_generation", None)
-        if (
-            not isinstance(generation, int)
-            or isinstance(generation, bool)
-            or generation <= 0
-            or not callable(verify)
-        ):
-            return None
-        try:
-            verified = verify(generation)
-            if inspect.isawaitable(verified):
-                verified = await verified
-            return state if verified is True else None
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            return None
-
-    async def _rebuild_catalog(self) -> dict[str, Any]:
-        """从 canonical documents 回填 topic catalog staging generation。"""
-
-        if self.catalog_store is None:
-            return {
-                "status": "skipped",
-                "success": True,
-                "reason_code": "catalog_unavailable",
-            }
-        previous_state = await self._safe_active_catalog_state(
-            await self._catalog_state_snapshot()
-        )
-        rebuild = getattr(self.catalog_store, "rebuild_from_canonical", None)
-        if not callable(rebuild):
-            return {
-                "status": "failed",
-                "success": False,
-                "reason_code": "catalog_rebuild_unavailable",
-            }
-        operation = cast(Callable[[], Awaitable[dict[str, Any]]], rebuild)
-        result = await operation()
-        if not isinstance(result, dict):
-            return {
-                "success": False,
-                "reason_code": "catalog_rebuild_failed",
-            }
-        if not result.get("success"):
-            return result
-        generation = result.get("generation")
-        if isinstance(generation, bool):
-            generation = None
-        try:
-            generation_value = 0 if generation is None else int(generation)
-        except (TypeError, ValueError):
-            generation_value = 0
-        if generation_value <= 0:
-            await self._mark_catalog_degraded("catalog_generation_missing")
-            return {
-                "success": False,
-                "reason_code": "catalog_generation_missing",
-            }
-        verify = getattr(self.catalog_store, "verify_published_generation", None)
-        if not callable(verify):
-            await self._restore_catalog_after_verify_failure(
-                generation_value,
-                previous_state,
-                "catalog_post_publish_verify_unavailable",
-            )
-            return {
-                "success": False,
-                "reason_code": "catalog_post_publish_verify_unavailable",
-            }
-        verified = False
-        try:
-            verification = verify(generation_value)
-            if inspect.isawaitable(verification):
-                verification = await verification
-            verified = verification is True
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.error("话题目录发布后复核失败")
-        if not verified:
-            await self._restore_catalog_after_verify_failure(
-                generation_value,
-                previous_state,
-                "catalog_post_publish_verify_failed",
-            )
-            return {
-                "success": False,
-                "reason_code": "catalog_post_publish_verify_failed",
-            }
-        previous_generation = (
-            previous_state.get("active_generation")
-            if isinstance(previous_state, dict)
-            else None
-        )
-        retire = getattr(self.catalog_store, "retire_generation", None)
-        if (
-            isinstance(previous_generation, int)
-            and not isinstance(previous_generation, bool)
-            and previous_generation > 0
-            and previous_generation != generation_value
-            and callable(retire)
-        ):
-            try:
-                retired = retire(previous_generation)
-                if inspect.isawaitable(retired):
-                    retired = await retired
-                if retired is not True:
-                    logger.warning("旧话题目录 generation 清理未完成")
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning("旧话题目录 generation 清理失败")
-        cleanup = getattr(self.catalog_store, "cleanup_orphan_generations", None)
-        if callable(cleanup):
-            try:
-                cleaned = cleanup()
-                if inspect.isawaitable(cleaned):
-                    cleaned = await cleaned
-                if cleaned is not True:
-                    logger.warning("孤儿话题目录 generation 清理未完成")
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.warning("孤儿话题目录 generation 清理失败")
-
-        return result
-
-    async def _restore_catalog_after_verify_failure(
-        self,
-        failed_generation: int,
-        previous_state: dict[str, Any] | None,
-        reason_code: str,
-    ) -> None:
-        """撤回未通过复核的 generation，无法撤回时转为原子降级。"""
-
-        previous_generation = None
-        previous_watermark = 0
-        previous_revision = None
-        if isinstance(previous_state, dict):
-            candidate = previous_state.get("active_generation")
-            if (
-                previous_state.get("status") == "ready"
-                and isinstance(candidate, int)
-                and not isinstance(candidate, bool)
-                and candidate > 0
-                and candidate != failed_generation
-            ):
-                previous_generation = candidate
-                previous_watermark = max(
-                    0,
-                    int(previous_state.get("published_dirty_watermark") or 0),
-                )
-                revision = previous_state.get("canonical_snapshot_revision")
-                previous_revision = revision if isinstance(revision, str) else None
-        restore = getattr(
-            self.catalog_store,
-            "restore_generation_after_verify_failure",
-            None,
-        )
-        if callable(restore):
-            try:
-                restored = restore(
-                    failed_generation,
-                    previous_generation=previous_generation,
-                    previous_published_dirty_watermark=previous_watermark,
-                    previous_canonical_snapshot_revision=previous_revision,
-                    reason_code=reason_code,
-                )
-                if inspect.isawaitable(restored) and await restored:
-                    return
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.error("话题目录发布后撤回失败")
-        await self._mark_catalog_degraded(reason_code)
+        snapshot = result.get("observability")
+        if not isinstance(snapshot, dict):
+            return
+        setattr(self.index_validator, "_observability", snapshot)
+        record_rebuild_metrics(snapshot)
 
     async def _verify_canonical(self) -> dict[str, Any]:
         """只读确认 canonical 文档可访问，并返回安全计数。"""
@@ -489,15 +373,12 @@ class DerivedRebuildCoordinator:
                 count_loader = getattr(storage, "count_documents", None)
                 if not callable(count_loader):
                     raise RuntimeError("canonical_count_unavailable")
-                load_count = cast(
-                    Callable[..., Awaitable[int]],
-                    count_loader,
-                )
+                load_count = cast(Callable[..., Awaitable[int]], count_loader)
                 count = await load_count(metadata_filters={})
             return {
                 "status": "verified",
                 "success": True,
-                "documents": max(0, count),
+                "documents": max(0, int(count)),
                 "reason_code": "canonical_verified",
             }
         except asyncio.CancelledError:
@@ -520,42 +401,61 @@ class DerivedRebuildCoordinator:
         *,
         failure_reason: str,
     ) -> dict[str, Any]:
-        """执行一个派生阶段并把普通异常转换为稳定降级结果。"""
+        """执行派生阶段并记录耗时，普通异常转换为稳定降级结果。"""
 
+        started = time.perf_counter()
         try:
             result = await operation()
             if not isinstance(result, dict):
-                return {
+                result = {
                     "status": "failed",
                     "success": False,
                     "reason_code": failure_reason,
                 }
-            if result.get("status") == "skipped":
-                return result
-            if result.get("status") == "failed":
-                return {
+            elif result.get("status") == "skipped":
+                result = dict(result)
+            elif result.get("status") == "failed":
+                result = {
                     **result,
                     "status": "failed",
                     "success": False,
                     "reason_code": failure_reason,
                 }
-            if result.get("success", True):
-                return {"status": "completed", **result}
-            return {
-                **result,
-                "status": "failed",
-                "success": False,
-                "reason_code": failure_reason,
-            }
+            elif result.get("success", True):
+                result = {"status": "completed", **result}
+            else:
+                result = {
+                    **result,
+                    "status": "failed",
+                    "success": False,
+                    "reason_code": failure_reason,
+                }
         except asyncio.CancelledError:
+            measurement = current_rebuild_measurement()
+            if measurement is not None:
+                measurement.record_stage(
+                    name,
+                    time.perf_counter() - started,
+                    status="cancelled",
+                )
             raise
         except Exception:
             logger.error("派生重建阶段失败：%s，reason_code=%s", name, failure_reason)
-            return {
+            result = {
                 "status": "failed",
                 "success": False,
                 "reason_code": failure_reason,
             }
+
+        measurement = current_rebuild_measurement()
+        if measurement is not None:
+            measurement.record_stage(
+                name,
+                time.perf_counter() - started,
+                result,
+                status=str(result.get("status") or "completed"),
+            )
+        return result
 
     async def _rebuild_indexes(self) -> dict[str, Any]:
         """调用现有 IndexValidator 重建 FTS5/BM25 和 FAISS。"""

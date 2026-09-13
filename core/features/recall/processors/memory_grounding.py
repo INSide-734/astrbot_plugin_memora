@@ -92,6 +92,12 @@ class MemoryGroundingValidator:
             "正文中的 Observation date/观察日期/对话日期优先于插件当前时间；只有正文没有日期"
             "锚点时，才可使用消息时间戳。无法唯一确定的上周、周末或大约日期必须保留原相对"
             "说法，不得猜测绝对年月日。"
+            "可写字段边界（必须遵守）：summary、content、key_facts 只能记录当前窗口"
+            " user 消息直接支持的、值得长期保留的事实、明确计划、偏好、决定，或经用户"
+            "明确确认的关系事实。assistant、system、tool 或环境消息中的建议、推断、自我"
+            "描述、能力说明和运行状态不是用户证据，即使措辞更完整也不能作为可写事实，"
+            "不得写入上述字段。第一人称只能作为叙述视角，不能把助手自己的行为、建议或"
+            '环境描述写成记忆；没有稳定用户事实时必须返回 {"memories": []}。'
         )
 
     def validate(
@@ -121,6 +127,7 @@ class MemoryGroundingValidator:
             return self._rejected("grounding_source_missing", claim_text=claim_text)
 
         raw_refs = candidate.get("source_refs")
+        inferred = False
         if isinstance(raw_refs, list) and raw_refs:
             resolved = resolve_references(
                 raw_refs,
@@ -135,6 +142,7 @@ class MemoryGroundingValidator:
                     claim_text=claim_text,
                 )
         else:
+            inferred = True
             inferred_refs = infer_references(
                 claim_text, messages, profile, support_score
             )
@@ -169,6 +177,7 @@ class MemoryGroundingValidator:
                 referenced_messages,
                 is_group_chat=is_group_chat,
                 profile=profile,
+                subject_messages=messages if inferred else None,
             )
             if subject_reason:
                 return self._rejected(

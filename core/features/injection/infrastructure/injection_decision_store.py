@@ -59,6 +59,10 @@ _BUCKET_SUMMARY_SQL = (
     "SELECT (created_at_ms / ?) * ? AS bucket_ms, "
     "COUNT(*) AS decision_count, "
     "SUM(fallback_applied) AS fallback_count, "
+    "SUM(CASE WHEN selected_count > 0 THEN 1 ELSE 0 END) "
+    "AS memory_present_count, "
+    "SUM(CASE WHEN outcome IN ('injected','fallback') THEN 1 ELSE 0 END) "
+    "AS payload_injected_count, "
     "SUM(selected_count) AS selected_count_total, "
     "SUM(dropped_count) AS dropped_count_total, "
     "SUM(truncated_count) AS truncated_count_total, "
@@ -139,6 +143,8 @@ class _BucketAggregate:
 
     payload_values: list[int]
     fallback_count: int
+    memory_present_count: int
+    payload_injected_count: int
     cost_trend: list[dict[str, Any]]
     selected_count_total: int
     dropped_count_total: int
@@ -348,6 +354,8 @@ class InjectionDecisionStore(BaseStore):
             "decision_count": 0,
             "payload_chars_p95": 0,
             "provider_fallback_rate": 0.0,
+            "memory_present_count": 0,
+            "payload_injected_count": 0,
             "selected_count_total": 0,
             "dropped_count_total": 0,
             "truncated_count_total": 0,
@@ -364,6 +372,8 @@ class InjectionDecisionStore(BaseStore):
         payload_values: list[int] = []
         utilization_values: list[int] = []
         fallback_count = 0
+        memory_present_count = 0
+        payload_injected_count = 0
         selected_count_total = 0
         dropped_count_total = 0
         truncated_count_total = 0
@@ -378,11 +388,15 @@ class InjectionDecisionStore(BaseStore):
             utilization_values.extend(bucket_utilization)
             bucket_count = int(row["decision_count"])
             bucket_fallback_count = int(row["fallback_count"] or 0)
+            bucket_memory_present = int(row["memory_present_count"] or 0)
+            bucket_payload_injected = int(row["payload_injected_count"] or 0)
             bucket_selected = int(row["selected_count_total"] or 0)
             bucket_dropped = int(row["dropped_count_total"] or 0)
             bucket_truncated = int(row["truncated_count_total"] or 0)
             bucket_budget = int(row["effective_budget_chars_total"] or 0)
             fallback_count += bucket_fallback_count
+            memory_present_count += bucket_memory_present
+            payload_injected_count += bucket_payload_injected
             selected_count_total += bucket_selected
             dropped_count_total += bucket_dropped
             truncated_count_total += bucket_truncated
@@ -401,6 +415,8 @@ class InjectionDecisionStore(BaseStore):
         return _BucketAggregate(
             payload_values=payload_values,
             fallback_count=fallback_count,
+            memory_present_count=memory_present_count,
+            payload_injected_count=payload_injected_count,
             cost_trend=cost_trend,
             selected_count_total=selected_count_total,
             dropped_count_total=dropped_count_total,
@@ -447,6 +463,8 @@ class InjectionDecisionStore(BaseStore):
             "decision_count": count,
             "payload_chars_p95": self._p95(aggregate.payload_values),
             "provider_fallback_rate": aggregate.fallback_count / count,
+            "memory_present_count": aggregate.memory_present_count,
+            "payload_injected_count": aggregate.payload_injected_count,
             "selected_count_total": aggregate.selected_count_total,
             "dropped_count_total": aggregate.dropped_count_total,
             "truncated_count_total": aggregate.truncated_count_total,

@@ -219,6 +219,9 @@ async def test_scheduler_snapshot_falls_back_to_safe_scalars_on_store_error() ->
         "mark_write_total": 0,
         "failed_candidate_total": 0,
         "skipped_idempotent_total": 0,
+        "candidate_total": 0,
+        "oldest_unresolved_age_seconds": 0,
+        "unresolved_reason_counts": {},
     }
 
 

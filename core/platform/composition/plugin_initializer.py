@@ -48,7 +48,7 @@ from .faiss_checker import FaissChecker
 from .identity_lifecycle import close_identity_runtime_after_failure
 from .provider_loader import ProviderLoader
 from .provider_waiter import ProviderWaiter
-from .readiness import InitializerReadinessMixin
+from .readiness import CaptureRuntime, InitializerReadinessMixin
 from .shutdown_lifecycle import (
     close_initializer_core_components_after_failure,
     close_initializer_injection_components,
@@ -89,6 +89,8 @@ class PluginInitializer(InitializerReadinessMixin):
         self.gate_runtime: GateRuntime | None = None
         self.conversation_manager: ConversationManager | None = None
         self.identity_runtime: ProtocolIdentityRuntime | None = None
+        self.capture_runtime: CaptureRuntime | None = None
+        self._capture_closed = False
         self.index_validator: IndexValidator | None = None
         self.derived_rebuild_coordinator: Any | None = None
         self.decay_scheduler: DecayScheduler | None = None
@@ -285,6 +287,7 @@ class PluginInitializer(InitializerReadinessMixin):
                 faiss_cls,
                 self._faiss_checker,
                 self._db_setup,
+                capture_ready_cb=self._publish_capture_runtime,
             )
             report_debug_event(
                 "plugin_initialized",
@@ -297,7 +300,6 @@ class PluginInitializer(InitializerReadinessMixin):
                 ),
                 count=len(components),
             )
-
             current_stage = "runtime_publish"
             publish_started = time.perf_counter()
             self.db = components["db"]
@@ -446,6 +448,10 @@ class PluginInitializer(InitializerReadinessMixin):
             duration_ms = max(
                 0.0, (time.perf_counter() - initialization_started) * 1000.0
             )
+            try:
+                await self.close_capture_runtime()
+            except Exception:
+                logger.error("初始化失败后关闭早期捕获能力失败", exc_info=True)
             if isinstance(e, asyncio.CancelledError):
                 report_debug_event(
                     "plugin_failed",
@@ -527,12 +533,64 @@ class PluginInitializer(InitializerReadinessMixin):
         enable_double_check = bool(
             self.config_manager.get("security.double_check_enabled", True)
         )
+
         service = build_prompt_protection_port(
             wrapper_template_index=template_index,
             enable_double_check=enable_double_check,
         )
         logger.info("提示词保护服务已初始化")
         return service
+
+    def _publish_capture_runtime(
+        self, conversation_manager: ConversationManager, identity_runtime: Any
+    ) -> CaptureRuntime:
+        """在派生重建前发布唯一的早期捕获能力。"""
+        capture = CaptureRuntime(
+            conversation_manager,
+            identity_runtime,
+            self.config_manager,
+            self._capture_writes_blocked,
+        )
+        self.capture_runtime = capture
+        self._capture_closed = False
+        report_debug_event(
+            "plugin_initialized",
+            component="initializer",
+            stage="capture_readiness",
+            status="ready",
+            reason_code="capture_runtime_published",
+            capability="conversation_capture",
+        )
+        return capture
+
+    def _capture_writes_blocked(self) -> bool:
+        """早期捕获复用插件级维护写保护。"""
+        manager = self.backup_manager
+        try:
+            getter = getattr(manager, "get_maintenance_state", None)
+            if callable(getter):
+                state = getter()
+                return (
+                    bool(state.get("blocked", False))
+                    if isinstance(state, dict)
+                    else True
+                )
+            checker = getattr(manager, "has_pending_restores", None)
+            return bool(checker()) if callable(checker) else False
+        except Exception:
+            return True
+
+    async def close_capture_runtime(self) -> None:
+        """撤销并排空早期捕获能力，关闭过程保持幂等。"""
+        capture = self.capture_runtime
+        if capture is None or self._capture_closed:
+            return
+        self._capture_closed = True
+        try:
+            await capture.close()
+        finally:
+            if self.capture_runtime is capture:
+                self.capture_runtime = None
 
     async def _initialize_cognitive_components(self) -> None:
         """创建共享的 v1.0+ 认知组件实例。"""

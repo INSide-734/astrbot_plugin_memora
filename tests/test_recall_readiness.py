@@ -17,6 +17,7 @@ def _plugin_shell():
     plugin = object.__new__(plugin_class)
     plugin.config_manager = MagicMock()
     plugin.config_manager.get.return_value = 800
+    plugin.initializer = SimpleNamespace(is_initialized=False, capture_runtime=None)
     return plugin
 
 

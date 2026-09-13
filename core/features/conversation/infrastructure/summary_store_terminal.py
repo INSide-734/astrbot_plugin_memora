@@ -95,10 +95,11 @@ class SummaryStoreTerminalMixin(
                     )
                 if not valid_window_outcome(outcome):
                     await self._rollback_summary()
-                    return CompletionResult(
-                        False,
-                        SummaryJobStatus.UNKNOWN,
-                        reason_code=SummaryReasonCode.INVALID_ACTION,
+                    return await self._mark_unknown_claim(
+                        claim,
+                        now,
+                        SummaryReasonCode.INVALID_ACTION,
+                        exception_type="unknown",
                     )
                 if outcome.unknown_count or (
                     not outcome.can_advance and outcome.failed_count == 0
@@ -138,7 +139,9 @@ class SummaryStoreTerminalMixin(
                         not isinstance(intent, CandidateIntent)
                         or intent.slot in intents
                     ):
-                        return await self._mark_unknown_claim(claim, now)
+                        return await self._mark_unknown_claim(
+                            claim, now, exception_type=outcome.exception_type
+                        )
                     slot_key = await owned_slot_key(
                         self.connection,
                         claim.job_id,
@@ -147,7 +150,9 @@ class SummaryStoreTerminalMixin(
                     )
                     intents[intent.slot] = (slot_key, intent)
                 if set(ledger) != set(intents):
-                    return await self._mark_unknown_claim(claim, now)
+                    return await self._mark_unknown_claim(
+                        claim, now, exception_type=outcome.exception_type
+                    )
                 for slot, (slot_key, intent) in intents.items():
                     existing = ledger[slot]
                     requires_canonical_id = (
@@ -174,7 +179,9 @@ class SummaryStoreTerminalMixin(
                         )
                         or mapping_inconsistent
                     ):
-                        return await self._mark_unknown_claim(claim, now)
+                        return await self._mark_unknown_claim(
+                            claim, now, exception_type=outcome.exception_type
+                        )
                 for slot, (slot_key, intent) in intents.items():
                     updated = await self.connection.execute(
                         """
@@ -203,11 +210,13 @@ class SummaryStoreTerminalMixin(
                         ),
                     )
                     if updated.rowcount != 1:
-                        return await self._mark_unknown_claim(claim, now)
+                        return await self._mark_unknown_claim(
+                            claim, now, exception_type=outcome.exception_type
+                        )
                 updated = await self.connection.execute(
                     """
                     UPDATE summary_jobs SET status=?,reason_code=?,next_attempt_at=COALESCE(?,next_attempt_at),
-                      failed_stage=?,lease_until=NULL,claim_token=NULL,canonical_count=?,quarantine_count=?,
+                      failed_stage=?,exception_type=?,lease_until=NULL,claim_token=NULL,canonical_count=?,quarantine_count=?,
                       discard_count=?,mark_write_count=?,failed_count=?,skipped_count=?,updated_at=?
                     WHERE job_id=? AND session_id=? AND session_epoch=? AND status='running'
                       AND claim_token=? AND worker_generation=?
@@ -217,6 +226,11 @@ class SummaryStoreTerminalMixin(
                         final_reason,
                         next_at,
                         outcome.failed_stage,
+                        (
+                            outcome.exception_type or "unknown"
+                            if status is SummaryJobStatus.UNKNOWN
+                            else None
+                        ),
                         outcome.canonical_count,
                         outcome.quarantine_count,
                         outcome.discard_count,

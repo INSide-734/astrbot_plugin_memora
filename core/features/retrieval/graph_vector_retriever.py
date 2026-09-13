@@ -33,6 +33,8 @@ class GraphVectorRetriever:
     """封装专用于图记忆条目的向量存储。"""
 
     _DELETE_BATCH_SIZE = 200
+    _MAX_INSERT_BATCH_SIZE = 200
+    _DEFAULT_INSERT_BATCH_SIZE = 32
 
     adapter_capabilities = AdapterCapabilityContract(
         kind=AdapterKind.VECTOR_RETRIEVER,
@@ -78,6 +80,51 @@ class GraphVectorRetriever:
     async def add_entry(self, content: str, metadata: dict[str, Any]) -> int:
         """将一条图条目插入向量数据库。"""
         return await self.faiss_db.insert(content=content, metadata=metadata)
+
+    async def add_entries(
+        self,
+        entries: list[tuple[str, dict[str, Any]]],
+        *,
+        batch_size: int | None = None,
+    ) -> list[int]:
+        """按有界批次写入图条目，并保留输入到内部 ID 的顺序。"""
+
+        if not entries:
+            return []
+        insert_batch = getattr(self.faiss_db, "insert_batch", None)
+        if not callable(insert_batch):
+            raise RuntimeError("图向量后端不支持批量插入")
+        configured = self.config.get(
+            "graph_embedding_batch_size",
+            self.config.get("embedding_batch_size", self._DEFAULT_INSERT_BATCH_SIZE),
+        )
+        try:
+            limit = int(configured if batch_size is None else batch_size)
+        except (TypeError, ValueError):
+            limit = self._DEFAULT_INSERT_BATCH_SIZE
+        limit = max(1, min(limit, self._MAX_INSERT_BATCH_SIZE))
+        vector_doc_ids: list[int] = []
+        for start in range(0, len(entries), limit):
+            chunk = entries[start : start + limit]
+            ids = await insert_batch(
+                contents=[content for content, _metadata in chunk],
+                metadatas=[dict(metadata) for _content, metadata in chunk],
+                batch_size=len(chunk),
+            )
+            if not isinstance(ids, (list, tuple)) or len(ids) != len(chunk):
+                raise RuntimeError("图向量批量插入返回的标识数量不匹配")
+            try:
+                normalized = [
+                    int(vector_doc_id)
+                    for vector_doc_id in ids
+                    if not isinstance(vector_doc_id, bool)
+                ]
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("图向量批量插入返回的标识无效") from exc
+            if len(normalized) != len(chunk):
+                raise RuntimeError("图向量批量插入返回的标识无效")
+            vector_doc_ids.extend(normalized)
+        return vector_doc_ids
 
     async def search(
         self,

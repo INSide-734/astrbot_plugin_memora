@@ -126,6 +126,8 @@ function summaryFixture(
     decision_count: 1,
     payload_chars_p95: 600,
     provider_fallback_rate: 0,
+    memory_present_count: 1,
+    payload_injected_count: 1,
     selected_count_total: 12,
     dropped_count_total: 5,
     truncated_count_total: 1,

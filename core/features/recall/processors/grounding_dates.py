@@ -119,12 +119,20 @@ _CJK_NUM_RE = re.compile(r"[零一二两三四五六七八九十百千万亿]+")
 
 
 def _cjk_to_int(text: str) -> int:
-    """把纯中文数字串（含进位组合，如"二十三"→23）解析为整数。"""
+    """把纯中文数字串（含进位组合，如"二十三"→23）解析为整数。
+
+    末位数字紧跟单位时按口语省略规则取下一级单位（"两千三"→2300、
+    "一百一"→110）；中间出现「零」时该数字仍按个位处理（"一百零五"→105）。
+    """
 
     total = 0
     section = 0
     number = 0
+    last_unit = 0
     for char in text:
+        if char == "零":
+            last_unit = 0
+            continue
         if char in _CJK_DIGITS:
             number = _CJK_DIGITS[char]
             continue
@@ -133,10 +141,12 @@ def _cjk_to_int(text: str) -> int:
             section = (section + number) * unit if (section or number) else unit
             total += section
             section = 0
-            number = 0
         else:
             section += (number or 1) * unit
-            number = 0
+        number = 0
+        last_unit = unit
+    if number and last_unit > 1:
+        number *= last_unit // 10
     return total + section + number
 
 

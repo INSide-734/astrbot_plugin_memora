@@ -6,6 +6,7 @@ from typing import Any
 from astrbot.api import logger
 
 from .....platform.provider.adapters import EmbeddingProviderAdapter
+from ...rebuild_observability import record_embedding_batch, record_embedding_request
 
 
 class EmbeddingRetryMixin:
@@ -44,6 +45,7 @@ class EmbeddingRetryMixin:
 
         for start in range(0, len(contents), embedding_batch_size):
             chunk = contents[start : start + embedding_batch_size]
+            record_embedding_batch()
             logger.debug(
                 "Embedding 子请求: "
                 f"offset={start}, size={len(chunk)}, total={len(contents)}"
@@ -94,6 +96,13 @@ class EmbeddingRetryMixin:
 
         for attempt in range(max_retries):
             try:
+                if getattr(getattr(adapter, "mode", None), "value", None) == "single":
+                    vectors: list[Any] = []
+                    for content in contents:
+                        record_embedding_request()
+                        vectors.extend(await adapter.embed([content]))
+                    return vectors
+                record_embedding_request()
                 return await adapter.embed(contents)
             except asyncio.CancelledError:
                 raise

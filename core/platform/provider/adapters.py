@@ -47,11 +47,19 @@ _LLM_PROVIDER_CAPABILITIES = AdapterCapabilityContract(
 
 @dataclass(frozen=True, slots=True)
 class LLMGenerationResult:
-    """保存一次文本生成的正文与 Provider 原始 token 用量。"""
+    """保存一次文本生成的正文、token 用量和安全终止原因。"""
 
     text: str
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    finish_reason: str = "unknown"
+
+    def __post_init__(self) -> None:
+        """把终止原因限制为固定低基数集合。"""
+        if not isinstance(self.finish_reason, str) or (
+            self.finish_reason not in _LLM_FINISH_REASONS
+        ):
+            object.__setattr__(self, "finish_reason", "unknown")
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +95,7 @@ class LLMProviderAdapter:
         prompt: str,
         system_prompt: str,
     ) -> LLMGenerationResult:
-        """调用冻结入口并返回文本及 Provider 明确提供的 token 用量。"""
+        """调用冻结入口并返回文本、用量及受控终止原因。"""
 
         pending = self._text_chat(prompt=prompt, system_prompt=system_prompt)
         if not inspect.isawaitable(pending):
@@ -107,7 +115,107 @@ class LLMProviderAdapter:
             text=completion_text,
             prompt_tokens=_optional_token_count(usage, "input"),
             completion_tokens=_optional_token_count(usage, "output"),
+            finish_reason=_safe_finish_reason(
+                getattr(response, "raw_completion", None)
+            ),
         )
+
+
+_LLM_FINISH_REASONS = frozenset(
+    {"unknown", "stop", "length", "tool_call", "content_filter", "error"}
+)
+_CHAT_FINISH_REASONS = {
+    "stop": "stop",
+    "length": "length",
+    "tool_calls": "tool_call",
+    "function_call": "tool_call",
+    "content_filter": "content_filter",
+}
+_RESPONSE_STATUS_REASONS = {
+    "completed": "stop",
+    "failed": "error",
+}
+_RESPONSE_INCOMPLETE_REASONS = {
+    "max_output_tokens": "length",
+    "content_filter": "content_filter",
+}
+_ANTHROPIC_STOP_REASONS = {
+    "end_turn": "stop",
+    "stop_sequence": "stop",
+    "max_tokens": "length",
+    "model_context_window_exceeded": "length",
+    "tool_use": "tool_call",
+    "refusal": "content_filter",
+}
+_GEMINI_FINISH_REASONS = {
+    "STOP": "stop",
+    "MAX_TOKENS": "length",
+    "SAFETY": "content_filter",
+    "PROHIBITED_CONTENT": "content_filter",
+    "BLOCKLIST": "content_filter",
+    "SPII": "content_filter",
+    "IMAGE_SAFETY": "content_filter",
+    "LANGUAGE": "content_filter",
+    "MALFORMED_FUNCTION_CALL": "tool_call",
+    "UNEXPECTED_TOOL_CALL": "tool_call",
+}
+
+
+def _sdk_enum_value(value: Any) -> str | None:
+    """读取 SDK 枚举的字符串值，不回显任意 Provider 对象。"""
+
+    if isinstance(value, str):
+        return value
+    enum_value = getattr(value, "value", None)
+    return enum_value if isinstance(enum_value, str) else None
+
+
+def _safe_finish_reason(raw_completion: Any) -> str:
+    """按 AstrBot LLMResponse 的已支持 raw_completion 形状归约原因。
+
+    AstrBot 4.28 的 raw_completion 联合类型是 OpenAI ChatCompletion/Response、
+    Gemini GenerateContentResponse 或 Anthropic Message。仅读取这些 SDK 已知的
+    字段；缺少、非法或其他 Provider 形状均保持 ``unknown``。
+    """
+
+    if raw_completion is None:
+        return "unknown"
+    choices = getattr(raw_completion, "choices", None)
+    if isinstance(choices, (list, tuple)) and choices:
+        reason = _sdk_enum_value(getattr(choices[0], "finish_reason", None))
+        return (
+            _CHAT_FINISH_REASONS.get(reason, "unknown")
+            if reason is not None
+            else "unknown"
+        )
+
+    status = _sdk_enum_value(getattr(raw_completion, "status", None))
+    if status in _RESPONSE_STATUS_REASONS:
+        return _RESPONSE_STATUS_REASONS[status]
+    if status == "incomplete":
+        details = getattr(raw_completion, "incomplete_details", None)
+        reason = _sdk_enum_value(getattr(details, "reason", None))
+        return (
+            _RESPONSE_INCOMPLETE_REASONS.get(reason, "unknown")
+            if reason is not None
+            else "unknown"
+        )
+
+    candidates = getattr(raw_completion, "candidates", None)
+    if isinstance(candidates, (list, tuple)) and candidates:
+        reason = _sdk_enum_value(getattr(candidates[0], "finish_reason", None))
+        return (
+            _GEMINI_FINISH_REASONS.get(reason, "unknown")
+            if reason is not None
+            else "unknown"
+        )
+
+    reason = _sdk_enum_value(getattr(raw_completion, "stop_reason", None))
+    return (
+        _ANTHROPIC_STOP_REASONS.get(reason, "unknown")
+        if reason is not None
+        else "unknown"
+    )
 
 
 def _optional_token_count(usage: Any, field: str) -> int | None:

@@ -49,6 +49,32 @@ class SummaryStoreSnapshotMixin:
             str(_row(row, "status", 0)): int(_row(row, "count", 1) or 0)
             for row in await cursor.fetchall()
         }
+        candidate_cursor = await self.connection.execute(
+            "SELECT COUNT(*) FROM summary_job_candidates"
+        )
+        candidate_total = int((await candidate_cursor.fetchone())[0] or 0)
+        unresolved_cursor = await self.connection.execute(
+            """
+            SELECT reason_code, COUNT(*) AS count
+            FROM summary_jobs
+            WHERE status IN ('blocked', 'unknown')
+            GROUP BY reason_code
+            ORDER BY reason_code
+            """
+        )
+        unresolved_reason_counts = {
+            str(_row(row, "reason_code", 0)): int(_row(row, "count", 1) or 0)
+            for row in await unresolved_cursor.fetchall()
+            if _row(row, "reason_code", 0)
+        }
+        oldest_cursor = await self.connection.execute(
+            """
+            SELECT MIN(created_at) FROM summary_jobs
+            WHERE status IN ('blocked', 'unknown')
+            """
+        )
+        oldest_created = (await oldest_cursor.fetchone())[0]
+        oldest_age = max(0, int(now - float(oldest_created))) if oldest_created else 0
         totals: dict[str, int] = {}
         executable_cursor = await self.connection.execute(
             """
@@ -82,6 +108,9 @@ class SummaryStoreSnapshotMixin:
             mark_write_total=totals["mark_write_total"],
             failed_candidate_total=totals["failed_candidate_total"],
             skipped_idempotent_total=totals["skipped_idempotent_total"],
+            candidate_total=candidate_total,
+            oldest_unresolved_age_seconds=oldest_age,
+            unresolved_reason_counts=unresolved_reason_counts,
         )
 
 

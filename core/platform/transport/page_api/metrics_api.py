@@ -183,7 +183,7 @@ class MetricsApiMixin:
             "schedulers": self._build_scheduler_summary(),
         }
 
-    async def _build_summary_task_summary(self) -> dict[str, int] | None:
+    async def _build_summary_task_summary(self) -> dict[str, object] | None:
         """读取可选总结调度器，并只返回统一 allowlist 标量投影。"""
         initializer = getattr(getattr(self, "plugin", None), "initializer", None)
         scheduler = getattr(initializer, "summary_scheduler", None)

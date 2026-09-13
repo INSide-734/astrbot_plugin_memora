@@ -1507,6 +1507,10 @@ function handleInjectionSummary(params: Record<string, string>): ApiResponse {
     provider_fallback_rate: rows.length
       ? rows.filter((row) => row.fallback_applied).length / rows.length
       : 0,
+    memory_present_count: rows.filter((row) => row.selected_count > 0).length,
+    payload_injected_count: rows.filter(
+      (row) => row.outcome === "injected" || row.outcome === "fallback",
+    ).length,
     selected_count_total: rows.reduce(
       (total, row) => total + row.selected_count,
       0,
