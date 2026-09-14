@@ -528,6 +528,8 @@
         "payloadP95": "Payload 字符数 p95",
         "fallbackRate": "Provider 降级率",
         "selectedTotal": "选择条数合计",
+        "payloadInjected": "已注入载荷",
+        "memoryPresent": "含记忆候选",
         "droppedTotal": "丢弃条数合计",
         "budgetUtilization": "预算利用率",
         "presetDistribution": "预设选择分布",

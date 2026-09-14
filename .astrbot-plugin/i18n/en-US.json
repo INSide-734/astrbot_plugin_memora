@@ -528,6 +528,8 @@
         "payloadP95": "Payload characters p95",
         "fallbackRate": "Provider fallback rate",
         "selectedTotal": "Selected total",
+        "payloadInjected": "Payload injected",
+        "memoryPresent": "Memories present",
         "droppedTotal": "Dropped total",
         "budgetUtilization": "Budget utilization",
         "presetDistribution": "Preset distribution",

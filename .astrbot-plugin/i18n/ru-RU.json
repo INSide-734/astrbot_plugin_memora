@@ -524,6 +524,8 @@
         "payloadP95": "Символы payload p95",
         "fallbackRate": "Доля резервного режима провайдера",
         "selectedTotal": "Всего выбрано",
+        "payloadInjected": "Внедрённый payload",
+        "memoryPresent": "С кандидатами памяти",
         "droppedTotal": "Всего отброшено",
         "budgetUtilization": "Использование бюджета",
         "presetDistribution": "Распределение пресетов",
