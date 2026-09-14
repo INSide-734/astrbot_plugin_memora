@@ -110,11 +110,11 @@ class SummaryWorkerCandidateMixin:
         candidates: Sequence[dict[str, Any]],
         completed_keys: Mapping[str, int],
         snapshot_payload: Mapping[str, object],
-    ) -> tuple[object | None, SummaryReasonCode | None]:
+    ) -> tuple[object | None, SummaryReasonCode | None, str | None]:
         """用同一固化快照预求值质量门，并拒绝候选快照变化。"""
         gate = self._quality_gate
         if gate is None:
-            return None, None
+            return None, None, None
         snapshot_kwargs = self._fixed_snapshot_kwargs(
             gate.route_candidate,
             claim,
@@ -147,8 +147,12 @@ class SummaryWorkerCandidateMixin:
         for candidate in candidates:
             try:
                 snapshot_key = _fixed_quality_key(candidate)
-            except (TypeError, ValueError):
-                return None, SummaryReasonCode.LEDGER_UNRESOLVED
+            except (TypeError, ValueError) as error:
+                return (
+                    None,
+                    SummaryReasonCode.LEDGER_UNRESOLVED,
+                    error.__class__.__name__,
+                )
             if snapshot_key[0] in completed_keys:
                 continue
             if not await self._claim_is_active(claim):
@@ -176,22 +180,30 @@ class SummaryWorkerCandidateMixin:
                 result = await self.run_claim_side_effect(claim, _route_candidate)
             except asyncio.CancelledError:
                 raise
-            except Exception:
-                return None, SummaryReasonCode.LEDGER_UNRESOLVED
+            except Exception as error:
+                return (
+                    None,
+                    SummaryReasonCode.LEDGER_UNRESOLVED,
+                    error.__class__.__name__,
+                )
             if getattr(result, "action", None) not in {
                 "allow",
                 "quarantined",
                 "discard",
                 "mark_write",
             }:
-                return None, SummaryReasonCode.INVALID_ACTION
+                return None, SummaryReasonCode.INVALID_ACTION, "unknown"
             try:
                 if _fixed_quality_key(candidate) != snapshot_key:
-                    return None, SummaryReasonCode.LEDGER_UNRESOLVED
-            except (TypeError, ValueError):
-                return None, SummaryReasonCode.LEDGER_UNRESOLVED
+                    return None, SummaryReasonCode.LEDGER_UNRESOLVED, "unknown"
+            except (TypeError, ValueError) as error:
+                return (
+                    None,
+                    SummaryReasonCode.LEDGER_UNRESOLVED,
+                    error.__class__.__name__,
+                )
             results[snapshot_key] = result
-        return _FixedQualityGate(results), None
+        return _FixedQualityGate(results), None, None
 
     @staticmethod
     def _prepare_candidates(
@@ -482,6 +494,7 @@ class SummaryWorkerCandidateMixin:
         *,
         stage: str,
         reason_code: SummaryReasonCode,
+        exception_type: str | None = "unknown",
         candidate_metrics: CandidateMetrics | None = None,
     ) -> WindowOutcome:
         """把 ledger、slot 或副作用不确定性固定为不可推进结果。"""
@@ -495,6 +508,7 @@ class SummaryWorkerCandidateMixin:
             failed_stage=stage,
             candidate_metrics=candidate_metrics,
             reason_code=reason_code,
+            exception_type=exception_type,
         )
 
 

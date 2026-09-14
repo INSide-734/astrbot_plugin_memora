@@ -10,6 +10,12 @@ scope 的候选纳入相似度比较。
 的同名字段对齐但口径独立；短文本由 ``min_tokens`` 护栏跳过，命中后还要
 通过 ``key_facts`` 词集 Jaccard >= 0.5 的事实护栏，避免把“同主题不同事实”
 合并掉。
+
+整段打分没有任何候选达标时，再算一次事实粒度覆盖作为 ``FACT_OVERLAP``
+观测信号：候选的每条事实在可比候选的 ``key_facts`` 中取最佳单条 Jaccard，
+达标事实（>= ``FACT_MATCH_FLOOR``）占比达到 ``FACT_OVERLAP_RATIO`` 即认为
+“部分共享事实”。该信号只用于灰度计数，不改变 HIT/FACT_MISMATCH 判定，
+也不参与写回决策。
 """
 
 from __future__ import annotations
@@ -23,6 +29,9 @@ from ....shared.memory_status import is_memory_recallable
 from ....shared.text_utils import tokenize_cjk_words
 
 FACT_JACCARD_FLOOR: Final = 0.5
+# 事实重叠观测门槛：单条事实达标所需的最佳 Jaccard，以及达标事实占比门槛。
+FACT_MATCH_FLOOR: Final = 0.6
+FACT_OVERLAP_RATIO: Final = 0.5
 _PARTICIPANT_BOUNDARY_PRIVACY: Final = "confidential"
 _PARTICIPANT_BOUNDARY_CHAT_TYPE: Final = "private"
 
@@ -33,6 +42,7 @@ class NearDuplicateVerdict(str, Enum):
     HIT = "hit"
     MISS = "miss"
     FACT_MISMATCH = "fact_mismatch"
+    FACT_OVERLAP = "fact_overlap"
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,12 +172,15 @@ async def detect_near_duplicate(
     candidate_limit: int = 5,
     min_tokens: int = 12,
 ) -> NearDuplicateOutcome:
-    """在注入的近邻端口上返回最高分命中、事实护栏终态或未命中。
+    """在注入的近邻端口上返回最高分命中、事实护栏/重叠终态或未命中。
 
     只评估最高分候选：分数达到 ``similarity_threshold`` 后，若两侧
     ``key_facts`` 词集 Jaccard 低于 ``FACT_JACCARD_FLOOR`` 则返回
-    ``FACT_MISMATCH``，否则返回 ``HIT``。任一侧 token 数低于
-    ``min_tokens``、作用域不完整或无可比候选时返回 ``MISS``。
+    ``FACT_MISMATCH``，否则返回 ``HIT``。整段打分没有任何候选达标时，若
+    候选事实被某个可比候选覆盖到 ``FACT_OVERLAP_RATIO`` 及以上（单条事实
+    门槛 ``FACT_MATCH_FLOOR``）则返回 ``FACT_OVERLAP``，否则返回 ``MISS``。
+    任一侧 token 数低于 ``min_tokens``、作用域不完整、无可比候选或候选侧
+    没有事实 token 时返回 ``MISS``。
     """
 
     candidate_tokens = tokenize_cjk_words(content)
@@ -181,18 +194,31 @@ async def detect_near_duplicate(
         DedupQuery(content=content, session_id=session_id, limit=candidate_limit)
     )
     incoming_tokens = frozenset(candidate_tokens)
-    scored: list[tuple[float, DedupDocument]] = []
+    evaluated: list[tuple[float, DedupDocument]] = []
     for document in documents:
         if not _is_comparable(document, incoming, min_tokens=min_tokens):
             continue
-        score = _jaccard(
-            incoming_tokens,
-            frozenset(tokenize_cjk_words(document.content)),
+        evaluated.append(
+            (
+                _jaccard(
+                    incoming_tokens,
+                    frozenset(tokenize_cjk_words(document.content)),
+                ),
+                document,
+            )
         )
-        if score >= similarity_threshold:
-            scored.append((score, document))
+    scored = [item for item in evaluated if item[0] >= similarity_threshold]
     if not scored:
-        return NearDuplicateOutcome(NearDuplicateVerdict.MISS)
+        # 整段无命中：事实粒度覆盖只作观测，不改变写入决策。
+        overlap = _best_fact_overlap(metadata, evaluated)
+        if overlap is None:
+            return NearDuplicateOutcome(NearDuplicateVerdict.MISS)
+        overlap_document, overlap_score = overlap
+        return NearDuplicateOutcome(
+            NearDuplicateVerdict.FACT_OVERLAP,
+            overlap_document,
+            overlap_score,
+        )
 
     # 同分时固定选择最早的 canonical，结论与检索返回顺序无关。
     score, document = max(scored, key=lambda item: (item[0], -item[1].memory_id))
@@ -299,16 +325,78 @@ def _is_comparable(
     return same_dedup_scope(incoming, stored)
 
 
-def _fact_tokens(metadata: Mapping[str, Any]) -> frozenset[str]:
-    """把 ``key_facts`` 文本列表展开为事实词集。"""
+def _best_fact_overlap(
+    metadata: Mapping[str, Any],
+    evaluated: Sequence[tuple[float, DedupDocument]],
+) -> tuple[DedupDocument, float] | None:
+    """在整段未达标的可比候选中选事实覆盖最高的一个。
+
+    返回 ``(候选, 该候选的整段分数)``；候选侧没有事实 token、或没有任何
+    候选达到 ``FACT_OVERLAP_RATIO`` 时返回 ``None``。同分时固定选择最早的
+    canonical，结论与检索返回顺序无关。
+    """
+
+    incoming_facts = _fact_token_sets(metadata)
+    if not incoming_facts:
+        return None
+    candidates: list[tuple[float, float, DedupDocument]] = []
+    for score, document in evaluated:
+        coverage = _fact_coverage(incoming_facts, document.metadata)
+        if coverage >= FACT_OVERLAP_RATIO:
+            candidates.append((coverage, score, document))
+    if not candidates:
+        return None
+    _, score, document = max(
+        candidates,
+        key=lambda item: (item[0], -item[2].memory_id),
+    )
+    return document, score
+
+
+def _fact_coverage(
+    incoming_facts: Sequence[frozenset[str]],
+    stored: Mapping[str, Any],
+) -> float:
+    """候选事实中被目标事实覆盖的占比。
+
+    单条候选事实的覆盖度取它与目标 ``key_facts`` 中某一条的最佳 Jaccard；
+    达到 ``FACT_MATCH_FLOOR`` 才计入分子。目标侧没有任何事实 token 时按
+    无覆盖处理。
+    """
+
+    stored_facts = _fact_token_sets(stored)
+    if not stored_facts:
+        return 0.0
+    matched = 0
+    for fact in incoming_facts:
+        best = max((_jaccard(fact, other) for other in stored_facts), default=0.0)
+        if best >= FACT_MATCH_FLOOR:
+            matched += 1
+    return matched / len(incoming_facts)
+
+
+def _fact_token_sets(metadata: Mapping[str, Any]) -> list[frozenset[str]]:
+    """把 ``key_facts`` 展开为逐条事实的词集；空白或无 token 的条目忽略。"""
 
     facts = metadata.get("key_facts")
     if not isinstance(facts, (list, tuple)):
-        return frozenset()
-    tokens: set[str] = set()
+        return []
+    token_sets: list[frozenset[str]] = []
     for fact in facts:
-        if isinstance(fact, str):
-            tokens.update(tokenize_cjk_words(fact))
+        if not isinstance(fact, str):
+            continue
+        tokens = frozenset(tokenize_cjk_words(fact))
+        if tokens:
+            token_sets.append(tokens)
+    return token_sets
+
+
+def _fact_tokens(metadata: Mapping[str, Any]) -> frozenset[str]:
+    """把 ``key_facts`` 文本列表展开为事实词集。"""
+
+    tokens: set[str] = set()
+    for fact in _fact_token_sets(metadata):
+        tokens.update(fact)
     return frozenset(tokens)
 
 
@@ -329,6 +417,8 @@ def _jaccard(left: frozenset[str], right: frozenset[str]) -> float:
 
 __all__ = [
     "FACT_JACCARD_FLOOR",
+    "FACT_MATCH_FLOOR",
+    "FACT_OVERLAP_RATIO",
     "DedupDocument",
     "DedupQuery",
     "DedupScope",

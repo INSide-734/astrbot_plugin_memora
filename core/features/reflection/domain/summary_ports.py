@@ -30,6 +30,15 @@ class SummaryJobStorePort(Protocol):
         """设置任务状态比较使用的统一时钟。"""
         ...
 
+    def set_summary_quarantine_candidate_lookup(
+        self,
+        lookup: Callable[
+            [str], Mapping[str, object] | None | Awaitable[Mapping[str, object] | None]
+        ],
+    ) -> None:
+        """注入 quality owner 的精确 candidate_key 隔离证据查询。"""
+        ...
+
     async def plan_existing_frontiers(
         self,
         context_factory: Callable[

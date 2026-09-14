@@ -7,6 +7,7 @@ export type PageId =
 
 export * from "./intelligence";
 export * from "./injection";
+export * from "./memoryDedup";
 export * from "./navigation";
 export * from "./editing";
 

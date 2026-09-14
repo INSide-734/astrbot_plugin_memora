@@ -24,7 +24,7 @@ class DiagnosticsApiMixin:
         def _build_anomaly_summary(self) -> dict[str, Any]: ...
         def _build_learning_summary(self) -> dict[str, Any]: ...
         def _build_prometheus_summary(self) -> dict[str, Any]: ...
-        async def _build_summary_task_summary(self) -> dict[str, int] | None: ...
+        async def _build_summary_task_summary(self) -> dict[str, object] | None: ...
 
     async def get_diagnostics_health(self):
         """返回诊断健康评分；失败时只暴露稳定错误码。"""
@@ -197,11 +197,16 @@ class DiagnosticsApiMixin:
         previous_failures = getattr(
             self, "_diagnostics_previous_write_failures_total", None
         )
+        # A missing scheduler is a real unavailable signal. Keep the key in the
+        # health input so the scorer can emit an explicit unknown projection,
+        # rather than allowing the UI to infer a healthy default from absence.
+        safe_snapshot = dict(snapshot)
+        safe_snapshot.setdefault("summary_tasks", None)
         health = scorer.score(
-            snapshot,
+            safe_snapshot,
             previous_write_failures_total=previous_failures,
         )
-        current_failures = self._write_failures_total(snapshot)
+        current_failures = self._write_failures_total(safe_snapshot)
         if current_failures is not None:
             self._diagnostics_previous_write_failures_total = current_failures
         return health

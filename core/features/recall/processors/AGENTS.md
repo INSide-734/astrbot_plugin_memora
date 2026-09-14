@@ -1,4 +1,4 @@
-[根级 AGENTS.md](../../../../../../../../AGENTS.md) / core / features / recall / processors
+[根级 AGENTS.md](../../../../AGENTS.md) / core / features / recall / processors
 
 # 对话到结构化记忆处理管道
 
@@ -23,7 +23,7 @@
 Provider，没有预算、功能门关闭或结构不可用时由该管线生成确定性来源 fallback。
 重建路径强制关闭 Provider，并在写入前二次验证 source revision、scope 和 privacy。
 
-本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`../handlers/AGENTS.md`](../../../../handlers/AGENTS.md)；消息组件标准化见 [`../extractors/AGENTS.md`](../../../../extractors/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
+本模块不捕获 AstrBot 事件、不决定何时触发总结、不直接持久化主管道产物，也不执行召回。触发与批次编排见 [`recall feature`](../AGENTS.md)；消息组件标准化见 [`conversation feature`](../../conversation/AGENTS.md)；存储、图 CRUD 与检索属于相应 manager/store/retrieval 模块。
 
 ## 真实主管道
 
@@ -69,6 +69,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - Prompt 模板优先级由 `PromptBuilder` 实现：配置自定义模板 > `core/prompts/*.txt` > 最小硬编码回退；系统提示可含当前时间、人格、连续性、兴趣与话题引导。
 - 输出解析优先 `MemoryExtractionResult` guardrail；验证失败才进入旧 JSON 解析器，并写入 `_guardrail_fallback`。不要把“回退成功”误标为已通过 guardrail。
 - 每条模型结果必须带当前窗口的匿名 `S<n>` source offset；旧输出仅允许由当前窗口唯一推断受控引用。数字、否定极性、群聊主体和引用边界先走确定性校验，不确定路径才使用请求级预算保护的 Judge。
+- Grounding Judge 只有在 profile 显式开启后才可进入成本/请求预算分支；unavailable 只使用 `judge_disabled`、`budget_denied`、`budget_scope_missing`、`budget_exhausted`、`response_invalid`、`call_failed`、`unknown`，普通异常不猜测 Provider 原因，结果继续 fail-closed。
 - 低质量或来源未通过的候选仍返回，但写 `quality_gate_action=quarantine`、稳定原因码和内部证据；此时不提前生成 Atom。生产调用方必须交给 `MemoryQualityGate` 按门禁配置路由（quarantine/discard/mark_write），不得直接写 canonical、FTS、FAISS、图或 Evolution；mark_write 处置由门禁补齐 `gate_disposition`/`gate_reason_codes` 并按需重建 Atom。
 - 每条记忆写 `schema_version=v3`；`StorageBuilder` 同时维护 `summary_schema_version=v2` 的摘要元数据，这是不同层级的版本字段。
 - 重要性可受情感强度、首因/近因和兴趣命中影响，并始终上限钳制到 1.0。
@@ -79,10 +80,11 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - `LLMClient.get_current_llm_provider()`：固定对象优先；字符串 ID 动态查找；之后使用当前默认 Provider，避免持有过期引用。Provider 实例变化时重新构建并缓存 `LLMProviderAdapter`，调用阶段不再反复探测入口。
 - `call_llm_with_retry(prompt, system_prompt, max_retries=3)`：通过冻结的 `text_chat` 入口调用，普通异常按 $2^{attempt}+jitter$ 退避，最后一次原样抛出；无 Provider 是 `RuntimeError`。取消继续传播，日志只记录异常类型。
 - `JsonParser` 顺序：直接 JSON → 补括号/引号与去尾逗号后解析 → 正则提取 → `QualityValidator` 默认结构。
+- 严格总结路径 `JsonParser.parse_summary_response()` 不做修复、正则或默认回退：完整代码围栏、`MemoryExtractionResult.model_validate(strict=True)` 与每条 `key_facts` 非空且非空白缺一不可，只容忍 JSON 对象前后混有解释文本（`raw_decode` 从首个 `{` 起解析）。失败抛 `SummaryParseError`：`str(error)` 与 job 级 reason 固定 `summary_invalid`，`reason` 仅取 `fence_invalid`/`json_invalid`/`schema_invalid`/`facts_missing`，`detail` 只允许字段路径、错误类型或字符偏移；`MemoryProcessor` 的失败日志写 `reason_code=summary_invalid` 与 `sub_reason=<reason>`。
 - `QualityValidator` 规范 `summary/topics/key_facts/sentiment/importance`；重要性范围为 `[0,1]`，非法值回退 `0.5`。
 - `ConversationFormatter` 的普通格式保留发送者、ID、秒级时间并给 bot 加前缀；compact 格式用于成本敏感路径。
-- `format_conversation_with_source_refs()` 增加稳定 `S0..S<n>` 标签和原始正文 `chars` 长度；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。抽取结果保持引用正文的主要语言；日期规范化只接受正文绝对日期、明确相对日期或消息时间戳锚定的确定性推导，普通数字继续严格匹配。
-- 来源证据必须带稳定身份与角色：`grounding_evidence.py` 把引用解析为 `message_id`、`message_seq`（调用方给出窗口序号时）、`role`、`start/end` 与 `message_fingerprint`；`grounding_checks.py` 只把 `user` 角色片段当作支持正文，群聊主体按稳定标识分组、同名标签在多主体间不可用于归属。仅由 `assistant`/`system` 片段支撑的声明以 `grounding_user_source_missing` 隔离，不得写 canonical。
+- `format_conversation_with_source_refs()` 增加稳定 `S0..S<n>` 标签和原始正文 `chars` 长度；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。抽取结果保持引用正文的主要语言；日期规范化只接受正文绝对日期、明确相对日期或消息时间戳锚定的确定性推导，中文数字只在量词、序数、比例、独立数量或明确前缀等确定语境中归一，口语省略（如「两千三」→2300）与小数位按位解析；普通数字继续严格匹配。
+- 来源证据必须带稳定身份与角色：`grounding_evidence.py` 把引用解析为 `message_id`、`message_seq`（调用方给出窗口序号时）、`role`、`start/end` 与 `message_fingerprint`，缺引用时只从 `user` 消息推断；`grounding_checks.py` 只把 `user` 角色片段当作支持正文，群聊主体按稳定标识分组、同名标签在多主体间不可用于归属。推断引用时同名歧义按整个窗口判定，主体一致性只要求被引用用户能被 `participants` 覆盖，不要求窗口内无关主体出现在 participants 中。仅由 `assistant`/`system` 片段支撑的声明以 `grounding_user_source_missing` 隔离，不得写 canonical。
 - `SummaryWorker` 把 `SourceWindow.message_seqs` 传给 `MemoryProcessor.process_conversation(message_seqs=...)`；长度不一致按来源不可信处理。门禁关闭时仍调用 `resolve_evidence()` 绑定证据，但沿用既有放行处置。
 - `StorageBuilder`：群聊 `privacy_level=public`，私聊 `confidential`；内容优先 canonical summary，否则使用对话摘录。
 
@@ -127,6 +129,7 @@ Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM pro
 - `asyncio.CancelledError` 属于控制流，必须穿透处理器与 LLM 重试。新增异步异常处理时先单独 `except asyncio.CancelledError: raise`，不要把关闭取消转成重试、空结果或 pending 业务失败。
 - LLM 文本是不可信输入：优先 guardrail，回退解析后仍需规范字段、长度、枚举与数值范围。Prompt 中只放完成抽取所需的对话片段，避免在日志输出正文或人格秘密。
 - 来源 Judge 服从同一请求的 `ExtraLlmBudget`；普通失败保守隔离，取消必须继续传播。不得把窗口外消息、会话身份、Provider 配置或内部证据映射传给 Judge。
+- Judge 与质量门 unavailable 日志只记录静态 component/stage、闭集 cause、归一化异常类别和计数；不得记录 claim/source、人格/会话标识、Provider 配置、异常正文或堆栈。
 - 图、画像、知识、笔记属于不同派生模型；不要把它们加入 `MemoryProcessor` 的关键同步路径，除非上游契约明确要求。
 - `TextProcessor` 是检索预处理边界；不要在抽取模块另造分词规则。
 - 包级 `__init__.py` 只导出已列出的六个符号。内部类需要成为稳定 API 时同步更新导出契约和测试。

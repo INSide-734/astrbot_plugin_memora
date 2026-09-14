@@ -107,11 +107,13 @@ def infer_references(
     profile: GateProfile,
     support_score: _SUPPORT_SCORE,
 ) -> list[dict[str, int]]:
-    """仅在模型缺少引用时从当前窗口推断高相关受控引用。"""
+    """仅在模型缺少引用时从当前窗口的 user 消息推断高相关受控引用。"""
 
     min_score = profile.thresholds.min_inference_score
     scored: list[tuple[float, int, str]] = []
     for index, message in enumerate(messages):
+        if str(message.role or "").strip().lower() != USER_ROLE:
+            continue
         content = Message.content_to_text(message.content)
         if not content.strip():
             continue

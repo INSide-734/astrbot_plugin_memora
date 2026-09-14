@@ -11,6 +11,7 @@ import pytest
 
 from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
 from core.features.memory.infrastructure.atom_store import AtomStore
+from core.features.memory.infrastructure.schema_manager import SchemaManager
 from core.features.memory.infrastructure.write_op_journal import WriteOpJournal
 from core.features.memory.infrastructure.write_op_serialization import (
     serialize_atom_for_repair,
@@ -260,7 +261,7 @@ async def test_failed_atom_repair_restores_through_real_store(
             atom_enabled=True,
             get_memory_cb=AsyncMock(return_value=memory),
         )
-        await journal.create_table()
+        await SchemaManager(db).create_tables(journal.create_table)
         op_id = await journal.start_op(
             "add",
             {"failed_atoms": [serialize_atom_for_repair(atom)]},

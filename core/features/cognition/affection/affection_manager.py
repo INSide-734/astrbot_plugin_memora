@@ -30,7 +30,7 @@ from .mood_cascade import apply_mood_cascade
 class LLMAdapter(Protocol):
     """好感度管理器所需的最小 LLM 适配器协议。"""
 
-    async def chat_completion(self, prompt: str, temperature: float = 0.1) -> str: ...
+    async def complete(self, prompt: str) -> str: ...
 
 
 # ---- 各情绪类型的描述文本 --------------------------------------------------------
@@ -661,14 +661,14 @@ class AffectionManager:
                     bot_response=bot_response or "(无)",
                     mood_context=f"机器人当前心情：{mood.description}",
                 )
-                raw = await self._llm.chat_completion(prompt, temperature=0.1)
+                raw = await self._llm.complete(prompt)
                 result = raw.strip().lower()
                 try:
                     return InteractionType(result)
                 except ValueError:
-                    logger.warning(
-                        f"[好感度管理] LLM 返回无效交互类型: {result}，回退到规则"
-                    )
+                    logger.warning("[好感度管理] LLM 返回无效交互类型，回退到规则")
+            except asyncio.CancelledError:
+                raise
             except Exception:
                 logger.warning("[好感度管理] LLM 分类失败，回退到规则")
 

@@ -3,9 +3,8 @@
 """
 
 import asyncio
-import json
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -14,15 +13,10 @@ from astrbot.api import logger
 
 from ....platform.security.guardrails import (
     MemoryExtractionResult,
-    validate_and_clean_json,
     validate_llm_response,
 )
 from ....shared.contracts.conversation import Message
 from ....shared.cost_control import CostControl
-from ....shared.extra_llm_budget import (
-    budgeted_extra_llm_call,
-    current_extra_llm_budget,
-)
 from ....shared.summary_llm_limiter import SummaryLlmLimiter
 from ...identity.application.enricher import build_memory_identity_context
 from ...memory.domain.memory_atom import MemoryAtom
@@ -30,9 +24,11 @@ from ...quality.domain.gate_config import BUILTIN_GENERIC_TERMS, GateProfile
 from .atom_classifier import classify_atoms
 from .conversation_formatter import ConversationFormatter
 from .gate_context import resolve_reflection_gate
+from .grounding_judge import GroundingJudgeCallable, GroundingJudgeMixin
 from .json_parser import JsonParser, SummaryParseError
 from .llm_client import LLMClient
 from .memory_grounding import GroundingResult, MemoryGroundingValidator
+from .memory_processor_candidate_mixin import MemoryProcessorCandidateMixin
 from .prompt_builder import (
     PromptBuilder,
     load_prompt_file,
@@ -41,6 +37,15 @@ from .prompt_builder import (
 from .quality_validator import QualityValidator
 from .reflection_generation_observability import (
     report_generation_stage as _report_generation_stage,
+)
+from .reflection_generation_observability import (
+    report_parse_attempt as _report_parse_attempt,
+)
+from .reflection_generation_observability import (
+    report_parse_failure as _report_parse_failure,
+)
+from .reflection_generation_observability import (
+    report_parse_success as _report_parse_success,
 )
 from .storage_builder import StorageBuilder
 from .topic_segmentation_pipeline import (
@@ -52,10 +57,8 @@ if TYPE_CHECKING:
     from ....shared.contracts import PromptProtectionPort
     from ...reflection.domain.summary_models import TopicCandidateSelection
 
-from .memory_processor_candidate_mixin import MemoryProcessorCandidateMixin
 
-
-class MemoryProcessor(MemoryProcessorCandidateMixin):
+class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
     """
     记忆处理器
 
@@ -70,10 +73,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
         config: dict[str, Any] | None = None,
         cost_control: CostControl | None = None,
         gate_runtime: Any | None = None,
-        grounding_judge: Callable[
-            [dict[str, Any], str], Awaitable[bool | Mapping[str, Any]]
-        ]
-        | None = None,
+        grounding_judge: GroundingJudgeCallable | None = None,
         topic_embed_fn: Callable[[list[str]], Awaitable[list[list[float]]]]
         | None = None,
         limiter: SummaryLlmLimiter | None = None,
@@ -251,6 +251,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                 prompt=prompt,
                 system_prompt=system_prompt,
                 max_retries=max(1, int(llm_max_retries)),
+                operation="summary_extraction",
             )
             llm_response_text = generation_result.text
             _report_generation_stage(
@@ -270,11 +271,23 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
 
             current_stage = "parse"
             stage_started = time.perf_counter()
-            structured_data = self._parse_llm_response(
-                llm_response_text,
-                is_group_chat,
-                strict_summary=strict_summary,
-            )
+            _report_parse_attempt()
+            try:
+                structured_data = self._parse_llm_response(
+                    llm_response_text,
+                    is_group_chat,
+                    strict_summary=strict_summary,
+                )
+            except asyncio.CancelledError:
+                raise
+            except SummaryParseError as error:
+                _report_parse_failure(error.reason)
+                raise
+            except Exception:
+                _report_parse_failure("unknown")
+                raise
+            else:
+                _report_parse_success()
 
             quality = (
                 "normal"
@@ -500,7 +513,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                 stage_started,
             )
             raise
-        except SummaryParseError:
+        except SummaryParseError as error:
             _report_generation_stage(
                 current_stage,
                 "failed",
@@ -514,7 +527,11 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                 total_started,
             )
             logger.error(
-                "[MemoryProcessor] 总结结构无效，reason_code=summary_invalid，异常类型=SummaryParseError"
+                "[MemoryProcessor] 总结结构无效，sub_reason=%s，detail=%s，异常类型=%s",
+                error.reason,
+                error.detail or "none",
+                error.__class__.__name__,
+                extra={"reason_code": "summary_invalid", "sub_reason": error.reason},
             )
             raise
         except Exception as e:
@@ -536,103 +553,6 @@ class MemoryProcessor(MemoryProcessorCandidateMixin):
                 exc_info=True,
             )
             raise
-
-    async def resolve_grounding_judge(
-        self,
-        grounding: GroundingResult,
-        *,
-        is_group_chat: bool,
-        profile: GateProfile,
-        topics: tuple[str, ...] = (),
-        importance: float = 0.5,
-    ) -> GroundingResult:
-        """按 profile 开关解析 Judge；成本许可未放行时由开关旁路，仍受额度约束。"""
-
-        if not profile.judge.enabled and not self.cost_control.allow(
-            "memory_grounding_judge"
-        ):
-            return grounding.with_unavailable_judge()
-        payload = {
-            "claim_text": grounding.claim_text,
-            "source_text": grounding.source_text,
-            "is_group_chat": bool(is_group_chat),
-            "chat_type": "群聊" if is_group_chat else "私聊",
-            "topics": "、".join(topics) or "无",
-            "importance": str(importance),
-        }
-        try:
-            if self.cost_control.allow("memory_grounding_judge"):
-                async with budgeted_extra_llm_call(
-                    self.cost_control,
-                    "memory_grounding_judge",
-                ) as allowed:
-                    if not allowed:
-                        return grounding.with_unavailable_judge()
-                    judged = await self._grounding_judge(
-                        payload, profile.judge.prompt_template
-                    )
-            else:
-                # 开关显式开启：绕过功能许可检查，直接走请求级预算。
-                budget = current_extra_llm_budget()
-                if budget is None:
-                    return grounding.with_unavailable_judge()
-                reservation = await budget.reserve("memory_grounding_judge")
-                if reservation is None:
-                    return grounding.with_unavailable_judge()
-                try:
-                    judged = await self._grounding_judge(
-                        payload, profile.judge.prompt_template
-                    )
-                except BaseException:
-                    # 失败或取消都必须释放预留；取消按控制流向上传播。
-                    await budget.release(reservation)
-                    raise
-                else:
-                    await budget.commit(reservation)
-            if isinstance(judged, Mapping):
-                supported = judged.get("supported") is True
-            else:
-                supported = judged is True
-            return grounding.with_judge_result(supported)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "[MemoryProcessor] 来源忠实性 Judge 失败，候选进入隔离，异常类型=%s",
-                exc.__class__.__name__,
-            )
-            return grounding.with_unavailable_judge()
-
-    async def _call_grounding_judge(
-        self,
-        payload: dict[str, Any],
-        template: str = "",
-    ) -> Mapping[str, Any]:
-        """只向 Provider 发送当前候选声明和已引用片段。"""
-
-        # 空配置 = 文件默认模板；占位符合法性由配置校验保证，这里直接渲染。
-        template_text = template or self._judge_prompt_default
-        prompt = template_text.format(
-            claim_text=str(payload.get("claim_text") or "")[:1200],
-            source_text=str(payload.get("source_text") or "")[:2400],
-            chat_type=payload.get("chat_type", "私聊"),
-            topics=payload.get("topics", "无"),
-            importance=payload.get("importance", "0.5"),
-        )
-        response_text = await self.llm_client.call_llm_with_retry(
-            prompt=prompt,
-            system_prompt="只做来源忠实性判断，不补充来源之外的事实。",
-            max_retries=1,
-        )
-        parsed = validate_and_clean_json(
-            response_text,
-            fallback_return_none=True,
-        )
-        if not isinstance(parsed, dict) or not isinstance(
-            parsed.get("supported"), bool
-        ):
-            raise ValueError("grounding_judge_invalid_response")
-        return json.loads(json.dumps(parsed))
 
     def _parse_llm_response(
         self,

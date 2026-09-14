@@ -31,7 +31,7 @@ flowchart LR
 - `get_mood`、`set_mood`、`reset_mood`、`get_mood_history`：群情绪读取、追加和缓存同步。强度裁剪到 `0.1..1.0`，持续时间裁剪到 `0.25..168.0` 小时。
 - `get_user_affection`、`get_group_affection_status`、`list_user_affections`：查询用户或群概览。
 - `create_user_affection_manual`、`update_user_affection_manual`、`delete_user_affection_manual`：管理员严格 CRUD；更新和删除要求 `expected_revision`，只允许修改分数。
-- `LLMAdapter.chat_completion(prompt, temperature)`：管理器要求的最小异步协议；缺失、失败或返回未知枚举时回退关键词分类，最终回退 `CHAT`。
+- `LLMAdapter.complete(prompt)`: 管理器要求的最小异步适配器协议；缺失、失败或返回未知枚举时回退关键词分类，最终回退 `CHAT`。
 - `AffectionLevel`：从 `HOSTILE` 到 `INTIMATE` 的离散分层。
 - `MoodType` / `BotMood`：十种情绪、强度、描述、起始时间与持续时间；`get_mood_modifier()` 给出计分乘数。
 - `InteractionType` / `INTERACTION_RULES`：17 种交互及基础变化、情绪敏感性、门控要求和级联标志。

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from astrbot.api import logger
 
@@ -17,6 +17,10 @@ from ..config.feature_config import is_jargon_discovery_enabled
 
 async def initialize_cognitive_components(initializer: Any) -> None:
     """创建共享的 v1.0+ 认知组件实例。"""
+    auxiliary_llm_client = getattr(initializer, "auxiliary_llm_client", None)
+    if auxiliary_llm_client is None:
+        raise RuntimeError("认知组件缺少辅助 LLM 客户端")
+
     db_path = str(Path(initializer.data_dir) / "memora.db")
     initialization_started = time.perf_counter()
     success_count = 0
@@ -30,8 +34,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
         await initializer.affection_store.initialize()
         initializer.affection_manager = AffectionManager(
             initializer.affection_store,
-            # 宿主 Provider 的运行时能力由既有认知组件边界验证。
-            llm_adapter=cast(Any, initializer.llm_provider),
+            llm_adapter=auxiliary_llm_client,
         )
         success_count += 1
         report_debug_event(
@@ -56,7 +59,7 @@ async def initialize_cognitive_components(initializer: Any) -> None:
             capability="affection",
             duration_ms=max(0.0, (time.perf_counter() - component_started) * 1000.0),
         )
-        logger.warning("好感度管理器初始化失败，已跳过: %s", exc, exc_info=True)
+        logger.warning("好感度管理器初始化失败，已跳过")
         initializer.affection_store = None
         initializer.affection_manager = None
 

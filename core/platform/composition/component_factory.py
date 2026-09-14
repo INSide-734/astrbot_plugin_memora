@@ -1,6 +1,7 @@
 """组合根的共享运行时组件构造工厂。"""
 
 import asyncio
+import inspect
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, cast
@@ -42,6 +43,7 @@ from ...features.memory.application.catalog_reconcile_scheduler import (
     TopicCatalogReconcileScheduler,
 )
 from ...features.memory.application.memory_engine import MemoryEngine
+from ...features.memory.infrastructure.dedup_metrics_store import DedupMetricsStore
 from ...features.memory.infrastructure.topic_metrics import build_metrics_recorder
 from ...features.notes.application import NoteProposalPipeline
 from ...features.notes.infrastructure import NoteGenerator
@@ -100,6 +102,8 @@ class ComponentFactory:
         faiss_vec_db_cls,
         faiss_checker,
         db_setup,
+        *,
+        capture_ready_cb: Callable[[ConversationManager, Any], Any] | None = None,
     ) -> dict:
         """构造共享组件，并在失败时回滚本次已拥有的资源。"""
         cleanup_state: dict[str, object] = {}
@@ -111,6 +115,7 @@ class ComponentFactory:
                 faiss_checker,
                 db_setup,
                 cleanup_state,
+                capture_ready_cb,
             )
         except BaseException:
             try:
@@ -129,6 +134,7 @@ class ComponentFactory:
         faiss_checker,
         db_setup,
         cleanup_state: dict[str, object],
+        capture_ready_cb: Callable[[ConversationManager, Any], Any] | None = None,
     ) -> dict:
         """按固定顺序构造全部共享组件。"""
 
@@ -278,6 +284,7 @@ class ComponentFactory:
             await asyncio.gather(db.initialize(), graph_db.initialize())
         else:
             await db.initialize()
+        await memory_engine.recover_persisted_operations()
         await memory_evolution_store.initialize()
         logger.info("数据库与索引组件已初始化")
         logger.info("MemoryEngine 已初始化")
@@ -295,6 +302,18 @@ class ComponentFactory:
             session_ttl=session_config.get("session_ttl", 3600),
         )
         logger.info("ConversationManager 已初始化")
+        identity_runtime = await build_identity_runtime(
+            self.data_dir, conversation_manager
+        )
+        cleanup_state["identity_runtime"] = identity_runtime
+        conversation_manager.identity_runtime = identity_runtime
+        if capture_ready_cb is not None:
+            capture_runtime = capture_ready_cb(conversation_manager, identity_runtime)
+            if inspect.isawaitable(capture_runtime):
+                capture_runtime = await capture_runtime
+            if capture_runtime is None:
+                raise RuntimeError("capture_runtime_publish_failed")
+            cleanup_state["capture_runtime"] = capture_runtime
 
         await db_setup.repair_message_counts(conversation_store)
 
@@ -464,6 +483,9 @@ class ComponentFactory:
         conversation_store.set_summary_canonical_owner_lookup(
             memory_engine.find_memory_id_by_idempotency_key
         )
+        conversation_store.set_summary_quarantine_candidate_lookup(
+            memory_quarantine_store.find_quarantine_candidate_by_key
+        )
         catalog_maintenance_result = await finalize_catalog_lifecycle(
             db_setup, index_validator, memory_engine, derived_rebuild_coordinator
         )
@@ -531,6 +553,9 @@ class ComponentFactory:
                 ),
             )
 
+        dedup_metrics_store = await self._build_dedup_metrics_store(data_dir_path)
+        cleanup_state["dedup_metrics_store"] = dedup_metrics_store
+
         candidate_selector = TopicCandidateSelector(
             catalog_store=memory_engine.topic_catalog_store,
             text_processor=memory_engine.text_processor,
@@ -545,6 +570,9 @@ class ComponentFactory:
             summary_batch_preparer,
             candidate_selector,
             metrics_recorder=await build_metrics_recorder(memory_engine, data_dir_path),
+            dedup_metrics_recorder=(
+                dedup_metrics_store.record if dedup_metrics_store is not None else None
+            ),
             config_manager=self.config_manager,
             max_parallel_summary_tasks=int(
                 self.config_manager.get(
@@ -605,12 +633,6 @@ class ComponentFactory:
             decay_scheduler = scheduler
             logger.info("DecayScheduler 已启动")
 
-        identity_runtime = await build_identity_runtime(
-            self.data_dir, conversation_manager
-        )
-        cleanup_state["identity_runtime"] = identity_runtime
-        conversation_manager.identity_runtime = identity_runtime
-
         catalog_reconcile_scheduler: TopicCatalogReconcileScheduler | None = None
         if memory_engine.topic_catalog_store is not None:
             catalog_reconcile_scheduler = TopicCatalogReconcileScheduler(
@@ -634,6 +656,7 @@ class ComponentFactory:
             "graph_db": graph_db,
             "memory_engine": memory_engine,
             "memory_processor": memory_processor,
+            "auxiliary_llm_client": auxiliary_llm_client,
             "memory_quarantine_store": memory_quarantine_store,
             "memory_quality_gate": memory_quality_gate,
             "gate_runtime": gate_runtime,
@@ -648,6 +671,7 @@ class ComponentFactory:
             "realtime_hub": realtime_hub,
             "summary_scheduler": summary_scheduler,
             "summary_llm_limiter": summary_llm_limiter,
+            "dedup_metrics_store": dedup_metrics_store,
             "catalog_maintenance_result": catalog_maintenance_result,
             "derived_rebuild_coordinator": derived_rebuild_coordinator,
             **injection_components,
@@ -671,6 +695,8 @@ class ComponentFactory:
                 "injection_decision_recorder"
             ),
             injection_decision_store=cleanup_state.get("injection_decision_store"),
+            dedup_metrics_store=cleanup_state.get("dedup_metrics_store"),
+            capture_runtime=cleanup_state.get("capture_runtime"),
         )
 
     @staticmethod
@@ -688,11 +714,14 @@ class ComponentFactory:
         catalog_reconcile_scheduler=None,
         injection_decision_recorder=None,
         injection_decision_store=None,
+        dedup_metrics_store=None,
+        capture_runtime=None,
     ) -> None:
         if memory_engine is not None and graph_db is not None:
             if getattr(memory_engine, "graph_vector_db", None) is graph_db:
                 memory_engine.graph_vector_db = None
         cleanup_steps = (
+            ("CaptureRuntime", capture_runtime, "close"),
             ("SummaryScheduler", summary_scheduler, "close"),
             ("DecayScheduler", decay_scheduler, "stop"),
             ("TopicCatalogReconcileScheduler", catalog_reconcile_scheduler, "stop"),
@@ -702,6 +731,7 @@ class ComponentFactory:
             ("ProtocolIdentityRuntime", identity_runtime, "close"),
             ("InjectionDecisionRecorder", injection_decision_recorder, "close"),
             ("InjectionDecisionStore", injection_decision_store, "close"),
+            ("DedupMetricsStore", dedup_metrics_store, "close"),
             ("RealtimeHub", realtime_hub, "close"),
             ("ConversationStore", conversation_store, "close"),
             ("MemoryEngine", memory_engine, "close"),
@@ -728,6 +758,34 @@ class ComponentFactory:
                 )
         if cancellation is not None:
             raise cancellation
+
+    async def _build_dedup_metrics_store(
+        self, data_dir_path: Path
+    ) -> DedupMetricsStore | None:
+        """构造近重复指标存储；失败时降级为不记录，不阻塞装配。"""
+
+        store: DedupMetricsStore | None = None
+        try:
+            store = DedupMetricsStore(
+                str(data_dir_path / "memory_dedup_metrics.sqlite3"),
+                retention_days=int(
+                    self.config_manager.get("memory_dedup.metrics_retention_days", 30)
+                ),
+            )
+            await store.initialize()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("近重复指标存储初始化失败，已停用 dedup 指标", exc_info=True)
+            if store is not None:
+                try:
+                    await store.close()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.debug("关闭未完成的近重复指标存储失败", exc_info=True)
+            return None
+        return store
 
     async def _build_injection_components(self, db_path: Path) -> dict[str, object]:
         """初始化注入决策存储与异步记录器。"""

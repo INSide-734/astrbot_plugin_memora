@@ -196,7 +196,33 @@ RERANKER_LLM_CALLS = Counter(
 
 REFLECTION_LLM_CALLS = Counter(
     "memora_reflection_llm_calls_total",
-    "Total number of LLM calls triggered by memory reflection/summarization.",
+    "Total number of physical summary extraction attempts.",
+    registry=REGISTRY,
+)
+
+SUMMARY_PARSE_ATTEMPTS = Counter(
+    "memora_summary_parse_attempts_total",
+    "Total number of summary response parse attempts.",
+    registry=REGISTRY,
+)
+
+SUMMARY_PARSE_SUCCESSES = Counter(
+    "memora_summary_parse_successes_total",
+    "Total number of successfully parsed summary responses.",
+    registry=REGISTRY,
+)
+
+SUMMARY_PARSE_FAILURES = Counter(
+    "memora_summary_parse_failures_total",
+    "Summary response parse failures by closed sub-reason.",
+    labelnames=["sub_reason"],
+    registry=REGISTRY,
+)
+
+SUMMARY_FINISH_REASONS = Counter(
+    "memora_summary_finish_reasons_total",
+    "Summary generation finish reasons by closed normalized value.",
+    labelnames=["finish_reason"],
     registry=REGISTRY,
 )
 
@@ -337,6 +363,10 @@ __all__ = [
     "REGISTRY",
     "RERANKER_LLM_CALLS",
     "SUMMARY_BATCH_COUNT",
+    "SUMMARY_FINISH_REASONS",
+    "SUMMARY_PARSE_ATTEMPTS",
+    "SUMMARY_PARSE_FAILURES",
+    "SUMMARY_PARSE_SUCCESSES",
     "WRITE_FAILURES_TOTAL",
     "WRITE_LOCK_RETRIES_TOTAL",
     "WRITE_OPERATIONS_TOTAL",

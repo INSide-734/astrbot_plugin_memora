@@ -38,6 +38,13 @@ if TYPE_CHECKING:
     from .anomaly_detector import AnomalyDetector
     from .continuity_tracker import ContinuityTracker
 
+_CANONICAL_DOCUMENT_STORAGE_NOT_READY = (
+    "persisted_recovery_canonical_document_storage_not_ready"
+)
+_GRAPH_DOCUMENT_STORAGE_NOT_READY = (
+    "persisted_recovery_graph_document_storage_not_ready"
+)
+
 
 def _build_continuity_tracker(
     config: Mapping[str, Any],
@@ -96,7 +103,7 @@ def _build_anomaly_detector(
 
 
 class MemoryEngineLifecycleMixin:
-    """MemoryEngine 生命周期方法（initialize / close / _create_tracked_task）"""
+    """MemoryEngine 初始化、持久操作恢复、关闭与任务追踪生命周期。"""
 
     topic_catalog_store: Any
 
@@ -245,8 +252,6 @@ class MemoryEngineLifecycleMixin:
             self._write_journal._atom_store = self.atom_store
             self._maintenance._graph_memory_manager = self.graph_memory_manager
             self._maintenance._graph_store = self.graph_store
-        if self._write_op_repair_enabled:
-            await self._write_journal.repair_incomplete()
 
         # ===== v2.5 子系统初始化（必须在 DualRouteRetriever 之前）=====
 
@@ -425,8 +430,6 @@ class MemoryEngineLifecycleMixin:
                     self.config.get("reconsolidation.min_recall_count", 5)
                 ),
             )
-            await self.reconsolidation.recover_incomplete_applies()
-            await self.reconsolidation.recover_incomplete_rollbacks()
 
         # 异常检测：记忆创建速率滚动统计
         self.anomaly_detector = _build_anomaly_detector(
@@ -495,6 +498,30 @@ class MemoryEngineLifecycleMixin:
             # 组合根未注入共享 Hub 时关闭 SSE，避免引擎私自创建第二个实例。
             self.sse = None
             logger.warning("实时事件 Hub 未由组合根注入，SSE 已禁用")
+
+    @staticmethod
+    def _document_storage_engine_ready(vector_db: Any) -> bool:
+        """检查宿主文档存储是否已建立异步数据库引擎。"""
+
+        document_storage = getattr(vector_db, "document_storage", None)
+        return getattr(document_storage, "engine", None) is not None
+
+    async def recover_persisted_operations(self) -> None:
+        """在 canonical 与图文档存储就绪后恢复持久化操作。"""
+
+        if not self._document_storage_engine_ready(self.faiss_db):
+            raise RuntimeError(_CANONICAL_DOCUMENT_STORAGE_NOT_READY)
+        if self.graph_enabled and not self._document_storage_engine_ready(
+            self.graph_vector_db
+        ):
+            raise RuntimeError(_GRAPH_DOCUMENT_STORAGE_NOT_READY)
+
+        if self._write_op_repair_enabled:
+            await self._write_journal.repair_incomplete()
+        reconsolidation = getattr(self, "reconsolidation", None)
+        if reconsolidation is not None:
+            await reconsolidation.recover_incomplete_applies()
+            await reconsolidation.recover_incomplete_rollbacks()
 
     async def close(self):
         """停止后台组件、保存状态并关闭数据库与向量资源。"""

@@ -13,6 +13,7 @@ from astrbot.api import logger
 from ....shared.summary_source import source_window_digest
 from ...memory.application.canonical_merge import (
     CanonicalMergeCoordinator,
+    DedupMetricsRecorder,
     build_canonical_merge_coordinator,
 )
 from ...memory.domain.memory_dedup_config import MemoryDedupConfig
@@ -69,11 +70,14 @@ class SummaryWorker(
         batch_preparer: TopicBatchPreparer,
         candidate_selector: TopicCandidateSelector | None = None,
         config_manager: Any | None = None,
+        *,
+        dedup_metrics_recorder: DedupMetricsRecorder | None = None,
     ) -> None:
         """绑定 worker 所需的窄 Store port 与现有候选处理流水线。
 
         ``candidate_selector`` 允许缺省：无 selector 时总结主链不受影响，
-        候选选择在执行期降级为 baseline。
+        候选选择在执行期降级为 baseline。``dedup_metrics_recorder`` 缺省时
+        近重复合并仍然工作，只是不落任何持久化指标。
         """
 
         self._job_store = job_store
@@ -83,6 +87,7 @@ class SummaryWorker(
         self._batch_preparer = batch_preparer
         self._candidate_selector = candidate_selector
         self._config_manager = config_manager
+        self._dedup_metrics_recorder = dedup_metrics_recorder
         self._canonical_merge: CanonicalMergeCoordinator | None = None
 
     def _get_memory_dedup_config(self) -> MemoryDedupConfig:
@@ -110,6 +115,7 @@ class SummaryWorker(
             self._canonical_merge = build_canonical_merge_coordinator(
                 self._memory_engine,
                 config_provider=self._get_memory_dedup_config,
+                metrics_recorder=self._dedup_metrics_recorder,
             )
         except Exception as error:
             logger.debug("近重复合并协调器装配失败: %s", error.__class__.__name__)
@@ -241,7 +247,11 @@ class SummaryWorker(
                 reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
                 candidate_metrics=candidate_metrics,
             )
-        fixed_quality_gate, gate_reason = await self._route_quality(
+        (
+            fixed_quality_gate,
+            gate_reason,
+            gate_exception_type,
+        ) = await self._route_quality(
             claim,
             candidates,
             completed_canonical_ids,
@@ -252,6 +262,7 @@ class SummaryWorker(
                 intents,
                 stage="quality_gate",
                 reason_code=gate_reason,
+                exception_type=gate_exception_type,
                 candidate_metrics=candidate_metrics,
             )
         try:
@@ -290,11 +301,12 @@ class SummaryWorker(
             raise
         except SummaryWorkerFailure:
             raise
-        except Exception:
+        except Exception as error:
             return self._unknown_outcome(
                 intents,
                 stage="candidate_write",
                 reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
+                exception_type=error.__class__.__name__,
                 candidate_metrics=candidate_metrics,
             )
         expected_snapshots = tuple(map(_fixed_quality_key, candidates))

@@ -74,3 +74,39 @@ class TestStorageBuilder:
         )
         assert content == "这是一段回退文本"
         assert metadata["canonical_summary"] == ""
+
+    def test_summary_embedded_facts_are_not_duplicated(
+        self, builder: StorageBuilder
+    ) -> None:
+        """分段摘要已逐字包含全部事实时，正文不得出现重复事实。"""
+        data = {
+            "summary": "[话题2] 我提醒用户早点休息",
+            "key_facts": ["我提醒用户早点休息"],
+            "topics": ["作息"],
+            "sentiment": "positive",
+        }
+        content, metadata = builder.build_storage_format(
+            fallback_excerpt="fallback",
+            structured_data=data,
+            is_group_chat=False,
+        )
+        assert content == "[话题2] 我提醒用户早点休息"
+        assert metadata["canonical_summary"] == content
+
+    def test_partially_embedded_facts_are_appended_once(
+        self, builder: StorageBuilder
+    ) -> None:
+        """只追加摘要未包含的事实，已被包含的事实不重复。"""
+        data = {
+            "summary": "用户讨论了咖啡口味",
+            "key_facts": ["用户讨论了咖啡口味", "用户喜欢拿铁"],
+            "topics": ["咖啡"],
+            "sentiment": "neutral",
+        }
+        content, metadata = builder.build_storage_format(
+            fallback_excerpt="fallback",
+            structured_data=data,
+            is_group_chat=False,
+        )
+        assert content == "用户讨论了咖啡口味 | 用户喜欢拿铁"
+        assert metadata["canonical_summary"] == content

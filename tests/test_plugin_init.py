@@ -1029,6 +1029,7 @@ class TestInjectionDecisionLifecycle:
         graph_db.close = AsyncMock(side_effect=lambda: order.append("graph_db"))
         engine = MagicMock()
         engine.initialize = AsyncMock()
+        engine.recover_persisted_operations = AsyncMock()
         engine.close = AsyncMock(side_effect=lambda: order.append("memory_engine"))
         engine.text_processor = None
         conversation_store = MagicMock()
@@ -1295,9 +1296,14 @@ class TestInjectionDecisionLifecycle:
             "graph_memory.enabled": False,
             "importance_decay.decay_rate": 0,
             "forgetting_agent.auto_cleanup_enabled": False,
+            "provider_settings.llm_provider_id": "provider-id",
         }.get(key, default)
         config.session_manager = {}
-        factory = ComponentFactory(MagicMock(), config, str(tmp_path))
+        llm_provider = MagicMock(spec=Provider)
+        llm_provider.text_chat = AsyncMock()
+        context = MagicMock()
+        context.get_provider_by_id.return_value = llm_provider
+        factory = ComponentFactory(context, config, str(tmp_path))
         injection_components = {
             "injection_decision_store": object(),
             "injection_decision_recorder": object(),
@@ -1310,6 +1316,7 @@ class TestInjectionDecisionLifecycle:
         db_type = MagicMock(return_value=db)
         engine = MagicMock()
         engine.initialize = AsyncMock()
+        engine.recover_persisted_operations = AsyncMock()
         engine.text_processor = None
         monkeypatch.setattr(
             "core.platform.composition.component_factory.MemoryEngine",
@@ -1327,10 +1334,13 @@ class TestInjectionDecisionLifecycle:
         db_setup.repair_message_counts = AsyncMock()
         db_setup.auto_rebuild_index_if_needed = AsyncMock()
 
-        llm_provider = MagicMock(spec=Provider)
-        llm_provider.text_chat = AsyncMock()
         components = await factory.build_all(
             MagicMock(), llm_provider, db_type, faiss_checker, db_setup
+        )
+
+        assert (
+            components["auxiliary_llm_client"].get_current_llm_provider()
+            is llm_provider
         )
 
         factory._build_injection_components.assert_awaited_once_with(
@@ -1481,11 +1491,13 @@ class TestInjectionDecisionLifecycle:
         quality_gate = MagicMock()
         gate_runtime = MagicMock()
         conversation_manager = MagicMock()
+        auxiliary_client = object()
         initializer._component_factory.build_all = AsyncMock(
             return_value={
                 "db": MagicMock(),
                 "graph_db": None,
                 "memory_engine": MagicMock(),
+                "auxiliary_llm_client": auxiliary_client,
                 "memory_processor": memory_processor,
                 "memory_quarantine_store": quarantine_store,
                 "memory_quality_gate": quality_gate,
@@ -1509,7 +1521,13 @@ class TestInjectionDecisionLifecycle:
         initializer._create_prompt_protection_service = MagicMock(
             return_value=MagicMock()
         )
-        initializer._initialize_cognitive_components = AsyncMock()
+
+        async def assert_auxiliary_client_is_published() -> None:
+            assert initializer.auxiliary_llm_client is auxiliary_client
+
+        initializer._initialize_cognitive_components = AsyncMock(
+            side_effect=assert_auxiliary_client_is_published
+        )
 
         with patch(
             "core.platform.composition.plugin_initializer.report_debug_event"
@@ -1518,9 +1536,9 @@ class TestInjectionDecisionLifecycle:
 
         assert initializer.injection_decision_store is store
         assert initializer.injection_decision_recorder is recorder
-        # 回归防护：发布段必须同时保留 conversation_manager 与 gate_runtime。
         assert initializer.conversation_manager is conversation_manager
         assert initializer.gate_runtime is gate_runtime
+        assert initializer.auxiliary_llm_client is auxiliary_client
         readiness_capabilities = {
             call.kwargs["capability"]
             for call in report.call_args_list
@@ -1561,6 +1579,7 @@ class TestInjectionDecisionLifecycle:
             return_value={
                 "db": MagicMock(),
                 "graph_db": None,
+                "auxiliary_llm_client": MagicMock(),
                 "memory_engine": MagicMock(),
                 "memory_processor": memory_processor,
                 "memory_quarantine_store": quarantine_store,
@@ -1618,6 +1637,7 @@ class TestInjectionDecisionLifecycle:
             return_value={
                 "db": MagicMock(),
                 "graph_db": None,
+                "auxiliary_llm_client": MagicMock(),
                 "memory_engine": MagicMock(),
                 "memory_processor": memory_processor,
                 "memory_quarantine_store": quarantine_store,

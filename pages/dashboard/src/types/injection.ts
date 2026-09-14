@@ -74,6 +74,8 @@ export interface InjectionStrategySummary {
   decision_count: number;
   payload_chars_p95: number;
   provider_fallback_rate: number;
+  memory_present_count: number;
+  payload_injected_count: number;
   selected_count_total: number;
   dropped_count_total: number;
   truncated_count_total: number;

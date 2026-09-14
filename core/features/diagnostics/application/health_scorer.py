@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import math
 from copy import deepcopy
 from typing import Any
+
+_MAX_SAFE_COUNT = 2**63 - 1
 
 
 class HealthScorer:
@@ -39,8 +42,8 @@ class HealthScorer:
 
         provider = self._as_dict(data.get("provider"))
         provider_status = str(provider.get("status", "")).lower()
-        attempts = self._to_number(provider.get("attempts"), 0)
-        max_attempts = self._to_number(provider.get("max_attempts"), 0)
+        attempts = self._to_number(provider.get("attempts")) or 0.0
+        max_attempts = self._to_number(provider.get("max_attempts")) or 0.0
         retry_active = provider.get("retry_active") is True
         provider_failed = provider_status == "failed"
         if provider_failed:
@@ -191,15 +194,124 @@ class HealthScorer:
                 )
             )
 
+        summary_value = data.get("summary_tasks")
+        summary_tasks = self._as_dict(summary_value)
+        summary_available = isinstance(summary_value, dict)
+        summary_projection: dict[str, Any] = {}
+        if "summary_tasks" in data:
+            blocked = self._safe_count(summary_tasks.get("blocked"))
+            unknown = self._safe_count(summary_tasks.get("unknown"))
+            candidate_total = self._safe_count(summary_tasks.get("candidate_total"))
+            canonical_total = self._safe_count(summary_tasks.get("canonical_total"))
+            quarantine_total = self._safe_count(summary_tasks.get("quarantine_total"))
+            accepted_total = canonical_total + quarantine_total
+            unresolved = blocked + unknown
+            reason_counts = summary_tasks.get("unresolved_reason_counts")
+            safe_reasons: dict[str, int] = {}
+            if isinstance(reason_counts, dict):
+                for reason, count in reason_counts.items():
+                    if not isinstance(reason, str) or not reason or len(reason) > 64:
+                        continue
+                    safe_count = self._safe_count(count)
+                    if safe_count > 0:
+                        safe_reasons[reason] = safe_count
+
+            has_evidence = candidate_total > 0 or accepted_total > 0 or unresolved > 0
+            write_status = (
+                "unknown"
+                if not has_evidence
+                else "available"
+                if accepted_total > 0
+                else "blocked"
+            )
+            summary_projection = {
+                "blocked": blocked,
+                "unknown": unknown,
+                "oldest_unresolved_age_seconds": self._safe_count(
+                    summary_tasks.get("oldest_unresolved_age_seconds")
+                ),
+                "unresolved_reason_counts": safe_reasons,
+                "write_availability": {
+                    "candidate_total": candidate_total,
+                    "canonical_total": canonical_total,
+                    "quarantine_total": quarantine_total,
+                    "accepted_total": accepted_total,
+                    "status": write_status,
+                },
+                "evidence_status": (
+                    "available"
+                    if has_evidence
+                    else "insufficient"
+                    if summary_available
+                    else "unknown"
+                ),
+            }
+            if unknown:
+                score -= 10
+                domains.append(
+                    self._domain(
+                        "summary_tasks",
+                        55,
+                        "degraded",
+                        "Summary jobs remain unresolved and need investigation.",
+                    )
+                )
+                recommended_actions.append(
+                    "Review unresolved summary jobs and their stable reason categories."
+                )
+            elif blocked:
+                domains.append(
+                    self._domain(
+                        "summary_tasks",
+                        70,
+                        "watch",
+                        "Summary jobs are blocked pending safety review.",
+                    )
+                )
+            elif not has_evidence:
+                domains.append(
+                    self._domain(
+                        "summary_tasks",
+                        0,
+                        "unknown",
+                        "Summary task evidence has no samples yet.",
+                    )
+                )
+            if candidate_total > 0 and accepted_total == 0:
+                score -= 10
+                domains.append(
+                    self._domain(
+                        "write_availability",
+                        50,
+                        "degraded",
+                        "Candidates exist but no canonical or quarantined writes are recorded.",
+                    )
+                )
+                recommended_actions.append(
+                    "Inspect the write path; candidate and accepted-write totals are shown below."
+                )
+            elif quarantine_total > 0:
+                domains.append(
+                    self._domain(
+                        "write_availability",
+                        100,
+                        "info",
+                        "Quarantined candidates are awaiting safety review; this is not an infrastructure failure.",
+                    )
+                )
+
         if provider_failed:
             score = min(score, 44)
         score = max(0, min(100, int(score)))
-        return {
+        result = {
             "score": score,
             "level": self.level_for_score(score),
             "domains": deepcopy(domains),
             "recommended_actions": list(recommended_actions),
         }
+        if summary_projection:
+            result["summary_tasks"] = summary_projection
+        return result
 
     def level_for_score(self, score: Any) -> str:
         """把任意分值钳制到 0～100 后映射为固定健康等级。"""
@@ -238,6 +350,17 @@ class HealthScorer:
         if isinstance(value, (int, float)):
             return float(value)
         return default
+
+    @classmethod
+    def _safe_count(cls, value: Any) -> int:
+        """把诊断计数限制为有限、非负且有界整数。"""
+        number = cls._to_number(value)
+        if number is None or not math.isfinite(number) or number <= 0:
+            return 0
+        try:
+            return min(int(number), _MAX_SAFE_COUNT)
+        except (TypeError, ValueError, OverflowError):
+            return 0
 
     @classmethod
     def _to_int(cls, value: Any) -> int | None:

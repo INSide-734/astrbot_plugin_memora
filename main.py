@@ -727,7 +727,10 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     async def handle_all_group_messages(self, event: AstrMessageEvent):
         """[事件钩子] 捕获全部群聊消息并进入记忆存储链路。"""
         if not self.initializer.is_initialized:
-            return False
+            capture = self.initializer.capture_runtime
+            if capture is not None:
+                await capture.capture_event(event)
+            return None
         if self._backfill_scheduler is None and self.initializer.backfill_scheduler:
             self._backfill_scheduler = self.initializer.backfill_scheduler
 
@@ -743,7 +746,11 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
 
     @filter.on_llm_request()
     async def handle_memory_recall(self, event: AstrMessageEvent, req: ProviderRequest):
-        """[事件钩子] 在 LLM 请求前查询并注入长期记忆。"""
+        """在 LLM 请求前捕获用户消息，再按完整就绪状态执行召回。"""
+        if not self.initializer.is_initialized:
+            capture = self.initializer.capture_runtime
+            if capture is not None:
+                await capture.capture_event(event, req=req)
         timing_context = RecallTimingContext.start(
             self.config_manager.get("recall_engine.pre_llm_soft_budget_ms", 800)
         )
@@ -781,7 +788,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
     @filter.after_message_sent()
     async def handle_session_reset(self, event: AstrMessageEvent):
         """[事件钩子] 发送消息后检查是否需要清空插件会话上下文。"""
-        if not event.get_extra("_clean_ltm_session", False):
+        if not event.get_extra("_clean_group_context_session", False):
             return
 
         ready, _ = await self._ensure_plugin_ready()
@@ -914,6 +921,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             self._background_tasks.clear()
         else:
             _report_skipped("background_tasks", "no_background_tasks")
+        await _safe_step(
+            "capture_runtime",
+            "停止早期消息捕获",
+            self.initializer.close_capture_runtime(),
+            timeout=STEP_TIMEOUT,
+        )
 
         # 2. 停止初始化后台任务（如提供器重试）
         await _safe_step(

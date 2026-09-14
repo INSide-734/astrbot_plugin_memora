@@ -5,14 +5,16 @@ from __future__ import annotations
 import asyncio
 import inspect
 from collections import defaultdict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from ...reflection.domain.summary_models import (
     CandidateDisposition,
     CandidateLedgerStatus,
     SummaryJobStatus,
+    normalize_exception_type,
 )
+from .summary_store_observability import log_summary_startup_reconcile
 
 if TYPE_CHECKING:
     pass
@@ -32,6 +34,63 @@ _TERMINAL_DISPOSITIONS = _CANONICAL_DISPOSITIONS | frozenset(
         CandidateDisposition.FAILED.value,
     }
 )
+_RECOVERABLE_QUARANTINE_STATUSES = frozenset({"pending", "blocked"})
+
+
+def _row(row: Any, name: str, index: int) -> Any:
+    """兼容 sqlite Row 和 tuple 测试替身。"""
+    try:
+        return row[name]
+    except (KeyError, IndexError, TypeError):
+        return row[index]
+
+
+def _valid_int(value: object, *, positive: bool = False) -> bool:
+    """验证来源证据中的非 bool 整数。"""
+    return (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+        and (value > 0 if positive else value >= 0)
+    )
+
+
+def _quarantine_evidence_matches(
+    job: Mapping[str, Any], slot: Mapping[str, Any], evidence: object
+) -> bool:
+    """仅接受同候选键、同窗口和允许的隔离状态证据。"""
+    if not isinstance(evidence, Mapping):
+        return False
+    candidate_key = str(slot.get("key") or "")
+    if not candidate_key or candidate_key.startswith("quality:"):
+        return False
+    if evidence.get("candidate_key") != candidate_key:
+        return False
+    if str(evidence.get("status") or "") not in _RECOVERABLE_QUARANTINE_STATUSES:
+        return False
+    source = evidence.get("source_window")
+    if not isinstance(source, Mapping):
+        source = evidence
+    if source.get("session_id") != job.get("session_id"):
+        return False
+    for field in ("start_seq", "end_seq", "expected_count", "session_epoch"):
+        if not _valid_int(source.get(field)) or source[field] != job.get(field):
+            return False
+    digest = source.get("source_digest")
+    return isinstance(digest, str) and digest == job.get("source_digest")
+
+
+def _reconcile_exception_type(current: object, fallback: object = None) -> str:
+    """保留安全的持久化异常类别，拒绝旧值中的异常正文。"""
+    normalized = normalize_exception_type(current)
+    if normalized and normalized != "unknown":
+        return normalized
+    return normalize_exception_type(fallback) or "unknown"
+
+
+def _completed_exception_type(current: object) -> str | None:
+    """完成任务时保留明确类别，清除 unknown/空值。"""
+    normalized = normalize_exception_type(current)
+    return normalized if normalized and normalized != "unknown" else None
 
 
 class SummaryStoreStartupMixin:
@@ -55,17 +114,24 @@ class SummaryStoreStartupMixin:
         self, lookup: Callable[[str], int | None | Awaitable[int | None]]
     ) -> None:
         """注入只按幂等键查询 canonical owner 的恢复回调。"""
-
         self._summary_canonical_owner_lookup = lookup
 
+    def set_summary_quarantine_candidate_lookup(
+        self,
+        lookup: Callable[
+            [str], Mapping[str, object] | None | Awaitable[Mapping[str, object] | None]
+        ],
+    ) -> None:
+        """注入 quality owner 提供的窄隔离证据查询回调。"""
+        self._summary_quarantine_candidate_lookup = lookup
+
     async def reconcile_startup_candidates(self) -> int:
-        """启动期对账候选副作用，无法确认时固定为 unknown。
+        """启动期按 canonical 或严格隔离证据收束候选副作用。
 
-        对账不持有 ConversationStore 事务执行外部数据库查询。已发现的正整数
-        owner 才能把 slot 收口为 canonical；没有 owner 的 writing/unknown 保留
-        unknown，并清除旧 claim，确保恢复失败不会推进连续 cursor。
+        所有跨库查询都在 ConversationStore 写事务外执行；写入阶段重新读取
+        job、epoch 和 ledger key，并用来源字段与状态条件 CAS。无法证明副作用
+        归属时保留 unknown，不推进连续游标，也不重新生成候选。
         """
-
         connection = getattr(self, "connection", None)
         if connection is None:
             return 0
@@ -73,6 +139,7 @@ class SummaryStoreStartupMixin:
             cursor = await connection.execute(
                 """
                 SELECT j.job_id,j.session_id,j.session_epoch,j.status,
+                       j.start_seq,j.end_seq,j.expected_count,j.source_digest,
                        c.slot,c.idempotency_key,c.status AS candidate_status,
                        c.disposition,c.canonical_id
                 FROM summary_jobs AS j
@@ -90,50 +157,98 @@ class SummaryStoreStartupMixin:
 
         jobs: dict[str, dict[str, Any]] = {}
         for row in rows:
-            job_id = str(row[0])
+            job_id = str(_row(row, "job_id", 0))
             job = jobs.setdefault(
                 job_id,
                 {
-                    "session_id": str(row[1]),
-                    "epoch": int(row[2]),
-                    "status": str(row[3]),
+                    "session_id": str(_row(row, "session_id", 1)),
+                    "epoch": int(_row(row, "session_epoch", 2)),
+                    "status": str(_row(row, "status", 3)),
+                    "start_seq": int(_row(row, "start_seq", 4)),
+                    "end_seq": int(_row(row, "end_seq", 5)),
+                    "expected_count": int(_row(row, "expected_count", 6)),
+                    "source_digest": str(_row(row, "source_digest", 7) or ""),
                     "slots": [],
                 },
             )
             job["slots"].append(
                 {
-                    "slot": int(row[4]),
-                    "key": str(row[5] or ""),
-                    "status": str(row[6] or ""),
-                    "disposition": (str(row[7]) if row[7] is not None else None),
-                    "canonical_id": row[8],
+                    "slot": int(_row(row, "slot", 8)),
+                    "key": str(_row(row, "idempotency_key", 9) or ""),
+                    "status": str(_row(row, "candidate_status", 10) or ""),
+                    "disposition": (
+                        str(_row(row, "disposition", 11))
+                        if _row(row, "disposition", 11) is not None
+                        else None
+                    ),
+                    "canonical_id": _row(row, "canonical_id", 12),
                 }
             )
 
-        lookup = getattr(self, "_summary_canonical_owner_lookup", None)
+        canonical_lookup = getattr(self, "_summary_canonical_owner_lookup", None)
+        quarantine_lookup = getattr(self, "_summary_quarantine_candidate_lookup", None)
         owners: dict[tuple[str, int], int] = {}
-        if callable(lookup):
-            for job_id, job in jobs.items():
-                for slot in job["slots"]:
-                    key = slot["key"]
-                    if not key:
-                        continue
+        quarantine: dict[tuple[str, int], Mapping[str, object]] = {}
+        evidence_errors: dict[str, str] = {}
+        for job_id, job in jobs.items():
+            for slot in job["slots"]:
+                if slot["status"] not in {
+                    CandidateLedgerStatus.WRITING.value,
+                    CandidateLedgerStatus.UNKNOWN.value,
+                }:
+                    continue
+                key = slot["key"]
+                if not key or key.startswith("quality:"):
+                    continue
+                owner: object | None = None
+                owner_failed = False
+                if callable(canonical_lookup):
                     try:
-                        owner = lookup(key)
+                        owner = canonical_lookup(key)
                         if inspect.isawaitable(owner):
                             owner = await owner
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
-                        continue
+                    except Exception as error:
+                        owner_failed = True
+                        evidence_errors.setdefault(
+                            job_id,
+                            normalize_exception_type(error.__class__.__name__)
+                            or "unknown",
+                        )
                     if (
-                        isinstance(owner, int)
+                        not owner_failed
+                        and isinstance(owner, int)
                         and not isinstance(owner, bool)
                         and owner > 0
                     ):
                         owners[(job_id, slot["slot"])] = owner
+                    elif not owner_failed and owner is not None:
+                        owner_failed = True
+                        evidence_errors.setdefault(job_id, "unknown")
+                if owner_failed or owners.get((job_id, slot["slot"])) is not None:
+                    continue
+                if not callable(quarantine_lookup):
+                    continue
+                try:
+                    candidate = quarantine_lookup(key)
+                    if inspect.isawaitable(candidate):
+                        candidate = await candidate
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    evidence_errors.setdefault(
+                        job_id,
+                        normalize_exception_type(error.__class__.__name__) or "unknown",
+                    )
+                    continue
+                if isinstance(candidate, Mapping):
+                    quarantine[(job_id, slot["slot"])] = candidate
 
         touched = 0
+        scanned = recovered = preserved_unknown = fenced = 0
+        fenced_reason: str | None = None
+        evidence_error_count = len(evidence_errors)
         now = self._summary_now()
         try:
             async with self._write_lock:
@@ -143,7 +258,8 @@ class SummaryStoreStartupMixin:
                         """
                         SELECT session_id,session_epoch,status,
                                canonical_count,quarantine_count,discard_count,
-                               mark_write_count,failed_count,skipped_count
+                               mark_write_count,failed_count,skipped_count,
+                               start_seq,end_seq,expected_count,source_digest,exception_type
                         FROM summary_jobs WHERE job_id=?
                         """,
                         (job_id,),
@@ -151,32 +267,93 @@ class SummaryStoreStartupMixin:
                     job_row = await current.fetchone()
                     if job_row is None:
                         continue
-                    session_id = str(job_row[0])
-                    epoch = int(job_row[1])
-                    current_status = str(job_row[2])
+                    scanned += 1
+                    persisted_exception_type = _row(job_row, "exception_type", 13)
+                    session_id = str(_row(job_row, "session_id", 0))
+                    epoch = int(_row(job_row, "session_epoch", 1))
+                    current_status = str(_row(job_row, "status", 2))
+                    current_source = {
+                        "session_id": session_id,
+                        "start_seq": _row(job_row, "start_seq", 9),
+                        "end_seq": _row(job_row, "end_seq", 10),
+                        "expected_count": _row(job_row, "expected_count", 11),
+                        "source_digest": str(_row(job_row, "source_digest", 12) or ""),
+                    }
+                    initial_source = {
+                        "session_id": job["session_id"],
+                        "start_seq": job["start_seq"],
+                        "end_seq": job["end_seq"],
+                        "expected_count": job["expected_count"],
+                        "source_digest": job["source_digest"],
+                    }
                     epoch_row = await (
                         await connection.execute(
                             "SELECT epoch FROM session_epochs WHERE session_id=?",
                             (session_id,),
                         )
                     ).fetchone()
-                    if epoch_row is None or int(epoch_row[0]) != epoch:
+                    if epoch_row is None or int(_row(epoch_row, "epoch", 0)) != epoch:
+                        await connection.execute(
+                            """
+                            UPDATE summary_job_candidates
+                            SET status='unknown',disposition=NULL,canonical_id=NULL,
+                                updated_at=?
+                            WHERE job_id=? AND status IN ('writing','unknown')
+                            """,
+                            (now, job_id),
+                        )
                         await connection.execute(
                             """
                             UPDATE summary_jobs
                             SET status='unknown',reason_code='epoch_fenced',
-                                failed_stage='startup_reconcile',
+                                failed_stage='startup_reconcile',exception_type=?,
                                 claim_token=NULL,lease_until=NULL,updated_at=?
                             WHERE job_id=?
                             """,
+                            (
+                                _reconcile_exception_type(persisted_exception_type),
+                                now,
+                                job_id,
+                            ),
+                        )
+                        fenced += 1
+                        touched += 1
+                        fenced_reason = fenced_reason or "epoch_fenced"
+                        continue
+                    if current_source != initial_source:
+                        await connection.execute(
+                            """
+                            UPDATE summary_job_candidates
+                            SET status='unknown',disposition=NULL,canonical_id=NULL,
+                                updated_at=?
+                            WHERE job_id=? AND status IN ('writing','unknown')
+                            """,
                             (now, job_id),
                         )
+                        await connection.execute(
+                            """
+                            UPDATE summary_jobs
+                            SET status='unknown',reason_code='source_digest_mismatch',
+                                failed_stage='startup_reconcile',exception_type=?,
+                                claim_token=NULL,lease_until=NULL,updated_at=?
+                            WHERE job_id=? AND session_id=? AND session_epoch=?
+                            """,
+                            (
+                                _reconcile_exception_type(persisted_exception_type),
+                                now,
+                                job_id,
+                                session_id,
+                                epoch,
+                            ),
+                        )
+                        fenced += 1
+                        fenced_reason = fenced_reason or "source_digest_mismatch"
                         touched += 1
                         continue
 
                     slot_cursor = await connection.execute(
                         """
-                        SELECT slot,disposition,status,canonical_id
+                        SELECT slot,slot_key,idempotency_key,disposition,status,canonical_id
                         FROM summary_job_candidates WHERE job_id=? ORDER BY slot
                         """,
                         (job_id,),
@@ -188,63 +365,147 @@ class SummaryStoreStartupMixin:
                                 """
                                 UPDATE summary_jobs
                                 SET status='unknown',reason_code='ledger_unresolved',
-                                    failed_stage='startup_reconcile',
+                                    failed_stage='startup_reconcile',exception_type=?,
                                     claim_token=NULL,lease_until=NULL,updated_at=?
-                                WHERE job_id=?
+                                WHERE job_id=? AND session_id=? AND session_epoch=?
                                 """,
-                                (now, job_id),
+                                (
+                                    _reconcile_exception_type(
+                                        persisted_exception_type,
+                                        evidence_errors.get(job_id),
+                                    ),
+                                    now,
+                                    job_id,
+                                    session_id,
+                                    epoch,
+                                ),
                             )
+                            preserved_unknown += 1
                             touched += 1
                         continue
 
+                    initial_slots = {slot["slot"]: slot for slot in job["slots"]}
                     unresolved = False
                     for slot_row in slot_rows:
-                        slot = int(slot_row[0])
-                        status = str(slot_row[2] or "")
+                        slot_number = int(_row(slot_row, "slot", 0))
+                        status = str(_row(slot_row, "status", 4) or "")
                         if status not in {
                             CandidateLedgerStatus.WRITING.value,
                             CandidateLedgerStatus.UNKNOWN.value,
                         }:
                             continue
-                        owner = owners.get((job_id, slot))
-                        if owner is None:
+                        initial_slot = initial_slots.get(slot_number)
+                        current_key = str(_row(slot_row, "idempotency_key", 2) or "")
+                        if initial_slot is None or current_key != initial_slot["key"]:
                             unresolved = True
                             await connection.execute(
                                 """
                                 UPDATE summary_job_candidates
                                 SET status='unknown',disposition=NULL,canonical_id=NULL,
                                     updated_at=?
-                                WHERE job_id=? AND slot=?
+                                WHERE job_id=? AND slot=? AND status IN ('writing','unknown')
                                 """,
-                                (now, job_id, slot),
+                                (now, job_id, slot_number),
                             )
                             continue
-                        updated = await connection.execute(
+                        owner = owners.get((job_id, slot_number))
+                        evidence = quarantine.get((job_id, slot_number))
+                        slot_data = {"key": current_key}
+                        if owner is not None:
+                            updated = await connection.execute(
+                                """
+                                UPDATE summary_job_candidates
+                                SET status='committed',disposition='canonical',canonical_id=?,
+                                    updated_at=?
+                                WHERE job_id=? AND slot=? AND idempotency_key=?
+                                  AND status IN ('writing','unknown')
+                                  AND (canonical_id IS NULL OR canonical_id=?)
+                                  AND EXISTS (
+                                    SELECT 1 FROM summary_jobs
+                                    WHERE job_id=? AND session_id=? AND session_epoch=?
+                                      AND start_seq=? AND end_seq=? AND expected_count=?
+                                      AND source_digest=?
+                                  )
+                                """,
+                                (
+                                    owner,
+                                    now,
+                                    job_id,
+                                    slot_number,
+                                    current_key,
+                                    owner,
+                                    job_id,
+                                    session_id,
+                                    epoch,
+                                    job["start_seq"],
+                                    job["end_seq"],
+                                    job["expected_count"],
+                                    job["source_digest"],
+                                ),
+                            )
+                            if updated.rowcount != 1:
+                                unresolved = True
+                            continue
+                        if _quarantine_evidence_matches(
+                            {**current_source, "session_epoch": epoch},
+                            slot_data,
+                            evidence,
+                        ):
+                            updated = await connection.execute(
+                                """
+                                UPDATE summary_job_candidates
+                                SET status='committed',disposition='quarantined',
+                                    canonical_id=NULL,updated_at=?
+                                WHERE job_id=? AND slot=? AND idempotency_key=?
+                                  AND status IN ('writing','unknown')
+                                  AND EXISTS (
+                                    SELECT 1 FROM summary_jobs
+                                    WHERE job_id=? AND session_id=? AND session_epoch=?
+                                      AND start_seq=? AND end_seq=? AND expected_count=?
+                                      AND source_digest=?
+                                  )
+                                """,
+                                (
+                                    now,
+                                    job_id,
+                                    slot_number,
+                                    current_key,
+                                    job_id,
+                                    session_id,
+                                    epoch,
+                                    job["start_seq"],
+                                    job["end_seq"],
+                                    job["expected_count"],
+                                    job["source_digest"],
+                                ),
+                            )
+                            if updated.rowcount != 1:
+                                unresolved = True
+                            continue
+                        unresolved = True
+                        await connection.execute(
                             """
                             UPDATE summary_job_candidates
-                            SET status='committed',disposition='canonical',canonical_id=?,
+                            SET status='unknown',disposition=NULL,canonical_id=NULL,
                                 updated_at=?
-                            WHERE job_id=? AND slot=?
+                            WHERE job_id=? AND slot=? AND idempotency_key=?
                               AND status IN ('writing','unknown')
-                              AND (canonical_id IS NULL OR canonical_id=?)
                             """,
-                            (owner, now, job_id, slot, owner),
+                            (now, job_id, slot_number, current_key),
                         )
-                        if updated.rowcount != 1:
-                            unresolved = True
 
                     refreshed = await connection.execute(
                         """
-                        SELECT disposition,status,canonical_id
+                        SELECT slot,disposition,status,canonical_id
                         FROM summary_job_candidates WHERE job_id=? ORDER BY slot
                         """,
                         (job_id,),
                     )
                     final_rows = list(await refreshed.fetchall())
                     for row in final_rows:
-                        disposition = row[0]
-                        status = str(row[1] or "")
-                        canonical_id = row[2]
+                        disposition = _row(row, "disposition", 1)
+                        status = str(_row(row, "status", 2) or "")
+                        canonical_id = _row(row, "canonical_id", 3)
                         if (
                             status
                             not in {
@@ -262,24 +523,33 @@ class SummaryStoreStartupMixin:
                             )
                         ):
                             unresolved = True
-
                     if unresolved:
                         await connection.execute(
                             """
                             UPDATE summary_jobs
                             SET status='unknown',reason_code='ledger_unresolved',
-                                failed_stage='startup_reconcile',
+                                failed_stage='startup_reconcile',exception_type=?,
                                 claim_token=NULL,lease_until=NULL,updated_at=?
-                            WHERE job_id=?
+                            WHERE job_id=? AND session_id=? AND session_epoch=?
                             """,
-                            (now, job_id),
+                            (
+                                _reconcile_exception_type(
+                                    persisted_exception_type,
+                                    evidence_errors.get(job_id),
+                                ),
+                                now,
+                                job_id,
+                                session_id,
+                                epoch,
+                            ),
                         )
                         touched += 1
+                        preserved_unknown += 1
                         continue
 
                     counts = defaultdict(int)
                     for row in final_rows:
-                        counts[str(row[0])] += 1
+                        counts[str(_row(row, "disposition", 1))] += 1
                     if counts[CandidateDisposition.FAILED.value]:
                         continue
                     values = {
@@ -300,13 +570,16 @@ class SummaryStoreStartupMixin:
                         """
                         UPDATE summary_jobs
                         SET status='completed',reason_code='completed',failed_stage=NULL,
-                            claim_token=NULL,lease_until=NULL,canonical_count=?,
-                            quarantine_count=?,discard_count=?,mark_write_count=?,
-                            failed_count=0,skipped_count=?,updated_at=?
+                            exception_type=?,claim_token=NULL,lease_until=NULL,
+                            canonical_count=?,quarantine_count=?,discard_count=?,
+                            mark_write_count=?,failed_count=0,skipped_count=?,updated_at=?
                         WHERE job_id=? AND session_id=? AND session_epoch=?
+                          AND start_seq=? AND end_seq=? AND expected_count=?
+                          AND source_digest=?
                           AND status IN ('running','unknown','failed','queued')
                         """,
                         (
+                            _completed_exception_type(persisted_exception_type),
                             values["canonical_count"],
                             values["quarantine_count"],
                             values["discard_count"],
@@ -316,17 +589,28 @@ class SummaryStoreStartupMixin:
                             job_id,
                             session_id,
                             epoch,
+                            job["start_seq"],
+                            job["end_seq"],
+                            job["expected_count"],
+                            job["source_digest"],
                         ),
                     )
                     if updated.rowcount != 1:
                         continue
+                    recovered += 1
                     old_values = {
-                        "canonical_count": int(job_row[3] or 0),
-                        "quarantine_count": int(job_row[4] or 0),
-                        "discard_count": int(job_row[5] or 0),
-                        "mark_write_count": int(job_row[6] or 0),
-                        "failed_count": int(job_row[7] or 0),
-                        "skipped_count": int(job_row[8] or 0),
+                        "canonical_count": int(
+                            _row(job_row, "canonical_count", 3) or 0
+                        ),
+                        "quarantine_count": int(
+                            _row(job_row, "quarantine_count", 4) or 0
+                        ),
+                        "discard_count": int(_row(job_row, "discard_count", 5) or 0),
+                        "mark_write_count": int(
+                            _row(job_row, "mark_write_count", 6) or 0
+                        ),
+                        "failed_count": int(_row(job_row, "failed_count", 7) or 0),
+                        "skipped_count": int(_row(job_row, "skipped_count", 8) or 0),
                     }
                     for counter, field in {
                         "canonical_total": "canonical_count",
@@ -346,6 +630,14 @@ class SummaryStoreStartupMixin:
                     await self._advance_cursor(session_id, epoch, now)
                     touched += 1
                 await connection.commit()
+                log_summary_startup_reconcile(
+                    scanned=scanned,
+                    recovered=recovered,
+                    preserved_unknown=preserved_unknown,
+                    fenced=fenced,
+                    evidence_error=evidence_error_count,
+                    reason_code=fenced_reason,
+                )
         except asyncio.CancelledError:
             await self._rollback_summary()
             raise

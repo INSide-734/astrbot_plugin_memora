@@ -60,19 +60,78 @@ class GraphMemoryManager:
                     f"entries={len(extracted.entries)}"
                 )
             entry_vector_doc_ids: dict[int, int] = {}
+            batch_mode = False
             try:
-                for entry_id, entry in zip(
-                    replace_result.entry_ids,
-                    extracted.entries,
-                    strict=True,
-                ):
-                    vector_doc_id = await self.graph_vector_retriever.add_entry(
-                        entry.content,
-                        dict(entry.metadata),
+                batch_adder = getattr(
+                    type(self.graph_vector_retriever), "add_entries", None
+                )
+                if callable(batch_adder):
+                    batch_mode = True
+                    entries = [
+                        (
+                            entry.content,
+                            {
+                                **dict(entry.metadata),
+                                "source_memory_id": source_memory_id,
+                            },
+                        )
+                        for entry in extracted.entries
+                    ]
+                    vector_doc_ids = await self.graph_vector_retriever.add_entries(
+                        entries
                     )
-                    entry_vector_doc_ids[entry_id] = vector_doc_id
+                    if len(vector_doc_ids) != len(extracted.entries):
+                        raise RuntimeError("图向量批量插入返回的标识数量不匹配")
+                    entry_vector_doc_ids = dict(
+                        zip(
+                            replace_result.entry_ids,
+                            vector_doc_ids,
+                            strict=True,
+                        )
+                    )
+                else:
+                    for entry_id, entry in zip(
+                        replace_result.entry_ids,
+                        extracted.entries,
+                        strict=True,
+                    ):
+                        vector_doc_id = await self.graph_vector_retriever.add_entry(
+                            entry.content,
+                            dict(entry.metadata),
+                        )
+                        entry_vector_doc_ids[entry_id] = vector_doc_id
+            except asyncio.CancelledError:
+                if batch_mode:
+                    await self._compensate_vector_entries(source_memory_id)
+                raise
+            except Exception:
+                if batch_mode:
+                    await self._compensate_vector_entries(source_memory_id)
+                raise
             finally:
-                await self.graph_store.update_entry_vector_doc_ids(entry_vector_doc_ids)
+                try:
+                    await self.graph_store.update_entry_vector_doc_ids(
+                        entry_vector_doc_ids
+                    )
+                except asyncio.CancelledError:
+                    if batch_mode:
+                        await self._compensate_vector_entries(source_memory_id)
+                    raise
+                except Exception:
+                    if batch_mode:
+                        await self._compensate_vector_entries(source_memory_id)
+                    raise
+
+    async def _compensate_vector_entries(self, source_memory_id: int) -> None:
+        """清理批量插入失败后可能留下的图向量文档。"""
+
+        try:
+            await self.graph_vector_retriever.delete_entries_for_memory(
+                source_memory_id
+            )
+        except BaseException:
+            # 保留原始失败或取消；修复日志由上层 saga 负责。
+            return
 
     async def delete_memory(self, source_memory_id: int) -> None:
         """删除属于一条源记忆的图产物。"""

@@ -2,7 +2,8 @@ export type IntelligenceTabId =
   | "evaluation"
   | "recallTrace"
   | "diagnostics"
-  | "reviewQueue";
+  | "reviewQueue"
+  | "topicGovernance";
 
 export type IntelligenceRunStatus = "idle" | "running" | "passed" | "warning" | "failed";
 

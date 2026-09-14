@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { Activity, AlertTriangle, BrainCircuit, ClipboardCheck, GitBranch, Stethoscope } from "lucide-react";
+import { Activity, AlertTriangle, BrainCircuit, ClipboardCheck, Gauge, GitBranch, Stethoscope } from "lucide-react";
+import { CandidateReuseConfig } from "@/components/CandidateReuseConfig";
+import { MemoryDedupMetrics } from "@/components/MemoryDedupMetrics";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { DiagnosticCenter } from "@/components/intelligence/DiagnosticCenter";
 import { EvaluationWorkbench } from "@/components/intelligence/EvaluationWorkbench";
@@ -26,6 +28,7 @@ const tabs: TabDefinition[] = [
   { id: "recallTrace", labelKey: "intelligence.tabs.recallTrace", icon: <GitBranch size={14} /> },
   { id: "diagnostics", labelKey: "intelligence.tabs.diagnostics", icon: <Stethoscope size={14} /> },
   { id: "reviewQueue", labelKey: "intelligence.tabs.reviewQueue", icon: <AlertTriangle size={14} /> },
+  { id: "topicGovernance", labelKey: "intelligence.tabs.topicGovernance", icon: <Gauge size={14} /> },
 ];
 
 const panelByTab: Record<IntelligenceTabId, (
@@ -41,6 +44,12 @@ const panelByTab: Record<IntelligenceTabId, (
   ),
   diagnostics: (showToast) => <DiagnosticCenter showToast={showToast} />,
   reviewQueue: (showToast) => <ReviewQueue showToast={showToast} />,
+  topicGovernance: (showToast) => (
+    <div className="space-y-6">
+      <CandidateReuseConfig showToast={showToast} />
+      <MemoryDedupMetrics />
+    </div>
+  ),
 };
 
 export function IntelligencePage({

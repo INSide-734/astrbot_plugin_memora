@@ -117,13 +117,149 @@ async def test_identical_content_scores_one() -> None:
 
 
 @pytest.mark.asyncio
-async def test_partial_overlap_below_threshold_misses() -> None:
-    """部分重合但低于阈值的候选不得判定为近重复。"""
+async def test_partial_overlap_below_threshold_observes_fact_overlap() -> None:
+    """整段未达阈值但事实已被覆盖时返回 FACT_OVERLAP（只观测不写回）。"""
 
     outcome, _ = await _detect([_document(5, content=_PARTIAL_OVERLAP)])
 
+    assert outcome.verdict is NearDuplicateVerdict.FACT_OVERLAP
+    assert outcome.memory_id == 5
+    assert outcome.score < 0.85
+
+
+@pytest.mark.asyncio
+async def test_no_whole_text_hit_without_fact_overlap_misses() -> None:
+    """整段未达阈值且事实完全不同时仍返回 MISS。"""
+
+    outcome, _ = await _detect(
+        [
+            _document(
+                6,
+                content=_PARTIAL_OVERLAP,
+                metadata={"key_facts": ["数据库每周日凌晨三点做全量冷备份"]},
+            )
+        ]
+    )
+
     assert outcome.verdict is NearDuplicateVerdict.MISS
     assert outcome.memory_id is None
+
+
+@pytest.mark.asyncio
+async def test_fact_overlap_requires_half_of_candidate_facts() -> None:
+    """达标事实占比低于一半时不得判定为 FACT_OVERLAP。"""
+
+    outcome, _ = await _detect(
+        [
+            _document(
+                14,
+                content=_PARTIAL_OVERLAP,
+                metadata={"key_facts": ["项目使用 SQLite 存储会话日志"]},
+            )
+        ],
+        metadata=_metadata(
+            key_facts=[
+                "项目使用 SQLite 存储会话记录",
+                "备份密钥轮换由运维执行",
+                "发布前必须跑完回归测试",
+            ]
+        ),
+    )
+
+    assert outcome.verdict is NearDuplicateVerdict.MISS
+
+
+@pytest.mark.asyncio
+async def test_fact_overlap_accepts_exactly_half_of_candidate_facts() -> None:
+    """达标事实恰好占一半（阈值含端点）时判定为 FACT_OVERLAP。"""
+
+    outcome, _ = await _detect(
+        [
+            _document(
+                15,
+                content=_PARTIAL_OVERLAP,
+                metadata={"key_facts": ["项目使用 SQLite 存储会话日志"]},
+            )
+        ],
+        metadata=_metadata(
+            key_facts=[
+                "项目使用 SQLite 存储会话记录",
+                "备份密钥轮换由运维执行",
+            ]
+        ),
+    )
+
+    assert outcome.verdict is NearDuplicateVerdict.FACT_OVERLAP
+    assert outcome.memory_id == 15
+
+
+@pytest.mark.asyncio
+async def test_fact_overlap_ignores_matches_below_single_fact_floor() -> None:
+    """单条事实相似度低于 0.6 时不计入覆盖，占比不足即 MISS。"""
+
+    outcome, _ = await _detect(
+        [
+            _document(
+                16,
+                content=_PARTIAL_OVERLAP,
+                metadata={"key_facts": ["项目使用 PostgreSQL 保存日志快照"]},
+            )
+        ],
+        metadata=_metadata(key_facts=["项目使用 SQLite 存储会话记录"]),
+    )
+
+    assert outcome.verdict is NearDuplicateVerdict.MISS
+
+
+@pytest.mark.asyncio
+async def test_fact_overlap_requires_candidate_facts() -> None:
+    """候选侧没有事实 token 时不得判定为 FACT_OVERLAP。"""
+
+    outcome, _ = await _detect(
+        [_document(17, content=_PARTIAL_OVERLAP)],
+        metadata=_metadata(key_facts=[]),
+    )
+
+    assert outcome.verdict is NearDuplicateVerdict.MISS
+
+
+@pytest.mark.asyncio
+async def test_fact_overlap_ties_prefer_earliest_canonical() -> None:
+    """事实覆盖同分时同样固定选择最早的 canonical。"""
+
+    outcome, _ = await _detect(
+        [
+            _document(60, content=_PARTIAL_OVERLAP),
+            _document(42, content=_PARTIAL_OVERLAP + "附录"),
+        ]
+    )
+
+    assert outcome.verdict is NearDuplicateVerdict.FACT_OVERLAP
+    assert outcome.memory_id == 42
+
+
+@pytest.mark.asyncio
+async def test_whole_text_scoring_takes_priority_over_fact_overlap() -> None:
+    """整段达标时先走事实护栏，不得降级为 FACT_OVERLAP。"""
+
+    outcome, _ = await _detect(
+        [
+            _document(
+                18,
+                content=_NEAR_DUPLICATE,
+                metadata={
+                    "key_facts": [
+                        "项目使用 SQLite 存储会话记录",
+                        "团队改用 PostgreSQL 保存日志快照",
+                    ]
+                },
+            )
+        ]
+    )
+
+    # 覆盖度 1/2 达到重叠门槛，但整段达标必须先判事实护栏。
+    assert outcome.verdict is NearDuplicateVerdict.FACT_MISMATCH
+    assert outcome.score >= 0.85
 
 
 @pytest.mark.asyncio

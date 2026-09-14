@@ -555,7 +555,7 @@ async def test_factory_migrates_before_opening_shared_database_stores(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """工厂必须先完成 canonical 迁移，再打开 FAISS 与 Evolution 连接。"""
+    """工厂必须先迁移 canonical，再打开文档存储并恢复持久化操作。"""
 
     from astrbot.core.provider.provider import Provider
 
@@ -567,6 +567,9 @@ async def test_factory_migrates_before_opening_shared_database_stores(
     database.close = AsyncMock()
     engine = MagicMock()
     engine.initialize = AsyncMock(side_effect=lambda: events.append("schema"))
+    engine.recover_persisted_operations = AsyncMock(
+        side_effect=lambda: events.append("recover")
+    )
     engine.close = AsyncMock()
     evolution_store = MagicMock()
     evolution_store.initialize = AsyncMock(
@@ -614,4 +617,4 @@ async def test_factory_migrates_before_opening_shared_database_stores(
             database_setup,
         )
 
-    assert events == ["schema", "faiss", "evolution"]
+    assert events == ["schema", "faiss", "recover", "evolution"]

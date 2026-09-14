@@ -528,6 +528,8 @@
         "payloadP95": "Payload 字符数 p95",
         "fallbackRate": "Provider 降级率",
         "selectedTotal": "选择条数合计",
+        "payloadInjected": "已注入载荷",
+        "memoryPresent": "含记忆候选",
         "droppedTotal": "丢弃条数合计",
         "budgetUtilization": "预算利用率",
         "presetDistribution": "预设选择分布",
@@ -1475,7 +1477,8 @@
         "evaluation": "评测",
         "recallTrace": "召回链路",
         "diagnostics": "诊断",
-        "reviewQueue": "复核队列"
+        "reviewQueue": "复核队列",
+        "topicGovernance": "Topic 治理"
       },
       "activeTab": "当前视图",
       "status": {
@@ -1797,6 +1800,48 @@
       "catalogDegradedHint": "目录未就绪时强制使用观察模式，模式选择器已禁用",
       "sizeBuckets": "规模桶分布",
       "metrics": "聚合指标"
+    },
+    "memoryDedup": {
+      "title": "跨窗口去重指标",
+      "description": "反思候选近重复检测的窗口聚合：命中率、合并、护栏与失败计数；mode=off 时不产生数据。",
+      "windowLabel": "统计窗口",
+      "window": {
+        "1h": "最近 1 小时",
+        "24h": "最近 24 小时",
+        "7d": "最近 7 天",
+        "30d": "最近 30 天"
+      },
+      "refresh": "刷新",
+      "state": {
+        "loading": "正在加载去重指标",
+        "error": "无法加载去重指标",
+        "empty": "当前窗口没有去重指标",
+        "emptyHint": "mode=off 时不检测也不记录；开启 observe 后这里会出现计数。"
+      },
+      "checked": "检测候选数",
+      "hitRate": "命中率",
+      "merged": "合并数",
+      "factMismatch": "事实护栏拦截",
+      "factOverlap": "事实重叠",
+      "guardRate": "护栏率",
+      "overlapRate": "重叠率",
+      "failureRate": "失败率",
+      "trend": "小时趋势",
+      "byMode": "按模式分列",
+      "mode": {
+        "observe": "观察模式",
+        "enforce": "执行模式"
+      },
+      "outcome": {
+        "checked": "检测",
+        "hit": "命中",
+        "merged": "合并",
+        "fact_mismatch": "事实护栏",
+        "fact_overlap": "事实重叠",
+        "conflict": "冲突",
+        "failed": "失败"
+      },
+      "outcomeHint": "计数仅按小时桶与模式聚合，不保存 scope、会话或正文。"
     },
     "category": {
       "fact": "事实",

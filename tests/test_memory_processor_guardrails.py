@@ -132,7 +132,7 @@ async def test_strict_summary_rejects_invalid_model_outputs(response: str) -> No
 
 @pytest.mark.asyncio
 async def test_strict_summary_failure_does_not_log_model_text(caplog) -> None:
-    """严格解析失败日志不得包含模型原始响应。"""
+    """严格解析失败日志必须给出失败阶段，且不得包含模型原始响应。"""
 
     canary = "SUMMARY_RESPONSE_SECRET_CANARY"
     with pytest.raises(SummaryParseError):
@@ -141,6 +141,9 @@ async def test_strict_summary_failure_does_not_log_model_text(caplog) -> None:
             strict_summary=True,
         )
 
+    records = [r for r in caplog.records if getattr(r, "reason_code", None)]
+    assert [r.reason_code for r in records] == ["summary_invalid"]
+    assert [r.sub_reason for r in records] == ["json_invalid"]
     assert canary not in caplog.text
 
 

@@ -74,5 +74,8 @@ openspec/
 
 # 本地数据目录
 data/
+# AstrBot 本地运行产物（仓库根即插件目录时的开发实例）
+.astrbot
+astrbot.lock
 # Added by code-review-graph
 .code-review-graph/

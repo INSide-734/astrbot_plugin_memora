@@ -219,6 +219,9 @@ async def test_scheduler_snapshot_falls_back_to_safe_scalars_on_store_error() ->
         "mark_write_total": 0,
         "failed_candidate_total": 0,
         "skipped_idempotent_total": 0,
+        "candidate_total": 0,
+        "oldest_unresolved_age_seconds": 0,
+        "unresolved_reason_counts": {},
     }
 
 
@@ -250,6 +253,7 @@ async def test_scheduler_start_failure_closes_published_core_resources(
         return_value={
             "db": db,
             "graph_db": graph_db,
+            "auxiliary_llm_client": MagicMock(),
             "memory_engine": engine,
             "memory_processor": MagicMock(),
             "memory_quarantine_store": MagicMock(),

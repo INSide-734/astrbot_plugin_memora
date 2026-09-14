@@ -153,6 +153,89 @@ def test_health_scorer_level_boundaries(score: int, level: str):
     assert scorer.level_for_score(score) == level
 
 
+def test_health_scorer_projects_write_availability_and_unresolved_tasks():
+    """候选存在但无接受写入时应显示写入不可用并扣分。"""
+    result = HealthScorer().score(
+        {
+            "summary_tasks": {
+                "candidate_total": 12,
+                "canonical_total": 0,
+                "quarantine_total": 0,
+                "blocked": 0,
+                "unknown": 0,
+            }
+        }
+    )
+
+    projection = result["summary_tasks"]
+    assert projection["evidence_status"] == "available"
+    assert projection["write_availability"]["candidate_total"] == 12
+    assert projection["write_availability"]["status"] == "blocked"
+    assert result["score"] == 90
+    assert any(item["name"] == "write_availability" for item in result["domains"])
+
+
+def test_health_scorer_treats_quarantine_as_informational_not_failure():
+    """正常隔离属于安全处置，不得按基础设施故障扣分。"""
+
+    result = HealthScorer().score(
+        {
+            "summary_tasks": {
+                "candidate_total": 5,
+                "canonical_total": 3,
+                "quarantine_total": 2,
+            }
+        }
+    )
+
+    projection = result["summary_tasks"]
+    assert projection["write_availability"]["status"] == "available"
+    assert projection["write_availability"]["accepted_total"] == 5
+    assert result["score"] == 100
+    domain = next(
+        item for item in result["domains"] if item["name"] == "write_availability"
+    )
+    assert domain["status"] == "info"
+
+
+def test_health_scorer_marks_empty_summary_evidence_as_insufficient():
+    """无候选、无写入、无未决证据时不得伪造成健康结论。"""
+
+    result = HealthScorer().score({"summary_tasks": {}})
+
+    projection = result["summary_tasks"]
+    assert projection["evidence_status"] == "insufficient"
+    assert projection["write_availability"]["status"] == "unknown"
+    assert projection["unresolved_reason_counts"] == {}
+
+
+def test_health_scorer_penalizes_unresolved_summary_tasks_with_reason_counts():
+    """未决任务应降级并保留闭集原因计数，异常文本不得进入投影。"""
+
+    result = HealthScorer().score(
+        {
+            "summary_tasks": {
+                "blocked": 2,
+                "unknown": 1,
+                "oldest_unresolved_age_seconds": 3600,
+                "unresolved_reason_counts": {
+                    "ledger_unresolved": 2,
+                    "x" * 200: 1,
+                    "negative": -3,
+                },
+            }
+        }
+    )
+
+    projection = result["summary_tasks"]
+    assert projection["unknown"] == 1
+    assert projection["blocked"] == 2
+    assert projection["oldest_unresolved_age_seconds"] == 3600
+    assert projection["unresolved_reason_counts"] == {"ledger_unresolved": 2}
+    assert result["score"] == 90
+    assert any(item["name"] == "summary_tasks" for item in result["domains"])
+
+
 def test_health_scorer_handles_missing_and_malformed_inputs_defensively():
     """缺失或畸形快照片段应安全退化为健康默认值。"""
     result = HealthScorer().score(

@@ -408,8 +408,9 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         "topic_segmentation.candidate_reuse.max_full_prompt_tokens",
         256,
     ),
-    # memory_dedup 四叶沿用 candidate_reuse 的分工：投影只为配置契约与
-    # 默认值一致性校验；实际读取由 SummaryWorker 在每窗口按需直接读
+    # memory_dedup 叶子沿用 candidate_reuse 的分工：投影只为配置契约与
+    # 默认值一致性校验；实际读取由 SummaryWorker（mode/阈值/候选数/短文本
+    # 门）与组合根（metrics_retention_days 构造指标 Store）直接读
     # ConfigManager 嵌套路径，因此 MemoryEngine 不消费这些键。
     _field("memory_dedup.mode", "memory_dedup.mode", "off"),
     _field(
@@ -419,6 +420,11 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
     ),
     _field("memory_dedup.candidate_limit", "memory_dedup.candidate_limit", 5),
     _field("memory_dedup.min_tokens", "memory_dedup.min_tokens", 12),
+    _field(
+        "memory_dedup.metrics_retention_days",
+        "memory_dedup.metrics_retention_days",
+        30,
+    ),
 )
 
 

@@ -28,6 +28,7 @@ from .summary_worker import SummaryWorker, SummaryWorkerFailure
 if TYPE_CHECKING:
     from ....shared.contracts import ReflectionWritePort
     from ....shared.summary_llm_limiter import SummaryLlmLimiter
+    from ...memory.application.canonical_merge import DedupMetricsRecorder
     from ...quality.application.memory_quality_gate import MemoryQualityGate
     from ...recall.processors.memory_processor import MemoryProcessor
     from ..domain.summary_ports import SummaryJobStorePort
@@ -101,6 +102,7 @@ class SummaryScheduler(SummarySchedulerLeaseMixin, SummarySchedulerMetricsMixin)
         candidate_selector: TopicCandidateSelector | None = None,
         *,
         metrics_recorder: Any | None = None,
+        dedup_metrics_recorder: DedupMetricsRecorder | None = None,
         config_manager: Any | None = None,
         max_parallel_summary_tasks: int = 4,
         max_parallel_summary_tasks_per_session: int = 2,
@@ -140,6 +142,7 @@ class SummaryScheduler(SummarySchedulerLeaseMixin, SummarySchedulerMetricsMixin)
             batch_preparer,
             candidate_selector,
             config_manager,
+            dedup_metrics_recorder=dedup_metrics_recorder,
         )
         self._max_parallel = max_parallel_summary_tasks
         self._max_parallel_per_session = max_parallel_summary_tasks_per_session

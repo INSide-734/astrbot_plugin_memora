@@ -34,6 +34,7 @@ from ...features.quality.application.memory_quality_gate import MemoryQualityGat
 from ...features.quality.infrastructure.quarantine_store import (
     MemoryQuarantineStore,
 )
+from ...features.recall.processors.llm_client import LLMClient
 from ...features.recall.processors.memory_processor import MemoryProcessor
 from ...shared.contracts import PromptProtectionPort
 from ...shared.errors import InitializationError
@@ -48,7 +49,7 @@ from .faiss_checker import FaissChecker
 from .identity_lifecycle import close_identity_runtime_after_failure
 from .provider_loader import ProviderLoader
 from .provider_waiter import ProviderWaiter
-from .readiness import InitializerReadinessMixin
+from .readiness import CaptureRuntime, InitializerReadinessMixin
 from .shutdown_lifecycle import (
     close_initializer_core_components_after_failure,
     close_initializer_injection_components,
@@ -79,6 +80,7 @@ class PluginInitializer(InitializerReadinessMixin):
         # AstrBot 4.27.2 未公开 EmbeddingProvider 类型，能力由下游适配器验证。
         self.embedding_provider: Any | None = None
         self.llm_provider: Provider | None = None
+        self.auxiliary_llm_client: LLMClient | None = None
         self.db: Any | None = None
         self.graph_db: Any | None = None
         self.memory_engine: MemoryEngine | None = None
@@ -89,6 +91,8 @@ class PluginInitializer(InitializerReadinessMixin):
         self.gate_runtime: GateRuntime | None = None
         self.conversation_manager: ConversationManager | None = None
         self.identity_runtime: ProtocolIdentityRuntime | None = None
+        self.capture_runtime: CaptureRuntime | None = None
+        self._capture_closed = False
         self.index_validator: IndexValidator | None = None
         self.derived_rebuild_coordinator: Any | None = None
         self.decay_scheduler: DecayScheduler | None = None
@@ -98,6 +102,7 @@ class PluginInitializer(InitializerReadinessMixin):
         self.backfill_scheduler: BackfillScheduler | None = None
         self.injection_decision_store: InjectionDecisionStore | None = None
         self.injection_decision_recorder: InjectionDecisionRecorder | None = None
+        self.dedup_metrics_store: Any | None = None
         self.memory_evolution_store: Any | None = None
         self.memory_evolution_manager: Any | None = None
         self.summary_scheduler: Any | None = None
@@ -284,6 +289,7 @@ class PluginInitializer(InitializerReadinessMixin):
                 faiss_cls,
                 self._faiss_checker,
                 self._db_setup,
+                capture_ready_cb=self._publish_capture_runtime,
             )
             report_debug_event(
                 "plugin_initialized",
@@ -296,12 +302,19 @@ class PluginInitializer(InitializerReadinessMixin):
                 ),
                 count=len(components),
             )
-
             current_stage = "runtime_publish"
             publish_started = time.perf_counter()
             self.db = components["db"]
             self.graph_db = components["graph_db"]
             self.memory_engine = components["memory_engine"]
+            self.auxiliary_llm_client = components["auxiliary_llm_client"]
+            owns_injection_components = True
+            owns_evolution_components = bool(
+                components.get("memory_evolution_store")
+                or components.get("memory_evolution_manager")
+            )
+            if self.auxiliary_llm_client is None:
+                raise RuntimeError("辅助 LLM 客户端未初始化")
             # MemoryEngine 是动态门面，质量评分器由组合根在发布阶段挂载。
             cast(Any, self.memory_engine)._quality_scorer = self.quality_scorer
             self.memory_processor = components["memory_processor"]
@@ -320,6 +333,7 @@ class PluginInitializer(InitializerReadinessMixin):
             )
             self.injection_decision_store = components["injection_decision_store"]
             self.injection_decision_recorder = components["injection_decision_recorder"]
+            self.dedup_metrics_store = components.get("dedup_metrics_store")
             self.memory_evolution_store = components.get("memory_evolution_store")
             self.memory_evolution_manager = components.get("memory_evolution_manager")
             self.realtime_hub = components.get("realtime_hub")
@@ -327,10 +341,6 @@ class PluginInitializer(InitializerReadinessMixin):
             self.summary_scheduler = None
             self.summary_llm_limiter = components.get("summary_llm_limiter")
             self.backup_manager = components.get("backup_manager")
-            owns_injection_components = True
-            owns_evolution_components = bool(
-                self.memory_evolution_store or self.memory_evolution_manager
-            )
             await self.ensure_catalog_readiness(components)
             if summary_scheduler is None:
                 raise InitializationError("总结调度器未初始化")
@@ -364,10 +374,12 @@ class PluginInitializer(InitializerReadinessMixin):
                 ("catalog_reconcile_scheduler", self.topic_catalog_reconcile_scheduler),
                 ("injection_store", self.injection_decision_store),
                 ("injection_recorder", self.injection_decision_recorder),
+                ("dedup_metrics_store", self.dedup_metrics_store),
                 ("memory_evolution_store", self.memory_evolution_store),
                 ("memory_evolution_manager", self.memory_evolution_manager),
                 ("prompt_protection", self.prompt_protection),
                 ("realtime_hub", self.realtime_hub),
+                ("auxiliary_llm_client", self.auxiliary_llm_client),
                 ("summary_scheduler", self.summary_scheduler),
             ):
                 is_ready = instance is not None
@@ -443,6 +455,10 @@ class PluginInitializer(InitializerReadinessMixin):
             duration_ms = max(
                 0.0, (time.perf_counter() - initialization_started) * 1000.0
             )
+            try:
+                await self.close_capture_runtime()
+            except Exception:
+                logger.error("初始化失败后关闭早期捕获能力失败", exc_info=True)
             if isinstance(e, asyncio.CancelledError):
                 report_debug_event(
                     "plugin_failed",
@@ -524,12 +540,64 @@ class PluginInitializer(InitializerReadinessMixin):
         enable_double_check = bool(
             self.config_manager.get("security.double_check_enabled", True)
         )
+
         service = build_prompt_protection_port(
             wrapper_template_index=template_index,
             enable_double_check=enable_double_check,
         )
         logger.info("提示词保护服务已初始化")
         return service
+
+    def _publish_capture_runtime(
+        self, conversation_manager: ConversationManager, identity_runtime: Any
+    ) -> CaptureRuntime:
+        """在派生重建前发布唯一的早期捕获能力。"""
+        capture = CaptureRuntime(
+            conversation_manager,
+            identity_runtime,
+            self.config_manager,
+            self._capture_writes_blocked,
+        )
+        self.capture_runtime = capture
+        self._capture_closed = False
+        report_debug_event(
+            "plugin_initialized",
+            component="initializer",
+            stage="capture_readiness",
+            status="ready",
+            reason_code="capture_runtime_published",
+            capability="conversation_capture",
+        )
+        return capture
+
+    def _capture_writes_blocked(self) -> bool:
+        """早期捕获复用插件级维护写保护。"""
+        manager = self.backup_manager
+        try:
+            getter = getattr(manager, "get_maintenance_state", None)
+            if callable(getter):
+                state = getter()
+                return (
+                    bool(state.get("blocked", False))
+                    if isinstance(state, dict)
+                    else True
+                )
+            checker = getattr(manager, "has_pending_restores", None)
+            return bool(checker()) if callable(checker) else False
+        except Exception:
+            return True
+
+    async def close_capture_runtime(self) -> None:
+        """撤销并排空早期捕获能力，关闭过程保持幂等。"""
+        capture = self.capture_runtime
+        if capture is None or self._capture_closed:
+            return
+        self._capture_closed = True
+        try:
+            await capture.close()
+        finally:
+            if self.capture_runtime is capture:
+                self.capture_runtime = None
 
     async def _initialize_cognitive_components(self) -> None:
         """创建共享的 v1.0+ 认知组件实例。"""
@@ -641,6 +709,7 @@ class PluginInitializer(InitializerReadinessMixin):
         for label, obj in (
             ("AffectionStore", self.affection_store),
             ("JargonStore", self.jargon_store),
+            ("DedupMetricsStore", self.dedup_metrics_store),
         ):
             if obj and hasattr(obj, "close"):
                 await self._safe_step(f"关闭{label}", obj.close())

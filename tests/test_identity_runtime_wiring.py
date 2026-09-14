@@ -699,6 +699,7 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
         return_value={
             "db": MagicMock(),
             "graph_db": None,
+            "auxiliary_llm_client": MagicMock(),
             "memory_engine": MagicMock(),
             "memory_processor": memory_processor,
             "memory_quarantine_store": MagicMock(),

@@ -146,6 +146,7 @@ class TestEventHandlerShutdown:
         )
         event = MagicMock()
         event.unified_msg_origin = "test-session-001"
+        event.get_extra.return_value = False
 
         await handler.handle_session_reset(event)
         conv.clear_session.assert_awaited_once_with("test-session-001")

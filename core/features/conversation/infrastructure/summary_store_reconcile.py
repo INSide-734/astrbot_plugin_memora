@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from ...reflection.domain.summary_models import (
     CandidateDisposition,
@@ -15,8 +14,15 @@ from ...reflection.domain.summary_models import (
     CompletionResult,
     SummaryJobStatus,
     SummaryReasonCode,
+    normalize_exception_type,
 )
+from .summary_source_fence import SummarySourceFenceMixin
 from .summary_store_keys import owned_slot_key, source_epoch_guarded, source_guarded
+from .summary_store_ledger import _row, _terminal_ledger_matches_job
+from .summary_store_observability import (
+    log_summary_candidate_reconcile,
+    log_summary_commit,
+)
 
 _CANONICAL_DISPOSITIONS = frozenset(
     {
@@ -34,104 +40,8 @@ _TERMINAL_DISPOSITIONS = _CANONICAL_DISPOSITIONS | frozenset(
 )
 
 
-def _row(row: Any, name: str, index: int) -> Any:
-    """兼容 sqlite Row 和 tuple 测试替身。"""
-    try:
-        return row[name]
-    except (KeyError, IndexError, TypeError):
-        return row[index]
-
-
-def _terminal_ledger_matches_job(job: Any, rows: Sequence[Any]) -> bool:
-    """核对终态任务计数与候选 ledger 的逐类数量。"""
-    fields = {
-        CandidateDisposition.CANONICAL.value: 2,
-        CandidateDisposition.QUARANTINED.value: 3,
-        CandidateDisposition.DISCARD.value: 4,
-        CandidateDisposition.MARK_WRITE.value: 5,
-        CandidateDisposition.FAILED.value: 6,
-        CandidateDisposition.SKIPPED_IDEMPOTENT.value: 7,
-    }
-    expected: dict[str, int] = {}
-    for disposition, index in fields.items():
-        value = _row(job, disposition, index)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            return False
-        expected[disposition] = value
-    actual = dict.fromkeys(fields, 0)
-    for row in rows:
-        disposition = str(_row(row, "disposition", 3) or "")
-        if disposition not in actual:
-            return False
-        actual[disposition] += 1
-    return len(rows) == sum(expected.values()) and actual == expected
-
-
-class SummaryStoreReconcileMixin:
-    """提供不持有跨库事务的候选映射收口和会话来源 fence。"""
-
-    def _summary_source_lock_for(self, session_id: str) -> asyncio.Lock:
-        """返回会话级来源锁，串行化 reset/trim 与外部 canonical 写入。"""
-        locks = getattr(self, "_summary_source_locks", None)
-        if locks is None:
-            locks = {}
-            setattr(self, "_summary_source_locks", locks)
-        lock = locks.get(session_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            locks[session_id] = lock
-        return lock
-
-    @asynccontextmanager
-    async def _summary_source_locks_for(
-        self, session_ids: Sequence[str]
-    ) -> AsyncGenerator[None, None]:
-        """按固定顺序持有多个 session 来源锁，保护 TTL 批量删除。"""
-        async with AsyncExitStack() as stack:
-            for session_id in sorted({item for item in session_ids if item}):
-                await stack.enter_async_context(
-                    self._summary_source_lock_for(session_id)
-                )
-            yield
-
-    @asynccontextmanager
-    async def _summary_quarantine_guard(self) -> AsyncGenerator[None, None]:
-        """在已持有会话来源锁后进入隔离 Store 协调锁。"""
-        guard = getattr(getattr(self, "quarantine_store", None), "source_guard", None)
-        if callable(guard):
-            async with cast(Any, guard()):
-                yield
-            return
-        yield
-
-    async def run_claim_side_effect(
-        self,
-        claim: ClaimedJob,
-        operation: Callable[[], Awaitable[object]],
-    ) -> object:
-        """在当前 claim 的 epoch 来源锁内运行外部副作用，不持有 SQLite 事务。"""
-        connection = getattr(self, "connection", None)
-        if (
-            connection is None
-            or not isinstance(claim, ClaimedJob)
-            or not callable(operation)
-        ):
-            raise RuntimeError(SummaryReasonCode.CLAIM_LOST.value)
-        if getattr(connection, "in_transaction", False):
-            raise RuntimeError("summary_store_transaction_active")
-        async with self._summary_source_lock_for(claim.session_id):
-            if not await self._claim_matches(claim):
-                raise RuntimeError(SummaryReasonCode.CLAIM_LOST.value)
-            if getattr(connection, "in_transaction", False):
-                raise RuntimeError("summary_store_transaction_active")
-            result = operation()
-            if inspect.isawaitable(result):
-                result = await result
-            if getattr(connection, "in_transaction", False):
-                raise RuntimeError("summary_store_transaction_active")
-            if not await self._claim_matches(claim):
-                raise RuntimeError(SummaryReasonCode.CLAIM_LOST.value)
-            return result
+class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
+    """提供不持有跨库事务的候选映射收口。"""
 
     @source_epoch_guarded
     @source_guarded
@@ -189,10 +99,8 @@ class SummaryStoreReconcileMixin:
 
     if TYPE_CHECKING:
         connection: Any
-        _write_lock: asyncio.Lock
 
         def _summary_now(self) -> float: ...
-        def _summary_source_lock_for(self, session_id: str) -> asyncio.Lock: ...
 
         async def _begin_summary(self) -> None: ...
         async def _rollback_summary(self) -> None: ...
@@ -209,8 +117,11 @@ class SummaryStoreReconcileMixin:
         claim: ClaimedJob,
         now: float,
         reason_code: SummaryReasonCode = SummaryReasonCode.LEDGER_UNRESOLVED,
+        exception_type: str | None = "unknown",
+        *,
+        observability_stage: Literal["commit", "candidate_reconcile"],
     ) -> CompletionResult:
-        """用 claim CAS 将不确定 job 与候选固定为 unknown，不推进游标。"""
+        """用 claim CAS 将不确定 job 与未收口候选固定为 unknown。"""
         if not await self._claim_matches(claim):
             await self._rollback_summary()
             return CompletionResult(
@@ -221,21 +132,22 @@ class SummaryStoreReconcileMixin:
         await self.connection.execute(
             """
             UPDATE summary_job_candidates
-            SET status='unknown', disposition=NULL, updated_at=?
-            WHERE job_id=?
+            SET status='unknown', disposition=NULL, canonical_id=NULL, updated_at=?
+            WHERE job_id=? AND status NOT IN ('committed','failed')
             """,
             (now, claim.job_id),
         )
         updated = await self.connection.execute(
             """
             UPDATE summary_jobs SET status='unknown', reason_code=?,
-              failed_stage='candidate_reconcile', lease_until=NULL,
+              failed_stage='candidate_reconcile', exception_type=?, lease_until=NULL,
               claim_token=NULL, updated_at=?
             WHERE job_id=? AND session_id=? AND session_epoch=?
               AND status='running' AND claim_token=? AND worker_generation=?
             """,
             (
                 reason_code.value,
+                normalize_exception_type(exception_type) or "unknown",
                 now,
                 claim.job_id,
                 claim.session_id,
@@ -252,24 +164,38 @@ class SummaryStoreReconcileMixin:
                 reason_code=SummaryReasonCode.CLAIM_LOST,
             )
         await self.connection.commit()
+        logger = (
+            log_summary_commit
+            if observability_stage == "commit"
+            else log_summary_candidate_reconcile
+        )
+        logger(
+            SummaryJobStatus.UNKNOWN,
+            reason_code,
+            exception_type,
+            unknown_count=1,
+        )
         return CompletionResult(True, SummaryJobStatus.UNKNOWN, 0, reason_code)
 
     async def _mark_unknown_completed(
-        self, claim: ClaimedJob, now: float
+        self,
+        claim: ClaimedJob,
+        now: float,
+        exception_type: str | None = "unknown",
     ) -> CompletionResult:
         """将已完成但无法核对的同 epoch job 降级为 unknown。"""
         await self.connection.execute(
             """
             UPDATE summary_job_candidates
-            SET status='unknown', disposition=NULL, updated_at=?
-            WHERE job_id=?
+            SET status='unknown', disposition=NULL, canonical_id=NULL, updated_at=?
+            WHERE job_id=? AND status NOT IN ('committed','failed')
             """,
             (now, claim.job_id),
         )
         updated = await self.connection.execute(
             """
             UPDATE summary_jobs SET status='unknown', reason_code=?,
-              failed_stage='candidate_reconcile', updated_at=?
+              failed_stage='candidate_reconcile', exception_type=?, updated_at=?
             WHERE job_id=? AND session_id=? AND session_epoch=?
               AND status='completed' AND worker_generation=?
               AND EXISTS (
@@ -279,6 +205,7 @@ class SummaryStoreReconcileMixin:
             """,
             (
                 SummaryReasonCode.LEDGER_UNRESOLVED.value,
+                normalize_exception_type(exception_type) or "unknown",
                 now,
                 claim.job_id,
                 claim.session_id,
@@ -296,6 +223,12 @@ class SummaryStoreReconcileMixin:
                 reason_code=SummaryReasonCode.CLAIM_LOST,
             )
         await self.connection.commit()
+        log_summary_candidate_reconcile(
+            SummaryJobStatus.UNKNOWN,
+            SummaryReasonCode.LEDGER_UNRESOLVED,
+            exception_type,
+            unknown_count=1,
+        )
         return CompletionResult(
             True,
             SummaryJobStatus.UNKNOWN,
@@ -587,7 +520,9 @@ class SummaryStoreReconcileMixin:
                     claim, rows, slot_to_canonical_id, require_terminal=False
                 )
                 if normalized is None:
-                    return await self._mark_unknown_claim(claim, now)
+                    return await self._mark_unknown_claim(
+                        claim, now, observability_stage="candidate_reconcile"
+                    )
                 rows_by_slot = {int(_row(row, "slot", 0)): row for row in rows}
                 for slot, canonical_id in normalized.items():
                     row = rows_by_slot[slot]
@@ -620,7 +555,9 @@ class SummaryStoreReconcileMixin:
                         ),
                     )
                     if updated.rowcount != 1:
-                        return await self._mark_unknown_claim(claim, now)
+                        return await self._mark_unknown_claim(
+                            claim, now, observability_stage="candidate_reconcile"
+                        )
                 final_cursor = await self.connection.execute(
                     "SELECT disposition,status,canonical_id FROM summary_job_candidates WHERE job_id=? ORDER BY slot",
                     (claim.job_id,),
@@ -647,10 +584,14 @@ class SummaryStoreReconcileMixin:
                 for row in final_rows:
                     disposition = str(_row(row, "disposition", 0) or "")
                     if disposition not in counts:
-                        return await self._mark_unknown_claim(claim, now)
+                        return await self._mark_unknown_claim(
+                            claim, now, observability_stage="candidate_reconcile"
+                        )
                     counts[disposition] += 1
                 if counts[CandidateDisposition.FAILED.value]:
-                    return await self._mark_unknown_claim(claim, now)
+                    return await self._mark_unknown_claim(
+                        claim, now, observability_stage="candidate_reconcile"
+                    )
                 values = {
                     "canonical_count": counts[CandidateDisposition.CANONICAL.value],
                     "quarantine_count": counts[CandidateDisposition.QUARANTINED.value],

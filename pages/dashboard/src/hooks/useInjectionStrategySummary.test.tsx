@@ -19,6 +19,8 @@ function summary(windowValue: "1h" | "24h" | "7d" | "30d", count = 1): Injection
     decision_count: count,
     payload_chars_p95: 100,
     provider_fallback_rate: 0,
+    memory_present_count: 0,
+    payload_injected_count: 0,
     selected_count_total: 0,
     dropped_count_total: 0,
     truncated_count_total: 0,

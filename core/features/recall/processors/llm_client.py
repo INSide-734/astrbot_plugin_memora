@@ -13,6 +13,10 @@ from ....shared.adapter_capabilities import (
     AdapterKind,
 )
 from ....shared.summary_llm_limiter import SummaryLlmLimiter
+from .reflection_generation_observability import (
+    report_generation_attempt,
+    report_generation_finish_reason,
+)
 
 
 class LLMClient:
@@ -107,20 +111,7 @@ class LLMClient:
     async def call_llm_with_retry(
         self, prompt: str, system_prompt: str, max_retries: int = 3
     ) -> str:
-        """调用当前 Provider，并保持原有的纯文本返回契约。
-
-        参数:
-            prompt: 发送给 Provider 的用户提示。
-            system_prompt: 发送给 Provider 的系统约束。
-            max_retries: 最大调用次数。
-
-        返回:
-            Provider 返回的文本内容。
-
-        异常:
-            asyncio.CancelledError: 调用或退避被取消。
-            Exception: 最后一次 Provider 调用失败，或 Provider 不可用。
-        """
+        """调用当前 Provider，并保持原有的纯文本返回契约。"""
 
         result = await self.call_llm_with_retry_result(
             prompt,
@@ -129,28 +120,45 @@ class LLMClient:
         )
         return result.text
 
+    async def _generate_once(
+        self,
+        adapter: LLMProviderAdapter,
+        prompt: str,
+        system_prompt: str,
+        operation: str,
+    ) -> LLMGenerationResult:
+        """执行一次已取得 limiter permit 的物理调用并记录安全结果。"""
+
+        track_extraction = operation == "summary_extraction"
+        if track_extraction:
+            report_generation_attempt()
+        try:
+            result = await adapter.generate_result(prompt, system_prompt)
+        except asyncio.CancelledError:
+            if track_extraction:
+                report_generation_finish_reason("unknown")
+            raise
+        except Exception:
+            if track_extraction:
+                report_generation_finish_reason("unknown")
+            raise
+        if track_extraction:
+            report_generation_finish_reason(getattr(result, "finish_reason", None))
+
+        return result
+
     async def call_llm_with_retry_result(
         self,
         prompt: str,
         system_prompt: str,
         max_retries: int = 3,
+        *,
+        operation: str = "generic",
     ) -> LLMGenerationResult:
-        """调用当前 Provider，并保留明确返回的 token usage。
+        """调用当前 Provider，并保留用量及受控终止原因。
 
         每次真实 Provider attempt 都独立取得并释放可选 limiter；重试等待
         不持有 permit。无 limiter 时保持原有调用路径。
-
-        参数:
-            prompt: 发送给 Provider 的用户提示。
-            system_prompt: 发送给 Provider 的系统约束。
-            max_retries: 最大调用次数。
-
-        返回:
-            Provider 文本以及可选的输入、输出 token 用量。
-
-        异常:
-            asyncio.CancelledError: 调用或退避被取消。
-            Exception: 最后一次 Provider 调用失败，或 Provider 不可用。
         """
 
         last_error = None
@@ -160,9 +168,13 @@ class LLMClient:
                 if adapter is None:
                     raise RuntimeError("LLM Provider 不可用")
                 if self._limiter is None:
-                    return await adapter.generate_result(prompt, system_prompt)
+                    return await self._generate_once(
+                        adapter, prompt, system_prompt, operation
+                    )
                 async with self._limiter:
-                    return await adapter.generate_result(prompt, system_prompt)
+                    return await self._generate_once(
+                        adapter, prompt, system_prompt, operation
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as e:

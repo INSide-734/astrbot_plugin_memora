@@ -9,6 +9,7 @@ from pathlib import Path
 import aiosqlite
 import pytest
 
+from core.features.memory.infrastructure.schema_manager import SchemaManager
 from core.features.memory.infrastructure.topic_catalog_schema import (
     TOPIC_CATALOG_SCHEMA_VERSION,
     create_topic_catalog_schema,
@@ -337,7 +338,7 @@ async def test_write_journal_repairs_catalog_dirty_without_snapshot(
         topic_catalog_store=store,
     )
     try:
-        await journal.create_table()
+        await SchemaManager(db).create_tables(journal.create_table)
         await db.execute(
             "UPDATE topic_catalog_state SET active_generation=1,status='ready' WHERE id=1"
         )
@@ -350,7 +351,10 @@ async def test_write_journal_repairs_catalog_dirty_without_snapshot(
             "source_provenance_complete": True,
         }
         await db.execute(
-            "INSERT INTO documents VALUES(?,?,?,?,?)",
+            """
+            INSERT INTO documents(id, text, metadata, created_at, updated_at)
+            VALUES(?,?,?,?,?)
+            """,
             (1, "正文", json.dumps(metadata), "2026-01-01T00:00:00+00:00", "r1"),
         )
         await db.commit()

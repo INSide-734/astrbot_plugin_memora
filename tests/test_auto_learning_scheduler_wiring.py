@@ -54,6 +54,7 @@ async def test_auto_learning_alone_starts_daily_maintenance_scheduler(
 
     engine = MagicMock()
     engine.initialize = AsyncMock()
+    engine.recover_persisted_operations = AsyncMock()
     engine.close = AsyncMock()
     engine.text_processor = None
     engine.semantic_compressor = None

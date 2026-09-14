@@ -17,6 +17,7 @@ from .constants import (
     PAGE_API_PREFIX,
     PLUGIN_NAME,
 )
+from .dedup_metrics_api import DedupMetricsApiMixin
 from .delegation_api import DelegationApiMixin
 from .diagnostics_api import DiagnosticsApiMixin
 from .evaluation_api import EvaluationApiMixin
@@ -88,6 +89,7 @@ class PluginPageApi(
     QuarantineApiMixin,
     RecallTraceApiMixin,
     InjectionStrategyApiMixin,
+    DedupMetricsApiMixin,
     ReviewApiMixin,
     MemoryEvolutionReviewApiMixin,
     ReconsolidationReviewApiMixin,

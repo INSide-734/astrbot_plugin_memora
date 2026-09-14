@@ -25,6 +25,7 @@ Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection �
 - 并发：进程内按 `session + scope_key` 的 `asyncio.Lock` 串行化「检测 → 合并」，覆盖总结窗口的候选并发；跨进程并发不在支持范围（单实例单 DB）。
 - 失败语义：检测异常、目标正文在检测后被改写、CAS 冲突、写回异常一律 fail-open，由调用方回落普通 canonical 写入；写回返回 False 时以回读 `merged_idempotency_keys`/`merge_count` 判定是否已提交，避免在已合并的情况下插入重复 canonical。
 - 默认关闭：`memory_dedup.mode=off` 不发起任何近重复查询；`observe` 只记录 `dedup_observed`；`enforce` 才写回。
+- 观测：`infrastructure/dedup_metrics_store.py` 是独立 SQLite 小时桶聚合 `dedup_metrics(bucket_ms, mode, outcome, count)`，**只保存计数与时间桶/模式/outcome**，不含 scope、会话、正文、ID 或 reason 明细，因此不需要 HMAC 摘要键；七类终态由协调器的可选 `metrics_recorder` 端口（缺省 no-op）UPSERT 增量写入，`off` 不产生任何行。其中 `fact_overlap` 是 `quality` 检测器在「整段无命中但候选事实被既有 canonical 覆盖到阈值」时给出的附加信号：`observe`/`enforce` 都记录 `checked` + `fact_overlap`，返回 OBSERVED 等价终态且**永不写回**；`checked` 始终是分母，派生 `overlap_rate = fact_overlap/checked`（`checked=0` → 0.0），`hit_rate`/`guard_rate`/`failure_rate` 语义不变。记录异常只降级 debug 日志且不影响合并结果，`asyncio.CancelledError` 继续传播；保留期由 `memory_dedup.metrics_retention_days`（默认 30，范围 1-3650）控制，在初始化后与写入节流（每 64 次写入或每小时至多一次）清理过期桶。只读消费方是 Page API `GET /memory-dedup/metrics`。
 
 ```mermaid
 graph TD
@@ -57,8 +58,8 @@ graph TD
 
 | 入口 | 语义 |
 |---|---|
-| `initialize()` / `close()` | 打开/关闭 SQLite 与图向量库，创建索引组件和可选子系统，追踪并取消后台任务 |
-| `add_memory(...) -> int` | 写文档/向量、BM25、原子、图产物并记录可恢复写日志 |
+| `initialize()` / `close()` | 打开/关闭 SQLite 与图向量库，创建索引组件和可选子系统；`initialize()` 不执行持久化操作恢复，追踪并取消 `_pending_tasks` |
+| `recover_persisted_operations()` | 在 canonical 与图文档存储就绪后，按既有重试与取消语义恢复 WriteOpJournal 和 reconsolidation；未就绪时静态失败且不产生副作用 |
 | `search_memories(...)` | 经缓存、双路/混合检索、触发词、情绪/季节和链式扩展返回 `HybridResult` |
 | `update_memory(...) -> bool` | 元数据原地更新；内容更新采用“新建后删除旧项”，删除失败则删除新项补偿 |
 | `delete_memory(...) -> bool` | 先删文档索引，再清理图和原子；子资源失败进入修复队列 |
@@ -74,7 +75,7 @@ graph TD
 2. `SchemaMigrationCoordinator` 只读检查版本；fresh install 直接建当前结构，旧库按 `migration_settings` 决定阻断或先创建 `pre_migration` 快照再迁移，同时创建 `memory_write_ops`。迁移成功后才注册可重连连接。
 3. 构建 `TextProcessor → BM25Retriever → VectorRetriever → HybridRetriever`。
 4. 仅在 `graph_enabled` 且存在 `graph_vector_db` 时构建 `GraphStore`、`AtomStore`、层级存储、图双路检索和 `GraphMemoryManager`。
-5. 可选执行 `WriteOpJournal.repair_incomplete()`。
+5. `initialize()` 只构建上述组件；组合根在 canonical/图文档存储各自 `initialize()` 成功后调用 `recover_persisted_operations()`，再继续发布后续子系统与 worker。
 6. 按配置构建画像、知识、笔记、自动学习、性格追踪、重排序器等；复用工厂注入的 typed `CostControl`，高成本 `llm`/`hybrid` 重排未通过功能门时降级为 `mmr`，成功创建的实例写回 `MemoryEngine.reranker` 并传给图双路检索器。
 7. 图路可用时构建 `DualRouteRetriever`，最后创建 `RealtimeSSE`。
 8. 若注入了 `projection_reader`，`MemoryEngine` 只把它作为召回阶段的派生注解读取器；它不改变 canonical 写入和整数 `doc_id` 语义。

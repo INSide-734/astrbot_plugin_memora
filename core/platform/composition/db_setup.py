@@ -6,6 +6,11 @@ from typing import cast
 
 from astrbot.api import logger
 
+from ...features.memory.rebuild_observability import (
+    classify_rebuild_trigger,
+    closed_rebuild_observability,
+)
+
 
 class DatabaseSetup:
     """执行数据库初始化、索引一致性检查和修复。"""
@@ -39,7 +44,7 @@ class DatabaseSetup:
                 not status.is_consistent and status.needs_rebuild
             )
             catalog_needs_rebuild = False
-            if rebuild_coordinator is not None and not indexes_need_rebuild:
+            if rebuild_coordinator is not None:
                 catalog_probe = getattr(
                     rebuild_coordinator, "catalog_needs_reconcile", None
                 )
@@ -50,6 +55,9 @@ class DatabaseSetup:
                         probe_result = await cast(Awaitable[object], probe_result)
                     catalog_needs_rebuild = bool(probe_result)
 
+            trigger_reason = classify_rebuild_trigger(
+                indexes_need_rebuild, catalog_needs_rebuild
+            )
             if indexes_need_rebuild or catalog_needs_rebuild:
                 if indexes_need_rebuild:
                     logger.warning(f"检测到索引不一致：{status.reason}")
@@ -58,6 +66,13 @@ class DatabaseSetup:
                         f"BM25 {status.bm25_count}，向量 {status.vector_count}"
                     )
                 if rebuild_coordinator is not None:
+                    # Keep the no-argument call shape used by older coordinators;
+                    # the current coordinator consumes this pending trigger.
+                    setattr(
+                        rebuild_coordinator,
+                        "_pending_rebuild_trigger_reason",
+                        trigger_reason,
+                    )
                     result = (
                         await rebuild_coordinator.rebuild_all()
                         if indexes_need_rebuild
@@ -86,6 +101,7 @@ class DatabaseSetup:
                 "success": True,
                 "skipped": True,
                 "reason_code": "indexes_consistent",
+                "observability": closed_rebuild_observability(trigger_reason),
             }
         except Exception:
             logger.error("自动重建索引失败，reason_code=index_rebuild_failed")

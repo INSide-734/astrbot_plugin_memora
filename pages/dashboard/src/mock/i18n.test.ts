@@ -162,6 +162,7 @@ const INJECTION_REQUIRED_KEYS = [
   "injection.overview.effectiveDelivery", "injection.overview.decisions",
   "injection.overview.payloadP95", "injection.overview.fallbackRate",
   "injection.overview.selectedTotal", "injection.overview.droppedTotal",
+  "injection.overview.payloadInjected", "injection.overview.memoryPresent",
   "injection.overview.budgetUtilization",
   "injection.overview.presetDistribution", "injection.overview.presetChartSummary",
   "injection.overview.costTrend", "injection.overview.costChartSummary",

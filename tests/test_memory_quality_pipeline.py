@@ -591,8 +591,14 @@ async def test_worker_merges_near_duplicate_instead_of_inserting(
 ) -> None:
     """enforce 模式下同 scope 近重复候选只强化 owner 并正常推进窗口。"""
 
+    from core.features.memory.infrastructure.dedup_metrics_store import (
+        DedupMetricsStore,
+    )
+
     store = ConversationStore(tmp_db_path)
     await store.initialize()
+    metrics_store = DedupMetricsStore(str(tmp_db_path) + ".dedup_metrics.sqlite3")
+    await metrics_store.initialize()
     engine = _DedupEngine(_dedup_metadata("dedup-session"))
     worker = SummaryWorker(
         cast(Any, store),
@@ -604,6 +610,7 @@ async def test_worker_merges_near_duplicate_instead_of_inserting(
         SimpleNamespace(
             get_config_snapshot=lambda: ({"memory_dedup": {"mode": "enforce"}}, "rev-1")
         ),
+        dedup_metrics_recorder=metrics_store.record,
     )
     try:
         claim = await _claim(
@@ -627,16 +634,26 @@ async def test_worker_merges_near_duplicate_instead_of_inserting(
             {"message_index": 0, "start": 0, "end": 3}
         ]
         assert engine.owner_metadata["merged_idempotency_keys"]
+        summary = await metrics_store.summary("24h")
+        assert (summary["checked"], summary["hit"], summary["merged"]) == (1, 1, 1)
         sql, params = engine.db_connection.calls[0]
         assert "ORDER BY id DESC LIMIT ?" in sql
         assert params == ("dedup-session", 5)
     finally:
+        await metrics_store.close()
         await store.close()
 
 
 @pytest.mark.asyncio
 async def test_worker_writes_normally_when_dedup_disabled(tmp_db_path: str) -> None:
     """缺省配置（mode=off）不得发起近重复查询，窗口行为保持不变。"""
+
+    recorded: list[tuple[str, str]] = []
+
+    async def _record(mode: str, outcome: str) -> None:
+        """收集 worker 注入的记录端口调用。"""
+
+        recorded.append((mode, outcome))
 
     store = ConversationStore(tmp_db_path)
     await store.initialize()
@@ -649,6 +666,7 @@ async def test_worker_writes_normally_when_dedup_disabled(tmp_db_path: str) -> N
         cast(Any, _BatchPreparer()),
         None,
         SimpleNamespace(get_config_snapshot=lambda: ({}, "rev-1")),
+        dedup_metrics_recorder=_record,
     )
     try:
         claim = await _claim(
@@ -663,5 +681,6 @@ async def test_worker_writes_normally_when_dedup_disabled(tmp_db_path: str) -> N
         assert engine.db_connection.calls == []
         assert engine.owner_metadata.get("merge_count") is None
         assert outcome.canonical_count == 1
+        assert recorded == []
     finally:
         await store.close()

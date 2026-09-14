@@ -299,6 +299,14 @@ class FeatureRoutesApiMixin:
             "页面接口：修复 pre-canonical 隔离批准收口",
         )
 
+        # ---- 跨窗口去重观测 ----
+        register(
+            f"{PAGE_API_PREFIX}/memory-dedup/metrics",
+            self.get_memory_dedup_metrics,
+            ["GET"],
+            "页面接口：跨窗口去重指标摘要",
+        )
+
         # ---- 黑话 ----
         register(
             f"{PAGE_API_PREFIX}/jargon/candidates",

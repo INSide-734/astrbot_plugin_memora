@@ -1,10 +1,14 @@
 """AtomFTSMixin 测试 — 基于FTS5的记忆原子全文搜索。"""
 
+import json
+import logging
 import time
 
 import pytest
 
 from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
+from core.features.memory.infrastructure import atom_fts as atom_fts_module
+from core.features.memory.infrastructure.atom_fts import _build_match_expression
 from core.features.memory.infrastructure.atom_store import AtomStore
 
 
@@ -147,8 +151,147 @@ class TestAtomFTS_search_fts:
         assert results[0].content == "匹配记忆"
 
 
+class TestBuildMatchExpression:
+    """MATCH 表达式构造：片段一律短语化，空查询不进入 FTS。"""
+
+    @pytest.mark.parametrize(
+        ("query", "expected"),
+        [
+            ("", None),
+            ("   ", None),
+            ("'", '"\'"'),
+            (":", '":"'),
+            (".", '"."'),
+            ("7", '"7"'),
+            ("()", '"()"'),
+            ('a"b', '"a""b"'),
+            (
+                "明早还跑不跑三公里 OR 血型是不是 O 型?",
+                '"明早还跑不跑三公里" OR "OR" OR "血型是不是" OR "O" OR "型?"',
+            ),
+        ],
+    )
+    def test_fragments_are_always_quoted_phrases(self, query, expected):
+        """关键字、标点、数字都退化为短语；OR 只作连接符不做词面处理。"""
+        assert _build_match_expression(query) == expected
+
+
+# FTS token 命中与 LIKE 子串命中完全重合的固定语料，
+# 使两组结果集在所有用例下可直接比较。
+_HARDENING_CORPUS = (
+    "明早还跑不跑三公里 血型是不是 O 型?",
+    "血型是 O 型，比例 3.14; OR 是逻辑运算符",
+    "AND 与 NEAR 都是 FTS5 关键字",
+    "版本 7 的记忆",
+    "无关的普通记忆",
+)
+
+_HOSTILE_QUERIES = (
+    "'",
+    ":",
+    ".",
+    "OR",
+    "AND",
+    "NEAR",
+    "7",
+    "()",
+    '"',
+    "",
+    "   ",
+    "明早还跑不跑三公里 OR 血型是不是 O 型?",
+    "他说：“明早还跑不跑三公里？”——血型是不是 O 型；",
+)
+
+
+async def _like_fallback_ids(
+    store: AtomStore,
+    query: str,
+    limit: int = 10,
+    atom_types: tuple[str, ...] | None = None,
+) -> set[int]:
+    """按 LIKE 回退口径（原始空白切分 + active/类型过滤）计算期望命中集。"""
+    patterns = json.dumps([f"%{token}%" for token in query.split() if token])
+    type_values = list(atom_types or ())
+    async with store._connect() as db:
+        cursor = await db.execute(
+            """
+            SELECT ma.id AS id
+            FROM memory_atoms ma
+            WHERE EXISTS (
+                SELECT 1 FROM json_each(:patterns) AS pattern
+                WHERE ma.content LIKE pattern.value
+            )
+              AND ma.status = 'active'
+              AND (
+                :has_atom_types = 0
+                OR ma.atom_type IN (SELECT value FROM json_each(:atom_types))
+              )
+            ORDER BY ma.id DESC
+            LIMIT :limit
+            """,
+            {
+                "patterns": patterns,
+                "has_atom_types": int(bool(type_values)),
+                "atom_types": json.dumps(type_values),
+                "limit": limit,
+            },
+        )
+        rows = await cursor.fetchall()
+    return {int(row[0]) for row in rows}
+
+
+class TestAtomFTS_search_fts_hardening:
+    """含 FTS5 语法字符的查询不得报错，且命中集与 LIKE 回退一致。"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query", _HOSTILE_QUERIES)
+    async def test_hostile_query_logs_no_warning_and_matches_like(
+        self, tmp_db_path, caplog, query
+    ):
+        """`'`、`:`、`.`、`OR`、`()`、纯空白等输入不再触发 fts5: syntax error。"""
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        for content in _HARDENING_CORPUS:
+            await store.insert(_make_atom(content=content))
+
+        with caplog.at_level(logging.WARNING):
+            results = await store.search_fts(query, limit=10)
+
+        warnings = [
+            record for record in caplog.records if record.levelno >= logging.WARNING
+        ]
+        assert warnings == []
+        assert {atom.atom_id for atom in results} == await _like_fallback_ids(
+            store, query
+        )
+
+
 class TestAtomFTS_search_fts_by_type:
     """Type-filtered FTS search via search_fts_by_type."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("query", ("'", "OR", "."))
+    async def test_hostile_query_in_type_branch_logs_no_warning_and_matches_like(
+        self, tmp_db_path, caplog, query
+    ):
+        """含 FTS5 语法字符的查询在类型分支下同样不得报错，命中集与 LIKE 一致。"""
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        for content in _HARDENING_CORPUS:
+            await store.insert(_make_atom(content=content))
+
+        with caplog.at_level(logging.WARNING):
+            results = await store.search_fts_by_type(
+                query, atom_types=["factual"], limit=10
+            )
+
+        warnings = [
+            record for record in caplog.records if record.levelno >= logging.WARNING
+        ]
+        assert warnings == []
+        assert {atom.atom_id for atom in results} == await _like_fallback_ids(
+            store, query, atom_types=("factual",)
+        )
 
     @pytest.mark.asyncio
     async def test_filter_by_atom_types(self, tmp_db_path):
@@ -269,3 +412,37 @@ class TestAtomFTS_search_fts_by_type:
 
         results_yes = await store.search_fts_by_type("过期", include_expired=True)
         assert len(results_yes) >= 1
+
+
+class TestAtomFTS_failure_logging_privacy:
+    """FTS 失败必须留痕，但不得回显 sqlite 异常 message（其中含查询原文）。"""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("method", ("search_fts", "search_fts_by_type"))
+    async def test_failure_warning_does_not_echo_query_text(
+        self, tmp_db_path, caplog, monkeypatch, method
+    ):
+        """还原裸 token 形态触发 `fts5: syntax error near "OR"`，日志只应记异常类型。"""
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await store.insert(_make_atom(content="普通记忆"))
+
+        marker = "OR"
+        monkeypatch.setattr(
+            atom_fts_module, "_build_match_expression", lambda query: query
+        )
+
+        with caplog.at_level(logging.WARNING):
+            results = await getattr(store, method)(marker, limit=5)
+
+        assert results == []
+        warnings = [
+            record
+            for record in caplog.records
+            if record.name.startswith("astrbot") and record.levelno >= logging.WARNING
+        ]
+        assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+        message = warnings[0].getMessage()
+        assert "OperationalError" in message
+        assert "syntax error" not in message
+        assert marker not in message

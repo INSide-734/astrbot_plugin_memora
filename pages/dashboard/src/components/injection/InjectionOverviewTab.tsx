@@ -243,6 +243,14 @@ export function InjectionOverviewTab({
       }),
     },
     {
+      label: t("injection.overview.payloadInjected"),
+      value: formatDashboardNumber(data.payload_injected_count, locale),
+    },
+    {
+      label: t("injection.overview.memoryPresent"),
+      value: formatDashboardNumber(data.memory_present_count, locale),
+    },
+    {
       label: t("injection.overview.selectedTotal"),
       value: formatDashboardNumber(data.selected_count_total, locale),
     },

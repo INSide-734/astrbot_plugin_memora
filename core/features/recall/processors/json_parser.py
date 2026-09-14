@@ -5,13 +5,49 @@ import re
 from typing import Any
 
 from astrbot.api import logger
+from pydantic import ValidationError
 
 from ....platform.security.guardrails import MemoryExtractionResult
 from .quality_validator import QualityValidator
 
+_PARSE_REASONS: frozenset[str] = frozenset(
+    {"fence_invalid", "json_invalid", "schema_invalid", "facts_missing"}
+)
+_FIELD_PATH_PART = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
+
+
+def _safe_field_path_part(part: object) -> str:
+    """只保留字段名、列表下标与错误类型，其余一律脱敏为 '*'。"""
+
+    if isinstance(part, str) and _FIELD_PATH_PART.match(part):
+        return part
+    if isinstance(part, int) and not isinstance(part, bool):
+        return str(part)
+    return "*"
+
+
+def _summarize_validation_error(error: ValidationError) -> str:
+    """只提取首个错误的字段路径与错误类型，绝不携带输入值。"""
+
+    errors = error.errors()
+    if not errors:
+        return "unknown"
+    first = errors[0]
+    parts = [*(first.get("loc") or ()), first.get("type")]
+    return ".".join(_safe_field_path_part(part) for part in parts)
+
 
 class SummaryParseError(ValueError):
-    """表示总结模型输出不满足严格结构契约。"""
+    """表示总结模型输出不满足严格结构契约。
+
+    ``str(error)`` 固定为 ``summary_invalid`` 以兼容既有 job 级 reason 映射；
+    ``reason`` 只区分失败阶段，``detail`` 只允许字段路径、错误类型或字符偏移。
+    """
+
+    def __init__(self, reason: str = "summary_invalid", *, detail: str = "") -> None:
+        super().__init__("summary_invalid")
+        self.reason = reason if reason in _PARSE_REASONS else "summary_invalid"
+        self.detail = detail
 
 
 class JsonParser:
@@ -62,7 +98,7 @@ class JsonParser:
             or lines[0].strip().lower() not in {"```", "```json"}
             or lines[-1].strip() != "```"
         ):
-            raise SummaryParseError("summary_invalid")
+            raise SummaryParseError("fence_invalid")
         return "\n".join(lines[1:-1]).strip()
 
     @staticmethod
@@ -81,27 +117,51 @@ class JsonParser:
                 if isinstance(value, int) and not isinstance(value, bool):
                     memory[field] = float(value)
 
+    @staticmethod
+    def _decode_summary_object(text: str) -> Any:
+        """解析总结对象；整段非法时退化为解析首个 ``{`` 起的 JSON 对象。
+
+        前后允许混有解释文本，但仍必须是合法 JSON；无法解析时抛出
+        ``json_invalid`` 并只附带整段解析的字符偏移。
+        """
+
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as error:
+            start = text.find("{")
+            if start >= 0:
+                try:
+                    data, _ = json.JSONDecoder().raw_decode(text, start)
+                    return data
+                except ValueError:
+                    pass
+            raise SummaryParseError(
+                "json_invalid", detail=f"char_offset={error.pos}"
+            ) from None
+
     def parse_summary_response(self, response_text: str) -> MemoryExtractionResult:
         """严格解析并验证总结对象，允许空 memories 列表。"""
 
         cleaned = self._strip_summary_code_fence(response_text)
+        data = self._decode_summary_object(cleaned)
+        if (
+            not isinstance(data, dict)
+            or "memories" not in data
+            or not isinstance(data["memories"], list)
+        ):
+            raise SummaryParseError("schema_invalid", detail="memories")
+        self._normalize_strict_numeric_fields(data)
         try:
-            data = json.loads(cleaned)
-            if (
-                not isinstance(data, dict)
-                or "memories" not in data
-                or not isinstance(data["memories"], list)
-            ):
-                raise SummaryParseError("summary_invalid")
-            self._normalize_strict_numeric_fields(data)
             result = MemoryExtractionResult.model_validate(data, strict=True)
-        except (json.JSONDecodeError, ValueError):
-            raise SummaryParseError("summary_invalid") from None
+        except ValidationError as error:
+            raise SummaryParseError(
+                "schema_invalid", detail=_summarize_validation_error(error)
+            ) from None
         if any(
             not memory.key_facts or any(not fact.strip() for fact in memory.key_facts)
             for memory in result.memories
         ):
-            raise SummaryParseError("summary_invalid")
+            raise SummaryParseError("facts_missing")
         return result
 
     def parse_llm_response(
