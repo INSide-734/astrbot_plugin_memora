@@ -893,7 +893,7 @@
         "replayable": "Replayable",
         "partial": "Partially replayable",
         "unavailable": "Not replayable",
-        "unknown": "Unable to verify"
+        "unknown": "Unverifiable"
       },
       "edit": "Edit",
       "nodeMemories": "Memory Count",

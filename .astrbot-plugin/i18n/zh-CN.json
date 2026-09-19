@@ -802,7 +802,7 @@
       "memoryIdPh": "记忆 ID（可选）",
       "searchBtn": "检索图谱",
       "overviewBtn": "最近概览",
-      "canvasDefault": "当前筛选下没有图谱数据。请调整筛选或返回最近概览",
+      "canvasDefault": "当前筛选下没有图谱数据。请调整筛选或返回最近概览。",
       "nodeTopic": "主题",
       "nodePerson": "人物",
       "nodeFact": "事实",
