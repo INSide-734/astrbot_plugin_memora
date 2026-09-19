@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
+from astrbot.api.message_components import Plain
 from astrbot.api.platform import MessageType
 
 from ....platform.context_helpers import get_persona_id
@@ -16,9 +17,12 @@ from ....shared.contracts.prompt_protection import (
     PROMPT_PROTECTION_SCOPE_EXTRA_KEY,
 )
 from ...identity.domain.models import IdentityTrust, ResolvedIdentity
+from ...observability.application import runtime as observability
 
 if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
+
+    from ....shared.adapter_capabilities import HostResponseBoundary
 
 
 class ReflectionContextMixin:
@@ -37,10 +41,24 @@ class ReflectionContextMixin:
         try:
             if protection_required:
                 if self._prompt_protection is None:
+                    observability.report_debug_event(
+                        "reflection_state",
+                        component="reflection",
+                        stage="protection",
+                        status="skipped",
+                        reason_code="reply_blocked_scope",
+                    )
                     return ""
                 has_scope = getattr(self._prompt_protection, "has_scope", None)
                 if callable(has_scope) and not has_scope(scope_id):
                     self._discard_prompt_protection_scope(scope_id)
+                    observability.report_debug_event(
+                        "reflection_state",
+                        component="reflection",
+                        stage="protection",
+                        status="skipped",
+                        reason_code="reply_blocked_scope",
+                    )
                     return ""
             if not protection_required and not self._config_manager.get(
                 "security.sanitize_llm_response", True
@@ -65,7 +83,17 @@ class ReflectionContextMixin:
                     f"[{session_id}] LLM 回复触发安全清洗："
                     f"移除项数量={len(leaks)}, 校验通过={validation_passed}"
                 )
-            return sanitized if validation_passed else ""
+            if not validation_passed:
+                # 校验失败按固定终态阻断；原因码不含正文、相似片段或身份。
+                observability.report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="protection",
+                    status="skipped",
+                    reason_code="reply_blocked_validation",
+                )
+                return ""
+            return sanitized
         except asyncio.CancelledError:
             self._discard_prompt_protection_scope(scope_id)
             raise
@@ -75,10 +103,43 @@ class ReflectionContextMixin:
                 f"[{session_id}] LLM 回复安全清洗失败，已阻止输出",
                 exc_info=True,
             )
+            observability.report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="protection",
+                status="skipped",
+                reason_code="reply_blocked_sanitizer_error",
+            )
             return ""
         finally:
             if event is not None:
                 self._clear_prompt_protection_context(event, scope_id)
+
+    @staticmethod
+    def _has_non_text_response_content(resp: Any) -> bool:
+        """判断回复是否携带文本以外的可见组件（图片等）。"""
+
+        chain = getattr(getattr(resp, "result_chain", None), "chain", None)
+        if not isinstance(chain, (list, tuple)):
+            return False
+        return any(not isinstance(component, Plain) for component in chain)
+
+    @classmethod
+    def _classify_empty_response(
+        cls,
+        resp: Any,
+        raw_response_text: str,
+        boundary: HostResponseBoundary,
+    ) -> str:
+        """给出无可持久化文本时的闭集原因码，不把中间步或发送记录当空失败。"""
+
+        if cls._has_non_text_response_content(resp):
+            return "reply_non_text_content"
+        if boundary.send_operation_started is True:
+            return "reply_empty_after_send_operation"
+        if not raw_response_text.strip():
+            return "reply_empty_provider"
+        return "empty_response_after_sanitization"
 
     def _discard_prompt_protection_scope(self, scope_id: str | None) -> None:
         if self._prompt_protection is None or not scope_id:

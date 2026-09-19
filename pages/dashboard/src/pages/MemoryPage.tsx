@@ -21,7 +21,7 @@ import { Field, FieldLabel } from "@/components/ui/field";
 import { useEntityEditor } from "@/hooks/useEntityEditor";
 import { BULK_CONFIRMATION_THRESHOLD } from "@/types/editing";
 import { dashboardLocale, formatDashboardDate, formatDashboardNumber, translateEnum } from "@/lib/i18n";
-import type { EntityNavigationTarget, MemoryItem } from "@/types";
+import type { EntityNavigationTarget, MemoryItem, SourceReplayability } from "@/types";
 
 interface MemoryPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -34,6 +34,53 @@ const SCROLL_BUFFER = 15;
 
 const STATUS_LABELS: Record<string, string> = {};
 const EDIT_FIELD_LABELS: Record<string, string> = {};
+
+function replayabilityVariant(status: string) {
+  if (status === "replayable") return "default" as const;
+  if (status === "unavailable") return "destructive" as const;
+  return "secondary" as const;
+}
+
+/** 详情里的来源可重放状态：只展示聚合状态、计数与固定原因码。 */
+function SourceReplayabilitySection({
+  replayability,
+  t,
+}: {
+  replayability?: SourceReplayability;
+  t: (key: string, ...args: string[]) => string;
+}) {
+  if (!replayability) return null;
+  const references = replayability.references ?? {};
+  const status = String(replayability.status ?? "unknown");
+  const reasons = Array.isArray(replayability.reason_codes)
+    ? replayability.reason_codes
+        .filter((code): code is string => typeof code === "string")
+        .join(", ")
+    : "";
+  return (
+    <DetailSection title={t("detail.sourceReplayability")}>
+      <DetailGrid>
+        <DetailField label={t("table.status")}>
+          <Badge variant={replayabilityVariant(status)}>
+            {t(`detail.sourceStatus.${status}`)}
+          </Badge>
+        </DetailField>
+        <DetailField label={t("detail.sourceReasons")}>{reasons || "--"}</DetailField>
+      </DetailGrid>
+      <div className="mt-3">
+        <DetailText>
+          {t(
+            "detail.sourceCounts",
+            String(references.verified ?? 0),
+            String(references.total ?? 0),
+            String(references.absent ?? 0),
+            String(references.unverifiable ?? 0),
+          )}
+        </DetailText>
+      </div>
+    </DetailSection>
+  );
+}
 
 export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: MemoryPageProps) {
   const { t, currentLang } = useI18n();
@@ -371,7 +418,7 @@ export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: Memor
         onSave={() => void editor.save()}
         labels={{ edit: t("detail.edit"), close: t("common.close"), cancel: t("common.cancel"), save: t("common.save"), saving: t("common.saving") }}
         status={editor.isDirty ? t("detail.unsaved") : null}
-        view={detail ? <div className="space-y-6"><DetailSection><DetailText>{detail.content ?? detail.summary ?? detail.text ?? memoryDraft.content}</DetailText></DetailSection><DetailSection><DetailGrid><DetailField label={t("table.id")}><span className="font-mono">{detail.id}</span></DetailField><DetailField label={t("table.type")}>{translateEnum(t, "memory.type", detail.type ?? memoryDraft.type)}</DetailField><DetailField label={t("table.status")}>{STATUS_LABELS[detail.status ?? memoryDraft.status] ?? detail.status ?? memoryDraft.status}</DetailField><DetailField label={t("table.importance")}>{formatDashboardNumber(normalizeImportance(detail.importance ?? memoryDraft.importance), locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</DetailField><DetailField label={t("table.created")}>{formatDashboardDate(detail.created_at, locale)}</DetailField></DetailGrid></DetailSection>{Array.isArray(detail.tags) ? <DetailSection title={t("field.tags")}><DetailTags tags={detail.tags.filter((tag): tag is string => typeof tag === "string")} /></DetailSection> : null}{Array.isArray(detail.entities) ? <DetailSection title={t("field.entities")}><DetailTags tags={detail.entities.filter((entity): entity is string => typeof entity === "string")} /></DetailSection> : null}</div> : null}
+        view={detail ? <div className="space-y-6"><DetailSection><DetailText>{detail.content ?? detail.summary ?? detail.text ?? memoryDraft.content}</DetailText></DetailSection><DetailSection><DetailGrid><DetailField label={t("table.id")}><span className="font-mono">{detail.id}</span></DetailField><DetailField label={t("table.type")}>{translateEnum(t, "memory.type", detail.type ?? memoryDraft.type)}</DetailField><DetailField label={t("table.status")}>{STATUS_LABELS[detail.status ?? memoryDraft.status] ?? detail.status ?? memoryDraft.status}</DetailField><DetailField label={t("table.importance")}>{formatDashboardNumber(normalizeImportance(detail.importance ?? memoryDraft.importance), locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</DetailField><DetailField label={t("table.created")}>{formatDashboardDate(detail.created_at, locale)}</DetailField></DetailGrid></DetailSection>{Array.isArray(detail.tags) ? <DetailSection title={t("field.tags")}><DetailTags tags={detail.tags.filter((tag): tag is string => typeof tag === "string")} /></DetailSection> : null}{Array.isArray(detail.entities) ? <DetailSection title={t("field.entities")}><DetailTags tags={detail.entities.filter((entity): entity is string => typeof entity === "string")} /></DetailSection> : null}<SourceReplayabilitySection replayability={detail.source_replayability} t={t} /></div> : null}
         form={<><MemoryForm value={editor.draft} onChange={(draft) => { (Object.keys(draft) as (keyof MemoryDraft)[]).forEach((field) => editor.setField(field, draft[field])); }} fieldErrors={editor.fieldErrors} formErrors={editor.formError ? [editor.formError] : []} disabled={editor.isSubmitting} mode="edit" /><Field data-disabled={editor.isSubmitting}><FieldLabel htmlFor="memory-edit-reason">{t("edit.reason")}</FieldLabel><Input id="memory-edit-reason" placeholder={t("edit.reason")} disabled={editor.isSubmitting} value={editReason} onChange={(event) => setEditReason(event.currentTarget.value)} /></Field></>}
       />
       <UnsavedChangesDialog open={closeConfirmationOpen} title={t("config.unsaved.title")} description={t("config.unsaved.description")} keepEditingLabel={t("config.unsaved.keepEditing")} discardLabel={t("config.unsaved.discard")} onKeepEditing={() => { setCloseConfirmationOpen(false); setPendingSelection(null); }} onDiscard={() => { const next = pendingSelection; setCloseConfirmationOpen(false); setPendingSelection(null); editor.cancel(); if (next) void fetchDetail(next); else setDetail(null); }} />

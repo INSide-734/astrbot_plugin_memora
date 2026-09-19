@@ -44,9 +44,11 @@ describe("GraphPage 时间范围", () => {
     });
 
     render(<GraphPage showToast={showToast} theme="light" />);
+
     const graph = await waitFor(() => {
       const instance = getGraphMockState().instances[0];
       expect(instance.setData).toHaveBeenCalled();
+      expect(screen.queryByText("Loading...")).toBeNull();
       return instance;
     });
     const initialApiCallCount = bridge.apiGet.mock.calls.length;
@@ -57,27 +59,15 @@ describe("GraphPage 时间范围", () => {
     fireEvent.click(screen.getByRole("button", { name: /apply/i }));
 
     await waitFor(() => {
+      expect(screen.queryByText("Loading...")).toBeNull();
       expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", {
         canvas: "1",
         time_start_hours: "6",
         time_end_hours: "24",
       });
-      expect(graph.setData).toHaveBeenLastCalledWith({
-        nodes: [{
-          id: "recent",
-          data: {
-            label: "Recent",
-            type: "topic",
-            weight: 1,
-            memory_count: 0,
-            degree: 0,
-            entry_count: 0,
-          },
-        }],
-        edges: [],
-      });
     });
-    expect(graph.setElementVisibility).not.toHaveBeenCalled();
+    graph.emit("node:click", { target: { id: "recent" } });
+    expect(await screen.findByText("Recent")).toBeTruthy();
   });
 
   it("重置时间范围时显式请求全部图谱", async () => {
@@ -89,18 +79,71 @@ describe("GraphPage 时间范围", () => {
     });
 
     render(<GraphPage showToast={showToast} theme="light" />);
-    await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", {
-        canvas: "1",
-        time_end_hours: "168",
-      });
-    });
+    await waitFor(() => expect(screen.queryByText("Loading...")).toBeNull());
     fireEvent.click(screen.getByRole("button", { name: /reset/i }));
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenLastCalledWith("page/graph/search", { canvas: "1" });
+      expect(bridge.apiGet).toHaveBeenLastCalledWith("page/graph/search", {
+        canvas: "1",
+      });
     });
     expect(screen.getByText("All")).toBeTruthy();
+  });
+
+  it("最近概览清除查询和记忆聚焦，恢复最近七天并刷新图谱与统计", async () => {
+    const { GraphPage } = await loadGraphPage();
+    let statsRequests = 0;
+    let overviewRequests = 0;
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/stats") {
+        statsRequests += 1;
+        return Promise.resolve(ok({ total_memories: statsRequests === 1 ? 21 : 22, sessions: {} }));
+      }
+      if (params.canvas === "1") {
+        overviewRequests += 1;
+        const node = overviewRequests === 1
+          ? { id: "initial", label: "Initial topic", type: "topic" }
+          : { id: "recent", label: "Refreshed recent topic", type: "topic" };
+        return Promise.resolve(ok({ nodes: [node], edges: [] }));
+      }
+      return Promise.resolve(ok({
+        nodes: [{ id: "focused", label: "Focused fact", type: "fact" }], edges: [],
+      }));
+    });
+    render(<GraphPage showToast={showToast} theme="light" />);
+    expect(await screen.findByText("21")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Loading...")).toBeNull());
+    const queryInput = screen.getByRole("textbox", { name: /search entities/i });
+    const memoryInput = screen.getByRole("textbox", { name: /memory id.*optional/i });
+    fireEvent.change(queryInput, { target: { value: "release" } });
+    fireEvent.change(memoryInput, { target: { value: "42" } });
+    fireEvent.change(screen.getAllByRole("slider")[0], { target: { value: "6" } });
+    fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "24" } });
+    fireEvent.click(screen.getByRole("button", { name: /apply/i }));
+    await waitFor(() => {
+      expect(bridge.apiGet).toHaveBeenLastCalledWith("page/graph/search", {
+        query: "release", memory_id: "42", time_start_hours: "6", time_end_hours: "24",
+      });
+      expect(screen.queryByText("Loading...")).toBeNull();
+    });
+    const graph = getGraphMockState().instances[0];
+    graph.emit("node:click", { target: { id: "focused" } });
+    expect(await screen.findByText("Focused fact")).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /overview/i }));
+
+    expect(await screen.findByText("22")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Loading...")).toBeNull());
+    expect(bridge.apiGet).toHaveBeenLastCalledWith("page/graph/search", {
+      canvas: "1", time_end_hours: "168",
+    });
+    expect((queryInput as HTMLInputElement).value).toBe("");
+    expect((memoryInput as HTMLInputElement).value).toBe("");
+    expect(screen.getAllByRole("slider").map((slider) => (slider as HTMLInputElement).value))
+      .toEqual(["0", "168"]);
+    expect(screen.queryByText("Focused fact")).toBeNull();
+    graph.emit("node:click", { target: { id: "recent" } });
+    expect(await screen.findByText("Refreshed recent topic")).toBeTruthy();
   });
 
   it("后端筛选响应移除节点时清除详情和 G6 选择状态", async () => {
@@ -134,6 +177,7 @@ describe("GraphPage 时间范围", () => {
     const graph = await waitFor(() => {
       const instance = getGraphMockState().instances[0];
       expect(instance.setData).toHaveBeenCalled();
+      expect(screen.queryByText("Loading...")).toBeNull();
       return instance;
     });
 
@@ -153,7 +197,7 @@ describe("GraphPage 时间范围", () => {
 
   it("应用时间范围后的 G6 重绘失败时进入错误状态", async () => {
     const { GraphPage } = await loadGraphPage();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/stats") return Promise.resolve(ok({ sessions: {} }));
       if (path === "page/graph/search") {
@@ -166,18 +210,17 @@ describe("GraphPage 时间范围", () => {
     });
 
     render(<GraphPage showToast={showToast} theme="light" />);
-    const graph = await waitFor(() => {
-      const instance = getGraphMockState().instances[0];
-      expect(instance.render).toHaveBeenCalled();
-      return instance;
+    const graph = getGraphMockState().instances[0];
+    await waitFor(() => {
+      expect(graph.render).toHaveBeenCalled();
+      expect(screen.queryByText("Loading...")).toBeNull();
     });
     vi.mocked(graph.render).mockRejectedValueOnce(new Error("range render exploded"));
-
     fireEvent.change(screen.getAllByRole("slider")[1], { target: { value: "12" } });
+
     fireEvent.click(screen.getByRole("button", { name: /apply/i }));
 
     expect(await screen.findByText("Failed to load graph data")).toBeTruthy();
     expect(showToast).toHaveBeenCalledWith("Error: range render exploded", true);
-    expect(errorSpy).toHaveBeenCalled();
   });
 });

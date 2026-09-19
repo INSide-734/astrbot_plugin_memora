@@ -2,8 +2,15 @@
 
 import pytest
 
-from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.domain.models import (
+    GraphBoundary,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 
 class TestGraphCRUDNodes:
@@ -21,7 +28,7 @@ class TestGraphCRUDNodes:
             canonical_value="xihu",
             metadata={"category": "scenic"},
         )
-        node_id = await store.upsert_node(node)
+        node_id = await store.upsert_node(node, boundary=BOUNDARY)
         assert node_id > 0
 
     @pytest.mark.asyncio
@@ -31,7 +38,7 @@ class TestGraphCRUDNodes:
         await store.initialize()
 
         node1 = GraphNode(node_type="entity", value="西湖", canonical_value="xihu")
-        id1 = await store.upsert_node(node1)
+        id1 = await store.upsert_node(node1, boundary=BOUNDARY)
 
         node2 = GraphNode(
             node_type="entity",
@@ -39,7 +46,7 @@ class TestGraphCRUDNodes:
             canonical_value="xihu",
             metadata={"updated": True},
         )
-        id2 = await store.upsert_node(node2)
+        id2 = await store.upsert_node(node2, boundary=BOUNDARY)
         assert id2 == id1
 
     @pytest.mark.asyncio
@@ -52,7 +59,7 @@ class TestGraphCRUDNodes:
             GraphNode(node_type="entity", value="小明", canonical_value="xiaoming"),
             GraphNode(node_type="entity", value="小红", canonical_value="xiaohong"),
         ]
-        mapping = await store.upsert_nodes(nodes)
+        mapping = await store.upsert_nodes(nodes, boundary=BOUNDARY)
         assert len(mapping) == 2
         assert all(v > 0 for v in mapping.values())
 
@@ -61,7 +68,7 @@ class TestGraphCRUDNodes:
         """upsert_nodes with empty list returns empty dict."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
-        assert await store.upsert_nodes([]) == {}
+        assert await store.upsert_nodes([], boundary=BOUNDARY) == {}
 
 
 class TestGraphCRUDEdges:
@@ -73,7 +80,7 @@ class TestGraphCRUDEdges:
             GraphNode(node_type="entity", value="小明", canonical_value="xiaoming"),
             GraphNode(node_type="entity", value="小红", canonical_value="xiaohong"),
         ]
-        return await store.upsert_nodes(nodes)
+        return await store.upsert_nodes(nodes, boundary=BOUNDARY)
 
     @pytest.mark.asyncio
     async def test_add_edge_insert(self, tmp_db_path):
@@ -89,12 +96,12 @@ class TestGraphCRUDEdges:
             source_memory_id=1,
             confidence=0.9,
         )
-        edge_id = await store.add_edge(edge, node_map)
+        edge_id = await store.add_edge(edge, node_map, boundary=BOUNDARY)
         assert edge_id > 0
 
     @pytest.mark.asyncio
-    async def test_add_edge_semantic_merge(self, tmp_db_path):
-        """Adding same relation between same nodes merges via EMA."""
+    async def test_add_edge_preserves_source_identity(self, tmp_db_path):
+        """Identical relations from different sources remain independently deletable."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
 
@@ -107,7 +114,7 @@ class TestGraphCRUDEdges:
             confidence=0.8,
             weight=1.0,
         )
-        id1 = await store.add_edge(edge1, node_map)
+        id1 = await store.add_edge(edge1, node_map, boundary=BOUNDARY)
 
         edge2 = GraphEdge(
             source_key="entity:xiaoming",
@@ -117,8 +124,12 @@ class TestGraphCRUDEdges:
             confidence=0.9,
             weight=1.0,
         )
-        id2 = await store.add_edge(edge2, node_map)
-        assert id2 == id1  # merged into existing
+        id2 = await store.add_edge(edge2, node_map, boundary=BOUNDARY)
+        assert id2 != id1
+        await store.delete_memory(1, boundary=BOUNDARY)
+        assert await store.get_neighbor_node_ids(
+            [node_map["entity:xiaoming"]], limit=10, boundary=BOUNDARY
+        ) == [node_map["entity:xiaohong"]]
 
     @pytest.mark.asyncio
     async def test_add_edges_batch(self, tmp_db_path):
@@ -135,7 +146,7 @@ class TestGraphCRUDEdges:
                 source_memory_id=1,
             ),
         ]
-        edge_map = await store.add_edges(edges, node_map)
+        edge_map = await store.add_edges(edges, node_map, boundary=BOUNDARY)
         assert len(edge_map) == 1
 
     @pytest.mark.asyncio
@@ -143,7 +154,7 @@ class TestGraphCRUDEdges:
         """add_edges with empty list returns empty dict."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
-        assert await store.add_edges([], {}) == {}
+        assert await store.add_edges([], {}, boundary=BOUNDARY) == {}
 
     @pytest.mark.asyncio
     async def test_add_edges_skips_missing_nodes(self, tmp_db_path):
@@ -159,7 +170,7 @@ class TestGraphCRUDEdges:
                 source_memory_id=1,
             ),
         ]
-        edge_map = await store.add_edges(edges, {})
+        edge_map = await store.add_edges(edges, {}, boundary=BOUNDARY)
         assert len(edge_map) == 0
 
 
@@ -171,14 +182,14 @@ class TestGraphCRUDEntries:
             GraphNode(node_type="entity", value="西湖", canonical_value="xihu"),
             GraphNode(node_type="entity", value="杭州", canonical_value="hangzhou"),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
         edge = GraphEdge(
             source_key="entity:xihu",
             target_key="entity:hangzhou",
             relation_type="位于",
             source_memory_id=1,
         )
-        edge_id = await store.add_edge(edge, node_map)
+        edge_id = await store.add_edge(edge, node_map, boundary=BOUNDARY)
         edge_map = {edge.edge_key: edge_id}
         return node_map, edge_map
 
@@ -199,7 +210,7 @@ class TestGraphCRUDEntries:
             node_keys=["entity:xihu", "entity:hangzhou"],
             relation_type="位于",
         )
-        entry_id = await store.add_entry(entry, node_map)
+        entry_id = await store.add_entry(entry, node_map, boundary=BOUNDARY)
         assert entry_id > 0
 
     @pytest.mark.asyncio
@@ -218,10 +229,10 @@ class TestGraphCRUDEntries:
             content="original content",
             node_keys=["entity:xihu", "entity:hangzhou"],
         )
-        id1 = await store.add_entry(entry, node_map)
+        id1 = await store.add_entry(entry, node_map, boundary=BOUNDARY)
 
         entry.content = "updated content"
-        id2 = await store.add_entry(entry, node_map)
+        id2 = await store.add_entry(entry, node_map, boundary=BOUNDARY)
         assert id2 == id1
 
     @pytest.mark.asyncio
@@ -243,7 +254,7 @@ class TestGraphCRUDEntries:
             )
             for i in range(3)
         ]
-        ids = await store.add_entries(entries, node_map, edge_map)
+        ids = await store.add_entries(entries, node_map, edge_map, boundary=BOUNDARY)
         assert len(ids) == 3
 
     @pytest.mark.asyncio
@@ -251,69 +262,4 @@ class TestGraphCRUDEntries:
         """add_entries with empty list returns empty list."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
-        assert await store.add_entries([], {}, {}) == []
-
-
-class TestGraphCRUDVectorDocIds:
-    """Vector document ID persistence."""
-
-    @pytest.mark.asyncio
-    async def test_update_entry_vector_doc_id(self, tmp_db_path):
-        """update_entry_vector_doc_id persists the vector doc id."""
-        store = GraphStore(tmp_db_path)
-        await store.initialize()
-
-        node = GraphNode(node_type="entity", value="test", canonical_value="test")
-        node_map = await store.upsert_nodes([node])
-        entry = GraphEntry(
-            entry_key="mem1:vec_test",
-            source_memory_id=1,
-            session_id="s1",
-            persona_id=None,
-            entry_type="fact",
-            content="test content",
-            node_keys=["entity:test"],
-        )
-        entry_id = await store.add_entry(entry, node_map)
-        await store.update_entry_vector_doc_id(entry_id, 42)
-        # No assertion needed — just verify it doesn't error; we trust the DB
-
-    @pytest.mark.asyncio
-    async def test_update_entry_vector_doc_ids_batch(self, tmp_db_path):
-        """update_entry_vector_doc_ids persists multiple vector doc ids."""
-        store = GraphStore(tmp_db_path)
-        await store.initialize()
-
-        node = GraphNode(node_type="entity", value="test2", canonical_value="test2")
-        node_map = await store.upsert_nodes([node])
-        entry1 = GraphEntry(
-            entry_key="mem1:vec_batch1",
-            source_memory_id=1,
-            session_id="s1",
-            persona_id=None,
-            entry_type="fact",
-            content="batch 1",
-            node_keys=["entity:test2"],
-        )
-        entry2 = GraphEntry(
-            entry_key="mem1:vec_batch2",
-            source_memory_id=1,
-            session_id="s1",
-            persona_id=None,
-            entry_type="fact",
-            content="batch 2",
-            node_keys=["entity:test2"],
-        )
-        id1 = await store.add_entry(entry1, node_map)
-        id2 = await store.add_entry(entry2, node_map)
-
-        await store.update_entry_vector_doc_ids({id1: 100, id2: 200})
-        # Should not error
-
-    @pytest.mark.asyncio
-    async def test_update_vector_doc_ids_empty(self, tmp_db_path):
-        """update_entry_vector_doc_ids with empty dict is a no-op."""
-        store = GraphStore(tmp_db_path)
-        await store.initialize()
-        # Should not raise
-        await store.update_entry_vector_doc_ids({})
+        assert await store.add_entries([], {}, {}, boundary=BOUNDARY) == []

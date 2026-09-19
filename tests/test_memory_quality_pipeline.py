@@ -33,6 +33,7 @@ from core.features.reflection.domain.summary_models import (
     SummaryWindowContext,
 )
 from core.shared.contracts.conversation import Message
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
 
 
 def _message(session_id: str, index: int, group_id: str | None = None) -> Message:
@@ -475,6 +476,12 @@ _OWNER_CONTENT = (
     "项目使用 SQLite 存储会话记录，每周五发布一次版本，发布前必须跑完回归测试"
 )
 _OWNER_SCOPE_KEY = "group:group-dedup:topic-a"
+_DEDUP_RESOLVER_REVISION = "revision-1"
+_DEDUP_FACT = "项目使用 SQLite 存储会话记录"
+_DEDUP_OWNER_FACTS = [_DEDUP_FACT, "每周五发布一次版本"]
+# 现有 owner 的逐事实用户证据；候选证据用独立消息号，合并后的并集可观察。
+_DEDUP_OWNER_EVIDENCE = fact_evidence(_DEDUP_OWNER_FACTS)
+_DEDUP_CANDIDATE_EVIDENCE = source_evidence(_DEDUP_FACT, message_id=9, message_seq=9)
 
 
 class _Cursor:
@@ -558,7 +565,7 @@ class _DedupEngine(_Engine):
 
 
 def _dedup_metadata(session_id: str) -> dict[str, Any]:
-    """构造同 scope 的既有 canonical metadata。"""
+    """构造同 scope、带逐事实用户证据的既有 canonical metadata。"""
 
     return {
         "scope_key": _OWNER_SCOPE_KEY,
@@ -566,21 +573,23 @@ def _dedup_metadata(session_id: str) -> dict[str, Any]:
         "chat_type": "group",
         "session_id": session_id,
         "persona_id": None,
+        "resolver_revision": _DEDUP_RESOLVER_REVISION,
         "participant_ids": ["user-1", "user-2"],
-        "key_facts": ["项目使用 SQLite 存储会话记录", "每周五发布一次版本"],
+        "key_facts": list(_DEDUP_OWNER_FACTS),
+        "fact_source_evidence": _DEDUP_OWNER_EVIDENCE,
         "status": "active",
         "importance": 0.3,
     }
 
 
 def _dedup_candidate(content: str) -> dict[str, Any]:
-    """构造带事实证据的近重复候选。"""
+    """构造带逐事实用户证据的近重复候选。"""
 
     candidate = _candidate(content)
     candidate["metadata"] = {
-        "key_facts": ["项目使用 SQLite 存储会话记录"],
+        "key_facts": [_DEDUP_FACT],
+        "fact_source_evidence": [_DEDUP_CANDIDATE_EVIDENCE],
         "participant_ids": ["user-1"],
-        "source_refs": [{"message_index": 0, "start": 0, "end": 3}],
     }
     return candidate
 
@@ -589,7 +598,10 @@ def _dedup_candidate(content: str) -> dict[str, Any]:
 async def test_worker_merges_near_duplicate_instead_of_inserting(
     tmp_db_path: str,
 ) -> None:
-    """enforce 模式下同 scope 近重复候选只强化 owner 并正常推进窗口。"""
+    """enforce 模式下同 scope 近重复候选只强化 owner 并正常推进窗口。
+
+    既有 canonical 必须具备可信 scope 修订与逐事实用户证据才可被强化。
+    """
 
     from core.features.memory.infrastructure.dedup_metrics_store import (
         DedupMetricsStore,
@@ -617,7 +629,7 @@ async def test_worker_merges_near_duplicate_instead_of_inserting(
             store,
             session_id="dedup-session",
             group_id="group-dedup",
-            scope=(_OWNER_SCOPE_KEY, "public", "revision-1"),
+            scope=(_OWNER_SCOPE_KEY, "public", _DEDUP_RESOLVER_REVISION),
         )
         outcome = await worker.execute(claim)
         committed = await store.commit_window(claim, outcome)
@@ -630,8 +642,9 @@ async def test_worker_merges_near_duplicate_instead_of_inserting(
         assert committed.accepted is True
         assert engine.owner_metadata["merge_count"] == 1
         assert engine.owner_metadata["importance"] == pytest.approx(0.8)
-        assert engine.owner_metadata["source_refs"] == [
-            {"message_index": 0, "start": 0, "end": 3}
+        assert engine.owner_metadata["fact_source_evidence"] == [
+            [*_DEDUP_OWNER_EVIDENCE[0], *_DEDUP_CANDIDATE_EVIDENCE],
+            _DEDUP_OWNER_EVIDENCE[1],
         ]
         assert engine.owner_metadata["merged_idempotency_keys"]
         summary = await metrics_store.summary("24h")
@@ -673,7 +686,7 @@ async def test_worker_writes_normally_when_dedup_disabled(tmp_db_path: str) -> N
             store,
             session_id="plain-session",
             group_id="group-dedup",
-            scope=(_OWNER_SCOPE_KEY, "public", "revision-1"),
+            scope=(_OWNER_SCOPE_KEY, "public", _DEDUP_RESOLVER_REVISION),
         )
         outcome = await worker.execute(claim)
 

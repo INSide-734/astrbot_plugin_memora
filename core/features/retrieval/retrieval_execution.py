@@ -9,6 +9,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ..memory.graph.domain.models import GraphQueryScope
+
 
 @dataclass(frozen=True, slots=True)
 class RouteOutcome:
@@ -49,6 +51,7 @@ class RouteExecutionCoordinator:
         reference_time: Any = None,
         deadline_monotonic: float | None = None,
         use_graph_route: bool = True,
+        query_scope: GraphQueryScope | None = None,
     ) -> RouteOutcome:
         """并发启动三路检索，并在调用方取消后收敛所有子任务。"""
         timing: dict[str, float | bool] = {}
@@ -102,6 +105,7 @@ class RouteExecutionCoordinator:
                     reference_time=reference_time,
                     timing_sink=route_timing,
                     deadline_monotonic=deadline_monotonic,
+                    query_scope=query_scope,
                 )
                 route_timing.setdefault(
                     "graph_total_ms", (time.perf_counter() - started) * 1000.0

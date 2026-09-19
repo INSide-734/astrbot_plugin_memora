@@ -16,6 +16,7 @@ from core.features.injection.domain.models import (
     InjectionOutcome,
 )
 from core.features.retrieval.rrf_fusion import HybridResult
+from tests.fact_evidence_helpers import candidate_evidence_metadata
 
 # ============================================================================
 # RecallHandler tests
@@ -348,7 +349,7 @@ class TestRecallHandlerFinalizeCandidates:
                 bm25_score=None,
                 vector_score=None,
                 content="main-1",
-                metadata={},
+                metadata=candidate_evidence_metadata("main-1"),
             ),
             HybridResult(
                 doc_id=2,
@@ -357,7 +358,7 @@ class TestRecallHandlerFinalizeCandidates:
                 bm25_score=None,
                 vector_score=None,
                 content="main-2",
-                metadata={},
+                metadata=candidate_evidence_metadata("main-2"),
             ),
             HybridResult(
                 doc_id=3,
@@ -366,7 +367,7 @@ class TestRecallHandlerFinalizeCandidates:
                 bm25_score=None,
                 vector_score=None,
                 content="main-3",
-                metadata={},
+                metadata=candidate_evidence_metadata("main-3"),
             ),
             HybridResult(
                 doc_id=4,
@@ -375,7 +376,7 @@ class TestRecallHandlerFinalizeCandidates:
                 bm25_score=None,
                 vector_score=None,
                 content="main-4",
-                metadata={},
+                metadata=candidate_evidence_metadata("main-4"),
             ),
             HybridResult(
                 doc_id=5,
@@ -384,7 +385,7 @@ class TestRecallHandlerFinalizeCandidates:
                 bm25_score=None,
                 vector_score=None,
                 content="main-5",
-                metadata={},
+                metadata=candidate_evidence_metadata("main-5"),
             ),
             HybridResult(
                 doc_id=3,
@@ -393,7 +394,9 @@ class TestRecallHandlerFinalizeCandidates:
                 bm25_score=None,
                 vector_score=None,
                 content="prospective duplicate",
-                metadata={"recall_source": "prospective"},
+                metadata=candidate_evidence_metadata(
+                    "prospective duplicate", recall_source="prospective"
+                ),
             ),
             HybridResult(
                 doc_id=6,
@@ -402,7 +405,9 @@ class TestRecallHandlerFinalizeCandidates:
                 bm25_score=None,
                 vector_score=None,
                 content="spontaneous",
-                metadata={"recall_source": "spontaneous"},
+                metadata=candidate_evidence_metadata(
+                    "spontaneous", recall_source="spontaneous"
+                ),
             ),
             HybridResult(
                 doc_id=7,
@@ -411,7 +416,9 @@ class TestRecallHandlerFinalizeCandidates:
                 bm25_score=None,
                 vector_score=None,
                 content="prospective",
-                metadata={"recall_source": "prospective"},
+                metadata=candidate_evidence_metadata(
+                    "prospective", recall_source="prospective"
+                ),
             ),
         ]
 
@@ -720,7 +727,13 @@ class TestReflectionHandlerPromptProtection:
             ),
             InjectionExecutionContext(
                 query="question",
-                memories=[{"content": secret, "score": 1.0, "metadata": {}}],
+                memories=[
+                    {
+                        "content": secret,
+                        "score": 1.0,
+                        "metadata": candidate_evidence_metadata(secret),
+                    }
+                ],
                 scope_id="scope-visible",
             ),
         )
@@ -886,7 +899,9 @@ def high_confidence_memories() -> list[HybridResult]:
             bm25_score=None,
             vector_score=None,
             content=f"memory-{index}",
-            metadata={"importance": 0.8, "create_time": 1_783_150_200},
+            metadata=candidate_evidence_metadata(
+                f"memory-{index}", importance=0.8, create_time=1_783_150_200
+            ),
         )
         for index, score in enumerate((0.95, 0.82, 0.61), start=1)
     ]

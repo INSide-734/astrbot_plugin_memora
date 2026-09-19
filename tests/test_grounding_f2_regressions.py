@@ -292,6 +292,9 @@ async def test_processor_keeps_assistant_only_claim_out_of_writable_atoms() -> N
                     "sentiment": "neutral",
                     "importance": 0.7,
                     "source_refs": [_full_ref(1, assistant)],
+                    # 逐事实证据必须与 key_facts 按下标对齐；这里让角色门
+                    # （而不是结构不匹配）成为拒绝原因。
+                    "fact_source_refs": [[_full_ref(1, assistant)]],
                 }
             ]
         },
@@ -305,12 +308,15 @@ async def test_processor_keeps_assistant_only_claim_out_of_writable_atoms() -> N
         _message(1, assistant, role="assistant"),
     ]
 
-    results = await processor.process_conversation(messages)
+    # 窗口稳定序号与消息同序传入：证据带上可重定位的 message_seq 后，
+    # 角色门（而非证据形状校验）才是这条 assistant-only 事实的拒绝原因。
+    results = await processor.process_conversation(messages, message_seqs=(1, 2))
 
     assert len(results) == 1
     metadata = results[0]["metadata"]
     assert metadata["quality_gate_action"] == "quarantine"
-    assert "grounding_user_source_missing" in metadata["grounding_reason_codes"]
+    # 逐事实证据按下标对齐且可重定位，拒绝原因只能来自角色门。
+    assert metadata["grounding_reason_codes"] == ["grounding_user_source_missing"]
     assert results[0]["atoms"] == []
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -76,6 +77,40 @@ _ATOM_TTL_CONFIG: dict[AtomType, dict[str, Any]] = {
 }
 
 
+def is_resolved_source_reference(value: object) -> bool:
+    """Accept only complete server-resolved message evidence, never legacy refs."""
+    if not isinstance(value, Mapping):
+        return False
+    for key, minimum in (
+        ("message_id", 1),
+        ("message_seq", 0),
+        ("start", 0),
+        ("end", 1),
+    ):
+        number = value.get(key)
+        if isinstance(number, bool) or not isinstance(number, int) or number < minimum:
+            return False
+    fingerprint = value.get("message_fingerprint")
+    return (
+        value["end"] > value["start"]
+        and value.get("role") in ("user", "assistant", "system", "tool")
+        and isinstance(fingerprint, str)
+        and len(fingerprint) == 64
+        and all(char in "0123456789abcdef" for char in fingerprint)
+    )
+
+
+def has_user_source_evidence(value: object) -> bool:
+    """Require a complete evidence group with at least one user source."""
+    return (
+        isinstance(value, Sequence)
+        and not isinstance(value, (str, bytes))
+        and bool(value)
+        and all(is_resolved_source_reference(item) for item in value)
+        and any(item["role"] == "user" for item in value)
+    )
+
+
 @dataclass(slots=True)
 class MemoryAtom:
     """从对话中提取出的细粒度、时间感知型记忆单元。"""
@@ -109,6 +144,7 @@ class MemoryAtom:
     parent_revision: str | None = None
     parent_scope_key: str | None = None
     parent_privacy_level: str | None = None
+    source_evidence: list[dict[str, Any]] = field(default_factory=list)
 
     # 内部 ID，在插入后写入
     atom_id: int = 0
@@ -204,4 +240,6 @@ __all__ = [
     "PrivacyLevel",
     "compute_decay_score",
     "compute_ttl",
+    "has_user_source_evidence",
+    "is_resolved_source_reference",
 ]

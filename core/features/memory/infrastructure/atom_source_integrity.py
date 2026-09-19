@@ -7,7 +7,7 @@ from typing import Any
 
 import aiosqlite
 
-from ..domain.memory_atom import MemoryAtom
+from ..domain.memory_atom import MemoryAtom, has_user_source_evidence
 from .canonical_source_validation import (
     load_canonical_source_states,
     source_matches_state,
@@ -25,6 +25,8 @@ async def validate_atom_parent_sources(
     orphan/pending 一并清除；只有真正的失效来源才拒绝派生写入。
     """
 
+    if any(not has_user_source_evidence(atom.source_evidence) for atom in atoms):
+        raise ValueError("grounding_source_evidence_invalid")
     if not atoms or not await _documents_table_exists(db):
         return
     source_ids = tuple(sorted({atom.parent_memory_id for atom in atoms}))
@@ -61,6 +63,7 @@ async def filter_atoms_by_current_sources(
 ) -> list[MemoryAtom]:
     """仅保留来源三元组完整且仍与 canonical 一致的 Atom。"""
 
+    atoms = [atom for atom in atoms if has_user_source_evidence(atom.source_evidence)]
     if not atoms:
         return []
     if not await _documents_table_exists(db):

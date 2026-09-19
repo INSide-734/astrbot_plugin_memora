@@ -308,7 +308,8 @@ class SummaryWorkerCandidateMixin:
         self,
         candidates: Sequence[dict[str, Any]],
     ) -> dict[str, int]:
-        """用 canonical 幂等索引识别崩溃后已写成功的候选及其 ID。"""
+        """识别已写成功的候选；暂存/拒绝 owner 不得推进窗口 cursor。"""
+
         finder = getattr(
             self._memory_engine,
             "find_memory_id_by_idempotency_key",
@@ -316,6 +317,7 @@ class SummaryWorkerCandidateMixin:
         )
         if not callable(finder):
             return {}
+        verifier = getattr(self._memory_engine, "is_memory_source_accepted", None)
         finder_call = cast(Callable[[str], Awaitable[int | None]], finder)
         completed: dict[str, int] = {}
         try:
@@ -326,6 +328,12 @@ class SummaryWorkerCandidateMixin:
                     continue
                 if isinstance(owner, bool) or not isinstance(owner, int) or owner <= 0:
                     raise ValueError("canonical_owner_invalid")
+                if callable(verifier):
+                    accepted = verifier(owner)
+                    if inspect.isawaitable(accepted):
+                        accepted = await accepted
+                    if accepted is not True:
+                        continue
                 completed[key] = owner
         except asyncio.CancelledError:
             raise

@@ -29,6 +29,7 @@ from core.platform.config import (
 )
 from core.platform.config.config_validator import get_default_config, validate_config
 from core.platform.transport.tools.memory_search_tool import MemorySearchTool
+from tests.fact_evidence_helpers import fact_evidence
 from tests.tool_contract_support import call_text_handler
 
 
@@ -510,8 +511,10 @@ async def test_emotion_and_seasonal_boost_modes_have_neutral_paths() -> None:
 def test_atom_negation_detection_can_be_disabled_end_to_end() -> None:
     """关闭否定检测后分类器和 MemoryProcessor 都不得写入负极性。"""
 
+    evidence = fact_evidence(["明天不去跑步"])
     atoms = classify_atoms(
         ["明天不去跑步"],
+        evidence,
         enable_quality_filter=False,
         enable_negation_detection=False,
     )
@@ -525,7 +528,12 @@ def test_atom_negation_detection_can_be_disabled_end_to_end() -> None:
             "atom_classifier.negation_detection_enabled": False,
         }
     )
-    processed = processor.classify_atoms_from_metadata({"key_facts": ["明天不去跑步"]})
+    processed = processor.classify_atoms_from_metadata(
+        {
+            "key_facts": ["明天不去跑步"],
+            "fact_source_evidence": evidence,
+        }
+    )
     assert processed[0].atom_type.value == "planned"
     assert "polarity" not in processed[0].metadata
 

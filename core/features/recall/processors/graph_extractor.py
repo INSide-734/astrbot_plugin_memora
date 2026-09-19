@@ -13,6 +13,7 @@ from ....platform.security.guardrails import (
 )
 from ...memory.graph.domain.models import (
     ExtractedGraph,
+    GraphBoundary,
     GraphEdge,
     GraphEntry,
     GraphNode,
@@ -65,6 +66,7 @@ class GraphExtractor:
         atoms: list | None = None,
     ) -> ExtractedGraph:
         """根据一条记忆文档构建图快照。"""
+        GraphBoundary.from_metadata(metadata)
         if atoms:
             return extract_graph_from_atoms(
                 source_memory_id,

@@ -2,8 +2,15 @@
 
 import pytest
 
-from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.domain.models import (
+    GraphBoundary,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 
 class TestGraphQueryFilters:
@@ -17,7 +24,7 @@ class TestGraphQueryFilters:
             ),
             GraphNode(node_type="entity", value="Target", canonical_value="target"),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
 
         # Entry for session s1 / persona p1
         edge1 = GraphEdge(
@@ -26,7 +33,7 @@ class TestGraphQueryFilters:
             relation_type="related",
             source_memory_id=10,
         )
-        edge_id1 = await store.add_edge(edge1, node_map)
+        edge_id1 = await store.add_edge(edge1, node_map, boundary=BOUNDARY)
         entry1 = GraphEntry(
             entry_key="mem10:filter_entry",
             source_memory_id=10,
@@ -37,7 +44,7 @@ class TestGraphQueryFilters:
             node_keys=["entity:filtertest", "entity:target"],
             relation_type="related",
         )
-        await store.add_entry(entry1, node_map, edge_id1)
+        await store.add_entry(entry1, node_map, edge_id1, boundary=BOUNDARY)
 
         # Entry for session s2 / persona p2
         edge2 = GraphEdge(
@@ -46,7 +53,7 @@ class TestGraphQueryFilters:
             relation_type="linked",
             source_memory_id=20,
         )
-        edge_id2 = await store.add_edge(edge2, node_map)
+        edge_id2 = await store.add_edge(edge2, node_map, boundary=BOUNDARY)
         entry2 = GraphEntry(
             entry_key="mem20:filter_entry",
             source_memory_id=20,
@@ -57,7 +64,7 @@ class TestGraphQueryFilters:
             node_keys=["entity:filtertest", "entity:target"],
             relation_type="linked",
         )
-        await store.add_entry(entry2, node_map, edge_id2)
+        await store.add_entry(entry2, node_map, edge_id2, boundary=BOUNDARY)
 
         return node_map
 
@@ -69,7 +76,7 @@ class TestGraphQueryFilters:
         await self._setup_filtered_data(store)
 
         results = await store.search_entries_by_bm25(
-            "Filter", limit=10, session_id="s-filter-1"
+            "Filter", limit=10, session_id="s-filter-1", boundary=BOUNDARY
         )
         assert len(results) >= 1
         # All results should match the session filter
@@ -84,7 +91,7 @@ class TestGraphQueryFilters:
         await self._setup_filtered_data(store)
 
         results = await store.search_entries_by_bm25(
-            "Filter", limit=10, persona_id="p-filter-1"
+            "Filter", limit=10, persona_id="p-filter-1", boundary=BOUNDARY
         )
         assert len(results) >= 1
 
@@ -96,7 +103,11 @@ class TestGraphQueryFilters:
         await self._setup_filtered_data(store)
 
         results = await store.search_entries_by_bm25(
-            "Filter", limit=10, session_id="s-filter-1", persona_id="p-filter-1"
+            "Filter",
+            limit=10,
+            session_id="s-filter-1",
+            persona_id="p-filter-1",
+            boundary=BOUNDARY,
         )
         assert len(results) >= 1
 
@@ -109,7 +120,7 @@ class TestGraphQueryFilters:
 
         target_id = node_map["entity:target"]
         results = await store.get_entries_for_node_ids(
-            [target_id], limit=10, session_id="s-filter-1"
+            [target_id], limit=10, session_id="s-filter-1", boundary=BOUNDARY
         )
         assert len(results) >= 1
 
@@ -122,7 +133,7 @@ class TestGraphQueryFilters:
 
         target_id = node_map["entity:target"]
         results = await store.get_entries_for_node_ids(
-            [target_id], limit=10, persona_id="p-filter-1"
+            [target_id], limit=10, persona_id="p-filter-1", boundary=BOUNDARY
         )
         assert len(results) >= 1
 
@@ -135,7 +146,11 @@ class TestGraphQueryFilters:
 
         target_id = node_map["entity:target"]
         results = await store.get_entries_for_node_ids(
-            [target_id], limit=10, session_id="s-filter-1", persona_id="p-filter-1"
+            [target_id],
+            limit=10,
+            session_id="s-filter-1",
+            persona_id="p-filter-1",
+            boundary=BOUNDARY,
         )
         assert len(results) >= 1
 
@@ -144,7 +159,7 @@ class TestGraphQueryFilters:
         """get_neighbor_node_ids with empty list returns empty list."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
-        result = await store.get_neighbor_node_ids([], limit=10)
+        result = await store.get_neighbor_node_ids([], limit=10, boundary=BOUNDARY)
         assert result == []
 
     @pytest.mark.asyncio
@@ -154,7 +169,9 @@ class TestGraphQueryFilters:
         await store.initialize()
         await self._setup_filtered_data(store)
 
-        results = await store.get_recent_memory_ids(limit=10, session_id="s-filter-1")
+        results = await store.get_recent_memory_ids(
+            limit=10, session_id="s-filter-1", boundary=BOUNDARY
+        )
         assert len(results) >= 1
 
     @pytest.mark.asyncio
@@ -164,7 +181,9 @@ class TestGraphQueryFilters:
         await store.initialize()
         await self._setup_filtered_data(store)
 
-        results = await store.get_recent_memory_ids(limit=10, persona_id="p-filter-1")
+        results = await store.get_recent_memory_ids(
+            limit=10, persona_id="p-filter-1", boundary=BOUNDARY
+        )
         assert len(results) >= 1
 
     @pytest.mark.asyncio
@@ -175,6 +194,9 @@ class TestGraphQueryFilters:
         await self._setup_filtered_data(store)
 
         results = await store.get_recent_memory_ids(
-            limit=10, session_id="s-filter-1", persona_id="p-filter-1"
+            limit=10,
+            session_id="s-filter-1",
+            persona_id="p-filter-1",
+            boundary=BOUNDARY,
         )
         assert len(results) >= 1

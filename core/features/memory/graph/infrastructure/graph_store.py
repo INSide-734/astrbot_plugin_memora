@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from ..domain.models import GraphEdge, GraphEntry, GraphNode
+from ...domain.revision import memory_revision
+from ..domain.models import GraphBoundary, GraphEdge, GraphEntry, GraphNode
 from .graph_canvas import GraphCanvasMixin
 from .graph_crud import GraphCRUDMixin
 from .graph_delete import GraphDeleteMixin
@@ -36,111 +37,147 @@ class GraphStore(
         self.db_path = db_path
 
     async def initialize(self) -> None:
-        """创建图记忆层使用的数据表。"""
+        """Migrate only derived tables, preserving legacy rows as boundary-incomplete."""
+        schemas = {
+            "graph_nodes": """
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                node_key TEXT NOT NULL,
+                node_type TEXT NOT NULL,
+                node_value TEXT NOT NULL,
+                canonical_value TEXT NOT NULL,
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                scope_key TEXT, privacy_level TEXT, revision_token TEXT,
+                UNIQUE(node_key, scope_key, privacy_level, revision_token)
+            """,
+            "graph_edges": """
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                edge_key TEXT NOT NULL,
+                source_node_id INTEGER NOT NULL,
+                target_node_id INTEGER NOT NULL,
+                relation_type TEXT NOT NULL,
+                source_memory_id INTEGER NOT NULL,
+                weight REAL NOT NULL DEFAULT 1.0,
+                confidence REAL NOT NULL DEFAULT 0.8,
+                status TEXT NOT NULL DEFAULT 'active',
+                metadata TEXT DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                scope_key TEXT, privacy_level TEXT, revision_token TEXT,
+                UNIQUE(source_memory_id, source_node_id, target_node_id,
+                       relation_type, scope_key, privacy_level, revision_token),
+                FOREIGN KEY(source_node_id) REFERENCES graph_nodes(id) ON DELETE CASCADE,
+                FOREIGN KEY(target_node_id) REFERENCES graph_nodes(id) ON DELETE CASCADE
+            """,
+            "graph_entries": """
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                entry_key TEXT NOT NULL,
+                source_memory_id INTEGER NOT NULL,
+                session_id TEXT, persona_id TEXT,
+                entry_type TEXT NOT NULL,
+                relation_type TEXT,
+                content TEXT NOT NULL,
+                metadata TEXT DEFAULT '{}',
+                edge_id INTEGER,
+                vector_doc_id INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                scope_key TEXT, privacy_level TEXT, revision_token TEXT,
+                UNIQUE(entry_key, source_memory_id, scope_key, privacy_level, revision_token),
+                FOREIGN KEY(edge_id) REFERENCES graph_edges(id) ON DELETE CASCADE
+            """,
+        }
         async with self._connect() as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS graph_nodes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    node_key TEXT NOT NULL UNIQUE,
-                    node_type TEXT NOT NULL,
-                    node_value TEXT NOT NULL,
-                    canonical_value TEXT NOT NULL,
-                    metadata TEXT DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+            # SQLite's table replacement must not cascade into the preserved links.
+            await db.execute("PRAGMA foreign_keys = OFF")
+            await db.execute("BEGIN IMMEDIATE")
+            try:
+                for table, schema in schemas.items():
+                    cursor = await db.execute(f"PRAGMA table_info({table})")
+                    columns = [str(row[1]) for row in await cursor.fetchall()]
+                    if columns and not {
+                        "scope_key",
+                        "privacy_level",
+                        "revision_token",
+                    }.issubset(columns):
+                        await db.execute(f"CREATE TABLE {table}_boundary ({schema})")
+                        # Column names come only from the existing SQLite schema.
+                        names = ", ".join(
+                            '"' + name.replace('"', '""') + '"' for name in columns
+                        )
+                        await db.execute(
+                            f"INSERT INTO {table}_boundary ({names}) SELECT {names} FROM {table}"
+                        )
+                        await db.execute(f"DROP TABLE {table}")
+                        await db.execute(
+                            f"ALTER TABLE {table}_boundary RENAME TO {table}"
+                        )
+                    else:
+                        await db.execute(
+                            f"CREATE TABLE IF NOT EXISTS {table} ({schema})"
+                        )
+                    await db.execute(
+                        f"CREATE INDEX IF NOT EXISTS idx_{table}_boundary "
+                        f"ON {table}(scope_key, privacy_level, revision_token)"
+                    )
+                    for operation in ("INSERT", "UPDATE"):
+                        await db.execute(
+                            f"""CREATE TRIGGER IF NOT EXISTS {table}_boundary_{operation.lower()}
+                            BEFORE {operation} ON {table}
+                            WHEN NEW.scope_key IS NULL OR trim(NEW.scope_key) = ''
+                              OR NEW.privacy_level IS NULL
+                              OR NEW.privacy_level NOT IN ('public', 'shared', 'confidential')
+                              OR NEW.revision_token IS NULL OR trim(NEW.revision_token) = ''
+                            BEGIN SELECT RAISE(ABORT, 'graph_boundary_required'); END"""
+                        )
+                await db.execute(
+                    """CREATE TABLE IF NOT EXISTS graph_entry_nodes (
+                        entry_id INTEGER NOT NULL, node_id INTEGER NOT NULL,
+                        PRIMARY KEY(entry_id, node_id),
+                        FOREIGN KEY(entry_id) REFERENCES graph_entries(id) ON DELETE CASCADE,
+                        FOREIGN KEY(node_id) REFERENCES graph_nodes(id) ON DELETE CASCADE
+                    )"""
                 )
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS graph_edges (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    edge_key TEXT NOT NULL UNIQUE,
-                    source_node_id INTEGER NOT NULL,
-                    target_node_id INTEGER NOT NULL,
-                    relation_type TEXT NOT NULL,
-                    source_memory_id INTEGER NOT NULL,
-                    weight REAL NOT NULL DEFAULT 1.0,
-                    confidence REAL NOT NULL DEFAULT 0.8,
-                    status TEXT NOT NULL DEFAULT 'active',
-                    metadata TEXT DEFAULT '{}',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY(source_node_id) REFERENCES graph_nodes(id) ON DELETE CASCADE,
-                    FOREIGN KEY(target_node_id) REFERENCES graph_nodes(id) ON DELETE CASCADE
+                await db.execute(
+                    """CREATE VIRTUAL TABLE IF NOT EXISTS memora_graph_entries_fts
+                    USING fts5(content, entry_id UNINDEXED, tokenize='unicode61')"""
                 )
-                """
+                indexes = {
+                    "idx_graph_nodes_canonical": "graph_nodes(canonical_value)",
+                    "idx_graph_edges_memory_id": "graph_edges(source_memory_id, scope_key, privacy_level, revision_token)",
+                    "idx_graph_entries_memory_id": "graph_entries(source_memory_id, scope_key, privacy_level, revision_token)",
+                    "idx_graph_entries_scope_latest": "graph_entries(session_id, persona_id, source_memory_id, id DESC)",
+                    "idx_graph_entries_session_id": "graph_entries(session_id)",
+                    "idx_graph_entries_persona_id": "graph_entries(persona_id)",
+                    "idx_graph_entry_nodes_node": "graph_entry_nodes(node_id)",
+                }
+                for name, target in indexes.items():
+                    await db.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {target}")
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
+            finally:
+                await db.execute("PRAGMA foreign_keys = ON")
+
+    async def load_source_memory(
+        self, source_memory_id: int
+    ) -> tuple[str, dict[str, Any]]:
+        """Read the canonical source; graph metadata is never its own authority."""
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "SELECT text, metadata, created_at, updated_at FROM documents WHERE id = ?",
+                (source_memory_id,),
             )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS graph_entries (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    entry_key TEXT NOT NULL UNIQUE,
-                    source_memory_id INTEGER NOT NULL,
-                    session_id TEXT,
-                    persona_id TEXT,
-                    entry_type TEXT NOT NULL,
-                    relation_type TEXT,
-                    content TEXT NOT NULL,
-                    metadata TEXT DEFAULT '{}',
-                    edge_id INTEGER,
-                    vector_doc_id INTEGER,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    FOREIGN KEY(edge_id) REFERENCES graph_edges(id) ON DELETE CASCADE
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS graph_entry_nodes (
-                    entry_id INTEGER NOT NULL,
-                    node_id INTEGER NOT NULL,
-                    PRIMARY KEY(entry_id, node_id),
-                    FOREIGN KEY(entry_id) REFERENCES graph_entries(id) ON DELETE CASCADE,
-                    FOREIGN KEY(node_id) REFERENCES graph_nodes(id) ON DELETE CASCADE
-                )
-                """
-            )
-            await db.execute(
-                """
-                CREATE VIRTUAL TABLE IF NOT EXISTS memora_graph_entries_fts
-                USING fts5(content, entry_id UNINDEXED, tokenize='unicode61')
-                """
-            )
-            await db.commit()
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_graph_nodes_canonical ON graph_nodes(canonical_value)"
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_graph_edges_semantic
-                ON graph_edges(source_node_id, target_node_id, relation_type)
-                """
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_graph_edges_memory_id ON graph_edges(source_memory_id)"
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_graph_entries_memory_id ON graph_entries(source_memory_id)"
-            )
-            await db.execute(
-                """
-                CREATE INDEX IF NOT EXISTS idx_graph_entries_scope_latest
-                ON graph_entries(session_id, persona_id, source_memory_id, id DESC)
-                """
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_graph_entries_session_id ON graph_entries(session_id)"
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_graph_entries_persona_id ON graph_entries(persona_id)"
-            )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_graph_entry_nodes_node ON graph_entry_nodes(node_id)"
-            )
-            await db.commit()
+            row = await cursor.fetchone()
+        if row is None:
+            raise ValueError("graph_boundary_required")
+        metadata = dict(self._from_json(row[1]))
+        revision = memory_revision({"created_at": row[2], "updated_at": row[3]})
+        metadata["revision_token"] = revision
+        GraphBoundary.from_metadata(metadata)
+        return str(row[0]), metadata
 
     async def replace_memory_graph(
         self,
@@ -148,19 +185,33 @@ class GraphStore(
         nodes: list[GraphNode],
         edges: list[GraphEdge],
         entries: list[GraphEntry],
+        *,
+        boundary: GraphBoundary,
     ) -> GraphReplaceResult:
-        """在一个 SQLite 事务中替换源记忆的全部结构化图产物。"""
+        """在一个 SQLite 事务中替换源记忆的全部结构化图产物。
+
+        事务内先按 canonical 源记忆回收全部 revision 与 legacy 行，
+        再写入新边界产物，避免旧 revision 残留。
+        """
+        GraphBoundary.require(boundary)
+        if any(
+            item.source_memory_id != source_memory_id for item in (*edges, *entries)
+        ):
+            raise ValueError("graph_boundary_mismatch")
         now = self._now_iso()
         async with self._connect() as db:
             await db.execute("BEGIN IMMEDIATE")
             try:
-                await self._delete_memory_rows(db, source_memory_id)
-                node_key_to_id = await self._upsert_nodes(db, nodes, now)
+                await self._delete_memories_rows(db, [source_memory_id])
+                node_key_to_id = await self._upsert_nodes(
+                    db, nodes, now, boundary=boundary
+                )
                 edge_key_to_id = await self._add_edges(
                     db,
                     edges,
                     node_key_to_id,
                     now,
+                    boundary=boundary,
                 )
                 entry_ids = await self._add_entries(
                     db,
@@ -168,6 +219,7 @@ class GraphStore(
                     node_key_to_id,
                     edge_key_to_id,
                     now,
+                    boundary=boundary,
                 )
                 await self._delete_orphan_nodes(db)
                 await db.commit()
@@ -190,21 +242,26 @@ class GraphStore(
         limit_nodes: int = 48,
         limit_edges: int = 72,
         *,
+        boundary: GraphBoundary,
         full: bool = False,
     ) -> dict[str, Any]:
         """返回图概览；全量模式跳过记忆、条目、节点和边数量裁剪。"""
+        GraphBoundary.require(boundary)
         if full:
             return await self._get_full_graph_snapshot(
                 session_id=session_id,
                 persona_id=persona_id,
+                boundary=boundary,
             )
         memory_ids = await self.get_recent_memory_ids(
             limit=limit_memories,
             session_id=session_id,
             persona_id=persona_id,
+            boundary=boundary,
         )
         return await self.get_subgraph_for_memories(
             memory_ids,
+            boundary=boundary,
             limit_entries=limit_entries,
             limit_nodes=limit_nodes,
             limit_edges=limit_edges,

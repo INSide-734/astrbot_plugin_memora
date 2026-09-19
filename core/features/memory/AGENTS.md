@@ -19,7 +19,7 @@ Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection �
 
 ### 跨窗口近重复合并
 
-`application/canonical_merge.py` 把反思候选并入同 scope 的既有 canonical（B5）：命中由 [`quality`](../quality/AGENTS.md) 的 `near_duplicate_detector` 判定，合并只做 reinforce——`importance` 取 max、`source_refs`/`source_evidence`/`topics` 并集去重（各限 32/32/5）、`merge_count`+1、`last_merged_at`、`merged_idempotency_keys`（限 16，重放短路），**正文永不改写**；revision 推进沿用 `update_memory` 的既有语义（含乐观校验、派生失效重算）。
+`application/canonical_merge.py` 把反思候选并入同 scope 的既有 canonical（B5）：命中由 [`quality`](../quality/AGENTS.md) 的 `near_duplicate_detector` 判定，合并只做 reinforce——`importance` 取 max、`source_refs`/`topics` 并集去重（限 32/5）、逐事实 `fact_source_evidence` 按规范化事实键合并（每条事实限 32 条来源）、`merge_count`+1、`last_merged_at`、`merged_idempotency_keys`（限 16，重放短路），**正文永不改写**；候选的摘要级 `source_evidence` 不并入既有记录，避免用未合并正文的证据扩大摘要归属，revision 推进沿用 `update_memory` 的既有语义（含乐观校验、派生失效...
 
 - 生产端口：`build_recent_document_search` 用 `documents` 表已有的 `json_extract(metadata, '$.session_id')` 索引做 `ORDER BY id DESC LIMIT N` 有界查询，scope/privacy/主体过滤留在 Python 侧，不新增索引；`load_memory`/`update_memory` 复用 `MemoryEngine` 既有方法。
 - 并发：进程内按 `session + scope_key` 的 `asyncio.Lock` 串行化「检测 → 合并」，覆盖总结窗口的候选并发；跨进程并发不在支持范围（单实例单 DB）。
@@ -109,6 +109,8 @@ sequenceDiagram
 
 - 这不是跨 SQLite/FAISS 的单一 ACID 事务。`memory_write_ops` 是跨存储 saga 日志；`repair_incomplete()` 尽力重放 `pending`/`needs_repair` 的 add、delete、batch delete 和 graph reindex。
 - `add_memory()` 在 canonical 成功后重新读取 source revision，并为 Atom 绑定 parent revision/scope/privacy；来源读取失败时只进入可修复派生失败，不把未绑定 Atom 写入生产 canonical 库。
+- 总结来源 fence 写入是两阶段的：`add_memory(source_fence=...)` 先落不可召回的暂存行（`summary_source_orphan/pending`、账本 step=`source_staged`，不建图、不强化既有 Atom、不触发干扰/触发词/演化/SSE），来源 owner 校验通过后在单个 canonical 事务内激活并同事务登记账本 `derived_pending`，再由 `finalize_add_derivation` 复用修复路径补图并收口同一 add 操作；接受与拒绝都按 `source_fence` token + 暂存状态做 CAS，拒绝仅在本轮 CAS 成功时收口账本，未接受来源既不派生也不推进 summary cursor。
+- canonical metadata 更新默认携带入口读到的 revision 做 CAS（失败原因码 `source_revision_mismatch`），无语义变化时不重建图；测试效应与自动干扰属于运行态维护，只经 `reinforce_recall_state`/`apply_interference_decay` 白名单入口写入，不推进 revision。
 - `memory_write_ops` 的 failed atom payload 保留父来源快照；repair 只接受仍匹配当前 revision 的现代载荷，旧载荷最多恢复为不可主动召回的兼容行。
 - 原子批量失败后逐条补写，仅仍失败的原子进入修复载荷。图失败不撤销已建文档，而是标记修复。
 - 删除先调用 `HybridRetriever.delete_memory()`；随后图或原子清理失败不会把主删除改成失败，但日志保留 `needs_repair`。
@@ -167,6 +169,7 @@ sequenceDiagram
 | 记忆再巩固 | `reconsolidation.py`、`reconsolidation_store.py` | 默认关闭；召回只生成 pending 候选；apply 先持久化唯一 intent，再按 source revision CAS 写 canonical 并恢复/失败收口；回滚同样持久化跨 Store 意图并刷新当前 source 的 graph 派生，状态、动作审计与操作清理原子收口；启动恢复不得覆盖后续编辑 |
 | 自主学习 | `features/learning/application/`、`features/learning/domain/`、`features/learning/infrastructure/` | 统一 FeedbackSignal 事件只进入隔离 Store；shadow 候选经单一 CAS 写入口发布；生产写入前持久化真实旧权重 intent，最终状态保存失败时保留可重启回滚快照；rebuild/publish/rollback/reset 共用状态锁，不直接修改生产权重 |
 | 可靠性 | `write_coordinator.py`、`features/memory/infrastructure/write_op_*`、`memory_engine_write_observability.py` | SQLite 写串行化、重试、跨存储操作日志和崩溃修复；canonical 写入指标与质量采样由独立 mixin 承担 |
+| 来源可重放（只读） | `features/memory/application/source_replayability.py` | 按当前 ConversationStore 消息事实逐项对账 canonical 已持久化的 `source_evidence`/`fact_source_evidence`（epoch、窗口边界、message_id/seq、session、role、区间、指纹），只输出 `replayable/partial/unavailable/unknown` 聚合状态、计数与固定原因码；不写库、不改清理语义、不返回正文/身份/映射 |
 | 记忆演化 | `features/evolution/application/`、`features/evolution/infrastructure/` | canonical 写后门控、确定性/LLM proposal、单 worker、lease/retry/dead/cancel、关系与 Projection 计划校验及语义摘要生成 |
 | canonical 派生钩子 | `memory_engine_evolution_hooks.py` | source revision 提取、post-commit 调度、relation/projection 失效；不承载 canonical 正文写入 |
 | 连续性 | `continuity_tracker.py`、`memory_engine_lifecycle.py` | 使用 `data_dir` 同步恢复/保存，按配置 TTL 和单 session 上限保留话题；关闭时不创建或读写 |

@@ -139,9 +139,9 @@ class BackfillScheduler:
                     logger.info("[Backfill] 没有更多旧版记忆需要处理")
                     break
 
-                for doc_id, raw_metadata in batch:
+                for doc_id, raw_metadata, revision in batch:
                     try:
-                        await self._backfill_one(doc_id, raw_metadata)
+                        await self._backfill_one(doc_id, raw_metadata, revision)
                         processed += 1
                         self._progress["processed"] = processed
                     except Exception as exc:
@@ -183,8 +183,8 @@ class BackfillScheduler:
         finally:
             self._task = None
 
-    async def _fetch_legacy_batch(self) -> list[tuple[int, dict]]:
-        """获取一批尚未完成回填的旧版记忆。"""
+    async def _fetch_legacy_batch(self) -> list[tuple[int, dict, str | None]]:
+        """获取一批尚未完成回填的旧版记忆及其 canonical revision。"""
 
         if self._engine is None or self._engine.faiss_db is None:
             return []
@@ -192,11 +192,14 @@ class BackfillScheduler:
         try:
             ds = self._engine.faiss_db.document_storage
             docs = await self._fetch_document_page(ds)
-            results: list[tuple[int, dict]] = []
+            results: list[tuple[int, dict, str | None]] = []
             for doc in docs:
                 doc_id = doc.get("id")
                 if doc_id is None or doc_id <= self._checkpoint:
                     continue
+                revision = doc.get("updated_at") or doc.get("created_at")
+                if revision is not None and not isinstance(revision, str):
+                    revision = str(revision)
                 meta = doc.get("metadata", {})
                 if isinstance(meta, str):
                     try:
@@ -214,7 +217,7 @@ class BackfillScheduler:
                 key_facts = meta.get("key_facts", [])
                 if isinstance(key_facts, list) and len(key_facts) <= 1:
                     continue
-                results.append((doc_id, meta))
+                results.append((doc_id, meta, revision))
                 if len(results) >= self._batch_size:
                     break
             return results
@@ -243,7 +246,7 @@ class BackfillScheduler:
         if db is not None and not isinstance(db, Mock) and hasattr(db, "execute"):
             cursor = await db.execute(
                 """
-                SELECT id, metadata
+                SELECT id, metadata, updated_at
                 FROM documents
                 WHERE id > ?
                 ORDER BY id
@@ -256,6 +259,7 @@ class BackfillScheduler:
                 {
                     "id": row["id"] if hasattr(row, "keys") else row[0],
                     "metadata": row["metadata"] if hasattr(row, "keys") else row[1],
+                    "updated_at": row["updated_at"] if hasattr(row, "keys") else row[2],
                 }
                 for row in rows
             ]
@@ -276,12 +280,25 @@ class BackfillScheduler:
 
         return asyncio.iscoroutinefunction(candidate)
 
-    async def _backfill_one(self, doc_id: int, meta: dict) -> None:
+    @staticmethod
+    def _cas_kwargs(revision: str | None) -> dict[str, Any]:
+        """构造 metadata 写入参数：有 revision 时执行 CAS，绝不推进 revision。"""
+
+        kwargs: dict[str, Any] = {"advance_revision": False}
+        if revision:
+            kwargs["expected_revision"] = revision
+        return kwargs
+
+    async def _backfill_one(
+        self, doc_id: int, meta: dict, revision: str | None = None
+    ) -> None:
         """将单条旧版记忆重新拆分为话题更一致的片段。
 
         参数:
             doc_id: 待回填的 canonical 文档 ID。
             meta: 旧文档的 metadata 副本。
+            revision: 读取批次时的 canonical revision；提供时元数据写入按它做 CAS，
+                避免覆盖并发语义更新。
 
         异常:
             RuntimeError: 新片段全部写入后，旧文档删除失败。
@@ -307,7 +324,7 @@ class BackfillScheduler:
                 await self._engine.hybrid_retriever.update_metadata(
                     doc_id,
                     {"schema_version": "v3"},
-                    advance_revision=False,
+                    **self._cas_kwargs(revision),
                 )
             return
 
@@ -349,7 +366,7 @@ class BackfillScheduler:
                                 "backfill_delete_failed": True,
                                 "backfill_new_ids": list(new_ids),
                             },
-                            advance_revision=False,
+                            **self._cas_kwargs(revision),
                         )
                     except Exception:
                         logger.warning(

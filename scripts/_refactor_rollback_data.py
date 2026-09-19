@@ -315,13 +315,22 @@ async def _rebuild_graph(
 
     try:
         _ensure_repo_root_importable()
+        from core.features.memory.domain.revision import memory_revision
         from core.features.memory.graph.domain.models import (
+            GraphBoundary,
             GraphEdge,
             GraphEntry,
             GraphNode,
         )
         from core.features.memory.graph.infrastructure.graph_store import GraphStore
 
+        source_metadata = json.loads(str(rows[0][2]))
+        if not isinstance(source_metadata, dict):
+            raise ValueError("graph_boundary_required")
+        source_metadata["revision_token"] = memory_revision(
+            {"created_at": rows[0][3], "updated_at": rows[0][4]}
+        )
+        boundary = GraphBoundary.from_metadata(source_metadata)
         source_id = int(rows[0][0])
         nodes = [
             GraphNode("fixture", "alpha", "alpha"),
@@ -336,7 +345,7 @@ async def _rebuild_graph(
         entry = GraphEntry(
             "rollback-fixture-entry",
             source_id,
-            "fixture-shared",
+            None,
             None,
             "relation",
             "anonymous graph evidence",
@@ -345,7 +354,9 @@ async def _rebuild_graph(
         )
         store = GraphStore(str(database))
         await store.initialize()
-        result = await store.replace_memory_graph(source_id, nodes, [edge], [entry])
+        result = await store.replace_memory_graph(
+            source_id, nodes, [edge], [entry], boundary=boundary
+        )
         stats = await store.get_memory_entry_stats()
         with closing(sqlite3.connect(database)) as connection:
             fts_matches = int(

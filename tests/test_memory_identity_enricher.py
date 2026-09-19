@@ -25,6 +25,7 @@ from core.features.injection.domain.models import (
     InjectionExecutionResult,
     InjectionOutcome,
 )
+from tests.fact_evidence_helpers import candidate_evidence_metadata
 
 
 def _identity(
@@ -586,7 +587,11 @@ async def test_recall_handler_enriches_safe_candidates_before_execution() -> Non
         doc_id=17,
         content="canonical",
         final_score=0.9,
-        metadata={"participants": ["旧名"], "revision": 3},
+        metadata={
+            "participants": ["旧名"],
+            "revision": 3,
+            **candidate_evidence_metadata("canonical"),
+        },
     )
     engine = MagicMock()
     engine.search_memories = AsyncMock(return_value=[raw_candidate])
@@ -645,12 +650,17 @@ async def test_recall_handler_enriches_safe_candidates_before_execution() -> Non
     await handler.handle_memory_recall(event, request, identity=identity)
 
     safe_candidates = enricher.enrich.await_args.args[0]
+    expected_metadata = {
+        "participants": ["旧名"],
+        "revision": 3,
+        **candidate_evidence_metadata("canonical"),
+    }
     assert safe_candidates == [
         {
             "id": 17,
             "content": "canonical",
             "score": 0.9,
-            "metadata": {"participants": ["旧名"], "revision": 3},
+            "metadata": expected_metadata,
             "timestamp": None,
         }
     ]
@@ -659,7 +669,7 @@ async def test_recall_handler_enriches_safe_candidates_before_execution() -> Non
         "session_id": "aiocqhttp:private:10001",
     }
     assert handler._execute_and_record.await_args.args[0].memories is enriched
-    assert raw_candidate.metadata == {"participants": ["旧名"], "revision": 3}
+    assert raw_candidate.metadata == expected_metadata
 
 
 def test_event_handler_passes_runtime_enricher_to_recall_handler() -> None:

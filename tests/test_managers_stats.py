@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -17,6 +18,7 @@ from core.features.memory.application.maintenance_operations import (
 from core.features.memory.infrastructure.validators.index_validator import (
     IndexValidator,
 )
+from tests.fact_evidence_helpers import source_evidence
 
 # ---------------------------------------------------------------------------
 # get_session_memories tests
@@ -444,20 +446,33 @@ class TestRebuildGraphIndex:
         assert result["rebuilt"] == 0
         assert result["skipped"] == 0
 
+    @staticmethod
+    def _derivable_doc(memory_id: int, topic: str) -> dict:
+        """构造通过图来源门禁的可派生文档行。"""
+
+        fact = f"fact-{topic}"
+        return {
+            "id": memory_id,
+            "text": f"content {topic}",
+            "created_at": "2026-09-18T00:00:00+00:00",
+            "updated_at": "2026-09-18T00:00:00+00:00",
+            "metadata": {
+                "scope_key": "scope-a",
+                "privacy_level": "public",
+                "key_facts": [fact],
+                "fact_source_evidence": [source_evidence(fact)],
+            },
+        }
+
     @pytest.mark.asyncio
     async def test_rebuild_documents(self) -> None:
         """Documents are passed to graph_memory_manager.index_memory."""
         ops = self._make_ops()
         docs = [
+            self._derivable_doc(1, "a"),
             {
-                "id": 1,
-                "text": "content A",
-                "metadata": {"topics": ["a"]},
-            },
-            {
-                "id": 2,
-                "text": "content B",
-                "metadata": json.dumps({"topics": ["b"]}),
+                **self._derivable_doc(2, "b"),
+                "metadata": json.dumps(self._derivable_doc(2, "b")["metadata"]),
             },
         ]
         ops._faiss_db.document_storage.count_documents = AsyncMock(
@@ -471,12 +486,12 @@ class TestRebuildGraphIndex:
 
     @pytest.mark.asyncio
     async def test_empty_content_skipped(self) -> None:
-        """Documents with empty text are skipped."""
+        """空正文来源计入 skipped，合法来源仍继续重建。"""
         ops = self._make_ops()
         docs = [
             {"id": 1, "text": "", "metadata": {}},
             {"id": 2, "text": "  ", "metadata": {}},
-            {"id": 3, "text": "valid", "metadata": {}},
+            self._derivable_doc(3, "valid"),
         ]
         ops._faiss_db.document_storage.count_documents = AsyncMock(
             return_value=len(docs)
@@ -487,54 +502,110 @@ class TestRebuildGraphIndex:
         assert result["skipped"] == 2
 
     @pytest.mark.asyncio
+    async def test_untrusted_sources_are_skipped_between_valid_ones(self) -> None:
+        """非法来源夹在合法来源之间时逐来源隔离，合法来源全部重建。"""
+        ops = self._make_ops()
+        legacy = {
+            "id": 2,
+            "text": "legacy content",
+            "created_at": "r1",
+            "updated_at": "r1",
+            "metadata": {},
+        }
+        mark_write = self._derivable_doc(4, "mw")
+        mark_write["metadata"] = {
+            **mark_write["metadata"],
+            "gate_disposition": "mark_write",
+        }
+        docs = [
+            self._derivable_doc(1, "a"),
+            legacy,
+            self._derivable_doc(3, "c"),
+            mark_write,
+        ]
+        ops._faiss_db.document_storage.count_documents = AsyncMock(
+            return_value=len(docs)
+        )
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+        result = await ops.rebuild_graph_index()
+        assert result["rebuilt"] == 2
+        assert result["skipped"] == 2
+        assert result["failed"] == 0
+        assert [
+            call.args[0]
+            for call in ops._graph_memory_manager.index_memory.call_args_list
+        ] == [1, 3]
+
+    @pytest.mark.asyncio
+    async def test_real_failure_is_counted_and_does_not_stop_batch(self) -> None:
+        """真实存储失败计入 failed 且不伪装成跳过，后续合法来源继续处理。"""
+        ops = self._make_ops()
+
+        async def _index(memory_id, content, metadata):
+            if memory_id == 1:
+                raise RuntimeError("vector_write_failed")
+
+        ops._graph_memory_manager.index_memory = AsyncMock(side_effect=_index)
+        docs = [self._derivable_doc(1, "a"), self._derivable_doc(2, "b")]
+        ops._faiss_db.document_storage.count_documents = AsyncMock(
+            return_value=len(docs)
+        )
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+        result = await ops.rebuild_graph_index()
+        assert result["rebuilt"] == 1
+        assert result["failed"] == 1
+        assert result["skipped"] == 0
+        assert result["total"] == 2
+
+    @pytest.mark.asyncio
+    async def test_cancellation_propagates_through_rebuild(self) -> None:
+        """取消必须穿透重建循环，不得被计为跳过或失败。"""
+        ops = self._make_ops()
+        ops._graph_memory_manager.index_memory = AsyncMock(
+            side_effect=asyncio.CancelledError
+        )
+        docs = [self._derivable_doc(1, "a")]
+        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+        with pytest.raises(asyncio.CancelledError):
+            await ops.rebuild_graph_index()
+
+    @pytest.mark.asyncio
     async def test_metadata_string_parsed(self) -> None:
         """JSON-string metadata is parsed before passing to index_memory."""
         ops = self._make_ops()
+        expected = self._derivable_doc(1, "hello")["metadata"]
         docs = [
-            {"id": 1, "text": "hello", "metadata": '{"key":"val"}'},
+            {
+                "id": 1,
+                "text": "hello",
+                "created_at": "r1",
+                "updated_at": "r1",
+                "metadata": json.dumps(expected),
+            },
         ]
         ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
         ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
         await ops.rebuild_graph_index()
         ops._graph_memory_manager.index_memory.assert_called_once_with(
-            1, "hello", {"key": "val"}
+            1, "hello", expected
         )
 
     @pytest.mark.asyncio
-    async def test_invalid_metadata_string(self) -> None:
-        """Broken JSON metadata string falls back to empty dict."""
+    async def test_invalid_metadata_stays_skipped(self) -> None:
+        """损坏 JSON 或缺失 metadata 的来源不能凭空派生，只计 skipped。"""
         ops = self._make_ops()
         docs = [
             {"id": 1, "text": "hello", "metadata": "{broken"},
+            {"id": 2, "text": "hello"},
+            {"id": 3, "text": "hello", "metadata": 42},
         ]
-        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
+        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=3)
         ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
-        await ops.rebuild_graph_index()
-        ops._graph_memory_manager.index_memory.assert_called_once_with(1, "hello", {})
-
-    @pytest.mark.asyncio
-    async def test_non_dict_metadata_fallback(self) -> None:
-        """Non-dict, non-string metadata falls back to empty dict."""
-        ops = self._make_ops()
-        docs = [
-            {"id": 1, "text": "hello", "metadata": 42},
-        ]
-        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
-        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
-        await ops.rebuild_graph_index()
-        ops._graph_memory_manager.index_memory.assert_called_once_with(1, "hello", {})
-
-    @pytest.mark.asyncio
-    async def test_missing_metadata_fallback(self) -> None:
-        """缺失 metadata key falls back to empty dict."""
-        ops = self._make_ops()
-        docs = [
-            {"id": 1, "text": "hello"},
-        ]
-        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
-        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
-        await ops.rebuild_graph_index()
-        ops._graph_memory_manager.index_memory.assert_called_once_with(1, "hello", {})
+        result = await ops.rebuild_graph_index()
+        assert result["rebuilt"] == 0
+        assert result["skipped"] == 3
+        ops._graph_memory_manager.index_memory.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_invalidate_cache_called(self) -> None:

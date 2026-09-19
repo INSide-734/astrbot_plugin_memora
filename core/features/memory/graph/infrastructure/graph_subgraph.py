@@ -10,6 +10,7 @@ import aiosqlite
 
 from .....shared.number_utils import safe_float
 from ...infrastructure.base import BaseStore
+from ..domain.models import GraphBoundary
 
 
 class GraphSubgraphMixin(BaseStore):
@@ -21,8 +22,11 @@ class GraphSubgraphMixin(BaseStore):
         limit_entries: int = 36,
         limit_nodes: int = 48,
         limit_edges: int = 72,
+        *,
+        boundary: GraphBoundary,
     ) -> dict[str, Any]:
         """为给定记忆 ID 返回紧凑的图快照。"""
+        GraphBoundary.require(boundary)
         normalized_memory_ids: list[int] = []
         seen_memory_ids: set[int] = set()
         for memory_id in memory_ids:
@@ -43,7 +47,7 @@ class GraphSubgraphMixin(BaseStore):
         limit_edges = max(1, min(limit_edges, 400))
 
         entry_rows, node_rows, edge_rows = await self._fetch_subgraph_rows(
-            normalized_memory_ids, limit_entries, limit_edges
+            normalized_memory_ids, limit_entries, limit_edges, boundary=boundary
         )
         return self._assemble_graph_snapshot(
             entry_rows,
@@ -56,11 +60,14 @@ class GraphSubgraphMixin(BaseStore):
         self,
         session_id: str | None = None,
         persona_id: str | None = None,
+        *,
+        boundary: GraphBoundary,
     ) -> dict[str, Any]:
         """返回指定会话与人格范围内未经数量裁剪的完整图快照。"""
         entry_rows, node_rows, edge_rows = await self._fetch_full_graph_rows(
             session_id=session_id,
             persona_id=persona_id,
+            boundary=boundary,
         )
         return self._assemble_graph_snapshot(
             entry_rows,
@@ -173,9 +180,14 @@ class GraphSubgraphMixin(BaseStore):
         normalized_memory_ids: list[int],
         limit_entries: int,
         limit_edges: int,
+        *,
+        boundary: GraphBoundary,
     ) -> tuple[list[aiosqlite.Row], list[aiosqlite.Row], list[aiosqlite.Row]]:
         """查询给定记忆 ID 对应的条目、节点和边数据。"""
-        memory_params = {"memory_ids_json": json.dumps(normalized_memory_ids)}
+        memory_params = {
+            **boundary.as_params(),
+            "memory_ids_json": json.dumps(normalized_memory_ids),
+        }
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
@@ -187,6 +199,8 @@ class GraphSubgraphMixin(BaseStore):
                 WHERE source_memory_id IN (
                     SELECT value FROM json_each(:memory_ids_json)
                 )
+                  AND scope_key = :scope_key AND privacy_level = :privacy_level
+                  AND revision_token = :revision_token
                 ORDER BY id DESC
                 LIMIT :limit_entries
                 """,
@@ -212,9 +226,11 @@ class GraphSubgraphMixin(BaseStore):
                 WHERE gen.entry_id IN (
                     SELECT value FROM json_each(:entry_ids_json)
                 )
+                  AND gn.scope_key = :scope_key AND gn.privacy_level = :privacy_level
+                  AND gn.revision_token = :revision_token
                 ORDER BY gn.id ASC
                 """,
-                {"entry_ids_json": json.dumps(entry_ids)},
+                {**boundary.as_params(), "entry_ids_json": json.dumps(entry_ids)},
             )
             node_rows = list(await node_cursor.fetchall())
 
@@ -236,6 +252,8 @@ class GraphSubgraphMixin(BaseStore):
                       AND target_node_id IN (
                         SELECT value FROM json_each(:node_ids_json)
                       )
+                      AND scope_key = :scope_key AND privacy_level = :privacy_level
+                      AND revision_token = :revision_token
                     ORDER BY id DESC
                     LIMIT :limit_edges
                     """,
@@ -252,11 +270,16 @@ class GraphSubgraphMixin(BaseStore):
     async def _fetch_full_graph_rows(
         self,
         *,
+        boundary: GraphBoundary,
         session_id: str | None,
         persona_id: str | None,
     ) -> tuple[list[aiosqlite.Row], list[aiosqlite.Row], list[aiosqlite.Row]]:
         """一次读取指定作用域内的全部图条目、关联节点和边。"""
-        params = {"session_id": session_id, "persona_id": persona_id}
+        params = {
+            **boundary.as_params(),
+            "session_id": session_id,
+            "persona_id": persona_id,
+        }
 
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
@@ -268,6 +291,8 @@ class GraphSubgraphMixin(BaseStore):
                 FROM graph_entries ge
                 WHERE (:session_id IS NULL OR ge.session_id = :session_id)
                   AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
+                  AND ge.scope_key = :scope_key AND ge.privacy_level = :privacy_level
+                  AND ge.revision_token = :revision_token
                 ORDER BY ge.id DESC
                 """,
                 params,
@@ -290,6 +315,10 @@ class GraphSubgraphMixin(BaseStore):
                 JOIN graph_nodes gn ON gn.id = gen.node_id
                 WHERE (:session_id IS NULL OR ge.session_id = :session_id)
                   AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
+                  AND ge.scope_key = :scope_key AND ge.privacy_level = :privacy_level
+                  AND ge.revision_token = :revision_token
+                  AND gn.scope_key = :scope_key AND gn.privacy_level = :privacy_level
+                  AND gn.revision_token = :revision_token
                 ORDER BY gn.id ASC
                 """,
                 params,
@@ -305,13 +334,23 @@ class GraphSubgraphMixin(BaseStore):
                        graph_edge.status, graph_edge.metadata,
                        graph_edge.created_at
                 FROM graph_edges graph_edge
+                JOIN graph_nodes source_node ON source_node.id = graph_edge.source_node_id
+                JOIN graph_nodes target_node ON target_node.id = graph_edge.target_node_id
                 WHERE EXISTS (
                     SELECT 1
                     FROM graph_entries ge
                     WHERE ge.source_memory_id = graph_edge.source_memory_id
                       AND (:session_id IS NULL OR ge.session_id = :session_id)
                       AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
+                      AND ge.scope_key = :scope_key AND ge.privacy_level = :privacy_level
+                      AND ge.revision_token = :revision_token
                 )
+                  AND graph_edge.scope_key = :scope_key AND graph_edge.privacy_level = :privacy_level
+                  AND graph_edge.revision_token = :revision_token
+                  AND source_node.scope_key = :scope_key AND source_node.privacy_level = :privacy_level
+                  AND source_node.revision_token = :revision_token
+                  AND target_node.scope_key = :scope_key AND target_node.privacy_level = :privacy_level
+                  AND target_node.revision_token = :revision_token
                 ORDER BY graph_edge.id DESC
                 """,
                 params,

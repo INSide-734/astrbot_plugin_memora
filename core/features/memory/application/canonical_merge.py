@@ -31,6 +31,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -46,7 +47,10 @@ from ...quality.application.near_duplicate_detector import (
     SimilarDocumentSearch,
     candidate_scope,
     detect_near_duplicate,
+    same_dedup_scope,
+    stored_scope,
 )
+from ..domain.memory_atom import has_user_source_evidence
 from ..domain.memory_dedup_config import MemoryDedupConfig
 from ..domain.revision import memory_revision
 
@@ -277,10 +281,25 @@ class CanonicalMergeCoordinator:
                 DEDUP_REASON_MERGE_CONFLICT,
             )
         metadata = _normalize_metadata(fresh.get("metadata") if fresh else None)
+        incoming_scope = candidate_scope(
+            candidate.metadata,
+            session_id=candidate.session_id,
+            persona_id=candidate.persona_id,
+        )
+        owner_scope = stored_scope(metadata)
+        fact_evidence = _merge_fact_evidence(metadata, candidate.metadata)
         if (
             not fresh
             or not is_memory_recallable(metadata)
             or fresh.get("text") != document.content
+            or incoming_scope is None
+            or owner_scope is None
+            or not same_dedup_scope(incoming_scope, owner_scope)
+            or fact_evidence is None
+            or any(
+                candidate.metadata.get(key) != metadata.get(key)
+                for key in ("revision_token", "resolver_revision")
+            )
         ):
             # 目标已被改写、失效或消失：不合并，交由调用方普通写入。
             await self._record_metrics(mode, "conflict")
@@ -311,6 +330,7 @@ class CanonicalMergeCoordinator:
                 DEDUP_REASON_MERGE_CONFLICT,
             )
         updates = self._merge_updates(candidate, metadata)
+        updates["metadata"]["fact_source_evidence"] = fact_evidence
         baseline_merge_count = _merge_count(metadata)
         try:
             applied = await self._update_memory(owner_id, updates, expected_revision)
@@ -413,7 +433,6 @@ class CanonicalMergeCoordinator:
         }
         for field, limit in (
             ("source_refs", MAX_SOURCE_REFS),
-            ("source_evidence", MAX_SOURCE_EVIDENCE),
             ("topics", MAX_TOPICS),
         ):
             union = _union(metadata.get(field), incoming.get(field), limit=limit)
@@ -576,6 +595,60 @@ def _union(existing: Any, incoming: Any, *, limit: int) -> list[Any]:
         seen.add(key)
         merged.append(item)
     return merged[:limit]
+
+
+def _merge_fact_evidence(
+    existing: Mapping[str, Any], incoming: Mapping[str, Any]
+) -> list[list[dict[str, Any]]] | None:
+    """Union evidence only for the same normalized fact, preserving owner order."""
+    paired: list[tuple[list[str], list[list[dict[str, Any]]]]] = []
+    for metadata in (existing, incoming):
+        facts = metadata.get("key_facts")
+        evidence = metadata.get("fact_source_evidence")
+        if (
+            not isinstance(facts, list)
+            or not facts
+            or any(not isinstance(fact, str) or not fact.strip() for fact in facts)
+            or not isinstance(evidence, list)
+            or len(facts) != len(evidence)
+            or not all(has_user_source_evidence(group) for group in evidence)
+        ):
+            return None
+        paired.append((facts, evidence))
+    owner_facts, owner_evidence = paired[0]
+    additions: dict[str, list[dict[str, Any]]] = {}
+    for fact, group in zip(*paired[1], strict=True):
+        additions.setdefault(_fact_key(fact), []).extend(group)
+    if not additions.keys() <= {_fact_key(fact) for fact in owner_facts}:
+        return None
+    merged: list[list[dict[str, Any]]] = []
+    for fact, group in zip(owner_facts, owner_evidence, strict=True):
+        seen: set[tuple[Any, ...]] = set()
+        refs: list[dict[str, Any]] = []
+        for item in (*group, *additions.get(_fact_key(fact), ())):
+            key = tuple(
+                item[field]
+                for field in (
+                    "message_id",
+                    "message_seq",
+                    "role",
+                    "start",
+                    "end",
+                    "message_fingerprint",
+                )
+            )
+            if key not in seen:
+                seen.add(key)
+                refs.append(dict(item))
+        retained = refs[:MAX_SOURCE_EVIDENCE]
+        if not has_user_source_evidence(retained):
+            return None
+        merged.append(retained)
+    return merged
+
+
+def _fact_key(fact: str) -> str:
+    return " ".join(unicodedata.normalize("NFKC", fact).casefold().split())
 
 
 def _merged_keys(metadata: Mapping[str, Any]) -> list[str]:

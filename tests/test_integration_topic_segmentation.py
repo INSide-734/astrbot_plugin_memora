@@ -615,7 +615,9 @@ class TestPerformanceLatency:
         # NOTE: threshold set to 3.0s (not 1.0s) because in a full test suite
         # concurrent test execution adds system overhead that can push this
         # over tighter limits. In isolation this typically completes < 0.5s.
-        from core.features.recall.processors.topic_splitter import _similarity_matrix
+        from core.features.recall.processors.topic_embeddings import (
+            similarity_matrix,
+        )
 
         dim = 64
         embeddings = [
@@ -623,7 +625,7 @@ class TestPerformanceLatency:
         ]
 
         start = time.perf_counter()
-        mat = _similarity_matrix(embeddings)
+        mat = similarity_matrix(embeddings)
         elapsed = time.perf_counter() - start
 
         assert len(mat) == 200

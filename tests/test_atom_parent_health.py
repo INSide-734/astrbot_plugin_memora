@@ -12,6 +12,7 @@ from core.features.memory.infrastructure.atom_store import AtomStore
 from core.features.memory.infrastructure.validators.persistence_health_validator import (
     PersistenceHealthValidator,
 )
+from tests.fact_evidence_helpers import source_evidence
 
 
 def _atom(content: str) -> MemoryAtom:
@@ -24,6 +25,7 @@ def _atom(content: str) -> MemoryAtom:
         parent_privacy_level="confidential",
         atom_type=AtomType.FACTUAL,
         content=content,
+        source_evidence=source_evidence(content),
     )
 
 

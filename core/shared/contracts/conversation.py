@@ -4,11 +4,22 @@
 数据，本模块不承担平台日志与持久化职责。
 """
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
+
+
+def message_evidence_fingerprint(role: str, content: str) -> str:
+    """生成不暴露正文或身份的稳定消息证据指纹。
+
+    持久化来源证据、抽取复核与只读来源对账必须共用同一算法，避免复制口径后漂移。
+    """
+
+    payload = f"{role}\0{content}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 @dataclass

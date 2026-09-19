@@ -10,6 +10,7 @@ from core.features.memory.domain.memory_atom import AtomType
 from core.features.recall.processors import atom_classifier
 from core.features.recall.processors.atom_classifier import classify_atoms
 from core.platform.security.guardrails import MemoryAtomSchema
+from tests.fact_evidence_helpers import fact_evidence
 
 
 def _classify(text: str):
@@ -17,6 +18,7 @@ def _classify(text: str):
 
     atoms = classify_atoms(
         [text],
+        fact_evidence([text]),
         parent_importance=0.7,
         enable_quality_filter=False,
     )
@@ -91,6 +93,7 @@ def test_emotion_evidence_is_preserved_in_atom_metadata() -> None:
 
     atoms = classify_atoms(
         ["用户喜欢雨天散步"],
+        fact_evidence(["用户喜欢雨天散步"]),
         parent_importance=0.8,
         emotion_tags=["怀念"],
         emotional_intensity=0.92,
@@ -138,6 +141,7 @@ def test_explicit_structured_type_is_only_a_fallback_hint(
 
     atoms = classify_atoms(
         ["关于蓝色纸盒的完整描述信息"],
+        fact_evidence(["关于蓝色纸盒的完整描述信息"]),
         parent_importance=0.8,
         atom_type_hint=hint,
         enable_quality_filter=False,

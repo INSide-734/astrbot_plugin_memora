@@ -28,9 +28,28 @@ from ....shared.sql import (
     MEMORY_FTS_TABLE,
 )
 from ...decay.application.operations import _normalize_batch_metadata
+from ..domain.revision import memory_revision
+from .graph_memory_manager import graph_source_gate_reason
 
 _TREND_DAYS = 90
 _MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000
+
+
+def _graph_source_skip_reason(
+    doc: dict[str, Any], metadata: dict[str, Any]
+) -> str | None:
+    """返回确定性不适用来源的闭集原因；未知存储错误不在此分类。"""
+
+    if not str(doc.get("text") or "").strip():
+        return "empty_content"
+    probe = dict(metadata)
+    probe["revision_token"] = memory_revision(
+        {
+            "created_at": doc.get("created_at"),
+            "updated_at": doc.get("updated_at"),
+        }
+    )
+    return graph_source_gate_reason(probe)
 
 
 def _normalize_unix_timestamp(value: Any) -> float | None:
@@ -405,10 +424,16 @@ class StatsOperationsMixin:
             logger.error(f"[StorageMaintenance] 执行存储维护失败: {e}", exc_info=True)
             return {"success": False, "error": str(e)}
 
-    async def rebuild_graph_index(self) -> dict[str, int]:
-        """从存储的文档重建图记忆工件。"""
+    async def rebuild_graph_index(self) -> dict[str, Any]:
+        """从存储的文档重建图记忆工件。
+
+        逐来源隔离失败：确定不适用（legacy、mark_write、暂存/拒绝、缺逐事实证据）
+        的来源计为 ``skipped`` 并继续处理同批后续合法来源；真实的存储/向量失败计为
+        ``failed`` 且不伪装成跳过；``asyncio.CancelledError`` 继续传播。
+        """
+
         if self._graph_memory_manager is None:
-            return {"rebuilt": 0, "skipped": 0, "total": 0}
+            return {"rebuilt": 0, "skipped": 0, "failed": 0, "total": 0}
 
         total_count = await self._faiss_db.document_storage.count_documents(
             metadata_filters={}
@@ -417,6 +442,9 @@ class StatsOperationsMixin:
         offset = 0
         rebuilt = 0
         skipped = 0
+        failed = 0
+        skipped_reasons: dict[str, int] = {}
+        failed_reasons: dict[str, int] = {}
 
         while offset < total_count:
             docs = await self._faiss_db.document_storage.get_documents(
@@ -436,13 +464,34 @@ class StatsOperationsMixin:
                         metadata = {}
                 elif not isinstance(metadata, dict):
                     metadata = {}
-                content = str(doc.get("text") or "")
-                if not content.strip():
+                skip_reason = _graph_source_skip_reason(doc, metadata)
+                if skip_reason is not None:
                     skipped += 1
+                    skipped_reasons[skip_reason] = (
+                        skipped_reasons.get(skip_reason, 0) + 1
+                    )
                     continue
-                await self._graph_memory_manager.index_memory(
-                    doc["id"], content, metadata
-                )
+                content = str(doc.get("text") or "")
+                # revision_token 属于图派生快照；scope/privacy 等 canonical 边界
+                # 仍由 GraphMemoryManager 重新读取并校验。
+                index_metadata = dict(metadata)
+                index_metadata.pop("revision_token", None)
+                try:
+                    await self._graph_memory_manager.index_memory(
+                        doc["id"], content, index_metadata
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as error:
+                    failed += 1
+                    failed_reasons["graph_index_failed"] = (
+                        failed_reasons.get("graph_index_failed", 0) + 1
+                    )
+                    logger.warning(
+                        "[GraphRebuild] 单来源重建失败，异常类型=%s",
+                        error.__class__.__name__,
+                    )
+                    continue
                 rebuilt += 1
 
             offset += len(docs)
@@ -452,5 +501,8 @@ class StatsOperationsMixin:
         return {
             "rebuilt": rebuilt,
             "skipped": skipped,
-            "total": rebuilt + skipped,
+            "failed": failed,
+            "skipped_reasons": skipped_reasons,
+            "failed_reasons": failed_reasons,
+            "total": rebuilt + skipped + failed,
         }

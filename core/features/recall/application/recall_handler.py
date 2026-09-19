@@ -19,9 +19,11 @@ from ...conversation.application.conversation_manager import ConversationManager
 from ...conversation.application.message_content_extractor import (
     MessageContentExtractor,
 )
+from ...identity.application.scope_resolver import CanonicalScopeResolver
 from ...identity.domain.models import IdentityTrust, ResolvedIdentity
 from ...injection.application.executor import InjectionExecutor
 from ...injection.application.router import InjectionStrategyRouter
+from ...memory.graph.domain.models import GraphQueryScope
 from ...observability.application import runtime as observability
 from ...retrieval.query_planner import QueryPlanner
 from ...retrieval.query_rewriter import QueryRewriter, resolve_reference_time
@@ -63,6 +65,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
         identity_enricher: MemoryIdentityEnricher | None = None,
         query_rewrite_llm_caller: Any | None = None,
         cost_control: CostControl | None = None,
+        scope_resolver: CanonicalScopeResolver | None = None,
     ) -> None:
         """装配召回依赖与可选的历史别名只读增强器。"""
 
@@ -91,6 +94,31 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
             cost_control=cost_control,
         )
         self._auxiliary_recall = AuxiliaryRecall(config_manager, memory_engine)
+        self._scope_resolver = scope_resolver or CanonicalScopeResolver()
+
+    def _resolve_graph_query_scope(
+        self,
+        identity: ResolvedIdentity | None,
+        *,
+        session_id: str,
+        chat_type: str,
+    ) -> GraphQueryScope | None:
+        """仅从可信身份解析请求级图查询 scope；不可信时返回 None 交由图路跳过。"""
+
+        resolution = self._scope_resolver.resolve(
+            identity,
+            session_id=session_id,
+            chat_type=chat_type,
+        )
+        if not resolution.available:
+            return None
+        try:
+            return GraphQueryScope(
+                resolution.scope_key,
+                str(resolution.privacy_level or ""),
+            )
+        except ValueError:
+            return None
 
     @observability.monitored
     async def handle_memory_recall(
@@ -412,6 +440,11 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                     return
 
                 user_id = self._get_event_sender_id(event, identity)
+                graph_query_scope = self._resolve_graph_query_scope(
+                    identity,
+                    session_id=session_id,
+                    chat_type=chat_type,
+                )
                 retrieval_started = time.perf_counter()
                 recalled_memories = await self._memory_engine.search_memories(
                     query=primary_query,
@@ -426,6 +459,8 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                     query_plan=query_plan,
                     timing_sink=timing_context.retrieval,
                     deadline_monotonic=timing_context.deadline_monotonic,
+                    query_scope=graph_query_scope,
+                    require_user_evidence=True,
                 )
                 observability.report_debug_event(
                     "recall_stage",
@@ -444,6 +479,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                     persona_id=recall_persona_id,
                     chat_type=chat_type,
                     deadline_monotonic=timing_context.deadline_monotonic,
+                    query_scope=graph_query_scope,
                 )
                 observability.report_debug_event(
                     "recall_stage",

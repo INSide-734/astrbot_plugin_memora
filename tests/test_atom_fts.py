@@ -3,6 +3,7 @@
 import json
 import logging
 import time
+from typing import Any
 
 import pytest
 
@@ -10,10 +11,11 @@ from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
 from core.features.memory.infrastructure import atom_fts as atom_fts_module
 from core.features.memory.infrastructure.atom_fts import _build_match_expression
 from core.features.memory.infrastructure.atom_store import AtomStore
+from tests.fact_evidence_helpers import source_evidence
 
 
 def _make_atom(**overrides) -> MemoryAtom:
-    defaults = dict(
+    defaults: dict[str, Any] = dict(
         parent_memory_id=1,
         atom_type=AtomType.FACTUAL,
         content="测试记忆内容",
@@ -23,6 +25,7 @@ def _make_atom(**overrides) -> MemoryAtom:
         persona_id="p1",
     )
     defaults.update(overrides)
+    defaults.setdefault("source_evidence", source_evidence(defaults["content"]))
     return MemoryAtom(**defaults)  # type: ignore[arg-type]
 
 

@@ -97,6 +97,8 @@ sequenceDiagram
 - 双路默认文档/图权重为 `0.65/0.35`，双路同 ID 额外 `cross_route_bonus=0.08`；显式 `RecallStrategy` 优先，其次 `QueryIntent`，最后关键词规则。
 - 缺正文或 metadata 的候选通过 `memory_loader` 并发回填；加载异常或 `None` 的候选被跳过。
 - 图路为空时直接使用文档路；当前实现先 await 文档任务再 await 图任务，协程对象已创建但不是 `create_task()`，修改计时/并发语义时须以测试为准。
+- 请求 scope 路径下，两条图路先按有界 overfetch 取候选，再逐条与当前 canonical 边界核对，校验通过者才进入 RRF 与 top-k；被拒计数与候选耗尽通过 `graph_candidates_rejected`/`graph_route_exhausted` 报告，固定 overfetch 不承诺无限补位。
+- 多查询计划在每个子查询 budget 截断前先执行用户证据门，链式扩展同样继承证据要求，避免无资格高分项挤掉已取得资格的候选。
 
 ## 查询改写、个性化与重排
 

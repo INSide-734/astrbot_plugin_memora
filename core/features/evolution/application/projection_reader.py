@@ -374,11 +374,15 @@ def _copy_candidate(candidate: HybridResult) -> HybridResult:
         candidate: 待复制的检索候选。
 
     返回：
-        内容与分数相同、可变字段独立的候选副本。
+        内容与分数相同、可变字段独立，且不带未经本次校验 projection 的副本。
     """
 
     from ...retrieval.rrf_fusion import HybridResult
 
+    metadata = dict(candidate.metadata or {})
+    # 持久化或上游传入的派生摘要没有经过本次 scope/revision 校验，不能随
+    # baseline 或异常回退进入模型载荷；只有本 reader 校验通过后才写回。
+    metadata.pop("derived_projections", None)
     return HybridResult(
         doc_id=candidate.doc_id,
         final_score=candidate.final_score,
@@ -386,7 +390,7 @@ def _copy_candidate(candidate: HybridResult) -> HybridResult:
         bm25_score=candidate.bm25_score,
         vector_score=candidate.vector_score,
         content=candidate.content,
-        metadata=dict(candidate.metadata or {}),
+        metadata=metadata,
         score_breakdown=(
             dict(candidate.score_breakdown)
             if candidate.score_breakdown is not None

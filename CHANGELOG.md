@@ -13,6 +13,9 @@ Memora 的所有重要变更都记录在此文件中。
 - 新增来源角色门：只有 `user` 角色的引用片段可以作为事实的支持正文，仅由助手复述或系统内容支撑的声明以新原因码 `grounding_user_source_missing` 进入隔离，不再写入 canonical，也不生成 Atom 或图关系。
 - 群聊主体改为按稳定身份标识分组：显示名不再充当主体键，昵称相同但标识不同的成员无法互相顶替；`participants` 只有在能唯一对应某个稳定主体时才用于归属判定。
 - 门禁关闭（`security.guardrails_enabled=false`）时仍解析并绑定来源证据，使关闭该校验的部署同样保留消息标识、角色与窗口序号。
+- 新增逐事实来源证据准入：`key_facts` 与 `fact_source_evidence` 必须按原始下标一一对应，每条事实独立校验用户来源；被拒事实只进入匿名隔离诊断，不进入 canonical、Atom、FTS、FAISS、图、关系或 Projection，门禁关闭时仍保留来源证据绑定，隔离批准会重新按当前消息复核。
+- 新增只读来源可重放评估：按当前会话消息逐项核对 epoch、窗口序号、消息标识、角色、正文区间与指纹，详情 API 和 Dashboard 仅展示 `replayable`/`partial`/`unavailable`/`unknown`、计数及固定原因码，不返回原始 metadata、身份或来源映射。
+- 图派生平面新增 canonical 来源边界：节点、边与条目保存 `scope_key`、`privacy_level`、`revision_token`，请求级 `GraphQueryScope` 与逐来源 `GraphBoundary` 分离；旧的空边界派生行不再作为授权或证据使用，同名节点和关系不会跨来源边界合并。
 - 注入决策摘要补齐选择器收益与预算利用率：窗口聚合新增 `selected_count_total`、`dropped_count_total`、`truncated_count_total`、`effective_budget_chars_avg`、`budget_utilization_avg`、`budget_utilization_p95`，`cost_trend` 每小时桶同步带上选择/丢弃合计与利用率均值；Dashboard 概览页新增选择/丢弃卡片与预算利用率图表序列。
 - 新增跨窗口近重复合并（B5，默认关闭）：反思候选在写入 canonical 前，于同 scope（`scope_key` + `privacy_level` + 会话/人格 + 私聊主体交集）内做确定性 token 集合 Jaccard 近重复检测，命中且两侧 `key_facts` 词集 Jaccard ≥ 0.5 时把候选并入既有 canonical——`importance` 取最大、`source_refs`/`source_evidence`/`topics` 并集去重（各限 32/32/5）、`merge_count` +1、`last_merged_at`、`merged_idempotency_keys`（限 16，重放短路），不再插入第二条 canonical，正文与派生索引不重写。
 - 新增 `memory_dedup` 配置节：`mode`（`off`/`observe`/`enforce`，默认 `off`）、`similarity_threshold`（0.85）、`candidate_limit`（5）、`min_tokens`（12）；反思候选新增 `merged` 终态与 `ReflectionStoreSummary.merged` 计数，命中/观测/事实护栏/合并冲突/检测失败分别记录 `dedup_merged`、`dedup_observed`、`dedup_fact_mismatch`、`dedup_merge_conflict`、`dedup_detector_failed` reason code。
@@ -21,12 +24,20 @@ Memora 的所有重要变更都记录在此文件中。
 ### 变更
 
 - `recall_engine.top_k` 默认检索条数由 5 调整为 6：检索结果是注入选择器的候选池，需要不小于各预设的 `max_memories`（quality 预设为 6），否则默认配置下该容量不可达。已持久化的配置不受影响。
+- 召回、主动记忆工具、自发/链式扩展、前瞻上下文与注入统一要求完整的用户来源证据，并在重排、去重、预算、top-K、缓存和模型传输前执行；混合候选只保留可归属用户的事实，无法归属的候选不再以原聚合分数占用名额。
+- 图路查询先按可信请求作用域执行有界补取，再逐条与当前 canonical 的作用域、隐私和 revision 校验；缺少可信作用域或来源校验器时安全跳过图路，不把派生行当作授权依据，并以 `graph_candidates_rejected`、`graph_route_skipped`、`graph_route_exhausted` 记录边界结果。
+- 图索引重建与 `/memora rebuild-graph` 结果区分 `rebuilt`、`skipped`、`failed` 及原因计数；确定不适用的旧格式、归档、`mark_write`、来源暂存/拒绝、证据不足或边界不完整来源会跳过，真实存储或向量错误不会伪装成跳过或成功。
 
 ### 修复
 
+- 恢复图谱页面打开即浏览最近图谱、直接搜索实体/主题的管理员总览，记忆 ID 改为可选聚焦；总览逐条校验当前 canonical 来源并排除失效图数据，保留不同来源边界，搜索和概览切换不再并发覆盖 G6 布局或恢复过期选择。
+- 修复图路陈旧、越权或损坏命中进入融合的问题：命中必须先通过逐来源 canonical 校验，正文和用户 metadata 以 canonical 为准，失效来源、孤儿行、跨边界端点和旧 revision 不再占用 RRF 或 top-K。
 - 修复持久化证据复核可能把证据交换给其它主体的问题：带 `message_id` 的证据只接受「消息标识 + 指纹」联合命中，未命中即按来源变更拒绝；只有缺少标识的旧证据才回退到指纹定位。
-- 修复 canonical 正文重复同一事实的问题：分段话题给出的摘要本身可能就是「[话题N] 事实A；事实B」，`StorageBuilder` 不再把已被摘要逐字包含的 key facts 重复追加到正文。
+- 修复新生成记忆含 ` | ` 且同一事实被摘要改述后重复追加的问题：canonical 正文只使用一份完整的准入事实，不再拼接叙述摘要，也不沿用补充片段的五条上限；原摘要保留在 `persona_summary`，无事实时仍使用摘要或摘录兜底。已有生产记录不会自动改写。
 - 注入载荷不再重复输出正文已经包含的 `key_facts`，消除重复注入带来的额外字符成本与噪声（#65）。
+- 修复回填写入与跨存储写操作恢复覆盖并发更新的问题：批次携带读取时 canonical revision，标记写入使用 `expected_revision` 且不推进 revision；仅 revision 推进时按当前来源重新绑定派生数据，正文或作用域变化时保留 `needs_repair`/`source_stale`。
+- 统一反思回复的闭集安全终态与宿主投递边界探测：区分 Provider 空回复、清洗后空回复、非文本内容和阻断原因；宿主信号不足或已进入流式投递时不伪造送达、不发送占位内容，原因码不包含被拒正文。
+- 记忆详情改为管理员字段白名单投影，移除原始 metadata、session/persona 等内部字段；未通过本次来源校验的 Projection 也不会随基线候选进入模型载荷。
 - 修复总结副作用 fence 在其他会话持有合法事务时的误拒，并保留启动 reconcile 已有明确异常类别；提交成功后的 unknown、reconcile 与启动汇总日志只记录安全的静态类别和计数。
 - 修复图 embedding 宿主单请求超过供应商上限的问题，并将持久化操作恢复移到 canonical/图文档存储就绪之后；符合重试预算的历史 `source_missing` 操作可在 canonical 仍存在时恢复。
 - 为 Grounding Judge unavailable 增加闭集原因归因；显式关闭 Judge 时不再因成本模式允许而调用 Provider，质量门 profile 缺失继续 fail-closed。
@@ -36,10 +47,12 @@ Memora 的所有重要变更都记录在此文件中。
 
 - 新增来源证据稳定性、角色门（助手单方面声称、系统内容）、群聊同名成员主体判定、重验证拒绝替换与窗口序号保留的回归用例。
 - `memory_grounding.py` 按职责拆分为 `grounding_evidence.py`（证据解析与定位）与 `grounding_checks.py`（词面/主体/数字/否定检查），消除原文件超出行数硬上限的问题。
+- 补充逐事实证据准入、用户来源召回/注入门、图请求作用域与管理员总览、来源可重放、revision CAS、图源清理、宿主响应边界和闭集回复原因码的 Python 与 Dashboard 回归用例。
 
 ### 升级说明
 
-- 无需迁移配置、canonical memory、索引或数据库；`source_evidence` 新增字段对旧记录按缺失处理，人工批准路径会优先按 `message_id` 复核。
+- 无需迁移配置或 canonical memory；启动时仅迁移图派生表结构。缺少完整边界的旧图行会安全保留但不参与读取，需由 canonical 重建恢复；`source_evidence` 新增字段对旧记录按缺失处理，人工批准路径会优先按 `message_id` 复核。
+- 缺少稳定消息标识、窗口序号或逐事实证据的旧 canonical 记录不会被自动猜测补齐，可能显示为不可重放并被自动召回、注入和图派生排除；人工复核必须重新取证。
 - 角色门生效后，仅由助手复述支撑的候选会从「写入 canonical」变为「进入隔离队列」，升级后隔离量可能上升；这些候选可在 Dashboard 人工复核后再决定是否写入，也可通过门禁 profile 调整处置。
 - 跨窗口近重复合并默认 `memory_dedup.mode=off`，行为与升级前一致；建议先切 `observe` 观测命中率与误伤样本，再切 `enforce`。检测或合并失败一律 fail-open 回落普通写入，不阻断候选落库；该功能只作用于自动反思产线，人工批准、导入与工具直写路径不受影响。
 

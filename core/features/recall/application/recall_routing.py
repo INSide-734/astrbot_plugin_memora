@@ -32,6 +32,7 @@ from ...injection.domain.models import (
     RequestSignals,
     RoutingMode,
 )
+from ...memory.domain.memory_atom import has_user_source_evidence
 from ...observability.application import runtime as observability
 from ...observability.domain import recall_timing as rt
 from .recall_observability import RecallTimingContext
@@ -201,6 +202,7 @@ class RecallRoutingMixin:
 
     @staticmethod
     def _safe_candidates(candidates: list[Any]) -> list[dict[str, Any]]:
+        """清理 projection；证据与身份暂留供选择门和受控身份增强使用。"""
         safe: list[dict[str, Any]] = []
         for candidate in candidates:
             content = str(getattr(candidate, "content", "") or "")
@@ -287,12 +289,15 @@ class RecallRoutingMixin:
             return ""
         lines = ["[Upcoming Plans]"]
         for candidate in prospective:
-            content = str(getattr(candidate, "content", "") or "")
             metadata = getattr(candidate, "metadata", None) or {}
+            # 计划条目会直接进入模型上下文：缺用户来源证据的行保持不可见。
+            if not has_user_source_evidence(metadata.get("source_evidence")):
+                continue
+            content = str(getattr(candidate, "content", "") or "")
             event_time = metadata.get("event_time")
             suffix = f" (at {event_time})" if event_time else ""
             lines.append(f"- {content}{suffix}")
-        return "\n".join(lines)
+        return "\n".join(lines) if len(lines) > 1 else ""
 
     async def _execute_and_record(
         self, execution: _RecallExecutionInput
@@ -347,6 +352,7 @@ class RecallRoutingMixin:
             context = InjectionExecutionContext(
                 query=execution.query,
                 memories=execution.memories,
+                allowed_source_roles=frozenset({"user"}),
                 cognitive_context=execution.cognitive_context,
                 prospective_context=prospective_context,
                 cognitive_budget_chars=cognitive_budget,

@@ -7,6 +7,8 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ...injection.application.selection import metadata_has_user_evidence
+from ...memory.graph.domain.models import GraphQueryScope
 from ...observability.application import runtime as observability
 from .continuity import build_continuity_context
 from .reconsolidation_dispatch import schedule_reconsolidation_proposal
@@ -23,6 +25,18 @@ class RecallContextMixin:
         """对多来源召回候选去重，并执行注入数量上限。"""
         if top_k <= 0 or not candidates:
             return []
+
+        # 与注入选择门共用同一资格判定：只有完整正文可逐事实归属用户来源
+        # 的候选能保留原分数，因此混合、assistant-only 与 legacy 候选都会在
+        # 去重、排序和 top-K 截断之前出局，不会先占用槽位再被丢弃。
+        eligible = [
+            item
+            for item in candidates
+            if metadata_has_user_evidence(getattr(item, "metadata", None))
+        ]
+        if not eligible:
+            return []
+        candidates = eligible
 
         source_priority = {
             "prospective": 3,
@@ -157,6 +171,7 @@ class RecallContextMixin:
         persona_id: str | None,
         chat_type: str,
         deadline_monotonic: float | None = None,
+        query_scope: GraphQueryScope | None = None,
     ) -> list[Any]:
         """兼容旧调用边界，并委托独立组件执行受预算约束的自发回忆。"""
 
@@ -165,6 +180,7 @@ class RecallContextMixin:
             persona_id=persona_id,
             chat_type=chat_type,
             deadline_monotonic=deadline_monotonic,
+            query_scope=query_scope,
         )
 
     def _prospective_recall_enabled(self) -> bool:

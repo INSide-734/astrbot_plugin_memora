@@ -162,6 +162,9 @@ class MemorySearchTool(AgentFunctionTool):
                 emotion_context=emotion_context,
                 chat_type=read_scope.chat_type,
                 user_id=read_scope.user_id,
+                # 工具自身不猜 session/persona 为 canonical graph scope；
+                # 无可信 scope 时图路显式跳过，但文档路仍受用户证据门约束。
+                require_user_evidence=True,
             )
 
             serialized_results = []

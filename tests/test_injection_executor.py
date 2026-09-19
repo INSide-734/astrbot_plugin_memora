@@ -29,6 +29,7 @@ from core.features.injection.domain.models import (
     RequestSignals,
     RoutingMode,
 )
+from tests.injection_executor_support import with_user_evidence
 
 
 async def build_executor_case(req):
@@ -42,7 +43,7 @@ async def build_executor_case(req):
     return await InjectionExecutor(InjectionAdapter()).execute(
         req,
         decision,
-        InjectionExecutionContext(
+        _context(
             query="coffee",
             memories=[
                 {
@@ -96,7 +97,7 @@ def _decision(
 def _context(memories, **overrides):
     values = {
         "query": "coffee",
-        "memories": memories,
+        "memories": [with_user_evidence(memory) for memory in memories],
         "cognitive_context": "",
         "prospective_context": "",
         "cognitive_budget_chars": 300,
@@ -303,7 +304,7 @@ async def test_executor_never_changes_system_prompt() -> None:
     result = await InjectionExecutor(InjectionAdapter()).execute(
         req,
         decision,
-        InjectionExecutionContext(
+        _context(
             query="coffee",
             memories=[{"content": "prefers espresso", "score": 0.9, "metadata": {}}],
         ),

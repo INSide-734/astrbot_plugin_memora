@@ -15,6 +15,7 @@ from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.shared.contracts.conversation import Message
 from core.shared.cost_control import CostControl
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
+from tests.fact_evidence_helpers import fact_evidence
 
 _ProcessorFactory = Callable[..., MemoryProcessor]
 
@@ -53,6 +54,7 @@ class TestClassifyAtomsFromMetadata:
     def test_classify_with_key_facts(self, processor: MemoryProcessor) -> None:
         metadata = {
             "key_facts": ["用户喜欢咖啡", "明天要开会"],
+            "fact_source_evidence": fact_evidence(["用户喜欢咖啡", "明天要开会"]),
             "topics": ["咖啡", "会议"],
         }
         atoms = processor.classify_atoms_from_metadata(metadata)
@@ -76,6 +78,7 @@ class TestClassifyAtomsFromMetadata:
     ) -> None:
         metadata = {
             "key_facts": ["fact1"],
+            "fact_source_evidence": fact_evidence(["fact1"]),
             "topics": ["topic1"],
             "participants": ["Alice"],
             "emotion_tags": ["happy"],
@@ -100,6 +103,7 @@ class TestBuildMemoryFromStructuredData:
             "summary": "用户讨论咖啡",
             "topics": ["咖啡"],
             "key_facts": ["用户喜欢拿铁"],
+            "fact_source_evidence": fact_evidence(["用户喜欢拿铁"]),
             "sentiment": "positive",
             "importance": 0.7,
         }
@@ -558,6 +562,7 @@ class TestProcessConversation:
         response = (
             '{"memories": ['
             '{"content": "用户喜欢深烘咖啡", "atom_type": "preference", '
+            '"key_facts":["用户喜欢深烘咖啡"],"fact_source_refs":[[]],'
             '"importance": 0.8, "entities": ["咖啡"], "emotion_tags": ["喜欢"]}'
             '], "confidence": 0.9, "extraction_quality": "high"}'
         )
@@ -579,6 +584,7 @@ class TestProcessConversation:
             '"topics": ["咖啡偏好"], "key_facts": ["用户喜欢深烘咖啡"], '
             '"participants": ["用户"], "sentiment": "positive", '
             '"importance": 0.8, "emotion_tags": ["开心"], '
+            '"fact_source_refs":[[{"message_index":0,"start":0,"end":2}]],'
             '"causal_relations": []}]}'
         )
         proc = make_processor(llm_response=response)
@@ -687,7 +693,8 @@ class TestGateIntegration:
             '{"memories":[{"content":"用户有三台手机",'
             '"key_facts":["用户有三台手机"],"topics":["手机"],'
             '"importance":0.7,"sentiment":"neutral",'
-            '"source_refs":[{"message_index":0,"start":0,"end":7}]}],'
+            '"source_refs":[{"message_index":0,"start":0,"end":7}],'
+            '"fact_source_refs":[[{"message_index":0,"start":0,"end":7}]]}],'
             '"confidence":0.8,"extraction_quality":"high"}'
         )
         proc = make_gated_processor(runtime, llm_response)
@@ -703,7 +710,7 @@ class TestGateIntegration:
             )
         ]
 
-        results = await proc.process_conversation(messages)
+        results = await proc.process_conversation(messages, message_seqs=(1,))
 
         assert results
         assert (
@@ -712,10 +719,10 @@ class TestGateIntegration:
         )
 
     @pytest.mark.asyncio
-    async def test_gate_disabled_skips_grounding(
+    async def test_gate_disabled_does_not_admit_legacy_fact_evidence(
         self, make_gated_processor: Callable[..., MemoryProcessor]
     ) -> None:
-        """主开关关闭时跳过 grounding 与质量判定，候选全部放行。"""
+        """Disabling configurable checks cannot invent missing per-fact evidence."""
         from core.features.quality.application.gate_runtime import build_gate_snapshot
         from core.features.quality.domain.gate_config import GateConfig
 
@@ -741,15 +748,17 @@ class TestGateIntegration:
 
         assert results
         for result in results:
-            assert result["metadata"]["quality_gate_action"] == "allow"
-            assert result["metadata"]["grounding_reason_codes"] == []
-            assert result["metadata"]["grounding_status"] == "grounded"
+            assert result["metadata"]["quality_gate_action"] == "quarantine"
+            assert result["metadata"]["grounding_reason_codes"] == [
+                "grounding_fact_evidence_mismatch"
+            ]
+            assert result["atoms"] == []
 
     @pytest.mark.asyncio
     async def test_gate_disabled_still_records_source_evidence(
         self, make_gated_processor: Callable[..., MemoryProcessor]
     ) -> None:
-        """主开关关闭时不判定，但仍为候选绑定带稳定身份的来源证据。"""
+        """A supported fact keeps its resolved evidence with configurable checks disabled."""
         from core.features.quality.application.gate_runtime import build_gate_snapshot
         from core.features.quality.domain.gate_config import GateConfig
 
@@ -758,7 +767,8 @@ class TestGateIntegration:
         llm_response = (
             '{"summary":"我喜欢喝咖啡","topics":["饮品"],'
             '"key_facts":["我喜欢喝咖啡"],"sentiment":"positive","importance":0.7,'
-            '"source_refs":[{"message_index":0,"start":0,"end":6}]}'
+            '"source_refs":[{"message_index":0,"start":0,"end":6}],'
+            '"fact_source_refs":[[{"message_index":0,"start":0,"end":6}]]}'
         )
         proc = make_gated_processor(runtime, llm_response)
         messages = [
@@ -926,8 +936,8 @@ class TestGroundingJudgeResolution:
         assert "{source_text}" not in prompt
 
     @pytest.mark.asyncio
-    async def test_judge_template_renders_extended_placeholders(self) -> None:
-        """自定义模板渲染 {chat_type}/{topics}/{importance} 后发送给 Provider。"""
+    async def test_judge_template_omits_unrelated_candidate_context(self) -> None:
+        """Configured placeholders remain valid but cannot disclose unrelated context."""
         from core.features.quality.domain.gate_config import GateJudge, GateProfile
 
         ctx = MagicMock()
@@ -959,5 +969,5 @@ class TestGroundingJudgeResolution:
 
         assert result.allowed is True
         prompt = provider.text_chat.await_args.kwargs["prompt"]
-        assert "群聊" in prompt and "猫" in prompt and "0.9" in prompt
+        assert "群聊" not in prompt and "猫" not in prompt and "0.9" not in prompt
         assert "候选声明" in prompt and "来源片段" in prompt

@@ -1,298 +1,267 @@
-"""GraphMemoryManager 图产物原子替换与向量同步测试。"""
+"""Graph manager canonical-source gates and derived mutation behavior."""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field
-from unittest.mock import AsyncMock, MagicMock, call
+import json
+from typing import Any, cast
 
 import pytest
 
 from core.features.memory.application.graph_memory_manager import GraphMemoryManager
-from core.features.memory.graph.infrastructure.graph_store import GraphReplaceResult
+from core.features.memory.graph.domain.models import GraphBoundary
+from core.features.memory.graph.infrastructure.graph_store import GraphStore
 from core.features.recall.processors.graph_extractor import GraphExtractor
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
 
 
-@dataclass
-class _GraphEntryStub:
-    """提供 Manager 向量同步所需的最小图条目字段。"""
+class _Vectors:
+    """In-memory vector records expose source cleanup and interrupted writes."""
 
-    content: str
-    metadata: dict
+    def __init__(self) -> None:
+        self.records: dict[int, tuple[str, dict[str, Any]]] = {}
+        self.next_id = 1
+        self.fail_at: int | None = None
+        self.started: asyncio.Event | None = None
+        self.release: asyncio.Event | None = None
+
+    async def add_entry(
+        self,
+        content: str,
+        metadata: dict[str, Any],
+        *,
+        boundary: GraphBoundary,
+    ) -> int:
+        boundary.validate_metadata(metadata)
+        if self.started is not None and self.release is not None:
+            self.started.set()
+            await self.release.wait()
+        vector_id = self.next_id
+        self.next_id += 1
+        if vector_id == self.fail_at:
+            raise RuntimeError("vector_write_failed")
+        self.records[vector_id] = (
+            content,
+            {**metadata, **boundary.as_params()},
+        )
+        return vector_id
+
+    async def reap_entries_for_memory(self, memory_id: int) -> int:
+        deleted = [
+            key
+            for key, (_, metadata) in self.records.items()
+            if metadata.get("source_memory_id") == memory_id
+        ]
+        for key in deleted:
+            del self.records[key]
+        return len(deleted)
 
 
-@dataclass
-class _ExtractedResultStub:
-    """提供图抽取结果的最小测试替身。"""
+async def _source(
+    store: GraphStore,
+    memory_id: int = 1,
+    *,
+    scope: str = "scope-a",
+    revision: str = "r1",
+    overrides: dict[str, Any] | None = None,
+) -> GraphBoundary:
+    facts = ["Alice likes coffee", "Alice likes tea"]
+    metadata = {
+        "scope_key": scope,
+        "privacy_level": "public",
+        "key_facts": facts,
+        "fact_source_evidence": fact_evidence(facts),
+        "source_evidence": source_evidence("; ".join(facts)),
+        "canonical_summary": "; ".join(facts),
+        "topics": ["drink"],
+        "participants": ["Alice"],
+        **(overrides or {}),
+    }
+    async with store._connect() as db:
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS documents (id INTEGER PRIMARY KEY, text TEXT, "
+            "metadata TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        await db.execute(
+            "INSERT OR REPLACE INTO documents VALUES (?, ?, ?, ?, ?)",
+            (
+                memory_id,
+                metadata["canonical_summary"],
+                json.dumps(metadata),
+                revision,
+                revision,
+            ),
+        )
+        await db.commit()
+    return GraphBoundary.from_metadata({**metadata, "revision_token": revision})
 
-    nodes: list = field(default_factory=list)
-    edges: list = field(default_factory=list)
-    entries: list = field(default_factory=list)
 
-
-class TestGraphMemoryManagerConstructor:
-    """验证 GraphMemoryManager 构造行为。"""
-
-    def test_init_stores_dependencies(self) -> None:
-        """构造器保存三个依赖并创建变更锁。"""
-        graph_store = MagicMock()
-        vector_retriever = MagicMock()
-        extractor = GraphExtractor(config={})
-
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
-
-        assert manager.graph_store is graph_store
-        assert manager.graph_vector_retriever is vector_retriever
-        assert manager.graph_extractor is extractor
-        assert isinstance(manager._mutation_lock, asyncio.Lock)
+async def _manager(tmp_db_path):
+    store = GraphStore(tmp_db_path)
+    await store.initialize()
+    vectors = _Vectors()
+    return (
+        GraphMemoryManager(store, cast(Any, vectors), GraphExtractor()),
+        store,
+        vectors,
+    )
 
 
 @pytest.mark.asyncio
-class TestGraphMemoryManagerIndexMemory:
-    """验证 index_memory 的原子替换和向量补偿。"""
+async def test_index_uses_current_canonical_content_not_caller_copy(tmp_db_path):
+    manager, store, vectors = await _manager(tmp_db_path)
+    boundary = await _source(store)
 
-    async def test_index_memory_uses_atomic_replace_for_empty_graph(self) -> None:
-        """空抽取结果仍原子删除旧图并清理该 source 的向量。"""
-        graph_store = MagicMock()
-        graph_store.replace_memory_graph = AsyncMock(
-            return_value=GraphReplaceResult(entry_ids=[])
-        )
-        graph_store.update_entry_vector_doc_ids = AsyncMock()
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=0)
-        vector_retriever.add_entry = AsyncMock()
-        extractor = MagicMock()
-        extractor.extract.return_value = _ExtractedResultStub()
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
+    await manager.index_memory(
+        1, "Untrusted caller claim", {"key_facts": ["Untrusted caller claim"]}
+    )
 
-        await manager.index_memory(42, "测试内容", {"key": "value"})
-
-        graph_store.replace_memory_graph.assert_awaited_once_with(42, [], [], [])
-        vector_retriever.delete_entries_for_memory.assert_awaited_once_with(42)
-        vector_retriever.add_entry.assert_not_awaited()
-        graph_store.update_entry_vector_doc_ids.assert_awaited_once_with({})
-        graph_store.delete_memory.assert_not_called()
-        graph_store.upsert_nodes.assert_not_called()
-        graph_store.add_edges.assert_not_called()
-        graph_store.add_entries.assert_not_called()
-
-    async def test_index_memory_with_entries(self) -> None:
-        """原子替换后按顺序创建向量并回写条目标识。"""
-        graph_store = MagicMock()
-        graph_store.replace_memory_graph = AsyncMock(
-            return_value=GraphReplaceResult(entry_ids=[301, 302])
-        )
-        graph_store.update_entry_vector_doc_ids = AsyncMock()
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=2)
-        vector_retriever.add_entry = AsyncMock(return_value=1001)
-        extractor = MagicMock()
-        entry1 = _GraphEntryStub(content="条目一", metadata={"topic": "t1"})
-        entry2 = _GraphEntryStub(content="条目二", metadata={"topic": "t2"})
-        extracted = _ExtractedResultStub(
-            nodes=[{"key": "node1", "type": "entity"}],
-            edges=[{"key": "edge1", "source": "a", "target": "b"}],
-            entries=[entry1, entry2],
-        )
-        extractor.extract.return_value = extracted
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
-
-        await manager.index_memory(42, "测试", {"key": "value"})
-
-        graph_store.replace_memory_graph.assert_awaited_once_with(
-            42,
-            extracted.nodes,
-            extracted.edges,
-            extracted.entries,
-        )
-        vector_retriever.delete_entries_for_memory.assert_awaited_once_with(42)
-        vector_retriever.add_entry.assert_has_awaits(
-            [
-                call("条目一", {"topic": "t1"}),
-                call("条目二", {"topic": "t2"}),
-            ]
-        )
-        graph_store.update_entry_vector_doc_ids.assert_awaited_once_with(
-            {301: 1001, 302: 1001}
-        )
-
-    async def test_index_memory_id_count_mismatch_raises(self) -> None:
-        """Store 返回的条目数量不匹配时显式失败。"""
-        graph_store = MagicMock()
-        graph_store.replace_memory_graph = AsyncMock(
-            return_value=GraphReplaceResult(entry_ids=[301])
-        )
-        graph_store.update_entry_vector_doc_ids = AsyncMock()
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=0)
-        extractor = MagicMock()
-        extractor.extract.return_value = _ExtractedResultStub(
-            entries=[
-                _GraphEntryStub(content="甲", metadata={}),
-                _GraphEntryStub(content="乙", metadata={}),
-            ]
-        )
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
-
-        with pytest.raises(RuntimeError, match="图条目标识数量不匹配"):
-            await manager.index_memory(42, "测试", {})
-
-        vector_retriever.delete_entries_for_memory.assert_awaited_once_with(42)
-        graph_store.update_entry_vector_doc_ids.assert_not_awaited()
-
-    async def test_index_memory_with_atoms_passed(self) -> None:
-        """原子列表原样传给图抽取器。"""
-        graph_store = MagicMock()
-        graph_store.replace_memory_graph = AsyncMock(
-            return_value=GraphReplaceResult(entry_ids=[])
-        )
-        graph_store.update_entry_vector_doc_ids = AsyncMock()
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=0)
-        extractor = MagicMock()
-        extractor.extract.return_value = _ExtractedResultStub()
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
-        atoms = [MagicMock()]
-
-        await manager.index_memory(42, "测试", {"key": "value"}, atoms=atoms)
-
-        extractor.extract.assert_called_once_with(
-            42,
-            "测试",
-            {"key": "value"},
-            atoms,
-        )
-
-    async def test_index_retry_purges_partial_vectors_before_readding(self) -> None:
-        """首次半写失败后，重试会先清理残留再建立完整向量。"""
-        graph_store = MagicMock()
-        graph_store.replace_memory_graph = AsyncMock(
-            side_effect=[
-                GraphReplaceResult(entry_ids=[301, 302]),
-                GraphReplaceResult(entry_ids=[401, 402]),
-            ]
-        )
-        graph_store.update_entry_vector_doc_ids = AsyncMock()
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=0)
-        vector_retriever.add_entry = AsyncMock(
-            side_effect=[1001, RuntimeError("模拟向量失败"), 2001, 2002]
-        )
-        extractor = MagicMock()
-        extractor.extract.return_value = _ExtractedResultStub(
-            entries=[
-                _GraphEntryStub(content="甲", metadata={}),
-                _GraphEntryStub(content="乙", metadata={}),
-            ]
-        )
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
-
-        with pytest.raises(RuntimeError, match="模拟向量失败"):
-            await manager.index_memory(42, "测试", {})
-        await manager.index_memory(42, "测试", {})
-
-        assert vector_retriever.delete_entries_for_memory.await_count == 2
-        graph_store.update_entry_vector_doc_ids.assert_has_awaits(
-            [call({301: 1001}), call({401: 2001, 402: 2002})]
-        )
+    snapshot = await store.get_graph_snapshot(full=True, boundary=boundary)
+    assert {node["label"] for node in snapshot["nodes"] if node["type"] == "fact"} == {
+        "Alice likes coffee",
+        "Alice likes tea",
+    }
+    assert all(
+        "Untrusted caller claim" not in content
+        for content, _ in vectors.records.values()
+    )
+    assert await store.get_recent_memory_ids(boundary=boundary) == [1]
 
 
 @pytest.mark.asyncio
-class TestGraphMemoryManagerDeleteMemory:
-    """验证单条图记忆删除。"""
+async def test_stale_boundary_cannot_replace_current_graph(tmp_db_path):
+    manager, store, vectors = await _manager(tmp_db_path)
+    boundary = await _source(store)
+    await manager.index_memory(1, "", {})
+    previous = dict(vectors.records)
+    await _source(store, revision="r2")
 
-    async def test_delete_memory_removes_sqlite_and_source_vectors(self) -> None:
-        """删除会清理 SQLite 图行和该 source 的全部向量。"""
-        graph_store = MagicMock()
-        graph_store.delete_memory = AsyncMock(return_value=[1001, 1002])
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=2)
-        extractor = GraphExtractor(config={})
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
+    with pytest.raises(ValueError, match="graph_boundary_mismatch"):
+        await manager.index_memory(1, "", boundary.as_params())
 
-        await manager.delete_memory(42)
-
-        graph_store.delete_memory.assert_awaited_once_with(42)
-        vector_retriever.delete_entries_for_memory.assert_awaited_once_with(42)
-
-    async def test_delete_memory_purges_vectors_without_sqlite_mapping(self) -> None:
-        """SQLite 没有旧向量映射时仍按 source 清理历史残留。"""
-        graph_store = MagicMock()
-        graph_store.delete_memory = AsyncMock(return_value=[])
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=1)
-        extractor = GraphExtractor(config={})
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
-
-        await manager.delete_memory(42)
-
-        graph_store.delete_memory.assert_awaited_once_with(42)
-        vector_retriever.delete_entries_for_memory.assert_awaited_once_with(42)
-
-    async def test_delete_waits_until_index_vector_sync_finishes(self) -> None:
-        """并发删除必须等待索引向量同步释放 mutation lock。"""
-        graph_store = MagicMock()
-        graph_store.replace_memory_graph = AsyncMock(
-            return_value=GraphReplaceResult(entry_ids=[301])
+    assert vectors.records == previous
+    assert await store.get_recent_memory_ids(boundary=boundary) == [1]
+    assert (
+        await store.get_recent_memory_ids(
+            boundary=GraphBoundary("scope-a", "public", "r2")
         )
-        graph_store.update_entry_vector_doc_ids = AsyncMock()
-        graph_store.delete_memory = AsyncMock(return_value=[])
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=0)
-        add_started = asyncio.Event()
-        release_add = asyncio.Event()
+        == []
+    )
 
-        async def paused_add_entry(_content: str, _metadata: dict) -> int:
-            """暂停向量创建，暴露 Manager 锁的确定性测试窗口。"""
-            add_started.set()
-            await release_add.wait()
-            return 1001
 
-        vector_retriever.add_entry = AsyncMock(side_effect=paused_add_entry)
-        extractor = MagicMock()
-        extractor.extract.return_value = _ExtractedResultStub(
-            entries=[_GraphEntryStub(content="甲", metadata={})]
-        )
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"memory_status": "archived"}, "graph_source_not_recallable"),
+        ({"gate_disposition": "mark_write"}, "graph_source_not_recallable"),
+        ({"fact_source_evidence": []}, "graph_source_evidence_required"),
+        (
+            {
+                "fact_source_evidence": [
+                    source_evidence(role="assistant"),
+                    source_evidence(),
+                ]
+            },
+            "graph_source_evidence_required",
+        ),
+    ],
+)
+async def test_untrusted_canonical_sources_never_reach_graph(
+    tmp_db_path, overrides, reason
+):
+    manager, store, vectors = await _manager(tmp_db_path)
+    boundary = await _source(store, overrides=overrides)
 
-        index_task = asyncio.create_task(manager.index_memory(42, "测试", {}))
-        await add_started.wait()
-        delete_task = asyncio.create_task(manager.delete_memory(42))
+    with pytest.raises(ValueError, match=reason):
+        await manager.index_memory(1, "", {})
+
+    assert await store.get_graph_snapshot(full=True, boundary=boundary) == {
+        "nodes": [],
+        "edges": [],
+        "entries": [],
+        "memories": [],
+    }
+    assert vectors.records == {}
+    async with store._connect() as db:
+        row = await (await db.execute("SELECT id FROM documents")).fetchone()
+    assert row == (1,)
+
+
+@pytest.mark.asyncio
+async def test_index_retry_removes_partial_vectors_and_rebuilds_same_source(
+    tmp_db_path,
+):
+    manager, store, vectors = await _manager(tmp_db_path)
+    boundary = await _source(store)
+    vectors.fail_at = 2
+    with pytest.raises(RuntimeError, match="vector_write_failed"):
+        await manager.index_memory(1, "", {})
+    assert set(vectors.records) == {1}
+
+    await manager.index_memory(1, "", {})
+
+    assert 1 not in vectors.records
+    snapshot = await store.get_graph_snapshot(full=True, boundary=boundary)
+    assert {content for content, _ in vectors.records.values()} == {
+        entry["content"] for entry in snapshot["entries"]
+    }
+    assert await store.get_recent_memory_ids(boundary=boundary) == [1]
+
+
+@pytest.mark.asyncio
+async def test_delete_waits_for_inflight_vector_sync(tmp_db_path):
+    manager, store, vectors = await _manager(tmp_db_path)
+    boundary = await _source(store)
+    vectors.started = asyncio.Event()
+    vectors.release = asyncio.Event()
+    index_task = asyncio.create_task(manager.index_memory(1, "", {}))
+    try:
+        await asyncio.wait_for(vectors.started.wait(), timeout=5)
+        delete_task = asyncio.create_task(manager.delete_memory(1))
         await asyncio.sleep(0)
-        graph_store.delete_memory.assert_not_awaited()
+        assert not delete_task.done()
+        vectors.release.set()
+        await asyncio.gather(index_task, delete_task)
+    finally:
+        vectors.release.set()
+        if not index_task.done():
+            index_task.cancel()
+            await asyncio.gather(index_task, return_exceptions=True)
 
-        release_add.set()
-        await index_task
-        await delete_task
-        graph_store.delete_memory.assert_awaited_once_with(42)
+    assert vectors.records == {}
+    assert await store.get_recent_memory_ids(boundary=boundary) == []
 
 
 @pytest.mark.asyncio
-class TestGraphMemoryManagerBatchDelete:
-    """验证批量图记忆删除。"""
+async def test_batch_delete_reaps_every_source_variant(tmp_db_path):
+    manager, store, vectors = await _manager(tmp_db_path)
+    old = await _source(store)
+    await manager.index_memory(1, "", {})
+    newer = await _source(store, revision="r2")
+    await manager.index_memory(1, "", {})
+    other = await _source(store, 2, scope="scope-b")
+    await manager.index_memory(2, "", {})
+    other_source_record = ("other", {"source_memory_id": 2})
+    vectors.records[99] = other_source_record
 
-    async def test_batch_delete_empty_list(self) -> None:
-        """空列表不会访问 Store 或向量后端。"""
-        graph_store = MagicMock()
-        vector_retriever = MagicMock()
-        extractor = GraphExtractor(config={})
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
+    await manager.batch_delete_memories([1, 1])
 
-        await manager.batch_delete_memories([])
+    assert await store.get_recent_memory_ids(boundary=old) == []
+    assert await store.get_recent_memory_ids(boundary=newer) == []
+    assert await store.get_recent_memory_ids(boundary=other) == [2]
+    assert vectors.records[99] == other_source_record
+    assert {
+        metadata["source_memory_id"] for _, metadata in vectors.records.values()
+    } == {2}
 
-        graph_store.batch_delete_memories.assert_not_called()
-        vector_retriever.delete_entries_for_memory.assert_not_called()
 
-    async def test_batch_delete_normalizes_ids_and_purges_each_source(self) -> None:
-        """批删会去重排序，并逐个清理 source-scoped 图向量。"""
-        graph_store = MagicMock()
-        graph_store.batch_delete_memories = AsyncMock(return_value={})
-        vector_retriever = MagicMock()
-        vector_retriever.delete_entries_for_memory = AsyncMock(return_value=0)
-        extractor = GraphExtractor(config={})
-        manager = GraphMemoryManager(graph_store, vector_retriever, extractor)
+@pytest.mark.asyncio
+async def test_delete_reaps_legacy_vectors_without_boundary_proof(tmp_db_path):
+    manager, _, vectors = await _manager(tmp_db_path)
+    vectors.records[4] = ("legacy", {"source_memory_id": 1})
+    vectors.records[5] = ("retained", {"source_memory_id": 2})
 
-        await manager.batch_delete_memories([2, 1, 2])
+    await manager.delete_memory(1)
 
-        graph_store.batch_delete_memories.assert_awaited_once_with([1, 2])
-        vector_retriever.delete_entries_for_memory.assert_has_awaits([call(1), call(2)])
+    assert vectors.records == {5: ("retained", {"source_memory_id": 2})}

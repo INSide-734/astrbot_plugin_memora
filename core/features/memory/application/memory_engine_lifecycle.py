@@ -244,6 +244,7 @@ class MemoryEngineLifecycleMixin:
                 self.graph_vector_retriever,
                 self.rrf_fusion,
                 self.config,
+                memory_loader=self.get_memory,
             )
             self.graph_memory_manager = GraphMemoryManager(
                 self.graph_store, self.graph_vector_retriever, self.graph_extractor

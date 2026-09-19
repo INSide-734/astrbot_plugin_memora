@@ -11,7 +11,13 @@ from ....platform.security.guardrails import MemoryExtractionResult
 from .quality_validator import QualityValidator
 
 _PARSE_REASONS: frozenset[str] = frozenset(
-    {"fence_invalid", "json_invalid", "schema_invalid", "facts_missing"}
+    {
+        "fence_invalid",
+        "json_invalid",
+        "schema_invalid",
+        "facts_missing",
+        "grounding_fact_evidence_mismatch",
+    }
 )
 _FIELD_PATH_PART = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,63}$")
 
@@ -154,6 +160,12 @@ class JsonParser:
         try:
             result = MemoryExtractionResult.model_validate(data, strict=True)
         except ValidationError as error:
+            if any(
+                item.get("ctx", {}).get("error") is not None
+                and str(item["ctx"]["error"]) == "grounding_fact_evidence_mismatch"
+                for item in error.errors()
+            ):
+                raise SummaryParseError("grounding_fact_evidence_mismatch") from None
             raise SummaryParseError(
                 "schema_invalid", detail=_summarize_validation_error(error)
             ) from None

@@ -508,6 +508,8 @@ class MetricsApiMixin:
             exc = task.exception()
         except Exception:
             return None
+        if exc is None:
+            return None
         return {"error": exc.__class__.__name__}
 
     @staticmethod

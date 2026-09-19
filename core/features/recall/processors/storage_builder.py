@@ -21,16 +21,11 @@ class StorageBuilder:
         """
         summary = str(structured_data.get("summary", "") or "")
         key_facts = structured_data.get("key_facts", [])
-        facts = [str(item) for item in key_facts[:5] if str(item).strip()]
+        facts = [str(item) for item in key_facts if str(item).strip()]
 
-        # 分段话题给出的摘要本身就是「[话题N] 事实A；事实B」，逐字包含于摘要的
-        # 事实不再重复追加，避免 canonical 正文出现两次同一事实。
-        missing_facts = [fact for fact in facts if fact not in summary]
-
-        canonical_parts = [summary] if summary else []
-        if missing_facts:
-            canonical_parts.append("；".join(missing_facts))
-        canonical_summary = " | ".join(canonical_parts) if canonical_parts else ""
+        # 正文只保留一份事实，避免摘要改述与事实列表重复；叙述另存 persona_summary。
+        # 保留全部准入事实，不能把原补充片段的五条上限沿用到唯一可检索正文。
+        canonical_summary = "；".join(facts) if facts else summary
 
         content = canonical_summary or fallback_excerpt
 
@@ -40,6 +35,7 @@ class StorageBuilder:
         metadata = {
             "topics": structured_data.get("topics", []),
             "key_facts": key_facts,
+            "fact_source_evidence": structured_data.get("fact_source_evidence", []),
             "sentiment": structured_data.get("sentiment", "neutral"),
             "interaction_type": "group_chat" if is_group_chat else "private_chat",
             "privacy_level": privacy_level,

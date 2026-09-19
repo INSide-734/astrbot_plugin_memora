@@ -16,6 +16,7 @@ from core.features.memory.infrastructure.write_op_journal import WriteOpJournal
 from core.features.memory.infrastructure.write_op_serialization import (
     serialize_atom_for_repair,
 )
+from tests.fact_evidence_helpers import source_evidence
 
 
 async def _upsert_document(
@@ -80,6 +81,7 @@ def _planned_atom(
         parent_privacy_level=privacy_level,
         atom_type=AtomType.PLANNED,
         content=content,
+        source_evidence=source_evidence(content),
         event_time=event_time,
         session_id="scope-a",
         persona_id="persona-a",

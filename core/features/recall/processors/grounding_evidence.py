@@ -6,11 +6,11 @@
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from typing import Any
 
-from ....shared.contracts.conversation import Message
+from ....shared.contracts.conversation import Message, message_evidence_fingerprint
 from ...quality.domain.gate_config import GateProfile
 
 USER_ROLE = "user"
@@ -20,9 +20,9 @@ _SUPPORT_SCORE = Callable[[str, str, "GateProfile"], float]
 def evidence_fingerprint(message: Message) -> str:
     """生成不暴露正文或身份的稳定消息证据指纹。"""
 
-    content = Message.content_to_text(message.content)
-    payload = f"{message.role}\0{content}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    return message_evidence_fingerprint(
+        message.role, Message.content_to_text(message.content)
+    )
 
 
 def reference_seq(
@@ -80,7 +80,7 @@ def resolve_references(
         snippet = content[start:end].strip()
         if not snippet:
             continue
-        role = str(message.role or "").strip().lower()
+        role = message.role
         evidence.append(
             {
                 "message_index": message_index,
@@ -95,7 +95,7 @@ def resolve_references(
         )
         if role == USER_ROLE:
             snippets.append(snippet)
-        referenced_messages.append(message)
+            referenced_messages.append(replace(message, content=content[start:end]))
     if not evidence:
         return None
     return evidence, "\n".join(snippets), referenced_messages
@@ -136,32 +136,14 @@ def match_stored_evidence(
     item: Mapping[str, Any],
     messages: list[Message],
 ) -> int | None:
-    """优先按稳定消息标识定位，缺少标识的旧证据才回退指纹匹配。
-
-    带标识时只接受该标识（以及并存指纹）的命中：正文相同的另一条消息
-    不能替代原证据，否则会把证据交换给其它主体。旧证据没有标识时才按
-    指纹重定位。
-    """
-
-    message_id = item.get("message_id")
-    fingerprint = str(item.get("message_fingerprint") or "")
-    if isinstance(message_id, int) and not isinstance(message_id, bool):
-        return next(
-            (
-                index
-                for index, message in enumerate(messages)
-                if message.id == message_id
-                and (not fingerprint or evidence_fingerprint(message) == fingerprint)
-            ),
-            None,
-        )
-    if not fingerprint:
-        return None
+    """Relocate only the exact message identity, role and fingerprint."""
     return next(
         (
             index
             for index, message in enumerate(messages)
-            if evidence_fingerprint(message) == fingerprint
+            if message.id == item.get("message_id")
+            and message.role == item.get("role")
+            and evidence_fingerprint(message) == item.get("message_fingerprint")
         ),
         None,
     )

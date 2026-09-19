@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from core.features.memory.application.graph_memory_manager import GraphMemoryManager
+from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.memory.graph.infrastructure.graph_store import GraphReplaceResult
 from core.features.memory.infrastructure.validators.embedding_retry import (
     EmbeddingRetryMixin,
@@ -21,6 +22,11 @@ from core.features.memory.rebuild_observability import (
 )
 from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
 from core.platform.composition import DerivedRebuildCoordinator
+from tests.fact_evidence_helpers import fact_evidence
+
+BOUNDARY = GraphBoundary.from_metadata(
+    {"scope_key": "graph-test", "privacy_level": "public", "revision_token": "r1"}
+)
 
 
 class _RetryHarness(EmbeddingRetryMixin):
@@ -113,14 +119,19 @@ class _BatchRetriever(GraphVectorRetriever):
         self.delete_calls: list[int] = []
 
     async def add_entries(
-        self, entries: list[tuple[str, dict]], *, batch_size: int | None = None
+        self,
+        entries: list[tuple[str, dict]],
+        *,
+        boundary: GraphBoundary,
+        batch_size: int | None = None,
     ) -> list[int]:
+        assert boundary == BOUNDARY
         self.add_calls.append(entries)
         if isinstance(self.result, BaseException):
             raise self.result
         return list(self.result)
 
-    async def delete_entries_for_memory(self, source_memory_id: int) -> int:
+    async def reap_entries_for_memory(self, source_memory_id: int) -> int:
         self.delete_calls.append(source_memory_id)
         return 0
 
@@ -132,10 +143,27 @@ class _GraphStore:
         self.entry_ids = entry_ids
         self.mappings: list[dict[int, int]] = []
 
-    async def replace_memory_graph(self, *_args) -> GraphReplaceResult:
+    async def load_source_memory(
+        self, source_memory_id: int
+    ) -> tuple[str, dict[str, object]]:
+        assert source_memory_id > 0
+        fact = "source"
+        return fact, {
+            **BOUNDARY.as_params(),
+            "key_facts": [fact],
+            "fact_source_evidence": fact_evidence([fact]),
+        }
+
+    async def replace_memory_graph(
+        self, *_args, boundary: GraphBoundary
+    ) -> GraphReplaceResult:
+        assert boundary == BOUNDARY
         return GraphReplaceResult(entry_ids=list(self.entry_ids))
 
-    async def update_entry_vector_doc_ids(self, mapping: dict[int, int]) -> None:
+    async def update_entry_vector_doc_ids(
+        self, mapping: dict[int, int], *, boundary: GraphBoundary
+    ) -> None:
+        assert boundary == BOUNDARY
         self.mappings.append(mapping)
 
 
@@ -219,7 +247,12 @@ async def test_graph_vector_retriever_uses_bounded_ordered_batches() -> None:
     retriever = GraphVectorRetriever(backend, {"graph_embedding_batch_size": 2})
 
     result = await retriever.add_entries(
-        [("a", {"n": 1}), ("b", {"n": 2}), ("c", {"n": 3})]
+        [
+            ("a", {"n": 1, **BOUNDARY.as_params()}),
+            ("b", {"n": 2, **BOUNDARY.as_params()}),
+            ("c", {"n": 3, **BOUNDARY.as_params()}),
+        ],
+        boundary=BOUNDARY,
     )
 
     assert result == [100, 101, 102]

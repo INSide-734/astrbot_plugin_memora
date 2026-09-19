@@ -22,6 +22,8 @@ from ...shared.recall_strategy import RecallStrategy
 from ...shared.temporal import normalize_datetime
 from ..evolution.application import ProjectionBudget, ProjectionScope
 from ..evolution.domain import ExpansionBudget, ScopeContext
+from ..injection.application.selection import metadata_has_user_evidence
+from ..memory.graph.domain.models import GraphQueryScope
 from ..quality.application.gate_disposition_filter import filter_mark_write
 from .dual_route_fusion import (
     build_score_breakdown,
@@ -128,6 +130,8 @@ class DualRouteRetriever:
         timing_sink: dict[str, float | int | bool] | None = None,
         deadline_monotonic: float | None = None,
         include_mark_write: bool = False,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> list[HybridResult]:
         """同时运行两条检索路由，并合并候选记忆。
 
@@ -136,6 +140,9 @@ class DualRouteRetriever:
             query_intent: 查询改写结果，优先使用 LLM 意图做权重调整。
             user_id: 用户 ID，用于个性化排序。
             query_plan: 可选多查询计划；存在时按计划拆分预算并跨查询 RRF 融合。
+            query_scope: 请求级图查询 scope；缺省时图路自行跳过，不猜 session/persona。
+            require_user_evidence: 为真时在重排与最终截断前只保留全部事实与
+                摘要都归属用户来源的候选；缺省保持既有检索行为。
         """
         if query_plan is not None and query_plan.queries:
             use_graph_route = should_use_graph_route(query_plan, query_intent)
@@ -154,6 +161,8 @@ class DualRouteRetriever:
                 deadline_monotonic=deadline_monotonic,
                 use_graph_route=use_graph_route,
                 include_mark_write=include_mark_write,
+                query_scope=query_scope,
+                require_user_evidence=require_user_evidence,
             )
 
         # 向后兼容：单查询路径
@@ -169,6 +178,7 @@ class DualRouteRetriever:
             reference_time=reference_time,
             deadline_monotonic=deadline_monotonic,
             use_graph_route=should_use_graph_route(query_plan, query_intent),
+            query_scope=query_scope,
         )
         doc_results = outcome.document_results
         graph_results = outcome.graph_results
@@ -299,6 +309,9 @@ class DualRouteRetriever:
         projection_ms = (time.perf_counter() - _t_projection_start) * 1000.0
 
         # v2.5 可插拔重排序 — MMR / Embedding 相似度 / LLM / Hybrid
+        if require_user_evidence:
+            # 证据门先于外部重排与 k 截断生效，混合候选不得占用 Provider 预算或槽位。
+            merged = _user_evidence_filter(merged)
         _t_rerank_start = time.perf_counter()
         if self.reranker and len(merged) > 1:
             merged = await self._apply_reranker(
@@ -357,6 +370,8 @@ class DualRouteRetriever:
         deadline_monotonic: float | None,
         use_graph_route: bool,
         include_mark_write: bool = False,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> list[HybridResult]:
         """多查询计划路径：按计划拆分预算，逐查询检索并跨查询 RRF 融合。"""
         reference_time = normalize_datetime(reference_time) or datetime.now(
@@ -389,6 +404,7 @@ class DualRouteRetriever:
                     reference_time=reference_time,
                     deadline_monotonic=deadline_monotonic,
                     use_graph_route=use_graph_route,
+                    query_scope=query_scope,
                 )
                 for sub_query, budget in active_queries
             )
@@ -430,6 +446,9 @@ class DualRouteRetriever:
             merge_total_ms += (time.perf_counter() - _t_merge_start) * 1000.0
 
             merged.sort(key=lambda item: (-item.final_score, item.doc_id))
+            if require_user_evidence:
+                # 资格门必须早于子查询 budget，避免无资格高分项挤掉合法补位。
+                merged = _user_evidence_filter(merged)
             per_query_merged.append(merged[:budget])
 
         # 跨查询 RRF 融合
@@ -547,6 +566,9 @@ class DualRouteRetriever:
         projection_ms = (time.perf_counter() - _t_projection_start) * 1000.0
 
         # 重排序
+        if require_user_evidence:
+            # 与单查询路径一致：先证据门，再外部重排与最终 k 截断。
+            fused = _user_evidence_filter(fused)
         _t_rerank_start = time.perf_counter()
         if self.reranker and len(fused) > 1:
             fused = await self._apply_reranker(
@@ -585,34 +607,6 @@ class DualRouteRetriever:
             timing_sink.update(self.last_search_timing)
         await self._schedule_atom_touch(visible, all_atom_ids_by_parent)
         return visible
-
-    async def _search_atom_evidence(
-        self,
-        query: str,
-        *,
-        k: int,
-        session_id: str | None,
-        persona_id: str | None,
-    ) -> list[Any]:
-        """查询内部 Atom 证据；普通故障返回空信号，取消异常向上传播。"""
-
-        if self.atom_retriever is None:
-            return []
-        try:
-            return await self.atom_retriever.search(
-                query,
-                k=k,
-                session_id=session_id,
-                persona_id=persona_id,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "[DualRouteRetriever] Atom 证据路降级，异常类型=%s",
-                exc.__class__.__name__,
-            )
-            return []
 
     @staticmethod
     def _aggregate_atom_evidence(
@@ -768,3 +762,13 @@ def _supports_declared_capability(adapter: Any, capability: AdapterCapability) -
 
     contract = declared_adapter_contract(adapter)
     return contract is None or contract.supports(capability)
+
+
+def _user_evidence_filter(results: list[HybridResult]) -> list[HybridResult]:
+    """只保留全部事实与摘要都能归属用户来源的候选。"""
+
+    return [
+        item
+        for item in results
+        if metadata_has_user_evidence(getattr(item, "metadata", None))
+    ]

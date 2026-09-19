@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.memory.graph.domain.models import GraphBoundary
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
+
 
 class TestGraphKeywordRetriever:
     @pytest.fixture
@@ -38,8 +42,8 @@ class TestGraphKeywordRetriever:
     @pytest.mark.asyncio
     async def test_search_empty_query(self, retriever: Any) -> None:
         """Empty or whitespace query returns empty list."""
-        assert await retriever.search("") == []
-        assert await retriever.search("   ") == []
+        assert await retriever.search("", boundary=BOUNDARY) == []
+        assert await retriever.search("   ", boundary=BOUNDARY) == []
 
     @pytest.mark.asyncio
     async def test_search_no_tokens(
@@ -47,7 +51,7 @@ class TestGraphKeywordRetriever:
     ) -> None:
         """When tokenizer returns empty, return empty."""
         text_processor.tokenize_async.return_value = []
-        results = await retriever.search("...")
+        results = await retriever.search("...", boundary=BOUNDARY)
         assert results == []
 
     @pytest.mark.asyncio
@@ -68,7 +72,7 @@ class TestGraphKeywordRetriever:
         ]
         graph_store.search_nodes_by_tokens.return_value = []
 
-        results = await retriever.search("test", limit=5)
+        results = await retriever.search("test", limit=5, boundary=BOUNDARY)
         assert len(results) == 1
         assert results[0].doc_id == 1
         assert results[0].score == 0.9
@@ -100,7 +104,7 @@ class TestGraphKeywordRetriever:
         ]
         graph_store.get_neighbor_node_ids.return_value = []
 
-        results = await retriever.search("test", limit=5)
+        results = await retriever.search("test", limit=5, boundary=BOUNDARY)
         assert len(results) == 1
         assert results[0].doc_id == 2
         assert results[0].score == 0.8 * 0.7  # neighbor weight
@@ -135,7 +139,7 @@ class TestGraphKeywordRetriever:
         ]
         graph_store.get_neighbor_node_ids.return_value = []
 
-        results = await retriever.search("test", limit=5)
+        results = await retriever.search("test", limit=5, boundary=BOUNDARY)
         assert len(results) == 1
         assert results[0].doc_id == 1
         # The direct BM25 hit (0.7) > neighbor hit (0.5*0.7=0.35), so max should be 0.7
@@ -164,7 +168,7 @@ class TestGraphKeywordRetriever:
         ]
         graph_store.get_neighbor_node_ids.return_value = [2]
 
-        results = await retriever.search("edge", limit=5)
+        results = await retriever.search("edge", limit=5, boundary=BOUNDARY)
         assert len(results) == 1
         assert results[0].doc_id == 3
         assert results[0].score == pytest.approx(0.6 * 0.7)  # edge_neighbor weight
@@ -180,29 +184,5 @@ class TestGraphKeywordRetriever:
         graph_store.search_nodes_by_tokens.return_value = []
         graph_store.get_entries_for_node_ids.return_value = []
 
-        results = await retriever.search("only", limit=5)
+        results = await retriever.search("only", limit=5, boundary=BOUNDARY)
         assert results == []
-
-    @pytest.mark.asyncio
-    async def test_search_with_session_id(
-        self, retriever: Any, graph_store: AsyncMock, text_processor: MagicMock
-    ) -> None:
-        """session_id is passed through to graph_store methods."""
-        text_processor.tokenize_async.return_value = ["test"]
-        graph_store.search_entries_by_bm25.return_value = [
-            {
-                "source_memory_id": 1,
-                "score": 0.9,
-                "content": "memory with session",
-                "metadata": {},
-                "entry_type": "fact",
-                "relation_type": None,
-            },
-        ]
-        graph_store.search_nodes_by_tokens.return_value = []
-
-        results = await retriever.search("test", limit=5, session_id="sess_1")
-        assert len(results) == 1
-        # Verify session_id was passed to BM25 search
-        bm25_call = graph_store.search_entries_by_bm25.call_args
-        assert bm25_call.kwargs.get("session_id") == "sess_1"

@@ -39,8 +39,6 @@ _VALENCE_MAP: dict[str, float] = {
     "neutral": 0.0,
 }
 
-_MAX_REINFORCEMENT_MULTIPLIER = 2.0
-
 
 class RetrievalBoostsMixin:
     """为 RetrievalOptimizer 提供检索后增强与干扰衰减。"""
@@ -204,32 +202,16 @@ class RetrievalBoostsMixin:
 
     async def _apply_testing_effect(self, results: list[HybridResult]) -> None:
         """对成功召回的记忆施加测试效应强化。"""
-        if self._update_memory is None:
+        reinforce = self._reinforce_recall_state
+        if reinforce is None:
             return
 
         top_results = results[: self._testing_effect_top_k]
         use_async = self._testing_effect_async and self._create_tracked_task is not None
 
         for r in top_results:
-            metadata = r.metadata or {}
-            current_count = int(metadata.get("reinforcement_count", 0) or 0)
-            original_ttl = float(metadata.get("ttl_days", 30.0) or 30.0)
-
-            new_count = current_count + 1
-            new_ttl = min(
-                original_ttl * _MAX_REINFORCEMENT_MULTIPLIER,
-                original_ttl * (1.05**new_count),
-            )
-
-            metadata["reinforcement_count"] = new_count
-            metadata["ttl_days"] = round(new_ttl, 2)
-
             try:
-                coro = self._update_memory(
-                    r.doc_id,
-                    {"metadata": metadata},
-                    skip_graph_reindex=True,
-                )
+                coro = reinforce(r.doc_id)
                 if use_async:
                     tracked_task = self._create_tracked_task
                     assert tracked_task is not None
@@ -338,20 +320,10 @@ class RetrievalBoostsMixin:
                     1, len(new_tokens | old_tokens)
                 )
                 if jaccard >= 0.6:
-                    old_metadata = old_memory.get("metadata", {})
-                    if isinstance(old_metadata, str):
-                        try:
-                            old_metadata = json.loads(old_metadata)
-                        except (json.JSONDecodeError, TypeError):
-                            old_metadata = {}
-                    old_importance = float(old_metadata.get("importance", 0.5))
-                    old_metadata["importance"] = round(
-                        max(0.05, old_importance * 0.9), 4
-                    )
-                    old_metadata["revised_by"] = new_memory_id
-                    if self._update_memory is None:
+                    decay = self._apply_interference_decay
+                    if decay is None:
                         continue
-                    await self._update_memory(result.doc_id, {"metadata": old_metadata})
+                    await decay(result.doc_id, source_memory_id=new_memory_id)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -360,7 +332,8 @@ class RetrievalBoostsMixin:
     _db: Any
     _search_memories: Any
     _get_memory: Any
-    _update_memory: Any
+    _reinforce_recall_state: Any
+    _apply_interference_decay: Any
     _create_tracked_task: Callable[[Any], Any] | None
     _testing_effect_async: bool
     _testing_effect_top_k: int

@@ -34,6 +34,7 @@ if str(ENTRYPOINT_ROOT) not in sys.path:
 # 命令行可指定源码根目录，因此相关模块必须在路径解析完成后导入。
 from scripts.recall_total_path_benchmark import (  # noqa: E402
     TOTAL_RECALL_BASELINE_PATH,
+    _resolved_user_evidence,
     handler_worker_main,
     record_total_path_baseline,
 )
@@ -126,6 +127,7 @@ _CANDIDATES = [
             "intent_match": 1.0,
             "temporal_value": 1.0,
             "source_value": 1.0,
+            **_resolved_user_evidence(content, index),
         },
         "useful": True,
     }

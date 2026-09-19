@@ -131,6 +131,8 @@ def format_memories_for_injection(
 
     未传预算时保留旧字符串返回格式；传入预算时返回文本与统计，并把
     ``total_chars`` 作为包装、metadata、分隔符和换行在内的完整硬上限。
+    生产调用必须先经过 ``select_candidates`` 的逐事实来源门与字段清理；
+    此处只负责可见字段格式化，不从旧候选或聚合分数推断来源可信度。
     """
     from ....shared.constants import MEMORY_INJECTION_FOOTER, MEMORY_INJECTION_HEADER
 
@@ -369,6 +371,24 @@ def format_memories_for_injection(
     return result
 
 
+def _safe_tool_result_entry(content: Any, score: Any, metadata: Any) -> dict[str, Any]:
+    """构造与最终注入同源的模型可见结果字段。
+
+    只序列化正文、分数、重要性和经共享清洗的 projection；canonical ID、
+    session/persona、时间戳、证据和 provenance 一律不进入模型载荷。
+    """
+    safe_metadata = metadata if isinstance(metadata, dict) else {}
+    entry: dict[str, Any] = {
+        "content": content,
+        "score": round(score, 4) if isinstance(score, float) else score,
+        "importance": safe_metadata.get("importance", 0.5),
+    }
+    projections = _safe_projection_objects(safe_metadata)
+    if projections:
+        entry["derived_projections"] = projections
+    return entry
+
+
 def format_memories_for_fake_tool_call(
     memories: list,
     query: str,
@@ -382,11 +402,13 @@ def format_memories_for_fake_tool_call(
     1. assistant 消息，包含 tool_calls（调用 recall_long_term_memory）
     2. tool 消息，包含工具调用结果（记忆内容，JSON 格式）
 
-    返回的 JSON 格式与 MemorySearchTool.call() 的真实返回值保持一致，
-    使 LLM 对伪造调用和真实调用有相同的理解。
+    返回的 JSON 结构与 MemorySearchTool 的真实返回值相容
+    （query/applied_filters/count/results），但每条结果只序列化模型可见
+    字段，使 LLM 对伪造调用和真实调用有相同的理解，同时不暴露 canonical
+    ID、session/persona、时间戳或来源证据。
 
     Args:
-        memories: 记忆字典列表，每条包含 content、score、metadata、timestamp 字段。
+        memories: 已经过共享选择门的记忆字典列表，字段仅含可见正文与元数据。
         query: 用户查询文本（作为工具调用参数）。
         k: 召回数量（作为工具调用参数）。
         session_filtered: 本次检索是否启用了会话过滤。
@@ -404,20 +426,15 @@ def format_memories_for_fake_tool_call(
     # 生成唯一的伪造调用 ID
     call_id = f"{FAKE_TOOL_CALL_ID_PREFIX}{uuid.uuid4().hex[:12]}"
 
-    # 将记忆序列化为与 MemorySearchTool.call() 一致的 JSON 格式
+    # 只序列化模型可见字段；canonical ID、session/persona、时间戳与证据
+    # 不进入模型载荷，projection 走共享清洗器。
     serialized_results = []
     for mem in memories:
         if isinstance(mem, dict):
-            memory_id = mem.get("id", mem.get("doc_id"))
             content = mem.get("content", "")
             score = mem.get("score", 0.0)
             metadata = mem.get("metadata", {})
         else:
-            memory_id = getattr(mem, "doc_id", None)
-            if not isinstance(memory_id, (str, int)):
-                memory_id = getattr(mem, "id", None)
-                if not isinstance(memory_id, (str, int)):
-                    memory_id = None
             content = getattr(mem, "content", "")
             score = getattr(mem, "score", getattr(mem, "final_score", 0.0))
             metadata_raw = getattr(mem, "metadata", {})
@@ -427,21 +444,7 @@ def format_memories_for_fake_tool_call(
                 else metadata_raw
             )
 
-        serialized_results.append(
-            {
-                "id": memory_id,
-                "content": content,
-                "score": round(score, 4) if isinstance(score, float) else score,
-                "importance": metadata.get("importance", 0.5),
-                "session_id": metadata.get("session_id"),
-                "persona_id": metadata.get("persona_id"),
-                "create_time": metadata.get("create_time"),
-                "last_access_time": metadata.get("last_access_time"),
-            }
-        )
-        safe_projection = _safe_projection_objects(metadata)
-        if safe_projection:
-            serialized_results[-1]["derived_projections"] = safe_projection
+        serialized_results.append(_safe_tool_result_entry(content, score, metadata))
 
     tool_result_json = json.dumps(
         {

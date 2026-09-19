@@ -2,50 +2,60 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.domain.models import (
+    GraphBoundary,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
 from core.platform.transport.page_api.graph_api import GraphApiMixin
 
-
-def _empty_snapshot() -> dict[str, list]:
-    """返回不含图元素的标准快照。"""
-    return {"nodes": [], "edges": [], "entries": [], "memories": []}
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 
 class _GraphApiHost(GraphApiMixin):
-    """为全量概览测试提供最小 Page API 宿主。"""
+    """为管理员总览契约提供最小 Page API 宿主。"""
 
     def __init__(self, graph_store: MagicMock) -> None:
-        """保存图存储替身并构造最小记忆引擎。"""
+        """保存图存储替身与统计替身，供总览入口读取。"""
         self._graph_store = graph_store
-        self._memory_engine = SimpleNamespace(
-            get_statistics=AsyncMock(return_value={"graph_nodes": 0})
-        )
+        self._memory_engine = MagicMock()
+        self._memory_engine.get_statistics = AsyncMock(return_value={"total": 0})
 
-    async def _ensure_plugin_ready(self):
-        """返回已经就绪的最小插件依赖。"""
-        return {"memory_engine": self._memory_engine}, None
-
-    def _get_graph_store(self, memory_engine):
+    def _get_graph_store(self, _memory_engine):
         """返回测试注入的图存储替身。"""
         return self._graph_store
 
-    def _build_graph_view_payload(self, snapshot, stats, **kwargs):
-        """构造测试所需的最小图视图响应。"""
-        return {**snapshot, "stats": stats, **kwargs}
+    async def _ensure_plugin_ready(self):
+        """返回只用于验证入口门控的最小就绪结果。"""
+        return {"memory_engine": self._memory_engine}, None
 
     def _ok(self, data):
-        """构造成功响应。"""
-        return {"status": "ok", "data": data}
+        """返回与生产一致的页面成功 envelope。"""
+        from core.platform.transport.page_api.response_utils import ok_response
 
-    def _error(self, message):
-        """构造失败响应。"""
-        return {"status": "error", "message": message}
+        return ok_response(data)
+
+    def _error(self, msg):
+        """返回与生产一致的页面错误 envelope。"""
+        from core.platform.transport.page_api.response_utils import error_response
+
+        return error_response(msg)
+
+    def _build_graph_view_payload(self, snapshot, stats, **kwargs):
+        """返回便于断言的管理员视图载荷替身。"""
+        result = {
+            "nodes": snapshot.get("nodes", []),
+            "edges": snapshot.get("edges", []),
+            "stats": stats,
+        }
+        result.update(kwargs)
+        return result
 
 
 @pytest.mark.asyncio
@@ -62,7 +72,7 @@ async def test_full_snapshot_returns_every_graph_memory(tmp_db_path) -> None:
         )
         for node_index in range(1, source_count * 2 + 1)
     ]
-    node_map = await store.upsert_nodes(nodes)
+    node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
     edges = [
         GraphEdge(
             source_key=nodes[(memory_id - 1) * 2].node_key,
@@ -72,7 +82,7 @@ async def test_full_snapshot_returns_every_graph_memory(tmp_db_path) -> None:
         )
         for memory_id in range(1, source_count + 1)
     ]
-    edge_map = await store.add_edges(edges, node_map)
+    edge_map = await store.add_edges(edges, node_map, boundary=BOUNDARY)
     entries = [
         GraphEntry(
             entry_key=f"memory-{memory_id}",
@@ -87,9 +97,9 @@ async def test_full_snapshot_returns_every_graph_memory(tmp_db_path) -> None:
         )
         for memory_id, edge in enumerate(edges, start=1)
     ]
-    await store.add_entries(entries, node_map, edge_map)
+    await store.add_entries(entries, node_map, edge_map, boundary=BOUNDARY)
 
-    snapshot = await store.get_graph_snapshot(full=True)
+    snapshot = await store.get_graph_snapshot(full=True, boundary=BOUNDARY)
 
     assert {item["memory_id"] for item in snapshot["memories"]} == set(
         range(1, source_count + 1)
@@ -108,7 +118,7 @@ async def test_full_snapshot_preserves_scope_filters(tmp_db_path) -> None:
         GraphNode(node_type="fact", value="甲", canonical_value="scope-a"),
         GraphNode(node_type="fact", value="乙", canonical_value="scope-b"),
     ]
-    node_map = await store.upsert_nodes(nodes)
+    node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
     await store.add_entries(
         [
             GraphEntry(
@@ -132,12 +142,14 @@ async def test_full_snapshot_preserves_scope_filters(tmp_db_path) -> None:
         ],
         node_map,
         {},
+        boundary=BOUNDARY,
     )
 
     snapshot = await store.get_graph_snapshot(
         session_id="session-a",
         persona_id="persona-a",
         full=True,
+        boundary=BOUNDARY,
     )
 
     assert [item["memory_id"] for item in snapshot["memories"]] == [1]
@@ -145,37 +157,46 @@ async def test_full_snapshot_preserves_scope_filters(tmp_db_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_overview_without_limits_requests_full_snapshot() -> None:
-    """无显式限制的概览端点必须读取全量图快照。"""
+async def test_overview_without_memory_id_returns_admin_canvas() -> None:
+    """GET /graph/overview 恢复管理员总览：无 canonical source 也可跨来源浏览。"""
     graph_store = MagicMock()
-    graph_store.get_graph_snapshot = AsyncMock(return_value=_empty_snapshot())
+    graph_store.get_admin_canvas_snapshot = AsyncMock(
+        return_value={
+            "nodes": [
+                {"id": 1, "label": "甲", "type": "fact"},
+                {"id": 2, "label": "乙", "type": "topic"},
+            ],
+            "edges": [{"id": 3, "source": 1, "target": 2, "type": "related"}],
+        }
+    )
     host = _GraphApiHost(graph_store)
     request_stub = MagicMock()
-    request_stub.args = {}
+    request_stub.args = {"session_id": "client-session", "persona_id": "client-persona"}
 
     with patch("core.platform.transport.page_api.graph_api.request", request_stub):
         result = await host.get_graph_overview()
 
     assert result["status"] == "ok"
-    graph_store.get_graph_snapshot.assert_awaited_once_with(
-        session_id=None,
-        persona_id=None,
-        full=True,
-    )
+    assert result["data"]["mode"] == "overview"
+    assert [node["id"] for node in result["data"]["nodes"]] == [1, 2]
+    assert result["data"]["filters"] == {
+        "session_id": "client-session",
+        "persona_id": "client-persona",
+    }
 
 
 @pytest.mark.asyncio
-async def test_empty_search_requests_full_snapshot() -> None:
-    """Dashboard 的无查询搜索必须读取全量图快照。"""
+async def test_empty_search_without_memory_id_returns_admin_canvas() -> None:
+    """空搜索回退到管理员总览，而不是要求客户端提供来源边界。"""
     graph_store = MagicMock()
-    graph_store.get_graph_snapshot = AsyncMock(return_value=_empty_snapshot())
+    graph_store.get_admin_canvas_snapshot = AsyncMock(
+        return_value={"nodes": [{"id": 1, "label": "甲", "type": "fact"}], "edges": []}
+    )
     host = _GraphApiHost(graph_store)
 
     result = await host._query_graph_impl({})
 
     assert result["status"] == "ok"
-    graph_store.get_graph_snapshot.assert_awaited_once_with(
-        session_id=None,
-        persona_id=None,
-        full=True,
-    )
+    assert result["data"]["mode"] == "overview"
+    assert [node["id"] for node in result["data"]["nodes"]] == [1]
+    graph_store.get_admin_canvas_snapshot.assert_awaited_once()

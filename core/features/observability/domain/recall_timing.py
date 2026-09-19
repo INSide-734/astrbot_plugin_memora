@@ -48,6 +48,7 @@ COUNT_KEYS: Final[tuple[str, ...]] = (
     "selected_count",
     "injection_chars",
     "conditional_llm_calls",
+    "graph_candidates_rejected",
 )
 BOOL_KEYS: Final[tuple[str, ...]] = (
     "cache_hit",
@@ -59,6 +60,7 @@ BOOL_KEYS: Final[tuple[str, ...]] = (
     "deadline_exhausted",
     "partial_fallback",
     "graph_route_skipped",
+    "graph_route_exhausted",
     "document_route_degraded",
     "graph_route_degraded",
     "atom_route_degraded",

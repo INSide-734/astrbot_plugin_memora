@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { GitGraph, Search, Maximize2, Minimize2 } from "lucide-react";
-import { Graph, type GraphOptions, type IPointerEvent } from "@antv/g6";
+import { Graph, type IPointerEvent } from "@antv/g6";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { useI18n } from "@/hooks/useI18n";
 import type { Theme } from "@/hooks/useTheme";
@@ -20,6 +20,14 @@ import { GraphTimeRangeFilter } from "@/components/graph/GraphTimeRangeFilter";
 import { GraphStats } from "@/components/graph/GraphStats";
 import type { GraphNode } from "@/types";
 import { dashboardLocale, formatDashboardPercent } from "@/lib/i18n";
+import {
+  EDGE_STYLES,
+  TEMPORAL_EDGES,
+  CAUSAL_EDGES,
+  GRAPH_LAYOUT_ALPHA_DECAY,
+  graphElementOptions,
+  graphMotionEnabled,
+} from "@/components/graph/graphAppearance";
 
 interface GraphPageProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -62,147 +70,18 @@ function currentGraphSearchEndpoint(
   memoryId: string,
   timeRange: GraphTimeRange,
 ): string {
+  const trimmedQuery = query.trim();
+  const trimmedMemoryId = memoryId.trim();
   return graphSearchEndpoint(
     {
-      query: query || undefined,
-      memoryId: memoryId || undefined,
-      canvas: !query && !memoryId,
+      query: trimmedQuery || undefined,
+      memoryId: trimmedMemoryId || undefined,
+      canvas: !trimmedQuery && !trimmedMemoryId,
     },
     timeRange,
   );
 }
 
-// 边类型对应颜色、虚线样式和翻译键。
-const EDGE_STYLES: Record<string, { color: string; dash: boolean; label: string }> = {
-  before:      { color: "#748ffc", dash: true,  label: "graph.edgeBefore" },
-  after:       { color: "#4dabf7", dash: true,  label: "graph.edgeAfter" },
-  during:      { color: "#a5d8ff", dash: true,  label: "graph.edgeDuring" },
-  results_in:  { color: "#51cf66", dash: false, label: "graph.edgeResultsIn" },
-  caused_by:   { color: "#ff6b6b", dash: false, label: "graph.edgeCausedBy" },
-  prevents:    { color: "#adb5bd", dash: true,  label: "graph.edgePrevents" },
-  is_a:        { color: "#cc5de8", dash: true,  label: "graph.edgeIsA" },
-  describes:       { color: "#bea4d8", dash: false, label: "graph.edgeDescribes" },
-  mentioned_in:    { color: "#94a3b8", dash: false, label: "graph.edgeMentionedIn" },
-  co_occurs_with:  { color: "#a0a4b0", dash: false, label: "graph.edgeCoOccurs" },
-};
-
-// 时序边使用虚线，因果边使用带标签的实线。
-const TEMPORAL_EDGES = new Set(["before", "after", "during"]);
-const CAUSAL_EDGES = new Set(["results_in", "caused_by"]);
-// 加快力模型降温，在完整保留节点、边和碰撞检测的前提下缩短首次布局时间。
-const GRAPH_LAYOUT_ALPHA_DECAY = 0.03;
-
-const EDGE_DEFAULT = { color: "rgba(148,163,184,0.5)", dash: false, label: "graph.edgeOther" };
-/** 返回边类型对应的画布样式。 */
-function edgeStyle(type: string | undefined) { return EDGE_STYLES[type ?? ""] ?? EDGE_DEFAULT; }
-
-/** 把主题选择态 token 解析为 G6 可直接消费的颜色。 */
-function resolveSelectionColor(
-  token: "--selection-indicator" | "--selection-border",
-  fallback: string,
-): string {
-  if (typeof document === "undefined" || !document.body) return fallback;
-
-  const probe = document.createElement("span");
-  probe.hidden = true;
-  probe.style.color = `var(${token}, ${fallback})`;
-  document.body.appendChild(probe);
-
-  try {
-    const value = getComputedStyle(probe).color.trim();
-    return value && !value.includes("var(") && !value.includes("color-mix(")
-      ? value
-      : fallback;
-  } finally {
-    probe.remove();
-  }
-}
-
-/** 构建随主题和动效偏好变化的 G6 节点与边配置。 */
-function graphElementOptions(
-  theme: Theme,
-  animateLabels: boolean,
-): Pick<GraphOptions, "node" | "edge"> {
-  const selectedStroke = resolveSelectionColor(
-    "--selection-indicator",
-    theme === "dark" ? "#f1f3f5" : "#343a40",
-  );
-  const hoverStroke = resolveSelectionColor(
-    "--selection-border",
-    theme === "dark" ? "rgba(241,243,245,0.35)" : "rgba(52,58,64,0.35)",
-  );
-  const labelAnimation = animateLabels
-    ? {
-        update: [{
-          fields: ["fill"],
-          shape: "label",
-          duration: 200,
-          easing: "ease-out",
-        }],
-      }
-    : false;
-
-  return {
-    node: {
-      type: "circle",
-      style: {
-        size: 24,
-        fill: (datum: Record<string, unknown>) => (
-          GRAPH_NODE_COLORS[String((datum as any).data?.type ?? "other")]
-            ?? GRAPH_NODE_COLORS.other
-        ),
-        fillOpacity: 0.85,
-        stroke: "transparent",
-        labelText: (datum: Record<string, unknown>) => (
-          String((datum as any).data?.label ?? datum.id ?? "")
-        ),
-        labelFontSize: 10,
-        labelFill: theme === "dark" ? "#e8eaed" : "#1e1e1e",
-        labelOffsetY: 12,
-        labelPlacement: "bottom",
-      },
-      state: {
-        hover: { stroke: hoverStroke, lineWidth: 2 },
-        selected: { stroke: selectedStroke, lineWidth: 3 },
-      },
-      animation: labelAnimation,
-    },
-    edge: {
-      type: "line",
-      style: {
-        stroke: (datum: Record<string, unknown>) => {
-          const type = String((datum as any)?.data?.type ?? "");
-          return edgeStyle(type).color;
-        },
-        lineWidth: (datum: Record<string, unknown>) => {
-          const type = String((datum as any)?.data?.type ?? "");
-          return CAUSAL_EDGES.has(type) ? 2 : 0.8;
-        },
-        lineDash: (datum: Record<string, unknown>) => {
-          const type = String((datum as any)?.data?.type ?? "");
-          return edgeStyle(type).dash ? [6, 3] : undefined;
-        },
-        labelText: (datum: Record<string, unknown>) => {
-          const data = (datum as any)?.data;
-          return data?.label ?? undefined;
-        },
-        labelFontSize: 9,
-        labelFill: theme === "dark" ? "#94a3b8" : "#64748b",
-        labelOffsetY: -6,
-      },
-      animation: labelAnimation,
-    },
-  };
-}
-
-/** 判断当前浏览器是否允许图谱动效。 */
-function graphMotionEnabled(): boolean {
-  try {
-    return !(window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false);
-  } catch {
-    return true;
-  }
-}
 
 /** 管理图谱工作区的数据加载、G6 生命周期和交互状态。 */
 export function GraphPage({ showToast, theme }: GraphPageProps) {
@@ -229,8 +108,10 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
   const graphRef = useRef<Graph | null>(null);
   const mountedRef = useRef(false);
   const requestGenerationRef = useRef(0);
+  const statsGenerationRef = useRef(0);
   const graphGenerationRef = useRef(0);
   const renderGenerationRef = useRef(0);
+  const renderQueueRef = useRef<Promise<boolean> | null>(null);
   const themeOperationGenerationRef = useRef(0);
   const themeRef = useRef(theme);
   const appliedThemeRef = useRef(theme);
@@ -243,6 +124,7 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
     return () => {
       mountedRef.current = false;
       requestGenerationRef.current += 1;
+      statsGenerationRef.current += 1;
       graphGenerationRef.current += 1;
       renderGenerationRef.current += 1;
       themeOperationGenerationRef.current += 1;
@@ -251,16 +133,17 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
 
   /** 拉取概览统计并忽略已过期请求。 */
   const fetchOverview = useCallback(async () => {
+    const generation = ++statsGenerationRef.current;
     try {
       const data = unwrapApiData(await apiRequest("stats"));
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || statsGenerationRef.current !== generation) return;
       setTotal(Number(data.total_memories ?? data.total_count ?? 0));
       setNodeCount(Number(data.graph_nodes ?? 0));
       setEdgeCount(Number(data.graph_edges ?? 0));
       const sessions = (data.sessions ?? {}) as Record<string, unknown>;
       setSessionCount(Object.keys(sessions).length);
     } catch (e) {
-      if (mountedRef.current) showToast(String(e), true);
+      if (mountedRef.current && statsGenerationRef.current === generation) showToast(String(e), true);
     }
   }, [showToast]);
 
@@ -271,9 +154,10 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
 
   /** 清除画布与详情面板中的当前节点选择。 */
   const clearGraphSelection = useCallback((graph = graphRef.current) => {
-    const selectedId = selectedNodeIdRef.current;
-    if (graph && selectedId) {
-      void graph.setElementState(selectedId, [], false).catch(() => {});
+    if (graph) {
+      for (const node of graph.getElementDataByState("node", "selected")) {
+        void graph.setElementState(String(node.id), [], false).catch(() => {});
+      }
     }
     selectedNodeIdRef.current = null;
     setSelectedNode(null);
@@ -283,6 +167,8 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
   /** 创建 G6 实例并绑定节点、画布与视口事件。 */
   const createGraph = useCallback((container: HTMLDivElement, initialTheme: Theme) => {
     const motionEnabled = graphMotionEnabled();
+    // G6 在选择动效结束后才回调，事件需保留开始时的请求代次。
+    const clickRequests = new WeakMap<IPointerEvent, number>();
     const graph = new Graph({
       container,
       autoFit: "view",
@@ -306,11 +192,14 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
           state: "selected",
           degree: 0,
           animation: motionEnabled,
-          enable: (event: IPointerEvent) => (
-            event.targetType === "node" || event.targetType === "canvas"
-          ),
+          enable: (event: IPointerEvent) => {
+            if (event.targetType !== "node" && event.targetType !== "canvas") return false;
+            clickRequests.set(event, requestGenerationRef.current);
+            return true;
+          },
           onClick: (event: IPointerEvent) => {
             if (!mountedRef.current || graphRef.current !== graph) return;
+            if (clickRequests.get(event) !== requestGenerationRef.current) return;
             if (event.targetType === "canvas") {
               selectedNodeIdRef.current = null;
               setSelectedNode(null);
@@ -373,6 +262,7 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
     const graph = createGraph(el, initialTheme);
     const graphGeneration = ++graphGenerationRef.current;
     graphRef.current = graph;
+    renderQueueRef.current = null;
     appliedThemeRef.current = initialTheme;
 
     // 如果已有缓存数据，立即渲染
@@ -437,54 +327,56 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
    * @param edges 最新图谱边。
    * @returns 本次操作是否仍是当前图实例的有效提交。
    */
-  const updateGraphData = useCallback(async (nodes: GraphNode[], edges: GraphEdgePayload[]) => {
+  const updateGraphData = useCallback((nodes: GraphNode[], edges: GraphEdgePayload[]): Promise<boolean> => {
     const g = graphRef.current;
-    if (!g || !mountedRef.current) return false;
+    if (!g || !mountedRef.current) return Promise.resolve(false);
     const graphGeneration = graphGenerationRef.current;
+    const requestGeneration = requestGenerationRef.current;
     const operationGeneration = ++renderGenerationRef.current;
-    // 仅允许当前图实例的最后一次渲染提交状态。
+    // 仅允许当前请求与图实例的最后一次渲染提交状态。
     const isCurrentOperation = () => (
       mountedRef.current
       && graphRef.current === g
       && graphGenerationRef.current === graphGeneration
+      && requestGenerationRef.current === requestGeneration
       && renderGenerationRef.current === operationGeneration
     );
-
-    nodesRef.current = nodes;
-    lastDataRef.current = { nodes, edges };
-    const renderData = buildGraphRenderData(nodes, edges, CAUSAL_EDGES);
-    for (const invalidEdge of renderData.invalidEdges) {
-      console.warn(
-        `[GraphPage] 过滤孤立边: ${invalidEdge.source} → ${invalidEdge.target}，节点列表中存在=${invalidEdge.sourceExists}/${invalidEdge.targetExists}`,
-      );
-    }
-
-    const selectedId = selectedNodeIdRef.current;
-    const selectionRemainsVisible = selectedId !== null
-      && nodes.some((node) => String(node.id) === selectedId);
-    const refreshedSelectedNode = selectionRemainsVisible
-      ? nodes.find((node) => String(node.id) === selectedId) ?? null
-      : null;
-    if (selectedId && !selectionRemainsVisible) {
-      clearGraphSelection(g);
-    }
-
-    try {
+    const previousRender = renderQueueRef.current;
+    const operation = (async () => {
+      // 旧布局完成前不能替换同一 G6 model；失败不能阻塞后续重试。
+      await previousRender?.catch(() => {});
       if (!isCurrentOperation()) return false;
-      g.setData(renderData.data);
-      await g.render();
-      if (!isCurrentOperation()) return false;
-      if (selectedId && selectionRemainsVisible) {
-        await g.setElementState(selectedId, ["selected"], false);
-        if (!isCurrentOperation()) return false;
+      nodesRef.current = nodes;
+      lastDataRef.current = { nodes, edges };
+      const renderData = buildGraphRenderData(nodes, edges, CAUSAL_EDGES);
+      for (const invalidEdge of renderData.invalidEdges) {
+        console.warn(
+          `[GraphPage] 过滤孤立边: ${invalidEdge.source} → ${invalidEdge.target}，节点列表中存在=${invalidEdge.sourceExists}/${invalidEdge.targetExists}`,
+        );
       }
-      setSelectedNode(refreshedSelectedNode);
-      return true;
-    } catch (err) {
-      if (!isCurrentOperation()) return false;
-      console.error("[GraphPage] G6 render 失败:", err);
-      throw err;
-    }
+
+      const selectedId = selectedNodeIdRef.current;
+      const refreshedSelectedNode = selectedId === null
+        ? null : nodes.find((node) => String(node.id) === selectedId) ?? null;
+      if (selectedId && !refreshedSelectedNode) clearGraphSelection(g);
+      try {
+        g.setData(renderData.data);
+        await g.render();
+        if (!isCurrentOperation()) return false;
+        if (selectedId && refreshedSelectedNode) {
+          await g.setElementState(selectedId, ["selected"], false);
+          if (!isCurrentOperation()) return false;
+        }
+        setSelectedNode(refreshedSelectedNode);
+        return true;
+      } catch (err) {
+        if (!isCurrentOperation()) return false;
+        console.error("[GraphPage] G6 render 失败:", err);
+        throw err;
+      }
+    })();
+    renderQueueRef.current = operation;
+    return operation;
   }, [clearGraphSelection]);
 
   /** 请求图数据，并仅允许最后一次请求更新页面。 */
@@ -498,6 +390,8 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
       mountedRef.current && requestGenerationRef.current === requestGeneration
     );
     if (!isCurrentRequest()) return false;
+    clearGraphSelection();
+    setHoveredNode(null);
     if (options.showLoading) setGraphState("loading");
 
     try {
@@ -516,50 +410,53 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
       if (options.setErrorState) setGraphState("error");
       return false;
     }
-  }, [showToast, updateGraphData]);
+  }, [clearGraphSelection, showToast, updateGraphData]);
 
   /** 按当前查询与可选记忆 ID 检索图谱。 */
   const searchGraph = useCallback(async () => {
-    clearGraphSelection();
     await requestGraphData(
       currentGraphSearchEndpoint(query, memoryId, appliedTimeRange),
+      { showLoading: true, setErrorState: true },
     );
-  }, [appliedTimeRange, clearGraphSelection, query, memoryId, requestGraphData]);
+  }, [appliedTimeRange, query, memoryId, requestGraphData]);
+
+  /** 恢复最近七天的管理员总览，同时刷新统计。 */
+  const loadRecentOverview = useCallback(async () => {
+    setQuery("");
+    setMemoryId("");
+    setDraftTimeRange(DEFAULT_GRAPH_TIME_RANGE);
+    setAppliedTimeRange(DEFAULT_GRAPH_TIME_RANGE);
+    void fetchOverview();
+    await requestGraphData(
+      graphSearchEndpoint({ canvas: true }, DEFAULT_GRAPH_TIME_RANGE),
+      { showLoading: true, setErrorState: true },
+    );
+  }, [fetchOverview, requestGraphData]);
 
   /** 应用时间范围草稿，并按当前搜索输入重新请求图谱。 */
   const applyTimeRange = useCallback(async () => {
     const nextRange = { ...draftTimeRange, isAll: false };
     setAppliedTimeRange(nextRange);
-    clearGraphSelection();
     await requestGraphData(
       currentGraphSearchEndpoint(query, memoryId, nextRange),
       { showLoading: true, setErrorState: true },
     );
-  }, [clearGraphSelection, draftTimeRange, memoryId, query, requestGraphData]);
+  }, [draftTimeRange, memoryId, query, requestGraphData]);
 
   /** 切换到全部时间并立即按当前搜索输入重新请求图谱。 */
   const resetTimeRange = useCallback(async () => {
     const nextRange = { ...ALL_GRAPH_TIME_RANGE };
     setDraftTimeRange(nextRange);
     setAppliedTimeRange(nextRange);
-    clearGraphSelection();
     await requestGraphData(
       currentGraphSearchEndpoint(query, memoryId, nextRange),
       { showLoading: true, setErrorState: true },
     );
-  }, [clearGraphSelection, memoryId, query, requestGraphData]);
+  }, [memoryId, query, requestGraphData]);
 
-  // 挂载时读取统计数据。
-  useEffect(() => { fetchOverview(); }, [fetchOverview]);
+  useEffect(() => { void loadRecentOverview(); }, [loadRecentOverview]);
 
-  // 画布容器挂载后加载首份图数据。
-  useEffect(() => {
-    if (!containerRef.current) return;
-    void requestGraphData(graphSearchEndpoint({ canvas: true }, DEFAULT_GRAPH_TIME_RANGE), {
-      showLoading: true,
-      setErrorState: true,
-    });
-  }, [requestGraphData]);
+
 
   /** 在宿主支持时切换图谱画布全屏状态。 */
   const toggleFullscreen = useCallback(() => {
@@ -603,6 +500,12 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
       <div data-slot="graph-canvas" ref={fullscreenRef} className={`relative min-h-[320px] bg-muted/30 ${isFullscreen ? "fixed inset-0 z-50" : ""}`}>
         <div ref={containerRef} className="h-full w-full" />
 
+        {graphState === "ready" && !lastDataRef.current?.nodes.length && (
+          <div role="status" className="pointer-events-none absolute inset-0 flex items-center justify-center px-4 text-center text-sm text-muted-foreground">
+            {t("graph.canvasDefault")}
+          </div>
+        )}
+
         {graphState === "loading" && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-muted/80">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -618,16 +521,7 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
               <Button
                 variant="link"
                 size="xs"
-                onClick={() => {
-                  void requestGraphData(currentGraphSearchEndpoint(
-                    query,
-                    memoryId,
-                    appliedTimeRange,
-                  ), {
-                    showLoading: true,
-                    setErrorState: true,
-                  });
-                }}
+                onClick={() => { void searchGraph(); }}
                 className="mt-2"
               >
                 {t("common.retry")}
@@ -662,21 +556,29 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
       {/* 图谱搜索栏。 */}
       <PageToolbar className="flex-nowrap overflow-x-auto border-b-0 border-t bg-background">
         <Input
+          aria-label={t("graph.queryPh")}
           placeholder={t("graph.queryPh")}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          className="flex-1 max-w-md"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) void searchGraph();
+          }}
+          className="min-w-48 flex-1 max-w-md"
         />
         <Input
+          aria-label={t("graph.memoryIdPh")}
           placeholder={t("graph.memoryIdPh")}
           value={memoryId}
           onChange={(e) => setMemoryId(e.target.value)}
-          className="w-32"
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) void searchGraph();
+          }}
+          className="w-40 shrink-0"
         />
         <Button size="sm" onClick={searchGraph}>
           <Search size={14} /> {t("graph.searchBtn")}
         </Button>
-        <Button variant="secondary" size="sm" onClick={fetchOverview}>
+        <Button variant="secondary" size="sm" onClick={loadRecentOverview}>
           <Maximize2 size={14} /> {t("graph.overviewBtn")}
         </Button>
       </PageToolbar>

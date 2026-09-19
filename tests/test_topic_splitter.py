@@ -727,65 +727,65 @@ def test_msg_text_content_to_text_exception():
     assert result == "fallback content"
 
 
-# ---- _cosine_sim / _similarity_matrix edge cases ----
+# ---- cosine_sim / similarity_matrix edge cases ----
 
 
 def test_cosine_sim_identical():
-    from core.features.recall.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_embeddings import cosine_sim
 
-    assert _cosine_sim([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
+    assert cosine_sim([1.0, 0.0], [1.0, 0.0]) == pytest.approx(1.0)
 
 
 def test_cosine_sim_orthogonal():
-    from core.features.recall.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_embeddings import cosine_sim
 
-    assert _cosine_sim([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+    assert cosine_sim([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
 
 
 def test_cosine_sim_zero_vector():
-    from core.features.recall.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_embeddings import cosine_sim
 
-    assert _cosine_sim([0.0, 0.0], [1.0, 0.0]) == 0.0
+    assert cosine_sim([0.0, 0.0], [1.0, 0.0]) == 0.0
 
 
 def test_cosine_sim_empty():
-    from core.features.recall.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_embeddings import cosine_sim
 
-    assert _cosine_sim([], []) == 0.0
+    assert cosine_sim([], []) == 0.0
 
 
 def test_cosine_sim_dimension_mismatch():
-    from core.features.recall.processors.topic_splitter import _cosine_sim
+    from core.features.recall.processors.topic_embeddings import cosine_sim
 
-    assert _cosine_sim([1.0, 2.0], [1.0]) == 0.0
+    assert cosine_sim([1.0, 2.0], [1.0]) == 0.0
 
 
 def test_similarity_matrix_diagonal_is_one():
-    from core.features.recall.processors.topic_splitter import _similarity_matrix
+    from core.features.recall.processors.topic_embeddings import similarity_matrix
 
     embeddings = [[1.0, 0.0], [0.0, 1.0], [0.5, 0.5]]
-    mat = _similarity_matrix(embeddings)
+    mat = similarity_matrix(embeddings)
     for i in range(len(embeddings)):
         assert mat[i][i] == 1.0
 
 
-# ---- _dummy_embeddings ----
+# ---- dummy_embeddings ----
 
 
 def test_dummy_embeddings_deterministic():
-    from core.features.recall.processors.topic_splitter import _dummy_embeddings
+    from core.features.recall.processors.topic_embeddings import dummy_embeddings
 
     texts = ["hello", "world"]
-    vecs1 = _dummy_embeddings(texts)
-    vecs2 = _dummy_embeddings(texts)
+    vecs1 = dummy_embeddings(texts)
+    vecs2 = dummy_embeddings(texts)
     assert vecs1 == vecs2
 
 
 def test_dummy_embeddings_dimension():
-    from core.features.recall.processors.topic_splitter import _dummy_embeddings
+    from core.features.recall.processors.topic_embeddings import dummy_embeddings
 
     texts = ["a", "b"]
-    vecs = _dummy_embeddings(texts)
+    vecs = dummy_embeddings(texts)
     assert len(vecs) == 2
     # The function uses hashlib.sha256 and dim=32
     assert len(vecs[0]) == 32

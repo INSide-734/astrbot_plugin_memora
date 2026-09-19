@@ -124,6 +124,9 @@ class TestMemoryExtractionResult:
                         "summary": "我记得用户明确说过喜欢深烘咖啡",
                         "topics": ["咖啡偏好"],
                         "key_facts": ["用户喜欢深烘咖啡"],
+                        "fact_source_refs": [
+                            [{"message_index": 0, "start": 0, "end": 8}]
+                        ],
                         "participants": ["用户"],
                         "sentiment": "positive",
                         "importance": 0.8,
@@ -157,6 +160,20 @@ class TestMemoryExtractionResult:
             }
         )
         assert len(result.memories[0].source_refs) == 16
+
+
+@pytest.mark.parametrize(
+    "groups", [None, [], [[{"message_index": 0, "start": 0, "end": 3}]]]
+)
+def test_guardrail_rejects_misaligned_fact_references(groups):
+    with pytest.raises(ValidationError, match="grounding_fact_evidence_mismatch"):
+        MemoryAtomSchema.model_validate(
+            {
+                "content": "用户喜欢茶并计划旅行",
+                "key_facts": ["用户喜欢茶", "用户计划旅行"],
+                "fact_source_refs": groups,
+            }
+        )
 
 
 # =============================================================================

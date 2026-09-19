@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +14,7 @@ from astrbot.api import logger
 from ....shared.number_utils import clamp_float
 from ....shared.recall_strategy import RecallStrategy
 from ....shared.temporal import canonical_visible_at, normalize_datetime
+from ...injection.application.selection import metadata_has_user_evidence
 from ...observability.application.memory_write_timing import (
     measure_memory_write_stage,
 )
@@ -22,6 +24,7 @@ from ...quality.application.gate_disposition_filter import (
 from ...retrieval.query_rewriter import resolve_reference_time
 from ...retrieval.rrf_fusion import HybridResult
 from ..domain.revision import memory_revision
+from ..graph.domain.models import GraphQueryScope
 from ..infrastructure.canonical_memory_reader import (
     load_canonical_memory,
 )
@@ -37,9 +40,24 @@ from .memory_engine_atom_support import (
     successful_atoms,
 )
 from .memory_engine_idempotency import MemoryEngineIdempotencyMixin
-from .memory_engine_semantic_updates import prepare_semantic_metadata_update
+from .memory_engine_semantic_updates import (
+    apply_interference_maintenance_delta,
+    apply_reinforcement_maintenance_delta,
+    is_runtime_maintenance_delta,
+    prepare_semantic_metadata_update,
+)
 from .memory_engine_write_observability import MemoryEngineWriteObservabilityMixin
 from .retrieval_timing import RetrievalTimingSink
+
+
+def _user_evidence_filter(results: list[HybridResult]) -> list[HybridResult]:
+    """只保留全部事实与摘要都能归属用户来源的候选。"""
+
+    return [
+        item
+        for item in results
+        if metadata_has_user_evidence(getattr(item, "metadata", None))
+    ]
 
 
 class MemoryEngineCRUDMixin(
@@ -120,10 +138,12 @@ class MemoryEngineCRUDMixin(
                         fallback_metadata=full_metadata,
                     )
                     sources_bound = True
-                    await reinforce_existing_atoms(
-                        self.atom_lifecycle_manager,
-                        prepared_atoms,
-                    )
+                    if not summary_source_staged:
+                        # 未接受来源不得强化既有 Atom；接受后由来源 owner 重试收尾。
+                        await reinforce_existing_atoms(
+                            self.atom_lifecycle_manager,
+                            prepared_atoms,
+                        )
                     await self.atom_store.insert_many(prepared_atoms)
                     await self._write_journal.advance_op(
                         op_id, "atoms_indexed", memory_id=doc_id
@@ -169,7 +189,15 @@ class MemoryEngineCRUDMixin(
         persisted_atoms = successful_atoms(prepared_atoms)
         needs_repair = atom_write_failed
         with measure_memory_write_stage("graph"):
-            if self.graph_memory_manager is not None:
+            if summary_source_staged:
+                # 来源尚未接受：禁止派生图产物，只保留待收口意图供接受后统一收尾。
+                await self._write_journal.advance_op(
+                    op_id,
+                    "source_staged",
+                    status="needs_repair" if needs_repair else "pending",
+                    memory_id=doc_id,
+                )
+            elif self.graph_memory_manager is not None:
                 try:
                     await self.graph_memory_manager.index_memory(
                         doc_id,
@@ -206,7 +234,7 @@ class MemoryEngineCRUDMixin(
                     status="needs_repair" if needs_repair else "pending",
                     memory_id=doc_id,
                 )
-        if not needs_repair:
+        if not needs_repair and not summary_source_staged:
             await self._write_journal.advance_op(
                 op_id, "completed", status="completed", memory_id=doc_id
             )
@@ -254,8 +282,16 @@ class MemoryEngineCRUDMixin(
         timing_sink: RetrievalTimingSink | None = None,
         deadline_monotonic: float | None = None,
         include_mark_write: bool = False,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> list[HybridResult]:
-        """执行受 scope、privacy、参考时间与可选软截止时间约束的召回。"""
+        """执行受 scope、privacy、参考时间与可选软截止时间约束的召回。
+
+        ``require_user_evidence`` 为真时，只有全部事实与摘要都归属用户来源的
+        候选才允许占用 k 名额、缓存与链式扩展种子；缺省值保持既有 API 行为。
+        """
+        if query_scope is not None:
+            query_scope = GraphQueryScope.require(query_scope)
 
         requested_reference_time = normalize_datetime(
             reference_time
@@ -290,6 +326,8 @@ class MemoryEngineCRUDMixin(
             recall_strategy=recall_strategy,
             reference_time=requested_reference_time,
             include_mark_write=include_mark_write,
+            query_scope=query_scope,
+            require_user_evidence=require_user_evidence,
         )
         cached_results = (
             None if trace_requested else self._retrieval.get_cached(cache_key)
@@ -299,6 +337,8 @@ class MemoryEngineCRUDMixin(
             visible = filter_mark_write(
                 cached_results, include_mark_write=include_mark_write
             )
+            if require_user_evidence:
+                visible = _user_evidence_filter(visible)
             ids = [r.doc_id for r in visible if getattr(r, "doc_id", None) is not None]
             if ids:
                 self._create_tracked_task(
@@ -329,13 +369,18 @@ class MemoryEngineCRUDMixin(
                 recall_strategy=recall_strategy,
                 reference_time=requested_reference_time,
                 include_mark_write=include_mark_write,
+                query_scope=query_scope,
+                require_user_evidence=require_user_evidence,
             )
         _t_cache_end = time.perf_counter()
         if session_cached is not None:
             # 会话缓存可能用不同 k 检索，先过滤 mark_write 再截断到请求的 k 值
             truncated = filter_mark_write(
                 session_cached, include_mark_write=include_mark_write
-            )[:k]
+            )
+            if require_user_evidence:
+                truncated = _user_evidence_filter(truncated)
+            truncated = truncated[:k]
             # 仍更新 access time
             ids = [
                 r.doc_id for r in truncated if getattr(r, "doc_id", None) is not None
@@ -389,6 +434,8 @@ class MemoryEngineCRUDMixin(
                 timing_sink=route_timing,
                 deadline_monotonic=deadline_monotonic,
                 include_mark_write=include_mark_write,
+                query_scope=query_scope,
+                require_user_evidence=require_user_evidence,
             )
             _t_doc_route = float(route_timing.get("document_route_ms", 0.0))
             _t_graph_route = float(route_timing.get("graph_route_ms", 0.0))
@@ -422,6 +469,9 @@ class MemoryEngineCRUDMixin(
         ]
         # mark_write 在截断与链式扩展之前过滤，避免占用 k 名额或充当扩展种子。
         results = filter_mark_write(results, include_mark_write=include_mark_write)
+        if require_user_evidence:
+            # 用户证据同样先于 boost 与 k 截断生效，混合候选不得先占槽位再被丢弃。
+            results = _user_evidence_filter(results)
         _t_boost = 0.0
         if results:
             _t_boost_start = time.perf_counter()
@@ -458,10 +508,15 @@ class MemoryEngineCRUDMixin(
                     max_hops=max_hops,
                     hop_decay=hop_decay,
                     reference_time=requested_reference_time,
+                    query_scope=query_scope,
+                    require_user_evidence=require_user_evidence,
                 )
                 _t_chain = (time.perf_counter() - _t_chain_start) * 1000.0
                 if chained:
                     results = chained[:k]
+        if require_user_evidence:
+            # 链式扩展可能引入无用户证据的候选，进入缓存与返回前再过滤一次。
+            results = _user_evidence_filter(results)
         ids = [r.doc_id for r in results if getattr(r, "doc_id", None) is not None]
         if ids:
             self._create_tracked_task(
@@ -483,6 +538,8 @@ class MemoryEngineCRUDMixin(
                 recall_strategy=recall_strategy,
                 reference_time=requested_reference_time,
                 include_mark_write=include_mark_write,
+                query_scope=query_scope,
+                require_user_evidence=require_user_evidence,
             )
         # === 存储阶段计时供 RecallHandler 读取 ===
         retrieval_total_ms = (time.perf_counter() - _t_start) * 1000.0
@@ -548,14 +605,15 @@ class MemoryEngineCRUDMixin(
             logger.error(f"[更新] 记忆不存在 (memory_id={memory_id})")
             self._last_write_reason_code = "source_not_found"
             return False
+        observed_revision = memory_revision(memory)
         if expected_revision is not None:
-            current_revision = memory_revision(memory)
-            if not current_revision or current_revision != str(expected_revision):
+            if not observed_revision or observed_revision != str(expected_revision):
                 self._last_write_reason_code = "source_revision_mismatch"
                 logger.warning(
                     f"[更新] source revision 冲突，拒绝覆盖 (memory_id={memory_id})"
                 )
                 return False
+
         current_metadata = memory.get("metadata", {})
         if isinstance(current_metadata, str):
             try:
@@ -660,26 +718,25 @@ class MemoryEngineCRUDMixin(
             update_kwargs: dict[str, Any] = {}
             if not semantic_metadata_changed:
                 update_kwargs["advance_revision"] = False
-            if expected_revision is None:
-                success = await self.hybrid_retriever.update_metadata(
-                    memory_id,
-                    metadata_updates,
-                    **update_kwargs,
-                )
-            else:
-                success = await self.hybrid_retriever.update_metadata(
-                    memory_id,
-                    metadata_updates,
-                    expected_revision=expected_revision,
-                    **update_kwargs,
-                )
+            effective_revision = expected_revision or observed_revision
+            if effective_revision:
+                update_kwargs["expected_revision"] = effective_revision
+            success = await self.hybrid_retriever.update_metadata(
+                memory_id,
+                metadata_updates,
+                **update_kwargs,
+            )
             if success:
                 if semantic_metadata_changed:
                     await self._invalidate_evolution_after_revision(memory_id)
                     await self._schedule_evolution_after_write(memory_id)
                     self._schedule_domain_proposals_after_write(memory_id)
                 self._retrieval.invalidate_cache()
-                if self.graph_memory_manager is not None and not skip_graph_reindex:
+                if (
+                    semantic_metadata_changed
+                    and self.graph_memory_manager is not None
+                    and not skip_graph_reindex
+                ):
                     op_id = await self._write_journal.start_op(
                         "graph_reindex",
                         {"memory_id": memory_id, "metadata": current_metadata},
@@ -698,6 +755,7 @@ class MemoryEngineCRUDMixin(
                     except asyncio.CancelledError:
                         raise
                     except Exception as e:
+                        self._last_write_reason_code = "graph_reindex_failed"
                         await self._write_journal.advance_op(
                             op_id,
                             "graph_reindex_failed",
@@ -711,7 +769,103 @@ class MemoryEngineCRUDMixin(
                             exc_info=True,
                         )
                         return False
+            if not success:
+                # 区分 CAS 冲突与存储失败：CAS 拒绝意味着并发写入已生效。
+                retriever_reason = getattr(
+                    self.hybrid_retriever, "_last_update_reason", None
+                )
+                if isinstance(retriever_reason, str) and retriever_reason:
+                    self._last_write_reason_code = retriever_reason
+                else:
+                    self._last_write_reason_code = (
+                        "source_revision_mismatch"
+                        if effective_revision
+                        else "metadata_update_failed"
+                    )
             return success
+        return True
+
+    async def reinforce_recall_state(self, memory_id: int) -> bool:
+        """按最新运行态推进强化计数与 TTL，且不推进 source revision。
+
+        该入口只服务内部测试效应：增量在读取到当前 canonical 后计算，并以该
+        revision 作为 CAS 前提写入白名单字段，语义更新或并发编辑会使其失败。
+        """
+
+        return await self._persist_runtime_maintenance(
+            memory_id,
+            apply_reinforcement_maintenance_delta,
+        )
+
+    async def apply_interference_decay(
+        self, memory_id: int, *, source_memory_id: int
+    ) -> bool:
+        """按最新运行态衰减被干扰记忆的重要性，且不推进 source revision。"""
+
+        def _delta(metadata: dict[str, Any]) -> dict[str, Any]:
+            return apply_interference_maintenance_delta(
+                metadata,
+                source_memory_id=source_memory_id,
+            )
+
+        return await self._persist_runtime_maintenance(memory_id, _delta)
+
+    async def _persist_runtime_maintenance(
+        self,
+        memory_id: int,
+        delta_builder: Callable[[dict[str, Any]], dict[str, Any]],
+    ) -> bool:
+        """以当前 canonical revision 为 CAS 前提合并运行态维护增量。"""
+
+        self._last_write_reason_code = None
+        memory = await self.get_memory(memory_id)
+        if not isinstance(memory, dict):
+            self._last_write_reason_code = "source_not_found"
+            return False
+        current_revision = memory_revision(memory)
+        if not current_revision:
+            self._last_write_reason_code = "source_revision_missing"
+            return False
+        metadata: Any = memory.get("metadata")
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        delta = delta_builder(metadata)
+        if not is_runtime_maintenance_delta(metadata, delta):
+            self._last_write_reason_code = "runtime_maintenance_field_rejected"
+            logger.error(
+                f"[更新] 运行态维护增量不在白名单内，拒绝写入 (memory_id={memory_id})"
+            )
+            return False
+        if not delta:
+            return True
+        if self.hybrid_retriever is None:
+            self._last_write_reason_code = "not_initialized"
+            return False
+        try:
+            success = await self.hybrid_retriever.update_metadata(
+                memory_id,
+                delta,
+                expected_revision=current_revision,
+                advance_revision=False,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error(
+                f"[更新] 运行态维护写入失败 (memory_id={memory_id})", exc_info=True
+            )
+            self._last_write_reason_code = "runtime_maintenance_failed"
+            return False
+        if not success:
+            # CAS 失败说明并发发生了语义更新或该行已不可写。
+            self._last_write_reason_code = "source_revision_mismatch"
+            return False
+        self._retrieval.invalidate_cache()
         return True
 
     async def delete_memory(self, memory_id: int) -> bool:

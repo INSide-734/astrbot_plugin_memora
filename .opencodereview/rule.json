@@ -1,0 +1,74 @@
+{
+  "include": [
+    "tests/**",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/*.md",
+    "core/prompts/**/*.txt",
+    "requirements.txt",
+    ".python-version",
+    "uv.lock"
+  ],
+  "rules": [
+    {
+      "path": "**/*.md",
+      "rule": "用中文审查，只报告本次变更新增或加重、可定位且有证据的问题，不报告纯排版或措辞偏好。遵循根级及最近的 AGENTS.md；生产代码、Schema、迁移、行为测试与构建脚本是运行时事实来源，不能通过改文档掩盖实现违反安全或公开契约的问题。检查新增或修改的命令是否注明工作目录、前置条件、重要副作用与成功判定，链接及入口是否真实存在，提案与已实现能力是否区分。详细公开中文指南属于 website/docs/，避免复制已有权威说明；不得把未运行的测试、基准或生产验收写成通过。示例、截图和诊断内容不得包含真实 query、prompt、记忆正文、身份、canonical ID、source mapping、revision、凭据、内部地址或原始堆栈；使用安全占位符。规模限制按根级及局部规范及其例外判断，不因未触及的历史超限要求无关重构。",
+      "merge_system_rule": true
+    },
+    {
+      "path": "{tests/**,**/*.test.*,**/*.spec.*}",
+      "rule": "用中文审查，只报告本次变更新增或加重、可定位且有证据的问题。结合根级、tests/ 或 pages/dashboard/ 的 AGENTS.md 与被测公开契约判断，不机械套用生产实现的限制到隔离的测试替身。测试必须观察行为、边界、状态转换、权限、冲突或真实错误，不能仅断言源码文本、内部接线、mock 回显或不抛异常；不要为覆盖率数字要求重复用例。缺失测试只有在能指出具体未覆盖回归时才报告。Python 测试不得访问真实 LLM、网络服务、生产数据库或用户数据；复用现有 AstrBot mocks，依赖 astrbot 的导入须在安装 mocks 后发生。SQLite 与索引使用独立临时资源，共享状态及补丁必须还原，异步任务、连接与计时器必须收束；并发验证使用可控同步而非 sleep 或绝对耗时阈值。禁止为迎合错误实现而降低断言、无理由 skip/xfail 或伪造性能结果。前端测试保持 bridge/envelope/revision/i18n 契约；隐私用例应证明敏感 canary 不会出现在模型、日志、观测或响应的禁止位置，fixture 内部的合成 ID 本身不是泄露。",
+      "merge_system_rule": true
+    },
+    {
+      "path": "{_conf_schema.json,.astrbot-plugin/i18n/*.json}",
+      "rule": "用中文审查，只报告本次变更新增或加重、可定位且有证据的问题。按根级及配置模块 AGENTS.md 核对真实调用方，不凭字段名推断用途。配置叶、默认值或枚举变化必须同步 _conf_schema.json、Pydantic 模型、运行时读取、Dashboard 类型与默认值、三语言 i18n 和受影响的契约测试；不得只改面板或 Schema。保存必须保留字段校验、base_revision/expected_revision、冲突 envelope 与原子替换语义，不能静默 last-write-wins。zh-CN、en-US、ru-RU 的键、插值占位符和配置含义必须一致，不能把翻译缺失伪装为有效配置。检查新增值的安全边界与旧持久化配置的处理，不得放入 Provider 密钥、真实身份或内部地址。只指出能够沿实际读取或写回路径证明的不一致，不要求无关配置扩展。",
+      "merge_system_rule": true
+    },
+    {
+      "path": "core/prompts/**",
+      "rule": "用中文审查，只报告本次变更新增或加重、可定位且有证据的问题。按根级及相关模块 AGENTS.md，结合实际模板加载者、格式化调用方和输出解析器核对占位符、转义、字段名、类型及必需输出，不凭模板文本猜测调用协议。区分静态系统指令与动态消息/记忆数据；动态记忆不得进入 System Prompt，外部消息、引用和模型输出不能被提升为指令或更高信任角色。事实提取保留证据与角色归属，不把助手生成、转述、假设或被拒绝的内容当成已确认用户事实，不让模型伪造身份、来源或权限。模型输入与输出遵循局部隐私 allowlist，Projection 仅暴露 type、summary、confidence；不得通过模板要求输出凭据、原始身份或内部 provenance，也不得把真实数据写入示例或观测。只报告可沿实际调用路径触发的协议、安全或事实归属回归，不做主观提示词润色。",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/*.py",
+      "rule": "用中文审查，只报告本次变更新增或加重、可定位且有证据的问题；先核对根级及最近的 AGENTS.md、公开调用方和相关测试，不把纯风格或未触及的历史债务当成缺陷。Memora 使用 Python 3.12、AstrBot、SQLite/FTS5、FAISS、Quart 和 Pydantic；以下运行时约束只在相关路径适用。SQLite canonical memory 及整数 ID 是唯一权威；FTS、FAISS、graph、relation、projection 均为可失效、可重建的派生数据，不能形成第二套 canonical 或 doc_id。演化只能在 canonical 提交并重读 source 后调度，派生失败不得回滚或删除 canonical；重建顺序为 canonical → FTS5/FAISS → graph → relation/projection，完成或安全降级后才启动 Evolution worker。图与派生读取按各 canonical source 校验 scope/privacy/revision 和局部有效性要求，缺失或失效时不得去掉边界继续查询。协议事件先经固定 ProtocolIdentityResolver 得到 ResolvedIdentity；OneBot 11 使用规范化 QQ，QQ 官方 OpenID 保留平台实例边界，名称及 union_openid 不能替代主键，匿名、冲突和非法事件不得写身份目录。质量门按绑定顺序首个精确匹配解析 profile，未命中用 default_profile；force_disposition 优先于原因码 override，再优先于 profile 默认；discard 不落库，quarantine 批准时重新取证，mark_write 默认不参与召回、注入和演化。召回顺序为请求过滤 → direct/graph 合并 → relation expansion → projection attachment → reranker → privacy filter → 注入；动态记忆不得进入 System Prompt，模型可见 Projection 仅含 type、summary、confidence，其余模型输入遵循局部 allowlist。query、prompt、正文、原始身份、ID 列表、source mapping、revision、scope、privacy、role、密钥、请求头、内部地址和原始堆栈不得泄露到日志、trace 或普通观测；受控人工复核只按局部明确授权开放。复用初始化器发布的共享实例，禁止请求内新建数据库、索引或模型；CancelledError 必须传播，后台任务可观察且关停可收束，普通可恢复旁路失败不阻断聊天。Page API 保留就绪及写保护、输入校验、revision/CAS、显式错误 envelope 和真实分页；SQL 值参数化，动态标识符用固定 allowlist，模型输出按不可信输入处理。配置/API/依赖改动核对跨层消费者与锁文件；生产注释、docstring、日志和 reason 按项目约定使用中文，协议标识符与第三方原始错误除外。不要以宽泛异常、空成功或冗余兼容路径掩盖根因，也不要要求无关重构。",
+      "merge_system_rule": true
+    },
+    {
+      "path": "pages/dashboard/**",
+      "rule": "用中文审查，只报告本次变更新增或加重、可定位且有证据的问题；遵循根级与 pages/dashboard/AGENTS.md，不报告纯格式或主观视觉偏好。Dashboard 使用 React 18、TypeScript、Vite 与 Base UI-backed shadcn，不是 Radix；复用 PageFrame、现有 UI 组件、语义 token 与 Lucide，不新建平行路由、请求层或重复 SSE 连接。运行时数据请求经 src/lib/bridge.ts 与 AstrBot 插件页面桥接，保留 Hash URL 和 status/data/error/code/field_errors envelope；mock 不能流入生产数据路径，不能用 any 绕过边界类型。配置保存 base_revision + 最小 changes，实体编辑 expected_revision；冲突与失败保留草稿、显示远端及字段错误，成功才更新缓存与清理 dirty，不能静默 last-write-wins。尊重服务端筛选、排序及真实分页，不虚构 offset、total 或客户端伪分页；查询范围变化清理不可见选择，批量操作确认且部分失败仅保留失败项。异步请求防止旧响应覆盖新状态，effect、订阅、timer、图布局及动画在重入/卸载时正确清理。保留键盘操作、焦点管理、控件可访问名称与桌面/移动滚动，不能出现遮挡或页面级横向溢出；加载、空态、失败与冲突都是必要状态。用户可见内容复用 zh/en/ru 三语言 key，并核对生产翻译及 mock。图谱管理员总览仍由后端逐 canonical 来源校验，不能扩大聊天侧权限；观测 DTO 与模型 DTO 严守各自 allowlist，受控详情权限不能扩散到日志或普通观测。构建必须保留 AstrBot 的 IIFE classic-script 单 bundle 与产物校验约束，不通过降低门禁掩盖产物错误；依赖变化同步对应 package.json 与锁文件。",
+      "merge_system_rule": true
+    },
+    {
+      "path": "**/*",
+      "rule": "用中文审查，只报告本次变更新增或加重、可定位且有证据的问题。先核对根级及最近的 AGENTS.md、实际消费者与可执行契约；上下文不足时不要猜测。只在能够证明安全、正确性、数据丢失、兼容性、性能或维护风险时提出问题，不重复格式工具的意见，不为未触及的历史债务要求重构，也不引入仅为未来准备的抽象。不得泄露凭据、真实用户数据、内部地址或原始诊断内容，不得通过关闭校验、扩大 ignore、跳过测试或伪造成功掩盖失败。依赖变更保持 pyproject.toml、requirements.txt、uv.lock 或对应前端清单与锁文件一致；发布版本按仓库现有一致性门禁核对全部来源。配置、公开 API、存储/隐私或构建入口变化核对相关调用方、契约测试与权威文档；验证建议限定受影响范围，不把未运行的检查描述为通过。",
+      "merge_system_rule": true
+    }
+  ],
+  "exclude": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/build/**",
+    "**/coverage/**",
+    "**/htmlcov/**",
+    "**/__pycache__/**",
+    "**/.venv/**",
+    "**/.pytest_cache/**",
+    "**/*.tsbuildinfo",
+    ".code-review-graph/**",
+    ".trellis/**",
+    ".worktrees/**",
+    "data/**",
+    "storage/**/*.db*",
+    "storage/**/*.sqlite*",
+    "storage/**/*.index",
+    "storage/**/*.bin",
+    "pages/dashboard/assets/**",
+    "pages/dashboard/index.html",
+    "pages/dashboard/playwright-report/**",
+    "pages/dashboard/test-results/**",
+    "website/docs/.vitepress/cache/**",
+    "website/docs/.vitepress/dist/**"
+  ]
+}

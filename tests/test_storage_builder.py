@@ -19,12 +19,11 @@ class TestStorageBuilder:
             "key_facts": ["用户喜欢拿铁"],
             "sentiment": "positive",
         }
-        content, metadata = builder.build_storage_format(
+        _, metadata = builder.build_storage_format(
             fallback_excerpt="fallback",
             structured_data=data,
             is_group_chat=False,
         )
-        assert "咖啡" in content
         assert metadata["privacy_level"] == "confidential"
         assert metadata["interaction_type"] == "private_chat"
 
@@ -75,38 +74,51 @@ class TestStorageBuilder:
         assert content == "这是一段回退文本"
         assert metadata["canonical_summary"] == ""
 
-    def test_summary_embedded_facts_are_not_duplicated(
+    def test_paraphrased_summary_does_not_repeat_canonical_facts(
         self, builder: StorageBuilder
     ) -> None:
-        """分段摘要已逐字包含全部事实时，正文不得出现重复事实。"""
+        """同义摘要不得再拼入正文，摘要省略的事实仍须可检索。"""
         data = {
-            "summary": "[话题2] 我提醒用户早点休息",
-            "key_facts": ["我提醒用户早点休息"],
-            "topics": ["作息"],
-            "sentiment": "positive",
+            "summary": "用户偏爱拿铁咖啡。",
+            "key_facts": ["用户喜欢喝拿铁咖啡", "用户只在上午喝咖啡"],
         }
-        content, metadata = builder.build_storage_format(
-            fallback_excerpt="fallback",
-            structured_data=data,
-            is_group_chat=False,
-        )
-        assert content == "[话题2] 我提醒用户早点休息"
-        assert metadata["canonical_summary"] == content
 
-    def test_partially_embedded_facts_are_appended_once(
+        content, metadata = builder.build_storage_format("", data, False)
+
+        assert content.count("拿铁") == 1
+        assert "用户只在上午喝咖啡" in content
+        assert " | " not in content
+        assert "偏爱" not in metadata["canonical_summary"]
+        assert "偏爱" in metadata["persona_summary"]
+
+    def test_canonical_body_keeps_facts_beyond_five(
         self, builder: StorageBuilder
     ) -> None:
-        """只追加摘要未包含的事实，已被包含的事实不重复。"""
-        data = {
-            "summary": "用户讨论了咖啡口味",
-            "key_facts": ["用户讨论了咖啡口味", "用户喜欢拿铁"],
-            "topics": ["咖啡"],
-            "sentiment": "neutral",
-        }
-        content, metadata = builder.build_storage_format(
-            fallback_excerpt="fallback",
-            structured_data=data,
-            is_group_chat=False,
+        """正文改用事实后，不得沿用补充片段的五条上限而丢失事实。"""
+        facts = [
+            "用户喜欢拿铁咖啡",
+            "用户通常上午喝咖啡",
+            "用户周末会去跑步",
+            "用户更喜欢安静环境",
+            "用户最近在学习绘画",
+            "用户不喜欢香菜",
+        ]
+
+        content, _ = builder.build_storage_format(
+            "", {"summary": "用户介绍了个人偏好。", "key_facts": facts}, False
         )
-        assert content == "用户讨论了咖啡口味 | 用户喜欢拿铁"
-        assert metadata["canonical_summary"] == content
+
+        assert all(fact in content for fact in facts)
+
+    def test_summary_without_facts_preserves_literal_pipe(
+        self, builder: StorageBuilder
+    ) -> None:
+        """移除组装分隔符不能破坏原文有含义的管道符。"""
+        summary = "用户用 cat notes.txt | sort 整理笔记。"
+
+        content, _ = builder.build_storage_format(
+            "回退摘录", {"summary": summary, "key_facts": []}, False
+        )
+
+        assert "cat notes.txt | sort" in content
+        assert "回退摘录" not in content

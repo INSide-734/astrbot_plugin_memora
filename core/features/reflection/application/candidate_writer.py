@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Final, cast
@@ -34,6 +35,7 @@ _EXPECTED_FENCED_CODES: Final[frozenset[str]] = frozenset(
         "epoch_fenced",
         "generation_fenced",
         "summary_source_fenced",
+        "summary_source_mismatch",
         # 由质量门在路由候选前做会话 epoch 校验时抛出
         # （memory_quality_gate），与 canonical 来源 fence 同属按设计失效。
         "summary_epoch_fenced",
@@ -312,6 +314,14 @@ async def store_reflection_candidates(
                 return None
             if isinstance(owner, bool) or not isinstance(owner, int) or owner <= 0:
                 raise ValueError("canonical_owner_invalid")
+            verifier = getattr(memory_engine, "is_memory_source_accepted", None)
+            if callable(verifier):
+                accepted = verifier(owner)
+                if inspect.isawaitable(accepted):
+                    accepted = await accepted
+                if accepted is not True:
+                    # 暂存/拒绝 owner 不算幂等成功，避免把未接受来源当已提交。
+                    return None
             return owner
 
         if idempotency_key in completed_idempotency_keys:

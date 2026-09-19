@@ -12,6 +12,10 @@ from astrbot.api.platform import MessageType
 
 from ....platform.config.manager import ConfigManager
 from ....platform.context_helpers import get_persona_id
+from ....shared.adapter_capabilities import (
+    ResponseDelivery,
+    probe_host_response_boundary,
+)
 from ....shared.contracts import ReflectionWritePort
 from ....shared.cost_control import CostControl
 from ...conversation.application.conversation_manager import ConversationManager
@@ -31,11 +35,26 @@ if TYPE_CHECKING:
     from astrbot.api.event import AstrMessageEvent
     from astrbot.api.provider import LLMResponse
 
+    from ....shared.adapter_capabilities import HostResponseBoundary
     from ....shared.contracts import PromptProtectionPort
 
 
 class ReflectionHandler(ReflectionContextMixin):
     """在 LLM 响应后执行反思与后台总结入队。"""
+
+    @staticmethod
+    def _precheck_reason_code(boundary: HostResponseBoundary) -> str | None:
+        """返回保护无法先于可见投递的闭集原因码；可验证时返回 None。
+
+        宿主已证明是流式投递时分片必然先于本后处理；事件形状无法验证时按未验证
+        处理，不假设保护已经先于投递完成。
+        """
+
+        if boundary.delivery is ResponseDelivery.STREAMING:
+            return "reply_streaming_precheck_unavailable"
+        if boundary.delivery is ResponseDelivery.UNKNOWN:
+            return "reply_precheck_unverified"
+        return None
 
     def __init__(
         self,
@@ -179,10 +198,25 @@ class ReflectionHandler(ReflectionContextMixin):
                 reason_code="missing_protection_scope",
             )
             return
+        boundary = probe_host_response_boundary(event)
+        precheck_reason_code = (
+            self._precheck_reason_code(boundary) if protection_required else None
+        )
+        if precheck_reason_code is not None:
+            # 宿主已证明是流式投递，或事件形状无法验证投递边界：可见分片可能先于
+            # 本后处理交给平台适配器。只记录稳定状态，不改投递方式、不发送占位
+            # 文本，也不宣称已保护。
+            observability.report_debug_event(
+                "reflection_state",
+                component="reflection",
+                stage="protection",
+                status="degraded",
+                reason_code=precheck_reason_code,
+            )
         session_id = getattr(event, "unified_msg_origin", "") or ""
-        response_text = str(getattr(resp, "completion_text", "") or "")
+        raw_response_text = str(getattr(resp, "completion_text", "") or "")
         response_text = self._sanitize_response_text(
-            response_text,
+            raw_response_text,
             session_id,
             scope_id=scope_id,
             protection_required=protection_required,
@@ -249,9 +283,13 @@ class ReflectionHandler(ReflectionContextMixin):
                     component="reflection",
                     stage="response",
                     status="skipped",
-                    reason_code="empty_response_after_sanitization",
+                    reason_code=self._classify_empty_response(
+                        resp,
+                        raw_response_text,
+                        boundary,
+                    ),
                 )
-                logger.warning("模型回复经安全清洗后为空，跳过记录")
+                logger.warning("模型回复不含可记录文本，跳过记录")
                 return
             error_indicators = [
                 "api error",

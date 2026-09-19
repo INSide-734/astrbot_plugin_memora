@@ -63,6 +63,8 @@
 
 导航组固定为 Overview、Memory、Insights、Relationships、System。新增或移动页面时同时更新 `PageId`、懒加载映射、hash 映射、导航、三语言文案、全局搜索、mock、单测和 browser smoke；保留脏表单前进/后退保护与 history index 行为。
 
+GraphPage 首屏自动加载最近七天的管理员图谱，实体/主题查询不要求 Memory ID；该字段仅为可选聚焦。“最近概览”清空两项输入并复位时间与统计，“重置”显示全部时间。草稿输入不清空已有画布；请求与同一 G6 实例的布局提交必须串行且仅最新代次生效，迟到的节点选择动画不得恢复旧详情。图数据仍由后端逐 canonical 来源校验，前端不能以总览权限绕过聊天侧边界。
+
 ## 前后端真实数据流
 
 ```mermaid

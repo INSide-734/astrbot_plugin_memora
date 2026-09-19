@@ -39,6 +39,8 @@ class RetrievalOptimizer(
         get_memory_cb: Callable | None = None,
         update_memory_cb: Callable | None = None,
         create_tracked_task_cb: Callable | None = None,
+        reinforce_recall_state_cb: Callable | None = None,
+        apply_interference_decay_cb: Callable | None = None,
     ) -> None:
         """保存召回协作对象，并冻结本次引擎生命周期内的增强配置。"""
 
@@ -49,6 +51,9 @@ class RetrievalOptimizer(
         self._get_memory = get_memory_cb
         self._update_memory = update_memory_cb
         self._create_tracked_task = create_tracked_task_cb
+        # 运行态维护端口：强化计数与干扰衰减都必须经引擎的 revision 中性写入口。
+        self._reinforce_recall_state = reinforce_recall_state_cb
+        self._apply_interference_decay = apply_interference_decay_cb
 
         self._cache_enabled = bool(config.get("search_cache_enabled", True))
         self._cache_ttl = float(config.get("search_cache_ttl_seconds", 45.0))

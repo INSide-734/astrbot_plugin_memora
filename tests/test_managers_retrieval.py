@@ -677,11 +677,11 @@ class TestInvalidateCache:
 
 
 class TestTestingEffect:
-    """测试 _apply_testing_effect."""
+    """测试 _apply_testing_effect 的运行态维护派发。"""
 
     @pytest.mark.asyncio
-    async def test_testing_effect_no_update_callback(self) -> None:
-        """No-op when _update_memory is None."""
+    async def test_testing_effect_no_maintenance_port(self) -> None:
+        """未接入维护端口时保持空操作。"""
         opt = RetrievalOptimizer(config={})
         r = _make_hr(
             1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0}
@@ -690,31 +690,32 @@ class TestTestingEffect:
         await opt._apply_testing_effect([r])
 
     @pytest.mark.asyncio
-    async def test_testing_effect_sync_mode(self) -> None:
-        """同步 mode updates memory directly."""
-        update_called = []
+    async def test_testing_effect_dispatches_intent_only(self) -> None:
+        """同步模式只按 doc_id 派发维护意图，不改写检索结果 metadata。"""
+        reinforced: list[int] = []
 
-        async def _update_memory(doc_id, updates, skip_graph_reindex=False):
-            update_called.append((doc_id, updates))
+        async def _reinforce(memory_id: int) -> bool:
+            reinforced.append(memory_id)
             return True
 
         opt = RetrievalOptimizer(
             config={"testing_effect_async": False, "testing_effect_top_k": 5},
-            update_memory_cb=_update_memory,
+            reinforce_recall_state_cb=_reinforce,
         )
         r = _make_hr(
             1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0}
         )
         await opt._apply_testing_effect([r])
-        assert len(update_called) == 1
-        assert update_called[0][1]["metadata"]["reinforcement_count"] == 1
+        assert reinforced == [1]
+        # 检索结果仍共享缓存对象，不能被维护路径原地改写。
+        assert r.metadata == {"reinforcement_count": 0, "ttl_days": 30.0}
 
     @pytest.mark.asyncio
     async def test_testing_effect_async_mode(self) -> None:
-        """Async mode uses create_tracked_task."""
+        """异步模式把维护协程交给受跟踪任务。"""
         tracked: list = []
 
-        async def _update_memory(doc_id, updates, skip_graph_reindex=False):
+        async def _reinforce(memory_id: int) -> bool:
             return True
 
         def _create_tracked_task(coro):
@@ -722,7 +723,7 @@ class TestTestingEffect:
 
         opt = RetrievalOptimizer(
             config={"testing_effect_async": True, "testing_effect_top_k": 5},
-            update_memory_cb=_update_memory,
+            reinforce_recall_state_cb=_reinforce,
             create_tracked_task_cb=_create_tracked_task,
         )
         r = _make_hr(
@@ -733,41 +734,33 @@ class TestTestingEffect:
         await tracked[0]
 
     @pytest.mark.asyncio
-    async def test_testing_effect_ttl_capped(self) -> None:
-        """TTL is capped at 2x original (MAX_REINFORCEMENT_MULTIPLIER)."""
-        update_called = []
+    async def test_testing_effect_failure_isolated(self) -> None:
+        """维护端口失败不得中断召回后处理。"""
 
-        async def _update_memory(doc_id, updates, skip_graph_reindex=False):
-            update_called.append(updates)
-            return True
+        async def _reinforce(memory_id: int) -> bool:
+            raise RuntimeError("maintenance failed")
 
         opt = RetrievalOptimizer(
             config={"testing_effect_async": False, "testing_effect_top_k": 5},
-            update_memory_cb=_update_memory,
+            reinforce_recall_state_cb=_reinforce,
         )
         r = _make_hr(
-            1,
-            "test",
-            score=0.9,
-            metadata={"reinforcement_count": 100, "ttl_days": 30.0},
+            1, "test", score=0.9, metadata={"reinforcement_count": 0, "ttl_days": 30.0}
         )
         await opt._apply_testing_effect([r])
-        meta = update_called[0]["metadata"]
-        # Capped at 2x original = 60.0
-        assert meta["ttl_days"] <= 60.0
 
     @pytest.mark.asyncio
     async def test_testing_effect_top_k_limit(self) -> None:
-        """Only top-K results are reinforced."""
-        update_called = []
+        """只有 top-K 结果会被派发维护。"""
+        reinforced: list[int] = []
 
-        async def _update_memory(doc_id, updates, skip_graph_reindex=False):
-            update_called.append(doc_id)
+        async def _reinforce(memory_id: int) -> bool:
+            reinforced.append(memory_id)
             return True
 
         opt = RetrievalOptimizer(
             config={"testing_effect_async": False, "testing_effect_top_k": 2},
-            update_memory_cb=_update_memory,
+            reinforce_recall_state_cb=_reinforce,
         )
         results = [
             _make_hr(
@@ -779,7 +772,35 @@ class TestTestingEffect:
             for i in range(5)
         ]
         await opt._apply_testing_effect(results)
-        assert len(update_called) == 2
+        assert reinforced == [0, 1]
+
+    @pytest.mark.asyncio
+    async def test_interference_dispatches_decay_intent(self) -> None:
+        """逆行干扰只按 doc_id 派发衰减意图，不改写旧记忆 metadata。"""
+        decays: list[tuple[int, int]] = []
+
+        async def _search(query, k=5, recall_type="passive"):
+            return [_make_hr(2, "旧记忆", score=0.8)]
+
+        async def _get_memory(doc_id: int):
+            return {
+                "text": "旧记忆 内容 近似",
+                "metadata": {"importance": 0.5},
+            }
+
+        async def _decay(doc_id: int, *, source_memory_id: int) -> bool:
+            decays.append((doc_id, source_memory_id))
+            return True
+
+        opt = RetrievalOptimizer(
+            config={},
+            db_connection=object(),
+            search_memories_cb=_search,
+            get_memory_cb=_get_memory,
+            apply_interference_decay_cb=_decay,
+        )
+        await opt.apply_interference(1, "旧记忆 内容 近似")
+        assert decays == [(2, 1)]
 
 
 class TestFilteringInApplyBoosts:

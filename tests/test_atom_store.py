@@ -7,6 +7,11 @@ import pytest
 
 from core.features.memory.domain.memory_atom import AtomStatus, AtomType, MemoryAtom
 from core.features.memory.infrastructure.atom_store import AtomStore
+from core.features.memory.infrastructure.write_op_serialization import (
+    _deserialize_atom_from_repair,
+    serialize_atom_for_repair,
+)
+from tests.fact_evidence_helpers import source_evidence
 
 
 def _make_atom(**overrides) -> MemoryAtom:
@@ -21,6 +26,7 @@ def _make_atom(**overrides) -> MemoryAtom:
         persona_id="p1",
     )
     defaults.update(overrides)
+    defaults.setdefault("source_evidence", source_evidence(defaults["content"]))
     return MemoryAtom(**defaults)  # type: ignore[arg-type]
 
 
@@ -94,6 +100,24 @@ class TestAtomStoreCRUD:
         store = AtomStore(tmp_db_path)
         await store.initialize()
         assert await store.get_by_parent(999) == []
+
+    @pytest.mark.asyncio
+    async def test_evidence_survives_repair_and_store_roundtrip(self, tmp_db_path):
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        original = _make_atom(content="用户喜欢绿茶")
+        payload = serialize_atom_for_repair(original)
+        replay = _deserialize_atom_from_repair(payload, 1, "sess-1", "p1")
+        assert replay is not None
+        atom_id = await store.insert(replay)
+        fetched = await store.get(atom_id)
+        assert fetched is not None
+        assert fetched.source_evidence == original.source_evidence
+        assert fetched.content == original.content
+        payload.pop("source_evidence")
+        assert _deserialize_atom_from_repair(payload, 1, "sess-1", "p1") is None
+        with pytest.raises(ValueError, match="grounding_source_evidence_invalid"):
+            await store.insert(_make_atom(source_evidence=[]))
 
 
 class TestAtomStoreLifecycle:

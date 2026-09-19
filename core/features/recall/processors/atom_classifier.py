@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Sequence
 from datetime import datetime, timedelta
+from typing import Any
 
 from astrbot.api import logger
 
@@ -16,6 +18,7 @@ from ...memory.domain.memory_atom import (
     DecayType,
     MemoryAtom,
     compute_ttl,
+    has_user_source_evidence,
 )
 
 # ---------- 分类模式 ----------
@@ -253,6 +256,7 @@ def _has_minimal_information(text: str) -> bool:
 
 def classify_atoms(
     key_facts: list[str],
+    fact_source_evidence: Sequence[Sequence[dict[str, Any]]],
     topics: list[str] | None = None,
     participants: list[str] | None = None,
     parent_importance: float = 0.5,
@@ -292,6 +296,8 @@ def classify_atoms(
     返回:
         通过筛选的 `MemoryAtom` 列表；每条事实都会计算 TTL 与衰减类型。
     """
+    if len(key_facts) != len(fact_source_evidence):
+        raise ValueError("grounding_fact_evidence_mismatch")
     entities: list[str] = []
     if topics:
         entities.extend(topics)
@@ -302,7 +308,9 @@ def classify_atoms(
     normalized_intensity = max(0.0, min(1.0, emotional_intensity))
 
     atoms: list[MemoryAtom] = []
-    for fact in key_facts:
+    for fact, evidence in zip(key_facts, fact_source_evidence, strict=True):
+        if not has_user_source_evidence(evidence):
+            continue
         fact = fact.strip()
         if not fact:
             continue
@@ -364,6 +372,7 @@ def classify_atoms(
             session_id=session_id,
             persona_id=persona_id,
             metadata=atom_metadata,
+            source_evidence=[dict(item) for item in evidence],
         )
         atoms.append(atom)
 

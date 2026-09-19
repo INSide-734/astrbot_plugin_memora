@@ -332,6 +332,8 @@ const DYNAMIC_KEYS = [
     .map((action) => `intelligence.reconsolidation.action.${action}`),
   ...["llm_revision"]
     .map((evidence) => `intelligence.reconsolidation.evidence.${evidence}`),
+  ...["replayable", "partial", "unavailable", "unknown"]
+    .map((status) => `detail.sourceStatus.${status}`),
   ...["proposed", "applied", "manual_reject", "rolled_back", "source_revision_mismatch", "candidate_changed"]
     .map((reason) => `intelligence.reconsolidation.reason.${reason}`),
   ...["healthy", "watch", "degraded", "critical"]

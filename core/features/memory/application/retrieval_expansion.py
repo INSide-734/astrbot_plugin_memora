@@ -14,7 +14,10 @@ from astrbot.api import logger
 from ....shared.memory_status import is_memory_recallable
 from ....shared.number_utils import safe_float
 from ....shared.temporal import canonical_visible_at
+from ...injection.application.selection import metadata_has_user_evidence
 from ...retrieval.rrf_fusion import HybridResult
+from ..domain.revision import memory_revision
+from ..graph.domain.models import GraphBoundary, GraphQueryScope
 
 
 def _safe_json(value: Any) -> dict[str, Any]:
@@ -48,6 +51,9 @@ class RetrievalExpansionMixin:
         k: int,
         session_id: str | None,
         persona_id: str | None,
+        *,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> list[HybridResult]:
         """用关联记忆扩展顶部结果（单跳，兼容旧行为）。"""
         return await self.chain_expand_multi_hop(
@@ -56,6 +62,8 @@ class RetrievalExpansionMixin:
             session_id,
             persona_id,
             max_hops=1,
+            query_scope=query_scope,
+            require_user_evidence=require_user_evidence,
         )
 
     async def chain_expand_multi_hop(
@@ -67,19 +75,15 @@ class RetrievalExpansionMixin:
         max_hops: int = 2,
         hop_decay: float | None = None,
         reference_time: Any | None = None,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> list[HybridResult]:
         """R2: 多跳检索 — 沿图边 + 话题关联做多层扩展。
 
         每跳衰减 hop_decay 的平方（hop 1: ×0.65, hop 2: ×0.42, hop 3: ×0.27）。
-
-        参数:
-            direct_results: 首轮检索结果
-            k: 最终返回数量上限
-            session_id: 会话过滤
-            persona_id: 人设过滤
-            max_hops: 最大扩展跳数（默认 2）
-            hop_decay: 每跳衰减因子（默认 0.65，逐跳平方递减）
         """
+        if query_scope is not None:
+            query_scope = GraphQueryScope.require(query_scope)
         decay = hop_decay if hop_decay is not None else self._DEFAULT_HOP_DECAY
         hops = max(1, min(5, max_hops))
         graph_expansion_enabled = self._config_bool(
@@ -106,22 +110,37 @@ class RetrievalExpansionMixin:
             for seed in seed_pool:
                 metadata = seed.metadata or {}
                 # 优先通过图边做关联扩展
-                if graph_expansion_enabled:
-                    linked_via_graph = await self._expand_via_graph_edges(
-                        seed,
-                        seen_ids,
-                        session_id,
-                        persona_id,
+                if graph_expansion_enabled and query_scope is not None:
+                    source_metadata = await self._load_graph_candidate_metadata(
+                        seed.doc_id
                     )
-                    for lr in linked_via_graph:
-                        canonical_metadata = await self._load_graph_candidate_metadata(
-                            lr.doc_id
+                    try:
+                        boundary = GraphBoundary.from_metadata(source_metadata)
+                    except ValueError:
+                        linked_via_graph = []
+                    else:
+                        linked_via_graph = (
+                            await self._expand_via_graph_edges(
+                                seed,
+                                seen_ids,
+                                session_id,
+                                persona_id,
+                                boundary=boundary,
+                            )
+                            if GraphQueryScope.from_boundary(boundary) == query_scope
+                            else []
                         )
+                    for lr in linked_via_graph:
+                        canonical_metadata = lr.metadata
                         if (
                             lr.doc_id not in seen_ids
                             and canonical_metadata is not None
                             and is_memory_recallable(canonical_metadata)
                             and canonical_visible_at(canonical_metadata, reference_time)
+                            and (
+                                not require_user_evidence
+                                or metadata_has_user_evidence(canonical_metadata)
+                            )
                         ):
                             lr.final_score *= hop_multiplier
                             seen_ids.add(lr.doc_id)
@@ -150,12 +169,18 @@ class RetrievalExpansionMixin:
                     recall_type="passive",
                     chain_depth=0,
                     reference_time=reference_time,
+                    query_scope=query_scope,
+                    require_user_evidence=require_user_evidence,
                 )
                 for lr in linked:
                     if (
                         lr.doc_id not in seen_ids
                         and is_memory_recallable(lr.metadata or {})
                         and canonical_visible_at(lr.metadata or {}, reference_time)
+                        and (
+                            not require_user_evidence
+                            or metadata_has_user_evidence(lr.metadata or {})
+                        )
                     ):
                         lr.final_score *= hop_multiplier
                         seen_ids.add(lr.doc_id)
@@ -196,7 +221,9 @@ class RetrievalExpansionMixin:
             return None
         if not isinstance(memory, Mapping):
             return None
-        return _safe_json(memory.get("metadata"))
+        metadata = dict(_safe_json(memory.get("metadata")))
+        metadata["revision_token"] = memory_revision(dict(memory))
+        return metadata
 
     async def _expand_via_graph_edges(
         self,
@@ -204,57 +231,84 @@ class RetrievalExpansionMixin:
         seen_ids: set[int],
         session_id: str | None,
         persona_id: str | None,
+        *,
+        boundary: GraphBoundary,
     ) -> list[HybridResult]:
-        """R2：通过图边遍历找到关联记忆。
-
-        查找与种子记忆共享图节点的其他记忆（co_occurs_with / describes /
-        before / after / during 等边类型）。
-        """
+        """按种子当前来源找同 scope 的节点，并独立核对每条目标 revision。"""
+        GraphBoundary.require(boundary)
         results: list[HybridResult] = []
         if self._db is None:
             return results
-
         try:
-            # 查找与该记忆共享节点或边的其他记忆 ID
             cursor = await self._db.execute(
                 """
-                SELECT DISTINCT ge2.source_memory_id, ge2.content, ge2.metadata
-                FROM graph_entry_nodes gen1
-                JOIN graph_entry_nodes gen2 ON gen1.node_id = gen2.node_id
-                    AND gen1.entry_id != gen2.entry_id
-                JOIN graph_entries ge1 ON gen1.entry_id = ge1.id
-                JOIN graph_entries ge2 ON gen2.entry_id = ge2.id
-                WHERE ge1.source_memory_id = ?
-                AND ge2.source_memory_id != ?
+                SELECT DISTINCT ge2.source_memory_id, ge2.content,
+                                ge2.revision_token
+                FROM graph_entries ge1
+                JOIN graph_entry_nodes gen1 ON gen1.entry_id = ge1.id
+                JOIN graph_nodes gn1 ON gn1.id = gen1.node_id
+                JOIN graph_nodes gn2 ON gn2.node_key = gn1.node_key
+                  AND gn2.scope_key = gn1.scope_key
+                  AND gn2.privacy_level = gn1.privacy_level
+                JOIN graph_entry_nodes gen2 ON gen2.node_id = gn2.id
+                JOIN graph_entries ge2 ON ge2.id = gen2.entry_id
+                WHERE ge1.source_memory_id = :source_memory_id
+                  AND ge2.source_memory_id != :source_memory_id
+                  AND ge1.scope_key = :scope_key
+                  AND ge1.privacy_level = :privacy_level
+                  AND ge1.revision_token = :revision_token
+                  AND gn1.scope_key = ge1.scope_key
+                  AND gn1.privacy_level = ge1.privacy_level
+                  AND gn1.revision_token = ge1.revision_token
+                  AND ge2.scope_key = :scope_key
+                  AND ge2.privacy_level = :privacy_level
+                  AND ge2.revision_token = gn2.revision_token
+                  AND (:session_id IS NULL OR ge1.session_id = :session_id)
+                  AND (:session_id IS NULL OR ge2.session_id = :session_id)
+                  AND (:persona_id IS NULL OR ge1.persona_id = :persona_id)
+                  AND (:persona_id IS NULL OR ge2.persona_id = :persona_id)
                 LIMIT 5
                 """,
-                (seed.doc_id, seed.doc_id),
+                {
+                    **boundary.as_params(),
+                    "source_memory_id": seed.doc_id,
+                    "session_id": session_id,
+                    "persona_id": persona_id,
+                },
             )
             rows = await cursor.fetchall()
+            added_ids = set(seen_ids)
             for row in rows:
                 doc_id = int(row["source_memory_id"])
-                if doc_id in seen_ids:
+                if doc_id in added_ids:
                     continue
-                meta_raw = row["metadata"] or "{}"
-
-                meta = json.loads(meta_raw) if isinstance(meta_raw, str) else meta_raw
+                meta = await self._load_graph_candidate_metadata(doc_id)
+                try:
+                    current = GraphBoundary.from_metadata(meta)
+                except ValueError:
+                    continue
+                if (
+                    current.scope_key != boundary.scope_key
+                    or current.privacy_level != boundary.privacy_level
+                    or current.revision_token != row["revision_token"]
+                ):
+                    continue
                 results.append(
                     HybridResult(
                         doc_id=doc_id,
-                        final_score=0.5,  # 基础分，会再由 hop_decay 继续衰减
+                        final_score=0.5,
                         rrf_score=0.5,
                         bm25_score=None,
                         vector_score=None,
                         content=row["content"] or "",
-                        metadata=meta if isinstance(meta, dict) else {},
+                        metadata=meta or {},
                     )
                 )
+                added_ids.add(doc_id)
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            logger.debug(
-                f"[MultiHop] 图边扩展失败 (seed={seed.doc_id})",
-                exc_info=True,
-            )
-
+            logger.debug("[MultiHop] graph_expansion_unavailable")
         return results
 
     # ---- 梦境整合 ----

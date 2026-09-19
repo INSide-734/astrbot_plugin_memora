@@ -63,6 +63,14 @@ class InjectionExecutionContext:
     provider: Any | None = None
     scope_id: str | None = None
     required_facets: tuple[str, ...] = ()
+    allowed_source_roles: frozenset[str] = frozenset({"user"})
+
+    def __post_init__(self) -> None:
+        """模型注入只信任用户消息；不提供助手角色的配置入口。"""
+        if not isinstance(
+            self.allowed_source_roles, frozenset
+        ) or self.allowed_source_roles != frozenset({"user"}):
+            raise ValueError("injection_source_roles_invalid")
 
 
 class InjectionExecutor:
@@ -106,7 +114,10 @@ class InjectionExecutor:
         format_started = time.perf_counter()
         try:
             selected, dropped = select_candidates(
-                decision, context.memories, required_facets=context.required_facets
+                decision,
+                context.memories,
+                allowed_source_roles=context.allowed_source_roles,
+                required_facets=context.required_facets,
             )
             protected_payload, stats, selected, dropped = self._build_verified_payload(
                 decision,

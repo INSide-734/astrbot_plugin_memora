@@ -15,6 +15,7 @@ from typing import Any
 from astrbot.api import logger
 
 from ....shared.summary_source import source_window_digest
+from ...memory.domain.memory_atom import has_user_source_evidence
 from ...recall.processors.memory_grounding import MemoryGroundingValidator
 from ..infrastructure.quarantine_store import MemoryQuarantineStore
 from .gate_rule_engine import CandidateView, evaluate_disposition, evaluate_rules
@@ -30,6 +31,35 @@ class MemoryGateResult:
     candidate_id: str | None = None
     reason_codes: tuple[str, ...] = ()
     atoms: list | None = None
+
+
+def _aggregate_fact_evidence(validation: Any) -> list[dict[str, Any]]:
+    """把逐事实重验证证据确定性聚合为摘要级用户证据。
+
+    只接受服务端解析过的完整引用并按首见顺序去重；任何一条事实缺少可解析证据
+    时返回空列表，由下游证据门继续 fail-closed，而不是回退到旧摘要引用。
+    """
+
+    aggregated: list[dict[str, Any]] = []
+    seen: set[tuple[Any, ...]] = set()
+    for result in validation:
+        evidence = getattr(result, "evidence", None)
+        if not isinstance(evidence, (list, tuple)) or not evidence:
+            return []
+        for reference in evidence:
+            key = (
+                reference.get("message_id"),
+                reference.get("message_seq"),
+                reference.get("role"),
+                reference.get("start"),
+                reference.get("end"),
+                reference.get("message_fingerprint"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            aggregated.append(dict(reference))
+    return aggregated if has_user_source_evidence(aggregated) else []
 
 
 class QuarantineApprovalPendingError(RuntimeError):
@@ -247,6 +277,9 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                 profile,
             )
             disposition = evaluate_disposition(tuple(reason_codes), outcome, profile)
+            if not _has_fact_evidence(metadata):
+                if disposition in {"allow", "mark_write"}:
+                    disposition = "quarantine"
             # 应用重要性动作：set_importance 覆盖，否则累加 delta，最终 clamp [0,1]
             base_importance = float(candidate.get("importance", 0.5))
             if outcome.set_importance is not None:
@@ -351,17 +384,37 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                 raise ValueError("quarantine_canonical_not_found")
             return current
 
-        corrected_metadata = None
-        corrected_content = None
+        corrected_metadata = dict(current["metadata"])
+        facts = corrected_metadata.get("key_facts")
+        corrected_content = (
+            "；".join(facts)
+            if isinstance(facts, list)
+            and facts
+            and all(isinstance(fact, str) and fact.strip() for fact in facts)
+            else None
+        )
         if content is not None:
             corrected_content = str(content).strip()
             if not corrected_content:
                 raise ValueError("quarantine_content_required")
             if len(corrected_content) > 2000:
                 raise ValueError("quarantine_content_too_long")
-            corrected_metadata = dict(current["metadata"])
+            groups = corrected_metadata.get("fact_source_evidence")
+            evidence = (
+                groups[0]
+                if isinstance(facts, list)
+                and len(facts) == 1
+                and isinstance(groups, list)
+                and len(groups) == 1
+                and isinstance(groups[0], list)
+                else []
+            )
             corrected_metadata["key_facts"] = [corrected_content]
+            corrected_metadata["fact_source_evidence"] = [evidence]
             corrected_metadata["summary_quality"] = "reviewed"
+        if corrected_content is not None:
+            corrected_metadata["canonical_summary"] = corrected_content
+            corrected_metadata["persona_summary"] = corrected_content
 
         approval_token = secrets.token_urlsafe(32)
         approval_token_hash = hashlib.sha256(approval_token.encode("utf-8")).hexdigest()
@@ -379,28 +432,40 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                 raise ValueError("source_window_invalid")
 
             async def _validate_source() -> tuple[
-                dict[str, Any], list[Any], dict[str, Any], Any
+                dict[str, Any], list[Any], dict[str, Any], Any, Any
             ]:
                 """读取来源并执行一次 grounding 重验证。"""
                 validated_window, validated_messages = await self._read_approval_source(
                     claimed
                 )
                 validated_metadata = dict(claimed["metadata"])
-                validated = self.grounding_validator.revalidate_stored_evidence(
-                    {
-                        "content": claimed["content"],
-                        "key_facts": validated_metadata.get("key_facts", []),
-                        "participants": validated_metadata.get("participants", []),
-                    },
+                resolved_profile = (
+                    self.gate_runtime.resolve_profile(
+                        "group" if claimed["is_group_chat"] else "private",
+                        validated_window.get("group_id"),
+                        claimed.get("persona_id"),
+                    )
+                    if self.gate_runtime is not None
+                    else None
+                )
+                validated = self.grounding_validator.revalidate_facts(
+                    validated_metadata,
                     validated_messages,
-                    list(validated_metadata.get("source_evidence") or []),
                     is_group_chat=bool(claimed["is_group_chat"]),
+                    profile=resolved_profile,
+                    message_seqs=tuple(
+                        range(
+                            validated_window["start_seq"] + 1,
+                            validated_window["end_seq"] + 1,
+                        )
+                    ),
                 )
                 return (
                     validated_window,
                     validated_messages,
                     validated_metadata,
                     validated,
+                    resolved_profile,
                 )
 
             async with self._source_guard(claimed_session_id):
@@ -409,6 +474,7 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                     messages,
                     metadata,
                     validation,
+                    profile,
                 ) = await _validate_source()
         except asyncio.CancelledError:
             await self.store.block_approval(
@@ -426,64 +492,53 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
                 reason_code="grounding_revalidation_failed",
             )
             raise
-        if validation.requires_judge:
-            # 重验证需要 Judge 时走与自动路径同一解析；不可用仍 fail-closed 阻塞。
-            profile = (
-                self.gate_runtime.resolve_profile(
-                    "group" if claimed["is_group_chat"] else "private",
-                    source_window.get("group_id"),
-                    claimed.get("persona_id"),
-                )
-                if self.gate_runtime is not None
-                else None
-            )
-            if profile is None:
-                try:
+        for index, fact_validation in enumerate(validation):
+            if fact_validation.requires_judge:
+                if profile is None:
                     logger.warning(
-                        "[MemoryQualityGate] 评估不可用 component=memory_quality_gate "
-                        "stage=approval cause=profile_unresolved "
-                        "exception_type=unknown count=1"
+                        "[GroundingJudge] unavailable component=memory_quality_gate "
+                        "stage=approval cause=profile_unresolved exception_type=unknown count=1"
                     )
-                except Exception:
-                    pass
-                validation = validation.with_unavailable_judge()
-            else:
-                try:
-                    validation = await self.memory_processor.resolve_grounding_judge(
-                        validation,
-                        is_group_chat=bool(claimed["is_group_chat"]),
-                        profile=profile,
-                        topics=tuple(metadata.get("topics") or ()),
-                        importance=float(claimed["importance"]),
-                    )
-                except asyncio.CancelledError:
-                    # Judge 取消时先恢复为 blocked，再向上传播，不得遗留 approving。
-                    await self.store.block_approval(
-                        candidate_id,
-                        expected_revision=claimed["revision"],
-                        actor_id=actor_id,
-                        reason_code="approval_cancelled_before_write",
-                    )
-                    raise
-                except Exception:
-                    await self.store.block_approval(
-                        candidate_id,
-                        expected_revision=claimed["revision"],
-                        actor_id=actor_id,
-                        reason_code="grounding_judge_failed",
-                    )
-                    raise
-        if not validation.allowed:
-            return await self.store.block_approval(
-                candidate_id,
-                expected_revision=claimed["revision"],
-                actor_id=actor_id,
-                reason_code=(
-                    validation.reason_codes[0]
-                    if validation.reason_codes
-                    else "grounding_revalidation_failed"
-                ),
-            )
+                    fact_validation = fact_validation.with_unavailable_judge()
+                else:
+                    try:
+                        fact_validation = (
+                            await self.memory_processor.resolve_grounding_judge(
+                                fact_validation,
+                                is_group_chat=bool(claimed["is_group_chat"]),
+                                profile=profile,
+                                topics=tuple(metadata.get("topics") or ()),
+                                importance=float(claimed["importance"]),
+                            )
+                        )
+                    except asyncio.CancelledError:
+                        await self.store.block_approval(
+                            candidate_id,
+                            expected_revision=claimed["revision"],
+                            actor_id=actor_id,
+                            reason_code="approval_cancelled_before_write",
+                        )
+                        raise
+                    except Exception:
+                        await self.store.block_approval(
+                            candidate_id,
+                            expected_revision=claimed["revision"],
+                            actor_id=actor_id,
+                            reason_code="grounding_judge_failed",
+                        )
+                        raise
+            validation[index] = fact_validation
+            if not fact_validation.allowed:
+                return await self.store.block_approval(
+                    candidate_id,
+                    expected_revision=claimed["revision"],
+                    actor_id=actor_id,
+                    reason_code=(
+                        fact_validation.reason_codes[0]
+                        if fact_validation.reason_codes
+                        else "grounding_revalidation_failed"
+                    ),
+                )
 
         metadata.update(
             {
@@ -494,8 +549,23 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
             }
         )
         metadata["grounding_status"] = "grounded"
-        metadata["grounding_reason_codes"] = list(validation.reason_codes)
-        metadata["source_evidence"] = validation.evidence
+        metadata["grounding_reason_codes"] = list(
+            dict.fromkeys(
+                reason for result in validation for reason in result.reason_codes
+            )
+        )
+        metadata["fact_source_evidence"] = [result.evidence for result in validation]
+        metadata["fact_dispositions"] = [
+            {
+                "fact_index": index,
+                "status": "grounded",
+                "reason_codes": list(result.reason_codes),
+            }
+            for index, result in enumerate(validation)
+        ]
+        # 摘要级证据只能从本次逐事实重验证结果确定性聚合：既不继承旧摘要引用，
+        # 也不为 approved 增加绕过门禁的特例，批准后仍可被普通召回与注入。
+        metadata["source_evidence"] = _aggregate_fact_evidence(validation)
         metadata["quality_gate_action"] = "approved"
         metadata["quarantine_approved"] = True
         metadata["_quarantine_candidate_id"] = candidate_id
@@ -687,6 +757,8 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
         """从处理器 metadata 生成稳定、去重的隔离原因码。"""
 
         reasons: list[str] = []
+        if not _has_fact_evidence(metadata):
+            reasons.append("grounding_fact_evidence_mismatch")
         if str(metadata.get("summary_quality") or "").casefold() == "low":
             reasons.append("summary_quality_low")
         if str(metadata.get("grounding_status") or "") != "grounded":
@@ -727,6 +799,20 @@ class MemoryQualityGate(MemoryQualityGateActionsMixin):
             separators=(",", ":"),
         ).encode("utf-8")
         return f"quality:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _has_fact_evidence(metadata: dict[str, Any]) -> bool:
+    """Keep configurable quality dispositions behind the fixed evidence boundary."""
+    facts = metadata.get("key_facts")
+    groups = metadata.get("fact_source_evidence")
+    return (
+        isinstance(facts, list)
+        and bool(facts)
+        and all(isinstance(fact, str) and fact.strip() for fact in facts)
+        and isinstance(groups, list)
+        and len(groups) == len(facts)
+        and all(has_user_source_evidence(group) for group in groups)
+    )
 
 
 __all__ = [

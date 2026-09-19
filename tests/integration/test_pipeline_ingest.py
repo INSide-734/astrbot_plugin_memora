@@ -121,12 +121,14 @@ class TestPipelineIngest:
         MemoryAtom，调用 AtomStore.insert()，并维护 FAISS 向量索引。
         """
         from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
+        from tests.fact_evidence_helpers import source_evidence
 
         now = time.time()
         atom = MemoryAtom(
             parent_memory_id=0,
             atom_type=AtomType.EPISODIC,
             content=segment.content,
+            source_evidence=source_evidence(segment.content),
             entities=segment.topics if hasattr(segment, "topics") else [],
             importance=segment.importance if hasattr(segment, "importance") else 0.5,
             emotion_tags=segment.metadata.get("emotion_tags", [])
@@ -427,6 +429,7 @@ class TestPipelineIngest:
             pytest.skip("AtomStore 不可用 — atom 子系统可能已禁用")
 
         from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
+        from tests.fact_evidence_helpers import source_evidence
 
         # 构造一个覆盖所有持久化字段的原子
         # 注意：emotion_tags 不在 DB schema 中，不是持久化字段；通过 metadata 传递
@@ -435,6 +438,9 @@ class TestPipelineIngest:
             parent_memory_id=42,
             atom_type=AtomType.FACTUAL,
             content="西湖是杭州最著名的景点，被列为世界文化遗产",
+            source_evidence=source_evidence(
+                "西湖是杭州最著名的景点，被列为世界文化遗产"
+            ),
             entities=["西湖", "杭州", "文化遗产"],
             importance=0.70,
             confidence=0.85,

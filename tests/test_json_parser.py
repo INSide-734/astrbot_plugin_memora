@@ -147,7 +147,7 @@ class TestStrictSummaryJsonParser:
 
         with pytest.raises(SummaryParseError) as raised:
             parser.parse_summary_response(
-                '{"memories":[{"summary":"这是稳定事实","key_facts":["  "]}]}'
+                '{"memories":[{"summary":"这是稳定事实","key_facts":["  "],"fact_source_refs":[[]]}]}'
             )
 
         assert raised.value.reason == "facts_missing"
@@ -159,7 +159,7 @@ class TestStrictSummaryJsonParser:
         response = (
             "好的，以下是我抽取的记忆：\n"
             '{"memories":[{"summary":"用户偏好手冲咖啡",'
-            '"key_facts":["用户喜欢手冲咖啡"]}]}\n'
+            '"key_facts":["用户喜欢手冲咖啡"],"fact_source_refs":[[]]}]}\n'
             "以上。"
         )
 
@@ -200,7 +200,7 @@ def test_strict_summary_accepts_integer_numeric_fields() -> None:
 
     result = JsonParser(QualityValidator()).parse_summary_response(
         '{"memories":[{"summary":"这是稳定事实","key_facts":["事实内容"],'
-        '"importance":1,"confidence":0}]}'
+        '"fact_source_refs":[[]],"importance":1,"confidence":0}]}'
     )
 
     assert result.memories[0].importance == 1

@@ -283,8 +283,8 @@ class TestFormatMemoriesForFakeToolCall:
         """空 list returns empty list."""
         assert format_memories_for_fake_tool_call([], "test query") == []
 
-    def test_dict_based_memories_with_id(self):
-        """字典 memories produce valid tool call messages."""
+    def test_dict_based_memories_expose_only_visible_fields(self):
+        """字典 memories 只序列化模型可见字段，内部标识不进入载荷。"""
         memories = [
             {
                 "id": 42,
@@ -310,21 +310,13 @@ class TestFormatMemoriesForFakeToolCall:
         content = json.loads(tool_msg["content"])
         assert content["query"] == "测试查询"
         assert content["count"] == 1
-        assert content["results"][0]["id"] == 42
-
-    def test_dict_memories_with_doc_id_fallback(self):
-        """字典 memories fall back to doc_id when id is missing."""
-        memories = [
-            {
-                "doc_id": 99,
-                "content": "fallback id test",
-                "score": 0.5,
-                "metadata": {},
-            }
-        ]
-        result = format_memories_for_fake_tool_call(memories, "q")
-        content = json.loads(result[1]["content"])
-        assert content["results"][0]["id"] == 99
+        assert content["results"][0] == {
+            "content": "记忆内容",
+            "score": 0.88,
+            "importance": 0.6,
+        }
+        assert "s1" not in tool_msg["content"]
+        assert "p1" not in tool_msg["content"]
 
     def test_object_based_memories(self):
         """Object memories produce valid tool call messages (covers lines 210-212)."""
@@ -337,21 +329,9 @@ class TestFormatMemoriesForFakeToolCall:
         result = format_memories_for_fake_tool_call([mem_obj], "对象查询")
         assert len(result) == 2
         content = json.loads(result[1]["content"])
-        assert content["results"][0]["id"] == 7
         assert content["results"][0]["content"] == "对象记忆内容"
-
-    def test_object_memories_with_id_fallback(self):
-        """Object memories fall back to id attribute when doc_id is not int/str."""
-        mem_obj = MagicMock()
-        mem_obj.doc_id = None  # Not int/str, triggers fallback to id
-        mem_obj.id = 55
-        mem_obj.content = "id fallback"
-        mem_obj.score = 0.6
-        mem_obj.metadata = {}
-
-        result = format_memories_for_fake_tool_call([mem_obj], "q")
-        content = json.loads(result[1]["content"])
-        assert content["results"][0]["id"] == 55
+        assert content["results"][0]["importance"] == 0.55
+        assert "id" not in content["results"][0]
 
     def test_object_memories_with_string_metadata(self):
         """Object memories with string metadata are parsed."""
@@ -409,7 +389,8 @@ class TestFormatMemoriesForFakeToolCall:
         )
         payload = json.loads(result[1]["content"])
         canonical = payload["results"][0]
-        assert canonical["id"] == 17
+        assert canonical["content"] == "canonical"
+        assert "id" not in canonical
         assert canonical["derived_projections"] == [
             {"type": "episode_summary", "summary": "摘要", "confidence": 0.86}
         ]

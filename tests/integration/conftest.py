@@ -269,6 +269,7 @@ async def preloaded_engine(
     RELATIONAL、PLANNED），其向量已添加到 FAISS 索引中。
     """
     from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
+    from tests.fact_evidence_helpers import source_evidence
 
     engine = integration_engine
     atom_store = engine.atom_store
@@ -292,6 +293,7 @@ async def preloaded_engine(
             parent_memory_id=0,
             atom_type=AtomType(entry["atom_type"]),
             content=entry["content"],
+            source_evidence=source_evidence(entry["content"]),
             importance=entry.get("importance", 0.5),
             emotion_tags=entry.get("emotion_tags", []),
             entities=entry.get("topics", []),

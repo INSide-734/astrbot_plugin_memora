@@ -18,6 +18,21 @@ from ..domain.memory_atom import MemoryAtom
 from .write_op_serialization import _deserialize_atom_from_repair, safe_json_dict
 
 
+def source_acceptance_allows_derivation(metadata: Any) -> bool:
+    """判断 canonical metadata 是否已脱离来源暂存/拒绝状态。
+
+    只有来源 owner 明确清除 ``summary_source_orphan`` 与
+    ``summary_source_pending`` 后才允许派生图与业务副作用；缺省字段的历史行
+    视为已接受，避免把旧数据误判为暂存。
+    """
+
+    if not isinstance(metadata, dict):
+        return True
+    return not metadata.get("summary_source_orphan") and not metadata.get(
+        "summary_source_pending"
+    )
+
+
 class WriteOpRepairMixin:
     """写操作日志 — 崩溃修复（Mixin，通过 MRO 访问宿主属性）"""
 
@@ -34,6 +49,7 @@ class WriteOpRepairMixin:
                 SELECT id, op_type, memory_id, status, step, payload, retry_count
                 FROM memory_write_ops
                 WHERE retry_count < ?
+                  AND NOT (status = 'pending' AND step = 'source_staged')
                   AND (
                     status IN ('pending', 'needs_repair')
                     OR (
@@ -123,6 +139,32 @@ class WriteOpRepairMixin:
                 self._invalidate_cache()
         return repaired
 
+    @staticmethod
+    def _can_converge_stale_source(
+        payload: dict[str, Any],
+        content: str,
+        metadata: dict[str, Any],
+    ) -> bool:
+        """判断过期 Atom 绑定能否按当前 canonical 安全收敛。
+
+        仅当暂存载荷记录的正文前缀仍与当前 canonical 一致、且 scope/privacy
+        未变化时，revision 推进才可归因于元数据维护；语义修改必须继续
+        保持 ``needs_repair``，不得以旧边界收口。
+        """
+
+        preview = payload.get("content_preview")
+        if not isinstance(preview, str) or not preview:
+            return False
+        if not content.startswith(preview):
+            return False
+        staged_metadata = payload.get("metadata")
+        if isinstance(staged_metadata, dict):
+            for field in ("scope_key", "privacy_level"):
+                recorded = staged_metadata.get(field)
+                if recorded is not None and metadata.get(field) != recorded:
+                    return False
+        return True
+
     async def _repair_add(
         self,
         op_id: int,
@@ -198,61 +240,46 @@ class WriteOpRepairMixin:
                 fallback_metadata=metadata,
             )
         except ValueError as exc:
+            if not self._can_converge_stale_source(payload, content, metadata):
+                # 正文或 scope 已变化：保留有界重试而不是终态失败，
+                # 且该行已可召回，图意图必须继续可见。
+                await self.advance_op(
+                    op_id,
+                    "source_stale",
+                    status="needs_repair",
+                    memory_id=int(memory_id),
+                    error=str(exc),
+                )
+                return False
+            # 仅元数据推进导致的 revision 变化：按当前 canonical 重新绑定后继续。
+            if atoms:
+                atoms = bind_atoms_to_canonical_source(
+                    atoms,
+                    memory,
+                    fallback_metadata=metadata,
+                )
+
+        if self._atom_store is not None and atoms and self._atom_enabled:
+            await self._repair_source_atoms(int(memory_id), atoms, payload)
+            await self.advance_op(op_id, "atoms_repaired", memory_id=memory_id)
+
+        if not source_acceptance_allows_derivation(metadata):
+            # 来源 owner 尚未接受：连同待建图意图一起保留，等合法 claim 收尾。
             await self.advance_op(
                 op_id,
-                "source_stale",
-                status="failed",
+                "source_staged",
+                status="pending",
                 memory_id=int(memory_id),
-                error=str(exc),
             )
             return False
 
-        if self._atom_store is not None and atoms and self._atom_enabled:
-            raw_parent_loader = getattr(
-                type(self._atom_store), "get_by_parent_raw", None
-            )
-            if callable(raw_parent_loader):
-                existing_atoms = await self._atom_store.get_by_parent_raw(
-                    int(memory_id)
-                )
-            else:
-                # 兼容只提供旧 Store 协议的测试替身和外部适配器。
-                existing_atoms = await self._atom_store.get_by_parent(int(memory_id))
-            if payload.get("failed_atoms"):
-                existing_keys = {
-                    (
-                        atom.content,
-                        atom.atom_type.value,
-                        atom.session_id,
-                        atom.persona_id,
-                    )
-                    for atom in existing_atoms
-                }
-                atoms_to_insert = [
-                    atom
-                    for atom in atoms
-                    if (
-                        atom.content,
-                        atom.atom_type.value,
-                        atom.session_id,
-                        atom.persona_id,
-                    )
-                    not in existing_keys
-                ]
-                if atoms_to_insert:
-                    await self._atom_store.insert_many(atoms_to_insert)
-            elif not existing_atoms:
-                await self._atom_store.insert_many(atoms)
-            await self.advance_op(op_id, "atoms_repaired", memory_id=memory_id)
-
-        if self._graph_memory_manager is not None and content.strip():
-            await self._graph_memory_manager.index_memory(
-                int(memory_id),
-                content,
-                metadata,
-                atoms or None,
-            )
-            await self.advance_op(op_id, "graph_repaired", memory_id=memory_id)
+        await self._derive_graph_stage(
+            op_id,
+            int(memory_id),
+            content,
+            metadata,
+            atoms or None,
+        )
 
         await self.advance_op(
             op_id,
@@ -282,7 +309,7 @@ class WriteOpRepairMixin:
         if self._graph_memory_manager is None:
             await self.advance_op(
                 op_id,
-                "completed",
+                "graph_skipped",
                 status="completed",
                 memory_id=int(memory_id),
                 payload_patch={"skipped": "graph manager not available"},
@@ -318,20 +345,20 @@ class WriteOpRepairMixin:
         if not content.strip():
             await self.advance_op(
                 op_id,
-                "completed",
+                "graph_skipped",
                 status="completed",
                 memory_id=int(memory_id),
                 payload_patch={"skipped": "empty content"},
             )
             return True
 
-        await self._graph_memory_manager.index_memory(
+        await self._derive_graph_stage(
+            op_id,
             int(memory_id),
             content,
             metadata,
             None,
         )
-        await self.advance_op(op_id, "graph_repaired", memory_id=int(memory_id))
         await self.advance_op(
             op_id,
             "completed",
@@ -339,6 +366,187 @@ class WriteOpRepairMixin:
             memory_id=int(memory_id),
         )
         return True
+
+    async def finalize_add_derivation(self, memory_id: int) -> bool:
+        """来源接受后补建图派生并收口该 canonical 的 add 操作。
+
+        与启动修复共用同一条单来源收尾实现：图功能禁用、正文为空或图不可用时记为
+        明确终态；来源仍处于暂存状态时保持账本开放，绝不派生图。账本不可用
+        （``start_op`` 失败）时不能把“无记录”当成无需派生：这里按当前 canonical
+        直接补建图，失败仍然可观察。
+        """
+
+        op = await self.find_open_add_op(int(memory_id))
+        if op is None:
+            return await self._derive_without_open_op(int(memory_id))
+        try:
+            return await self._repair_add(
+                int(op["op_id"]),
+                int(memory_id),
+                op["payload"],
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # canonical 已接受：图失败只进入修复队列，不回滚 canonical。
+            await self.advance_op(
+                int(op["op_id"]),
+                "graph_failed",
+                status="needs_repair",
+                memory_id=int(memory_id),
+                error=str(exc),
+            )
+            logger.error(
+                f"[WriteOpJournal] 来源接受后建图失败 (memory_id={memory_id})",
+                exc_info=True,
+            )
+            return False
+
+    async def _derive_without_open_op(self, memory_id: int) -> bool:
+        """没有开放 add 账本时按当前 canonical 幂等补建图。
+
+        返回 ``False`` 表示未派生（来源仍未接受、正文为空或图不可用）；
+        真实索引异常只记录脱敏日志并由调用方继续降级，绝不伪报完成。
+        """
+
+        if self._get_memory is None:
+            return False
+        try:
+            memory = await self._get_memory(int(memory_id))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+        if not isinstance(memory, dict):
+            return False
+        metadata = memory.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = safe_json_dict(metadata)
+        if not source_acceptance_allows_derivation(metadata):
+            return False
+        content = str(memory.get("text") or "")
+        if not content.strip() or self._graph_memory_manager is None:
+            return False
+        atoms = None
+        if self._atom_store is not None and self._atom_enabled:
+            loader = getattr(self._atom_store, "get_by_parent", None)
+            if callable(loader):
+                try:
+                    loaded = await loader(int(memory_id))
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    loaded = None
+                if isinstance(loaded, (list, tuple)) and loaded:
+                    atoms = list(loaded)
+        try:
+            await self._graph_memory_manager.index_memory(
+                int(memory_id),
+                content,
+                metadata,
+                atoms,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error(
+                f"[WriteOpJournal] 无账本收尾建图失败 (memory_id={memory_id})",
+                exc_info=True,
+            )
+            return False
+        return True
+
+    async def find_open_add_op(self, memory_id: int) -> dict[str, Any] | None:
+        """返回该 canonical 仍未收口的 add 操作记录（含修复载荷）。"""
+
+        if self._db is None:
+            return None
+        try:
+            cursor = await self._db.execute(
+                """
+                SELECT id, status, step, payload FROM memory_write_ops
+                WHERE memory_id = ? AND op_type = 'add'
+                  AND status IN ('pending', 'needs_repair')
+                ORDER BY id DESC LIMIT 1
+                """,
+                (int(memory_id),),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("[WriteOpJournal] 读取待收口 add 操作失败", exc_info=True)
+            return None
+        if row is None:
+            return None
+        return {
+            "op_id": int(row[0]),
+            "status": str(row[1] or ""),
+            "step": str(row[2] or ""),
+            "payload": safe_json_dict(row[3]),
+        }
+
+    async def _derive_graph_stage(
+        self,
+        op_id: int,
+        memory_id: int,
+        content: str,
+        metadata: dict[str, Any],
+        atoms: list[MemoryAtom] | None,
+    ) -> None:
+        """按当前 canonical 建图并推进账本；不可派生时记为明确不适用。"""
+
+        if self._graph_memory_manager is None or not content.strip():
+            await self.advance_op(op_id, "graph_skipped", memory_id=memory_id)
+            return
+        await self._graph_memory_manager.index_memory(
+            memory_id,
+            content,
+            metadata,
+            atoms or None,
+        )
+        await self.advance_op(op_id, "graph_indexed", memory_id=memory_id)
+
+    async def _repair_source_atoms(
+        self,
+        memory_id: int,
+        atoms: list[MemoryAtom],
+        payload: dict[str, Any],
+    ) -> None:
+        """只补写该来源缺失的暂存原子；调用方负责随后推进账本步骤。"""
+
+        raw_parent_loader = getattr(type(self._atom_store), "get_by_parent_raw", None)
+        if callable(raw_parent_loader):
+            existing_atoms = await self._atom_store.get_by_parent_raw(memory_id)
+        else:
+            # 兼容只提供旧 Store 协议的测试替身和外部适配器。
+            existing_atoms = await self._atom_store.get_by_parent(memory_id)
+        if payload.get("failed_atoms"):
+            existing_keys = {
+                (
+                    atom.content,
+                    atom.atom_type.value,
+                    atom.session_id,
+                    atom.persona_id,
+                )
+                for atom in existing_atoms
+            }
+            atoms_to_insert = [
+                atom
+                for atom in atoms
+                if (
+                    atom.content,
+                    atom.atom_type.value,
+                    atom.session_id,
+                    atom.persona_id,
+                )
+                not in existing_keys
+            ]
+            if atoms_to_insert:
+                await self._atom_store.insert_many(atoms_to_insert)
+        elif not existing_atoms:
+            await self._atom_store.insert_many(atoms)
 
     async def _repair_delete(
         self,

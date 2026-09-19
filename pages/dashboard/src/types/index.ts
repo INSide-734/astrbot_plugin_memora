@@ -13,6 +13,18 @@ export * from "./editing";
 
 export type MemoryStatus = "active" | "dormant" | "archived" | "deleted";
 
+/** 管理员只读来源可重放状态：只含聚合计数与固定原因码，不含来源或身份字段。 */
+export interface SourceReplayability {
+  status?: "replayable" | "partial" | "unavailable" | "unknown" | string;
+  references?: {
+    total?: number;
+    verified?: number;
+    absent?: number;
+    unverifiable?: number;
+  };
+  reason_codes?: string[];
+}
+
 export interface MemoryItem {
   id: string;
   content?: string;
@@ -24,6 +36,7 @@ export interface MemoryItem {
   created_at?: string;
   updated_at?: string;
   session_id?: string;
+  source_replayability?: SourceReplayability;
   [key: string]: unknown;
 }
 

@@ -11,6 +11,7 @@ from typing import Any, TypeVar
 from astrbot.api import logger
 
 from ...memory.application.retrieval_timing import RetrievalTimingSink
+from ...memory.graph.domain.models import GraphQueryScope
 from ...retrieval.rrf_fusion import HybridResult
 
 T = TypeVar("T")
@@ -51,6 +52,7 @@ class AuxiliaryRecall:
         persona_id: str | None,
         chat_type: str,
         deadline_monotonic: float | None,
+        query_scope: GraphQueryScope | None = None,
     ) -> list[Any]:
         """在剩余预算内按低概率执行独立计时的宽泛记忆搜索。"""
 
@@ -87,6 +89,8 @@ class AuxiliaryRecall:
                 chat_type=chat_type,
                 timing_sink=timing_sink,
                 deadline_monotonic=deadline_monotonic,
+                query_scope=query_scope,
+                require_user_evidence=True,
             )
 
         try:
@@ -112,7 +116,7 @@ class AuxiliaryRecall:
         chat_type: str,
         deadline_monotonic: float | None,
     ) -> list[Any]:
-        """在剩余预算内查询即将到期的 PLANNED 原子。"""
+        """在剩余预算内查询即将到期且有用户来源证据的 PLANNED 原子。"""
 
         if _deadline_exhausted(deadline_monotonic) or not self.prospective_enabled():
             return []

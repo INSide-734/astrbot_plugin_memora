@@ -11,6 +11,14 @@ from typing import Any
 
 from astrbot.api import logger
 
+from .topic_embeddings import cosine_sim, dummy_embeddings
+from .topic_fact_index import (
+    agglomerative_index_clusters,
+    cluster_facts,
+    indexed_facts,
+    segment_metadata,
+)
+
 # ---------------------------------------------------------------------------
 # 数据类型
 # ---------------------------------------------------------------------------
@@ -82,7 +90,7 @@ class PromptSegmentationStrategy(TopicSegmentationStrategy):
             if not isinstance(mem, dict):
                 continue
             summary = str(mem.get("summary", "") or "")
-            key_facts: list[str] = [str(f) for f in (mem.get("key_facts") or []) if f]
+            key_facts, fact_indices = indexed_facts(mem.get("key_facts"))
             topics: list[str] = [str(t) for t in (mem.get("topics") or []) if t]
             if not summary and not key_facts:
                 continue  # 跳过空条目（纯闲聊）
@@ -90,7 +98,7 @@ class PromptSegmentationStrategy(TopicSegmentationStrategy):
             segments.append(
                 MemorySegment(
                     content=summary,
-                    metadata=_segment_metadata(mem, key_facts, topics),
+                    metadata=segment_metadata(mem, key_facts, topics, fact_indices),
                     importance=float(mem.get("importance", 0.5)),
                     key_facts=key_facts,
                     topics=topics,
@@ -142,19 +150,17 @@ class EmbeddingClusteringStrategy(TopicSegmentationStrategy):
     ) -> list[MemorySegment]:
         """仅在单个原始 memory 边界内聚类，避免跨参与者合并。"""
 
-        key_facts: list[str] = [
-            str(f) for f in (structured_data.get("key_facts") or []) if f
-        ]
+        key_facts, fact_indices = indexed_facts(structured_data.get("key_facts"))
         if len(key_facts) <= 1:
-            return _single_segment(structured_data, key_facts)
+            return _single_segment(structured_data, key_facts, fact_indices)
 
         embeddings = await self._compute_embeddings(key_facts)
-        clusters = self._cluster(embeddings, key_facts)
+        clusters = self._cluster(embeddings, fact_indices)
         return _build_segments_from_clusters(structured_data, clusters)
 
     async def _compute_embeddings(self, facts: list[str]) -> list[list[float]]:
         if self._embed_fn is None:
-            return _dummy_embeddings(facts)
+            return dummy_embeddings(facts)
 
         try:
             vectors = await self._embed_fn(facts)
@@ -166,54 +172,21 @@ class EmbeddingClusteringStrategy(TopicSegmentationStrategy):
                 exc_info=True,
             )
 
-        return _dummy_embeddings(facts)
+        return dummy_embeddings(facts)
 
     def _cluster(
-        self, embeddings: list[list[float]], facts: list[str]
-    ) -> list[list[str]]:
-        n = len(facts)
-        if n <= 1:
-            return [list(facts)]
+        self, embeddings: list[list[float]], fact_indices: list[int]
+    ) -> list[list[int]]:
+        """按余弦阈值聚类，返回按原始 fact 下标表示的簇。
 
-        sim = _similarity_matrix(embeddings)
-
-        # 基于配置阈值执行贪心式凝聚聚类
-        parent = list(range(n))
-
-        def find(x: int) -> int:
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
-        def union(a: int, b: int) -> None:
-            ra, rb = find(a), find(b)
-            if ra != rb:
-                parent[rb] = ra
-
-        # 合并相似度高于阈值的点对（遍历上三角）
-        for i in range(n):
-            for j in range(i + 1, n):
-                if sim[i][j] >= self._threshold:
-                    union(i, j)
-
-        # 收集聚类结果
-        groups: dict[int, list[str]] = {}
-        for i in range(n):
-            root = find(i)
-            groups.setdefault(root, []).append(facts[i])
-
-        clusters = list(groups.values())
-        # 按簇大小排序（大的在前），并限制最大簇数
-        clusters.sort(key=len, reverse=True)
-        if len(clusters) > self._max_clusters:
-            # 将超出上限的小簇并入最大簇
-            overflow = clusters[self._max_clusters :]
-            clusters = clusters[: self._max_clusters]
-            for c in overflow:
-                clusters[0].extend(c)
-
-        return clusters
+        聚类只使用向量相似度，事实文本不参与分组，重复事实也不会互相吞并。
+        """
+        return agglomerative_index_clusters(
+            embeddings,
+            fact_indices,
+            threshold=self._threshold,
+            max_clusters=self._max_clusters,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -312,7 +285,7 @@ class TopicChunkingStrategy(TopicSegmentationStrategy):
         # 找出相邻相似度低于阈值的转折点
         boundaries = [0]
         for i in range(1, len(embeddings)):
-            sim = _cosine_sim(embeddings[i - 1], embeddings[i])
+            sim = cosine_sim(embeddings[i - 1], embeddings[i])
             if sim < self._threshold:
                 boundaries.append(i)
 
@@ -344,18 +317,19 @@ class TopicChunkingStrategy(TopicSegmentationStrategy):
         is_group_chat: bool = False,
     ) -> list[MemorySegment]:
         # 透传：真正的切块在 ReflectionHandler 上游完成
-        return _single_segment(structured_data, structured_data.get("key_facts") or [])
+        facts, fact_indices = indexed_facts(structured_data.get("key_facts"))
+        return _single_segment(structured_data, facts, fact_indices)
 
     async def _compute_message_embeddings(self, texts: list[str]) -> list[list[float]]:
         if self._embed_fn is None:
-            return _dummy_embeddings(texts)
+            return dummy_embeddings(texts)
         try:
             vectors = await self._embed_fn(texts)
             if vectors and len(vectors) == len(texts):
                 return [list(v) for v in vectors]
         except Exception:
             logger.warning("[话题切块] 向量计算失败，改用伪造向量", exc_info=True)
-        return _dummy_embeddings(texts)
+        return dummy_embeddings(texts)
 
 
 # ---------------------------------------------------------------------------
@@ -426,7 +400,8 @@ class TwoStageLLMStrategy(TopicSegmentationStrategy):
         messages: list | None = None,
         is_group_chat: bool = False,
     ) -> list[MemorySegment]:
-        return _single_segment(structured_data, structured_data.get("key_facts") or [])
+        facts, fact_indices = indexed_facts(structured_data.get("key_facts"))
+        return _single_segment(structured_data, facts, fact_indices)
 
 
 # ---------------------------------------------------------------------------
@@ -654,67 +629,26 @@ def _msg_text(msg: Any) -> str:
     return str(msg)
 
 
-def _cosine_sim(a: list[float], b: list[float]) -> float:
-    if not a or not b or len(a) != len(b):
-        if len(a) != len(b) and a and b:
-            logger.warning(
-                "[余弦相似度] 向量维度不一致：len=%d vs len=%d；返回 0.0",
-                len(a),
-                len(b),
-            )
-        return 0.0
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(y * y for y in b) ** 0.5
-    if na == 0.0 or nb == 0.0:
-        return 0.0
-    return dot / (na * nb)
-
-
-def _similarity_matrix(embeddings: list[list[float]]) -> list[list[float]]:
-    n = len(embeddings)
-    mat = [[0.0] * n for _ in range(n)]
-    for i in range(n):
-        mat[i][i] = 1.0
-        for j in range(i + 1, n):
-            s = _cosine_sim(embeddings[i], embeddings[j])
-            mat[i][j] = s
-    return mat
-
-
-def _dummy_embeddings(texts: list[str]) -> list[list[float]]:
-    """在缺少 `embed_fn` 时使用的兜底方案：基于哈希生成伪向量。
-
-    这些向量不具备真实语义，只是为了让聚类流程仍能继续运行。
-    调用方在走到该路径时应记录告警日志。
-    """
-    import hashlib
-
-    dim = 64
-    out: list[list[float]] = []
-    for t in texts:
-        h = hashlib.sha256(t.encode()).digest()
-        # 取前 dim 个字节并做归一化
-        vec = [((b / 255.0) * 2.0 - 1.0) for b in h[:dim]]
-        norm = sum(x * x for x in vec) ** 0.5
-        if norm > 0:
-            vec = [x / norm for x in vec]
-        out.append(vec)
-    return out
-
-
 def _build_segments_from_clusters(
-    data: dict[str, Any], clusters: list[list[str]]
+    data: dict[str, Any], clusters: list[list[Any]]
 ) -> list[MemorySegment]:
-    """按聚类结果为每个簇构建一个 `MemorySegment`。"""
+    """按聚类结果为每个簇构建一个 `MemorySegment`。
+
+    簇元素是 ``data["key_facts"]`` 里的原始 fact 下标，逐事实引用按下标透传；
+    旧调用传入事实文本时无法证明下标，对应片段不携带逐事实引用（fail-closed）。
+    """
     segments: list[MemorySegment] = []
-    for i, facts in enumerate(clusters):
+    for i, cluster in enumerate(clusters):
+        if not cluster:
+            continue
+        facts, fact_indices = cluster_facts(data.get("key_facts"), cluster)
         if not facts:
+            logger.warning("[向量聚类分割] 簇无法映射到原始事实，已跳过该簇")
             continue
         prefix = f"[话题{i + 1}] " if len(clusters) > 1 else ""
         summary = prefix + "；".join(facts)
         topics = [str(topic) for topic in (data.get("topics") or []) if topic]
-        metadata = _segment_metadata(data, facts, topics)
+        metadata = segment_metadata(data, facts, topics, fact_indices)
         segments.append(
             MemorySegment(
                 content=summary,
@@ -727,7 +661,11 @@ def _build_segments_from_clusters(
     return segments
 
 
-def _single_segment(data: dict[str, Any], key_facts: list[str]) -> list[MemorySegment]:
+def _single_segment(
+    data: dict[str, Any],
+    key_facts: list[str],
+    fact_indices: list[int] | None = None,
+) -> list[MemorySegment]:
     """将单话题的 LLM 输出包装成只含一个元素的列表。"""
     summary = str(data.get("summary", "") or "")
     if not summary and not key_facts:
@@ -736,34 +674,12 @@ def _single_segment(data: dict[str, Any], key_facts: list[str]) -> list[MemorySe
     return [
         MemorySegment(
             content=summary,
-            metadata=_segment_metadata(data, key_facts, topics),
+            metadata=segment_metadata(data, key_facts, topics, fact_indices),
             importance=float(data.get("importance", 0.5)),
             key_facts=key_facts,
             topics=topics,
         )
     ]
-
-
-def _segment_metadata(
-    data: dict[str, Any],
-    key_facts: list[str],
-    topics: list[str],
-) -> dict[str, Any]:
-    """复制分段允许继承的内容元数据，不推断身份或作用域。"""
-
-    metadata: dict[str, Any] = {
-        "topics": list(topics),
-        "key_facts": list(key_facts),
-        "sentiment": data.get("sentiment", "neutral"),
-        "emotion_tags": data.get("emotion_tags") or [],
-        "causal_relations": data.get("causal_relations") or [],
-        "participants": data.get("participants") or [],
-        "schema_version": "v3",
-    }
-    for key in ("source_refs", "atom_type", "confidence"):
-        if data.get(key) is not None:
-            metadata[key] = data[key]
-    return metadata
 
 
 def _memory_input_count(structured_data: dict[str, Any]) -> int:

@@ -67,6 +67,7 @@ def _raw_memory_candidates(structured_data: dict[str, Any]) -> list[dict[str, An
             "causal_relations": structured_data.get("causal_relations"),
             "participants": structured_data.get("participants"),
             "source_refs": structured_data.get("source_refs"),
+            "fact_source_refs": structured_data.get("fact_source_refs"),
             "atom_type": structured_data.get("atom_type"),
             "confidence": structured_data.get("confidence"),
         }

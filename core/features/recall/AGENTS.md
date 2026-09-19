@@ -52,6 +52,7 @@ flowchart LR
 8. 注入先完整构建再原子应用；Prompt protection 注册或请求变更失败必须恢复原状态。
 9. 计时、trace 与日志只含 allowlist 标量和随机关联码，不得含 query、正文、身份、source ID 或 metadata。
 10. 所有普通增强失败回退安全 baseline；`asyncio.CancelledError` 始终传播。
+11. 模型可见入口统一要求用户来源证据：主召回、主动记忆工具与自发/链式扩展都传 `require_user_evidence`；前瞻计划条目在 `_prospective_context` 按 `source_evidence` 过滤后才进入模型上下文；缺可信身份 scope 时图路显式跳过，不猜 session/persona。
 
 ## 依赖方向
 

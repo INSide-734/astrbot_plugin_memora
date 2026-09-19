@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.retrieval.graph_retriever import GraphRetriever
 from core.features.retrieval.hybrid_retriever import HybridRetriever
 from core.features.retrieval.retrieval_execution import RouteExecutionCoordinator
@@ -123,6 +124,7 @@ async def test_graph_route_falls_back_to_keyword_after_vector_deadline() -> None
         "query",
         deadline_monotonic=time.perf_counter() - 1.0,
         timing_sink=timing,
+        boundary=GraphBoundary("scope", "public", "r1"),
     )
 
     assert [item.doc_id for item in result] == [7]

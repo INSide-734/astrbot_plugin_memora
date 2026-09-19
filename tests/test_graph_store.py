@@ -2,8 +2,15 @@
 
 import pytest
 
-from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.domain.models import (
+    GraphBoundary,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 
 class TestGraphStoreInitialize:
@@ -43,7 +50,7 @@ class TestGraphStoreInitialize:
         assert stats["graph_entries"] == 0
 
         node = GraphNode(node_type="entity", value="test", canonical_value="test")
-        await store.upsert_node(node)
+        await store.upsert_node(node, boundary=BOUNDARY)
 
         stats = await store.get_memory_entry_stats()
         assert stats["graph_nodes"] == 1
@@ -59,7 +66,7 @@ class TestGraphDelete:
             GraphNode(node_type="entity", value="B", canonical_value="b"),
             GraphNode(node_type="entity", value="C", canonical_value="c"),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
 
         edge = GraphEdge(
             source_key="entity:a",
@@ -67,7 +74,7 @@ class TestGraphDelete:
             relation_type="related",
             source_memory_id=100,
         )
-        edge_id = await store.add_edge(edge, node_map)
+        edge_id = await store.add_edge(edge, node_map, boundary=BOUNDARY)
         edge_map = {edge.edge_key: edge_id}
 
         entry = GraphEntry(
@@ -80,7 +87,7 @@ class TestGraphDelete:
             node_keys=["entity:a", "entity:b"],
             relation_type="related",
         )
-        await store.add_entry(entry, node_map, edge_id)
+        await store.add_entry(entry, node_map, edge_id, boundary=BOUNDARY)
         return node_map, edge_map
 
     @pytest.mark.asyncio
@@ -90,7 +97,7 @@ class TestGraphDelete:
         await store.initialize()
 
         await self._setup_graph_data(store)
-        vector_doc_ids = await store.delete_memory(100)
+        vector_doc_ids = await store.delete_memory(100, boundary=BOUNDARY)
         assert vector_doc_ids == []
         # Verify entries/edges cleaned up
         stats = await store.get_memory_entry_stats()
@@ -102,7 +109,7 @@ class TestGraphDelete:
         """delete_memory on unknown id returns empty list."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
-        result = await store.delete_memory(99999)
+        result = await store.delete_memory(99999, boundary=BOUNDARY)
         assert result == []
 
     @pytest.mark.asyncio
@@ -121,16 +128,16 @@ class TestGraphDelete:
                     node_type="entity", value=f"Y{mem_id}", canonical_value=f"y{mem_id}"
                 ),
             ]
-            node_map = await store.upsert_nodes(nodes)
+            node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
             edge = GraphEdge(
                 source_key=f"entity:x{mem_id}",
                 target_key=f"entity:y{mem_id}",
                 relation_type="related",
                 source_memory_id=mem_id,
             )
-            await store.add_edge(edge, node_map)
+            await store.add_edge(edge, node_map, boundary=BOUNDARY)
 
-        await store.batch_delete_memories([200, 201])
+        await store.batch_delete_memories([200, 201], boundary=BOUNDARY)
         stats = await store.get_memory_entry_stats()
         assert stats["graph_edges"] == 0
 
@@ -139,7 +146,7 @@ class TestGraphDelete:
         """batch_delete_memories with empty list returns empty dict."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
-        assert await store.batch_delete_memories([]) == {}
+        assert await store.batch_delete_memories([], boundary=BOUNDARY) == {}
 
 
 class TestGraphQuery:
@@ -151,7 +158,7 @@ class TestGraphQuery:
             GraphNode(node_type="entity", value="WestLake", canonical_value="westlake"),
             GraphNode(node_type="entity", value="Hangzhou", canonical_value="hangzhou"),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
         entry = GraphEntry(
             entry_key="mem1:search_entry",
             source_memory_id=1,
@@ -162,7 +169,7 @@ class TestGraphQuery:
             node_keys=["entity:westlake", "entity:hangzhou"],
             relation_type="located_in",
         )
-        await store.add_entry(entry, node_map)
+        await store.add_entry(entry, node_map, boundary=BOUNDARY)
         return node_map
 
     @pytest.mark.asyncio
@@ -172,7 +179,9 @@ class TestGraphQuery:
         await store.initialize()
 
         await self._setup_searchable_data(store)
-        results = await store.search_entries_by_bm25("WestLake", limit=10)
+        results = await store.search_entries_by_bm25(
+            "WestLake", limit=10, boundary=BOUNDARY
+        )
         assert len(results) >= 1
         assert any("WestLake" in r["content"] for r in results)
 
@@ -182,7 +191,9 @@ class TestGraphQuery:
         store = GraphStore(tmp_db_path)
         await store.initialize()
 
-        results = await store.search_entries_by_bm25("珠穆朗玛峰", limit=10)
+        results = await store.search_entries_by_bm25(
+            "珠穆朗玛峰", limit=10, boundary=BOUNDARY
+        )
         assert results == []
 
     @pytest.mark.asyncio
@@ -192,7 +203,9 @@ class TestGraphQuery:
         await store.initialize()
 
         await self._setup_searchable_data(store)
-        results = await store.search_nodes_by_tokens(["westlake"], limit=10)
+        results = await store.search_nodes_by_tokens(
+            ["westlake"], limit=10, boundary=BOUNDARY
+        )
         assert len(results) >= 1
         assert any("westlake" in r["canonical_value"] for r in results)
 
@@ -201,7 +214,7 @@ class TestGraphQuery:
         """search_nodes_by_tokens with empty tokens returns empty."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
-        assert await store.search_nodes_by_tokens([]) == []
+        assert await store.search_nodes_by_tokens([], boundary=BOUNDARY) == []
 
     @pytest.mark.asyncio
     async def test_get_entries_for_node_ids(self, tmp_db_path):
@@ -212,7 +225,9 @@ class TestGraphQuery:
         node_map = await self._setup_searchable_data(store)
         westlake_id = node_map["entity:westlake"]
 
-        results = await store.get_entries_for_node_ids([westlake_id], limit=10)
+        results = await store.get_entries_for_node_ids(
+            [westlake_id], limit=10, boundary=BOUNDARY
+        )
         assert len(results) >= 1
 
     @pytest.mark.asyncio
@@ -220,7 +235,9 @@ class TestGraphQuery:
         """get_entries_for_node_ids with empty list returns empty."""
         store = GraphStore(tmp_db_path)
         await store.initialize()
-        assert await store.get_entries_for_node_ids([], limit=10) == []
+        assert (
+            await store.get_entries_for_node_ids([], limit=10, boundary=BOUNDARY) == []
+        )
 
     @pytest.mark.asyncio
     async def test_get_neighbor_node_ids(self, tmp_db_path):
@@ -233,16 +250,18 @@ class TestGraphQuery:
             GraphNode(node_type="entity", value="B", canonical_value="b"),
             GraphNode(node_type="entity", value="C", canonical_value="c"),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
         edge = GraphEdge(
             source_key="entity:a",
             target_key="entity:b",
             relation_type="linked",
             source_memory_id=1,
         )
-        await store.add_edge(edge, node_map)
+        await store.add_edge(edge, node_map, boundary=BOUNDARY)
 
-        neighbors = await store.get_neighbor_node_ids([node_map["entity:a"]], limit=10)
+        neighbors = await store.get_neighbor_node_ids(
+            [node_map["entity:a"]], limit=10, boundary=BOUNDARY
+        )
         assert node_map["entity:b"] in neighbors
         assert node_map["entity:a"] not in neighbors  # not in own neighbors
 
@@ -253,7 +272,7 @@ class TestGraphQuery:
         await store.initialize()
 
         await self._setup_searchable_data(store)
-        memory_ids = await store.get_recent_memory_ids(limit=5)
+        memory_ids = await store.get_recent_memory_ids(limit=5, boundary=BOUNDARY)
         assert len(memory_ids) >= 1
         assert 1 in memory_ids
 
@@ -267,7 +286,7 @@ class TestGraphSubgraph:
             GraphNode(node_type="entity", value="小红", canonical_value="xiaohong"),
             GraphNode(node_type="entity", value="朋友", canonical_value="friend"),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
 
         edge = GraphEdge(
             source_key="entity:xiaoming",
@@ -275,7 +294,7 @@ class TestGraphSubgraph:
             relation_type="朋友",
             source_memory_id=1,
         )
-        edge_id = await store.add_edge(edge, node_map)
+        edge_id = await store.add_edge(edge, node_map, boundary=BOUNDARY)
 
         entry = GraphEntry(
             entry_key="mem1:sub_entry",
@@ -288,7 +307,7 @@ class TestGraphSubgraph:
             relation_type="朋友",
             metadata={"canonical_summary": "朋友关系", "importance": 0.8},
         )
-        await store.add_entry(entry, node_map, edge_id)
+        await store.add_entry(entry, node_map, edge_id, boundary=BOUNDARY)
         return node_map
 
     @pytest.mark.asyncio
@@ -298,7 +317,7 @@ class TestGraphSubgraph:
         await store.initialize()
 
         await self._setup_subgraph_data(store)
-        snapshot = await store.get_subgraph_for_memories([1])
+        snapshot = await store.get_subgraph_for_memories([1], boundary=BOUNDARY)
 
         assert "nodes" in snapshot
         assert "edges" in snapshot
@@ -313,7 +332,7 @@ class TestGraphSubgraph:
         store = GraphStore(tmp_db_path)
         await store.initialize()
 
-        snapshot = await store.get_subgraph_for_memories([])
+        snapshot = await store.get_subgraph_for_memories([], boundary=BOUNDARY)
         assert snapshot == {"nodes": [], "edges": [], "entries": [], "memories": []}
 
     @pytest.mark.asyncio
@@ -322,7 +341,7 @@ class TestGraphSubgraph:
         store = GraphStore(tmp_db_path)
         await store.initialize()
 
-        snapshot = await store.get_subgraph_for_memories([99999])
+        snapshot = await store.get_subgraph_for_memories([99999], boundary=BOUNDARY)
         assert snapshot == {"nodes": [], "edges": [], "entries": [], "memories": []}
 
     @pytest.mark.asyncio
@@ -332,6 +351,6 @@ class TestGraphSubgraph:
         await store.initialize()
 
         await self._setup_subgraph_data(store)
-        snapshot = await store.get_graph_snapshot(limit_memories=5)
+        snapshot = await store.get_graph_snapshot(limit_memories=5, boundary=BOUNDARY)
         assert "nodes" in snapshot
         assert "memories" in snapshot

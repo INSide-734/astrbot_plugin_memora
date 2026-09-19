@@ -7,6 +7,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from ....shared.contracts.conversation import Message
+from ...memory.domain.memory_atom import is_resolved_source_reference
 from ...quality.application.gate_runtime import GateSnapshot, default_gate_snapshot
 from ...quality.domain.gate_config import GateProfile
 from .grounding_checks import (
@@ -83,6 +84,9 @@ class MemoryGroundingValidator:
             f"source_refs 数组，每条记忆最多 {max_references} 条 source_refs，每个引用只能使用"
             f"当前对话中的 S0..S{upper} 标签，并写成 "
             '{"message_index": 0, "start": 0, "end": 12}。'
+            "每条结果还必须返回 fact_source_refs，其长度必须与 key_facts 完全一致："
+            "fact_source_refs[i] 只能包含直接支持 key_facts[i] 的引用数组，不能借用其他"
+            "事实的引用。source_refs 只用于 summary/window，不代替逐事实证据。"
             "start/end 是该条原始消息正文中的字符区间，左闭右开，必须满足 "
             "0 <= start < end <= chars；引用整条正文时使用 start=0、end=chars。"
             "消息头中的时间、昵称和 ID 不属于正文 offset，不得仅据消息头中的时间生成事实。"
@@ -99,6 +103,63 @@ class MemoryGroundingValidator:
             "不得写入上述字段。第一人称只能作为叙述视角，不能把助手自己的行为、建议或"
             '环境描述写成记忆；没有稳定用户事实时必须返回 {"memories": []}。'
         )
+
+    def validate_facts(
+        self,
+        candidate: dict[str, Any],
+        messages: list[Message],
+        *,
+        is_group_chat: bool,
+        profile: GateProfile | None = None,
+        message_seqs: Sequence[int | None] | None = None,
+    ) -> list[GroundingResult]:
+        """逐事实校验独立用户证据；缺少持久化消息标识或序号时保守拒绝。"""
+        facts = candidate.get("key_facts")
+        groups = candidate.get("fact_source_refs")
+        if (
+            not isinstance(facts, list)
+            or not facts
+            or any(not isinstance(fact, str) or not fact.strip() for fact in facts)
+            or not isinstance(groups, list)
+            or len(groups) != len(facts)
+            or any(not isinstance(group, list) for group in groups)
+        ):
+            count = len(facts) if isinstance(facts, list) and facts else 1
+            return [
+                self._rejected("grounding_fact_evidence_mismatch") for _ in range(count)
+            ]
+        if message_seqs is not None and not _valid_message_sequences(
+            message_seqs, len(messages)
+        ):
+            return [self._rejected("grounding_message_sequence_invalid") for _ in facts]
+        results: list[GroundingResult] = []
+        for fact, refs in zip(facts, groups, strict=True):
+            if not refs:
+                results.append(
+                    self._rejected("grounding_source_evidence_missing", claim_text=fact)
+                )
+                continue
+            result = self.validate(
+                {
+                    "summary": fact,
+                    "source_refs": refs,
+                    "participants": candidate.get("participants", []),
+                },
+                messages,
+                is_group_chat=is_group_chat,
+                profile=profile,
+                message_seqs=message_seqs,
+            )
+            if len(result.evidence) != len(refs):
+                result = self._rejected("grounding_reference_invalid", claim_text=fact)
+            elif not all(
+                is_resolved_source_reference(item) for item in result.evidence
+            ):
+                result = self._rejected(
+                    "grounding_source_evidence_invalid", claim_text=fact
+                )
+            results.append(result)
+        return results
 
     def validate(
         self,
@@ -278,54 +339,79 @@ class MemoryGroundingValidator:
         *,
         is_group_chat: bool,
         profile: GateProfile | None = None,
+        message_seqs: Sequence[int | None] | None = None,
     ) -> GroundingResult:
-        """按消息指纹重新定位持久化证据并复用完整校验。"""
-
-        if profile is None:
-            profile = self._snapshot.resolve_profile(
-                "group" if is_group_chat else "private", None, None
-            )
+        """Relocate complete evidence without substituting another message."""
         if not evidence:
             return self._rejected("grounding_source_evidence_missing")
-        examined = evidence[: profile.references.max_references]
+        if not all(is_resolved_source_reference(item) for item in evidence):
+            return self._rejected("grounding_source_evidence_invalid")
+        if message_seqs is not None and not _valid_message_sequences(
+            message_seqs, len(messages)
+        ):
+            return self._rejected("grounding_message_sequence_invalid")
         refs: list[dict[str, Any]] = []
-        stored_seqs: dict[int, int] = {}
-        well_formed = 0
-        for item in examined:
-            if not isinstance(item, dict):
-                continue  # 坏证据过滤化：单条畸形不再毁整条复核
-            well_formed += 1
+        stored_seqs: list[int | None] = [None] * len(messages)
+        for item in evidence:
             matched_index = match_stored_evidence(item, messages)
             if matched_index is None:
-                continue  # 单项无法匹配时跳过，零条可复用才整体拒绝
-            stored_seq = item.get("message_seq")
-            if isinstance(stored_seq, int) and not isinstance(stored_seq, bool):
-                stored_seqs.setdefault(matched_index, stored_seq)
+                return self._rejected("grounding_source_changed")
+            sequence = item["message_seq"]
+            if message_seqs is not None and message_seqs[matched_index] != sequence:
+                return self._rejected("grounding_source_changed")
+            if stored_seqs[matched_index] not in (None, sequence):
+                return self._rejected("grounding_source_changed")
+            stored_seqs[matched_index] = sequence
             refs.append(
                 {
                     "message_index": matched_index,
-                    "start": item.get("start"),
-                    "end": item.get("end"),
+                    "start": item["start"],
+                    "end": item["end"],
                 }
             )
-        if not refs:
-            if well_formed == 0:
-                return self._rejected("grounding_source_evidence_invalid")
-            return self._rejected("grounding_source_changed")
-        replay = dict(candidate)
-        replay["source_refs"] = refs
-        message_seqs = (
-            [stored_seqs.get(index) for index in range(len(messages))]
-            if stored_seqs
-            else None
-        )
-        return self.validate(
-            replay,
+        result = self.validate(
+            {**candidate, "source_refs": refs},
             messages,
             is_group_chat=is_group_chat,
             profile=profile,
-            message_seqs=message_seqs,
+            message_seqs=message_seqs if message_seqs is not None else stored_seqs,
         )
+        if len(result.evidence) != len(refs):
+            return self._rejected("grounding_reference_invalid")
+        return result
+
+    def revalidate_facts(
+        self,
+        candidate: dict[str, Any],
+        messages: list[Message],
+        *,
+        is_group_chat: bool,
+        profile: GateProfile | None = None,
+        message_seqs: Sequence[int | None] | None = None,
+    ) -> list[GroundingResult]:
+        """Revalidate aligned persisted fact groups independently on approval."""
+        facts = candidate.get("key_facts")
+        groups = candidate.get("fact_source_evidence")
+        if (
+            not isinstance(facts, list)
+            or not facts
+            or any(not isinstance(fact, str) or not fact.strip() for fact in facts)
+            or not isinstance(groups, list)
+            or len(groups) != len(facts)
+            or any(not isinstance(group, list) for group in groups)
+        ):
+            return [self._rejected("grounding_fact_evidence_mismatch")]
+        return [
+            self.revalidate_stored_evidence(
+                {"summary": fact, "participants": candidate.get("participants", [])},
+                messages,
+                group,
+                is_group_chat=is_group_chat,
+                profile=profile,
+                message_seqs=message_seqs,
+            )
+            for fact, group in zip(facts, groups, strict=True)
+        ]
 
     @staticmethod
     def message_fingerprint(message: Message) -> str:
@@ -335,16 +421,9 @@ class MemoryGroundingValidator:
 
     @staticmethod
     def _claim_text(candidate: dict[str, Any]) -> str:
-        """合并摘要与去重事实，形成待验证声明。"""
-
-        parts: list[str] = []
-        summary = candidate.get("summary") or candidate.get("content")
-        if isinstance(summary, str) and summary.strip():
-            parts.append(summary.strip())
-        for fact in candidate.get("key_facts") or []:
-            if isinstance(fact, str) and fact.strip() and fact.strip() not in parts:
-                parts.append(fact.strip())
-        return " ".join(parts)
+        """Return one claim; summary evidence never borrows support from facts."""
+        claim = candidate.get("summary") or candidate.get("content")
+        return claim.strip() if isinstance(claim, str) else ""
 
     @staticmethod
     def _rejected(
@@ -364,6 +443,17 @@ class MemoryGroundingValidator:
             source_text=source_text,
             claim_text=claim_text,
         )
+
+
+def _valid_message_sequences(values: Sequence[int | None], count: int) -> bool:
+    if len(values) != count:
+        return False
+    previous = -1
+    for value in values:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= previous:
+            return False
+        previous = value
+    return True
 
 
 __all__ = ["GroundingResult", "MemoryGroundingValidator"]

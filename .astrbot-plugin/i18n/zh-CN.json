@@ -90,7 +90,7 @@
   "rebuild_graph": {
     "action_name": "重建图记忆",
     "starting": "开始重建图记忆索引，这可能需要一些时间...",
-    "success": "图记忆重建完成。\n\n• 重建: {rebuilt} 条\n• 跳过: {skipped} 条"
+    "success": "图记忆重建完成。\n\n• 重建: {rebuilt} 条\n• 跳过: {skipped} 条\n• 失败: {failed} 条"
   },
   "webui": {
     "guide": "Memora 管理界面\n\n请通过 AstrBot 官方 WebUI 访问:\n• 打开 AstrBot 仪表盘\n• 进入 插件 -> Memora -> Pages -> dashboard\n\n提示:\n• 插件页面复用 AstrBot 登录态，无需额外登录\n• 需要 AstrBot >= 4.24.2 版本支持\n\n可在界面中执行:\n• 记忆编辑与管理\n• 可视化统计分析\n• 图谱浏览与召回调试\n• 数据迁移与索引维护"
@@ -799,10 +799,10 @@
       "nodes": "节点",
       "edges": "关系",
       "queryPh": "搜索实体、主题或记忆...",
-      "memoryIdPh": "记忆 ID",
+      "memoryIdPh": "记忆 ID（可选）",
       "searchBtn": "检索图谱",
       "overviewBtn": "最近概览",
-      "canvasDefault": "搜索实体、主题或记忆来探索图谱",
+      "canvasDefault": "当前筛选下没有图谱数据。请调整筛选或返回最近概览",
       "nodeTopic": "主题",
       "nodePerson": "人物",
       "nodeFact": "事实",
@@ -886,6 +886,15 @@
       "viewMode": "查看模式",
       "editMode": "编辑模式",
       "title": "记忆详情",
+      "sourceReplayability": "来源可重放状态",
+      "sourceCounts": "已核对 {0}/{1} 条引用，缺失 {2}，无法核对 {3}",
+      "sourceReasons": "原因码",
+      "sourceStatus": {
+        "replayable": "可重放",
+        "partial": "部分可重放",
+        "unavailable": "不可重放",
+        "unknown": "无法核对"
+      },
       "edit": "编辑",
       "nodeMemories": "关联记忆数",
       "nodeDegree": "度数",

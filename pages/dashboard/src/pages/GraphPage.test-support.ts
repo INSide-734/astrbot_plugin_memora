@@ -19,6 +19,7 @@ export interface ClickSelectBehaviorMock {
 interface GraphInstanceMock {
   config: Record<string, unknown>;
   handlers: Map<string, GraphEventHandler>;
+  selectionAnimation: Promise<void> | null;
   setData: ReturnType<typeof vi.fn>;
   setOptions: ReturnType<typeof vi.fn>;
   draw: ReturnType<typeof vi.fn>;
@@ -28,6 +29,7 @@ interface GraphInstanceMock {
   setElementVisibility: ReturnType<typeof vi.fn>;
   setElementState: ReturnType<typeof vi.fn>;
   getElementState: ReturnType<typeof vi.fn>;
+  getElementDataByState: (elementType: string, state: string) => Array<{ id: string }>;
   getZoom: ReturnType<typeof vi.fn>;
   on: (eventName: string, handler: GraphEventHandler) => void;
   emit: (eventName: string, event?: GraphPointerEvent) => void;
@@ -81,6 +83,7 @@ export async function loadGraphPage(): Promise<typeof import("./GraphPage")> {
     Graph: class GraphMock {
       config: Record<string, unknown>;
       handlers = new Map<string, GraphEventHandler>();
+      selectionAnimation: Promise<void> | null = null;
       setData = vi.fn();
       setOptions = vi.fn();
       draw = vi.fn().mockResolvedValue(undefined);
@@ -93,6 +96,11 @@ export async function loadGraphPage(): Promise<typeof import("./GraphPage")> {
         this.stateMap.set(id, [...states]);
       });
       getElementState = vi.fn((id: string) => this.stateMap.get(id) ?? []);
+      getElementDataByState = vi.fn((_elementType: string, state: string) => (
+        [...this.stateMap]
+          .filter(([, states]) => states.includes(state))
+          .map(([id]) => ({ id }))
+      ));
       getZoom = vi.fn().mockReturnValue(1.75);
 
       /** 保存配置并登记当前 G6 模拟实例。 */
@@ -118,9 +126,19 @@ export async function loadGraphPage(): Promise<typeof import("./GraphPage")> {
         const targetType = event.targetType
           ?? (eventName.split(":", 1)[0] as GraphPointerEvent["targetType"]);
         const pointerEvent = { ...event, targetType };
-        const enabled = clickSelect?.enable === undefined
+        const enabled = eventName.endsWith(":click") && (
+          clickSelect?.enable === undefined
           || clickSelect.enable === true
-          || (typeof clickSelect.enable === "function" && clickSelect.enable(pointerEvent));
+          || (typeof clickSelect.enable === "function" && clickSelect.enable(pointerEvent))
+        );
+        // G6 先更新实际选择，再等待动效完成后回调页面。
+        const notifySelection = () => {
+          if (this.selectionAnimation) {
+            void this.selectionAnimation.then(() => clickSelect?.onClick?.(pointerEvent));
+          } else {
+            clickSelect?.onClick?.(pointerEvent);
+          }
+        };
         if (clickSelect && enabled && (targetType === "node" || targetType === "edge" || targetType === "combo")) {
           const id = event.target?.id;
           if (id) {
@@ -134,7 +152,7 @@ export async function loadGraphPage(): Promise<typeof import("./GraphPage")> {
               }
               this.stateMap.set(id, [...current, state]);
             }
-            clickSelect.onClick?.(pointerEvent);
+            notifySelection();
           }
         } else if (clickSelect && enabled && targetType === "canvas") {
           for (const [elementId, states] of this.stateMap) {
@@ -143,7 +161,7 @@ export async function loadGraphPage(): Promise<typeof import("./GraphPage")> {
               states.filter((item) => item !== clickSelect.state),
             );
           }
-          clickSelect.onClick?.(pointerEvent);
+          notifySelection();
         }
         this.handlers.get(eventName)?.(event);
       }

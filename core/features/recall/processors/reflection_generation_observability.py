@@ -40,7 +40,14 @@ _LLM_FINISH_REASONS = frozenset(
     {"unknown", "stop", "length", "tool_call", "content_filter", "error"}
 )
 _PARSE_SUB_REASONS = frozenset(
-    {"fence_invalid", "json_invalid", "schema_invalid", "facts_missing", "unknown"}
+    {
+        "fence_invalid",
+        "json_invalid",
+        "schema_invalid",
+        "facts_missing",
+        "grounding_fact_evidence_mismatch",
+        "unknown",
+    }
 )
 _BUDGET_REASONS = frozenset(
     {"none", "count_exceeded", "token_exceeded", "token_truncated", "unknown"}

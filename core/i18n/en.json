@@ -58,7 +58,7 @@
   "rebuild_graph": {
     "action_name": "Rebuild graph memory",
     "starting": "Starting graph memory index rebuild, this may take some time...",
-    "success": "Graph memory rebuild complete.\n\n• Rebuilt: {rebuilt} items\n• Skipped: {skipped} items"
+    "success": "Graph memory rebuild complete.\n\n• Rebuilt: {rebuilt} items\n• Skipped: {skipped} items\n• Failed: {failed} items"
   },
   "webui": {
     "guide": "Memora Management Interface\n\nPlease access via AstrBot official WebUI:\n• Open AstrBot Dashboard\n• Go to Plugins -> Memora -> Pages -> dashboard\n\nTips:\n• Plugin page reuses AstrBot login state, no extra login needed\n• Requires AstrBot >= 4.24.2\n\nAvailable in interface:\n• Memory editing and management\n• Visual statistics and analysis\n• Graph browsing and recall debugging\n• Data migration and index maintenance"

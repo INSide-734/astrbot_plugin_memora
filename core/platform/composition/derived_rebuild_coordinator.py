@@ -494,6 +494,18 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
         result = await rebuild_graph()
         if not isinstance(result, dict):
             return {"status": "completed", "success": True}
+        result = dict(result)
+        try:
+            failed = max(0, int(result.get("failed", 0) or 0))
+        except (TypeError, ValueError):
+            failed = 0
+        if failed:
+            return {
+                **result,
+                "status": "failed",
+                "success": False,
+                "reason_code": "graph_rebuild_partial_failed",
+            }
         return result
 
     async def _rebuild_evolution(self) -> dict[str, Any]:

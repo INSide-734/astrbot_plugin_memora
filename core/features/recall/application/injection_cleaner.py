@@ -26,6 +26,22 @@ _DEEPSEEK_REPLAY_FOOTER = "[/DeepSeekV4-FakeToolCall-Replay]"
 _FAKE_TOOL_CALL_ID_PATTERN = re.compile(
     rf"{re.escape(FAKE_TOOL_CALL_ID_PREFIX)}(?:[0-9a-f]{{12}}|[0-9a-f]{{32}})\Z"
 )
+_LEGACY_FAKE_RESULT_KEYS = frozenset(
+    {
+        "id",
+        "content",
+        "score",
+        "importance",
+        "session_id",
+        "persona_id",
+        "create_time",
+        "last_access_time",
+    }
+)
+_VISIBLE_FAKE_RESULT_KEYS = frozenset({"content", "score", "importance"})
+_VISIBLE_FAKE_RESULT_KEYS_WITH_PROJECTION = _VISIBLE_FAKE_RESULT_KEYS | {
+    "derived_projections"
+}
 _LEGACY_FAKE_TOOL_CALL_ID_PATTERN = re.compile(
     rf"{re.escape(FAKE_TOOL_CALL_ID_PREFIX)}[0-9a-f]{{12}}\Z"
 )
@@ -85,21 +101,19 @@ def _legacy_fake_tool_payload(value: str, expected_query: str) -> bool:
         or count != len(results)
     ):
         return False
-    result_keys = {
-        "id",
-        "content",
-        "score",
-        "importance",
-        "session_id",
-        "persona_id",
-        "create_time",
-        "last_access_time",
-    }
-    return all(
-        isinstance(result, dict)
-        and set(result) == result_keys
-        and isinstance(result.get("content"), str)
-        for result in results
+    return all(_is_fake_tool_result(result) for result in results)
+
+
+def _is_fake_tool_result(result: object) -> bool:
+    """接受历史完整字段集与现行模型可见字段集的结果条目。"""
+
+    if not isinstance(result, dict) or not isinstance(result.get("content"), str):
+        return False
+    keys = set(result)
+    return (
+        keys == _LEGACY_FAKE_RESULT_KEYS
+        or keys == _VISIBLE_FAKE_RESULT_KEYS
+        or keys == _VISIBLE_FAKE_RESULT_KEYS_WITH_PROJECTION
     )
 
 

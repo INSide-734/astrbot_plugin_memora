@@ -15,8 +15,10 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from core.features.memory.graph.domain.models import GraphEdge, GraphNode
+from core.features.memory.graph.domain.models import GraphBoundary, GraphEdge, GraphNode
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
+
+BOUNDARY = GraphBoundary("graph-integration", "public", "r1")
 
 
 class TestPipelineGraph:
@@ -63,7 +65,7 @@ class TestPipelineGraph:
             ),
         ]
         # Act — upsert 3 个节点
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
 
         # 验证节点增量
         stats = await store.get_memory_entry_stats()
@@ -82,8 +84,8 @@ class TestPipelineGraph:
             relation_type="去了",
             source_memory_id=90001,
         )
-        await store.add_edge(edge1, node_map)
-        await store.add_edge(edge2, node_map)
+        await store.add_edge(edge1, node_map, boundary=BOUNDARY)
+        await store.add_edge(edge2, node_map, boundary=BOUNDARY)
 
         # 验证边增量
         stats = await store.get_memory_entry_stats()
@@ -91,7 +93,9 @@ class TestPipelineGraph:
 
         # Act — 查询张三的邻居
         zhangsan_id = node_map["person:zhangsan_pipe2_test1"]
-        neighbors = await store.get_neighbor_node_ids([zhangsan_id], limit=10)
+        neighbors = await store.get_neighbor_node_ids(
+            [zhangsan_id], limit=10, boundary=BOUNDARY
+        )
 
         # Assert — 张三 应连接到 李四 和 西湖
         assert node_map["person:lisi_pipe2_test1"] in neighbors
@@ -100,7 +104,7 @@ class TestPipelineGraph:
         assert zhangsan_id not in neighbors
 
         # 清理
-        await store.delete_memory(90001)
+        await store.delete_memory(90001, boundary=BOUNDARY)
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -132,7 +136,7 @@ class TestPipelineGraph:
                 canonical_value="zhaoliu_pipe2_test2",
             ),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
 
         edge = GraphEdge(
             source_key="person:wangwu_pipe2_test2",
@@ -140,7 +144,7 @@ class TestPipelineGraph:
             relation_type="同事",
             source_memory_id=90002,
         )
-        await store.add_edge(edge, node_map)
+        await store.add_edge(edge, node_map, boundary=BOUNDARY)
 
         # Act — 通过 get_memory_entry_stats 验证增量计数
         stats = await store.get_memory_entry_stats()
@@ -154,7 +158,7 @@ class TestPipelineGraph:
         )
 
         # Act — 通过 delete_memory 删除边（级联移除）
-        await store.delete_memory(90002)
+        await store.delete_memory(90002, boundary=BOUNDARY)
 
         stats_after = await store.get_memory_entry_stats()
         # 边回到基线（匹配的边已被移除）
@@ -206,7 +210,7 @@ class TestPipelineGraph:
                 canonical_value="milk_pipe2_test3",
             ),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
         node_ids = sorted(node_map.values())
 
         # 为每个节点生成确定性的归一化向量

@@ -144,6 +144,7 @@ class MaintenanceCommandMixin:
                     "rebuild_graph.success",
                     rebuilt=result.get("rebuilt", 0),
                     skipped=result.get("skipped", 0),
+                    failed=result.get("failed", 0),
                 )
             )
         except Exception as e:

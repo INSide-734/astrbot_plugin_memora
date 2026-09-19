@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Generator
 from typing import Any
 from unittest.mock import MagicMock
@@ -25,6 +26,32 @@ from core.features.injection.domain.models import (
     RequestSignals,
     RoutingMode,
 )
+
+
+def resolved_reference(text: str, *, role: str = "user") -> dict[str, Any]:
+    """为独立的合成消息构造完整、可定位的来源证据。"""
+    return {
+        "message_index": 0,
+        "message_id": 1,
+        "message_seq": 1,
+        "role": role,
+        "start": 0,
+        "end": len(text),
+        "message_fingerprint": hashlib.sha256(f"{role}\0{text}".encode()).hexdigest(),
+        "inferred": False,
+    }
+
+
+def with_user_evidence(memory: dict[str, Any]) -> dict[str, Any]:
+    """给原有预算/投递夹具显式附加用户证据，不改传入对象。"""
+    metadata = dict(memory.get("metadata") or {})
+    facts = metadata.get("key_facts", [memory["content"]])
+    metadata.update(
+        key_facts=facts,
+        fact_source_evidence=[[resolved_reference(fact)] for fact in facts],
+        source_evidence=[resolved_reference(memory["content"])],
+    )
+    return {**memory, "metadata": metadata}
 
 
 def request_stub() -> MagicMock:
@@ -79,7 +106,7 @@ def context_stub(
 
     values: dict[str, Any] = {
         "query": "coffee",
-        "memories": memories,
+        "memories": [with_user_evidence(memory) for memory in memories],
         "cognitive_context": "",
         "prospective_context": "",
         "cognitive_budget_chars": 300,

@@ -86,7 +86,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - `format_conversation_with_source_refs()` 增加稳定 `S0..S<n>` 标签和原始正文 `chars` 长度；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。抽取结果保持引用正文的主要语言；日期规范化只接受正文绝对日期、明确相对日期或消息时间戳锚定的确定性推导，中文数字只在量词、序数、比例、独立数量或明确前缀等确定语境中归一，口语省略（如「两千三」→2300）与小数位按位解析；普通数字继续严格匹配。
 - 来源证据必须带稳定身份与角色：`grounding_evidence.py` 把引用解析为 `message_id`、`message_seq`（调用方给出窗口序号时）、`role`、`start/end` 与 `message_fingerprint`，缺引用时只从 `user` 消息推断；`grounding_checks.py` 只把 `user` 角色片段当作支持正文，群聊主体按稳定标识分组、同名标签在多主体间不可用于归属。推断引用时同名歧义按整个窗口判定，主体一致性只要求被引用用户能被 `participants` 覆盖，不要求窗口内无关主体出现在 participants 中。仅由 `assistant`/`system` 片段支撑的声明以 `grounding_user_source_missing` 隔离，不得写 canonical。
 - `SummaryWorker` 把 `SourceWindow.message_seqs` 传给 `MemoryProcessor.process_conversation(message_seqs=...)`；长度不一致按来源不可信处理。门禁关闭时仍调用 `resolve_evidence()` 绑定证据，但沿用既有放行处置。
-- `StorageBuilder`：群聊 `privacy_level=public`，私聊 `confidential`；内容优先 canonical summary，否则使用对话摘录。
+- `StorageBuilder`：群聊 `privacy_level=public`，私聊 `confidential`；正文优先以中文分号连接全部准入 `key_facts`，没有事实时使用摘要，两者皆空才回退到对话摘录。正文不再把叙述摘要与事实列表用 ` | ` 拼接；`canonical_summary` 与规范正文一致，原叙述保留在 `persona_summary`，事实及其证据仍按原顺序保存在 metadata。
 
 ## 话题分割协议
 

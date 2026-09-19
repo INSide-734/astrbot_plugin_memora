@@ -30,6 +30,27 @@ _SCENARIO = "balanced_full_path_with_fixed_retrieval"
 _SOURCE_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}")
 
 
+def _resolved_user_evidence(content: str, index: int) -> dict[str, Any]:
+    """构造离线基准使用的完整用户来源证据。"""
+    from core.shared.contracts.conversation import message_evidence_fingerprint
+
+    reference = {
+        "message_index": index - 1,
+        "message_id": index,
+        "message_seq": index,
+        "role": "user",
+        "start": 0,
+        "end": len(content),
+        "message_fingerprint": message_evidence_fingerprint("user", content),
+        "inferred": False,
+    }
+    return {
+        "key_facts": [content],
+        "fact_source_evidence": [[dict(reference)]],
+        "source_evidence": [reference],
+    }
+
+
 class SilentLogger:
     """Drop benchmark logs while retaining production call boundaries."""
 
@@ -176,6 +197,7 @@ def build_memories() -> list[Any]:
                 "intent_match": 1.0,
                 "temporal_value": 1.0,
                 "source_value": 1.0,
+                **_resolved_user_evidence(content, index),
             },
         )
         for index, (score, content) in enumerate(rows, start=1)

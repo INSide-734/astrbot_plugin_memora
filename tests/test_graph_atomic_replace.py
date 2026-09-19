@@ -8,8 +8,15 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.domain.models import (
+    GraphBoundary,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 
 def _graph_payload(
@@ -60,12 +67,14 @@ async def _seed_graph(
 ) -> int:
     """通过现有公开 CRUD 写入一组旧图，并可选绑定向量标识。"""
     nodes, edges, entries = _graph_payload(source_memory_id, prefix)
-    node_map = await store.upsert_nodes(nodes)
-    edge_map = await store.add_edges(edges, node_map)
-    entry_ids = await store.add_entries(entries, node_map, edge_map)
+    node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
+    edge_map = await store.add_edges(edges, node_map, boundary=BOUNDARY)
+    entry_ids = await store.add_entries(entries, node_map, edge_map, boundary=BOUNDARY)
     entry_id = entry_ids[0]
     if vector_doc_id is not None:
-        await store.update_entry_vector_doc_id(entry_id, vector_doc_id)
+        await store.update_entry_vector_doc_id(
+            entry_id, vector_doc_id, boundary=BOUNDARY
+        )
     return entry_id
 
 
@@ -84,7 +93,9 @@ async def test_replace_memory_graph_replaces_all_rows_atomically(tmp_db_path) ->
     await _seed_graph(store, 36, "旧", vector_doc_id=9001)
     nodes, edges, entries = _graph_payload(36, "新")
 
-    result = await store.replace_memory_graph(36, nodes, edges, entries)
+    result = await store.replace_memory_graph(
+        36, nodes, edges, entries, boundary=BOUNDARY
+    )
 
     assert len(result.entry_ids) == 1
     old_row = await _fetch_one(
@@ -122,7 +133,7 @@ async def test_replace_memory_graph_rolls_back_on_edge_failure(
     monkeypatch.setattr(store, "_add_edges", fail_add_edges)
 
     with pytest.raises(RuntimeError, match="模拟边写入失败"):
-        await store.replace_memory_graph(36, nodes, edges, entries)
+        await store.replace_memory_graph(36, nodes, edges, entries, boundary=BOUNDARY)
 
     old_row = await _fetch_one(
         store,
@@ -156,7 +167,7 @@ async def test_replace_memory_graph_rolls_back_before_propagating_cancel(
     monkeypatch.setattr(store, "_add_edges", cancel_add_edges)
 
     with pytest.raises(asyncio.CancelledError):
-        await store.replace_memory_graph(36, nodes, edges, entries)
+        await store.replace_memory_graph(36, nodes, edges, entries, boundary=BOUNDARY)
 
     old_row = await _fetch_one(
         store,
@@ -170,7 +181,7 @@ async def test_replace_memory_graph_rolls_back_before_propagating_cancel(
         value="后续节点",
         canonical_value="follow-up",
     )
-    assert await store.upsert_node(follow_up) > 0
+    assert await store.upsert_node(follow_up, boundary=BOUNDARY) > 0
 
 
 @pytest.mark.asyncio
@@ -230,10 +241,14 @@ async def test_concurrent_delete_waits_for_atomic_replace(
         track_delete_memory_rows,
     )
     replace_task = asyncio.create_task(
-        replacing_store.replace_memory_graph(1, nodes, edges, entries)
+        replacing_store.replace_memory_graph(
+            1, nodes, edges, entries, boundary=BOUNDARY
+        )
     )
     await entered_edge_stage.wait()
-    delete_task = asyncio.create_task(deleting_store.delete_memory(2))
+    delete_task = asyncio.create_task(
+        deleting_store.delete_memory(2, boundary=BOUNDARY)
+    )
     await delete_begin_attempted.wait()
     assert not delete_task.done()
     assert not delete_rows_started.is_set()

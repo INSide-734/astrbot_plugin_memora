@@ -11,7 +11,7 @@
 `core/shared/` 放置被多个 feature 复用、且不属于某个业务 feature 的窄契约和基础原语。依赖主方向固定为 `feature/platform -> shared`；`shared` 不得反向导入 `platform`、`features`、组合根、Page API 或命令层。
 
 - `contracts/`：跨 feature DTO、事件与 `Protocol` 端口，详见子文档。
-- `adapter_capabilities.py`：Provider、Store、Retriever 的不可变能力快照；未知 adapter 必须按 `unsupported` 处理，不得凭方法名猜能力。
+- `adapter_capabilities.py`：Provider、Store、Retriever 的不可变能力快照；未知 adapter 必须按 `unsupported` 处理，不得凭方法名猜能力。另含 AstrBot 响应投递边界的只读探测：`ASTRBOT_HOST_RESPONSE_CAPABILITIES` 明确不提供插件可用的流式预检、显式失败终态与送达回执；`probe_host_response_boundary()` 只接受宿主 `ResultContentType` 已核对成员名与文档化的 `_has_send_oper` 发送记录，未知形状一律 `unknown`，探测本身不修改事件、结果或宿主。
 - `constants.py`：记忆注入边界与伪工具调用名，是模型上下文协议，不是展示文案。
 - `cost_control.py`、`extra_llm_budget.py`：额外 LLM 功能许可和请求级 reservation 预算。
 - `temporal.py`、`number_utils.py`、`text_utils.py`、`mmr.py`：无 I/O 的时间、数值、分词和本地 MMR 原语。
@@ -71,7 +71,7 @@
 | 修改位置 | 必须联动核对 |
 |---|---|
 | `contracts/` DTO、事件、端口 | 子包文档、所有实现与消费者、`tests/test_shared_contracts.py` 及对应 feature 契约 |
-| `adapter_capabilities.py` | platform provider adapter、retrieval/injection 调用方、`tests/test_adapter_capabilities.py` |
+| `adapter_capabilities.py` | platform provider adapter、retrieval/injection 调用方、reflection 响应边界调用方、`tests/test_adapter_capabilities.py`、`tests/test_host_response_boundary.py` |
 | 注入常量 | injection formatter/cleaner、Agent 工具名、`tests/test_shared_constants.py` 与注入测试 |
 | 成本许可或预算 | platform config、query rewrite/reranker/反思与 proposal 调用点、shared 预算测试 |
 | provenance/revision/sort | Profile/Knowledge/Note/Cognition Store 与 Page API、并发/CAS 测试 |

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.injection.application.selection import metadata_has_user_evidence
 from core.features.quality.application.memory_quality_gate import MemoryQualityGate
 from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
 from core.features.recall.processors.memory_grounding import MemoryGroundingValidator
@@ -185,24 +186,26 @@ async def test_approve_persists_candidate_correlation_in_canonical_metadata(
     await store.initialize()
     message = _source_message()
     grounding = MemoryGroundingValidator()
-    source_evidence = grounding.validate(
+    fact = message.content
+    fact_evidence = grounding.validate(
         {
-            "summary": "用户喜欢咖啡。",
-            "key_facts": ["用户喜欢咖啡。"],
+            "summary": fact,
+            "key_facts": [fact],
             "source_refs": [
                 {"message_index": 0, "start": 0, "end": len(message.content)}
             ],
         },
         [message],
         is_group_chat=False,
-    ).evidence
+        message_seqs=(1,),
+    )
     candidate = await store.stage_candidate(
         candidate_key="durable-metadata-candidate",
         reason_codes=["summary_quality_low"],
-        content="用户喜欢咖啡。",
+        content=fact,
         metadata={
-            "key_facts": ["用户喜欢咖啡。"],
-            "source_evidence": source_evidence,
+            "key_facts": [fact],
+            "fact_source_evidence": [fact_evidence.evidence],
             "grounding_status": "grounded",
             "summary_quality": "low",
         },
@@ -235,3 +238,67 @@ async def test_approve_persists_candidate_correlation_in_canonical_metadata(
     metadata = engine.add_memory.await_args.kwargs["metadata"]
     assert metadata["_quarantine_candidate_id"] == candidate["candidate_id"]
     assert metadata["_quarantine_approval_status"] == "committed"
+    # 批准后的摘要级证据来自本次逐事实重验证，普通召回门禁必须放行。
+    assert metadata_has_user_evidence(metadata) is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_summary_only_candidate_stays_blocked(
+    tmp_path,
+) -> None:
+    """只有旧摘要引用的候选不得自动批准：保持 blocked 且不写 canonical。"""
+
+    store = MemoryQuarantineStore(tmp_path / "memory_quarantine.sqlite3")
+    await store.initialize()
+    message = _source_message()
+    grounding = MemoryGroundingValidator()
+    legacy_summary_evidence = grounding.validate(
+        {
+            "summary": "用户喜欢咖啡。",
+            "key_facts": ["用户喜欢咖啡。"],
+            "source_refs": [
+                {"message_index": 0, "start": 0, "end": len(message.content)}
+            ],
+        },
+        [message],
+        is_group_chat=False,
+    ).evidence
+    candidate = await store.stage_candidate(
+        candidate_key="legacy-summary-only-candidate",
+        reason_codes=["summary_quality_low"],
+        content="用户喜欢咖啡。",
+        metadata={
+            "key_facts": ["用户喜欢咖啡。"],
+            "source_evidence": legacy_summary_evidence,
+            "grounding_status": "grounded",
+            "summary_quality": "low",
+        },
+        importance=0.7,
+        session_id="session-1",
+        persona_id="persona-1",
+        source_window=stable_source_window(message),
+        is_group_chat=False,
+    )
+    engine = MagicMock()
+    engine.add_memory = AsyncMock(return_value=77)
+    processor = MagicMock()
+    processor.classify_atoms_from_metadata.return_value = []
+    conversation = _approval_conversation()
+    conversation.get_messages_seq_range = AsyncMock(return_value=[message])
+    gate = MemoryQualityGate(
+        store,
+        memory_engine=engine,
+        memory_processor=processor,
+        conversation_manager=conversation,
+    )
+    pending = await store.get_candidate(candidate["candidate_id"])
+
+    blocked = await gate.approve(
+        candidate["candidate_id"],
+        expected_revision=pending["revision"],
+        actor_id="admin",
+    )
+
+    assert blocked["status"] == "blocked"
+    assert blocked["failure_reason"] == "grounding_fact_evidence_mismatch"
+    engine.add_memory.assert_not_awaited()

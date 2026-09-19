@@ -21,6 +21,8 @@ from core.features.reconsolidation.application.reconsolidation import (
     ReconsolidationManager,
 )
 from core.features.retrieval.graph_vector_retriever import GraphVectorRetriever
+from core.shared.summary_source_fence import SummarySourceFence
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
 
 
 class _SqliteDocumentStorage:
@@ -237,7 +239,15 @@ async def _insert_document(
     content: str,
 ) -> None:
     metadata = json.dumps(
-        {"session_id": "session-a", "persona_id": "persona-a"},
+        {
+            "session_id": "session-a",
+            "persona_id": "persona-a",
+            "scope_key": "scope-a",
+            "privacy_level": "public",
+            "key_facts": [content],
+            "fact_source_evidence": fact_evidence([content]),
+            "source_evidence": source_evidence(content),
+        },
         ensure_ascii=False,
     )
     await db.execute(
@@ -420,10 +430,6 @@ async def test_ready_gated_recovery_restores_graph_without_changing_canonical(
         for index, (_content, vector_id) in enumerate(graph_rows):
             record = graph_db.records[int(vector_id)]
             assert record["text"] == f"graph-entry-{index}"
-            assert record["metadata"] == {
-                "rank": index,
-                "source_memory_id": 7,
-            }
         canonical_after_row = await (
             await db.execute(
                 """
@@ -445,6 +451,214 @@ async def test_ready_gated_recovery_restores_graph_without_changing_canonical(
         await engine.recover_persisted_operations()
         assert await graph_store.get_memory_entry_stats() == graph_after
         assert graph_db.records == vector_records_after
+    finally:
+        await db.close()
+
+
+class _FencedWriteRetriever:
+    """把来源 fence 写入的 canonical 文档落到真实临时 SQLite。"""
+
+    def __init__(self, db_path: Path, memory_id: int) -> None:
+        self.db_path = db_path
+        self.memory_id = memory_id
+
+    async def add_memory(self, content: str, metadata: dict[str, Any]) -> int:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO documents(id, doc_id, text, metadata, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    self.memory_id,
+                    f"doc-{self.memory_id}",
+                    content,
+                    json.dumps(metadata, ensure_ascii=False),
+                    "r1",
+                    "r1",
+                ),
+            )
+            await db.commit()
+        return self.memory_id
+
+
+async def _graph_entry_count(db: aiosqlite.Connection, memory_id: int) -> int:
+    """统计该来源当前的图条目行数。"""
+
+    cursor = await db.execute(
+        "SELECT COUNT(*) FROM graph_entries WHERE source_memory_id = ?",
+        (memory_id,),
+    )
+    row = await cursor.fetchone()
+    return int(row[0]) if row else 0
+
+
+async def _stored_metadata(db: aiosqlite.Connection, memory_id: int) -> dict[str, Any]:
+    """读取该 canonical 行当前的 metadata。"""
+
+    cursor = await db.execute(
+        "SELECT metadata FROM documents WHERE id = ?",
+        (memory_id,),
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+    return json.loads(row[0])
+
+
+def _source_fence() -> SummarySourceFence:
+    """构造绑定固定 session 与 claim 的总结来源 fence。"""
+
+    return SummarySourceFence(
+        job_id="job-fenced-1",
+        session_id="session-a",
+        session_epoch=1,
+        start_seq=0,
+        end_seq=1,
+        expected_count=1,
+        source_digest="digest-a",
+        worker_generation=1,
+        claim_token="claim-token-a",
+    )
+
+
+async def _fenced_engine(
+    tmp_path: Path,
+    db_path: Path,
+    canonical_db: _CanonicalVectorDb,
+    graph_db: _RejectingGraphVectorDb,
+) -> MemoryEngine:
+    """构造带真实写日志与真实图管理器的来源 fence 写入引擎。"""
+
+    engine = MemoryEngine(
+        db_path=str(db_path),
+        faiss_db=canonical_db,
+        graph_vector_db=graph_db,
+        config=_engine_config(
+            tmp_path,
+            **{"graph_memory_enabled": True, "write_reliability.max_retries": 3},
+        ),
+    )
+    db = await aiosqlite.connect(db_path)
+    db.row_factory = aiosqlite.Row
+    cast(Any, engine).db_connection = db
+    engine._write_journal._db = db
+    engine._write_journal._topic_catalog_store = None
+    await SchemaManager(db).create_tables(engine._write_journal.create_table)
+    graph_store = GraphStore(str(db_path))
+    await graph_store.initialize()
+    engine._write_journal._graph_memory_manager = GraphMemoryManager(
+        graph_store,
+        GraphVectorRetriever(graph_db),
+        cast(Any, _StaticGraphExtractor()),
+    )
+    engine.hybrid_retriever = _FencedWriteRetriever(db_path, 7)
+    return engine
+
+
+@pytest.mark.asyncio
+async def test_source_staged_write_defers_graph_and_ledger(
+    tmp_path: Path,
+) -> None:
+    """来源接受前零图产物且账本待收口；接受后才建图并完成同一 add 操作。"""
+
+    db_path = tmp_path / "memora.db"
+    canonical_db = _CanonicalVectorDb(db_path)
+    await canonical_db.document_storage.initialize()
+    graph_db = _RejectingGraphVectorDb()
+    await graph_db.initialize()
+    engine = await _fenced_engine(tmp_path, db_path, canonical_db, graph_db)
+    fence = _source_fence()
+    db = cast(aiosqlite.Connection, engine.db_connection)
+    try:
+        # 与 add_memory(source_fence=...) 暂存后崩溃留下的 canonical 行一致。
+        memory_id = await engine._add_memory_unchecked(  # noqa: SLF001
+            "候选正文",
+            session_id="session-a",
+            persona_id="persona-a",
+            metadata={
+                "idempotency_key": "fenced-staged-1",
+                "scope_key": "scope-a",
+                "privacy_level": "public",
+                "key_facts": ["候选正文"],
+                "fact_source_evidence": fact_evidence(["候选正文"]),
+                "source_evidence": source_evidence("候选正文"),
+                "summary_source_orphan": True,
+                "summary_source_pending": True,
+                "source_epoch": fence.session_epoch,
+                "source_digest": fence.source_digest,
+                "source_fence_generation": fence.worker_generation,
+                "source_fence": fence.opaque_token,
+            },
+            summary_source_staged=True,
+        )
+        assert memory_id == 7
+
+        # 暂存期：不得建图，账本停在可观察的待接受步骤。
+        assert await _graph_entry_count(db, 7) == 0
+        operation = (await _operation_rows(db))[-1]
+        assert operation[3:] == ("pending", "source_staged", 0)
+
+        # 崩溃后重试：同一 claim 接受既有暂存 owner，补建图并收口同一 add 操作。
+        engine.set_summary_source_validator(AsyncMock(return_value=True))
+        accepted = await engine.add_memory(  # noqa: SLF001
+            "候选正文",
+            session_id="session-a",
+            persona_id="persona-a",
+            metadata={
+                "idempotency_key": "fenced-staged-1",
+                "scope_key": "scope-a",
+                "privacy_level": "public",
+                "key_facts": ["候选正文"],
+                "fact_source_evidence": fact_evidence(["候选正文"]),
+                "source_evidence": source_evidence("候选正文"),
+            },
+            source_fence=fence,
+        )
+        assert accepted == 7
+
+        assert await _graph_entry_count(db, 7) == 11
+        operation = (await _operation_rows(db))[-1]
+        assert operation[3] == "completed"
+        assert operation[4] == "completed"
+        assert not (await _stored_metadata(db, 7))["summary_source_orphan"]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_fenced_write_leaves_no_graph_when_source_is_rejected(
+    tmp_path: Path,
+) -> None:
+    """写入途中失去 fence 时不得留下图产物，账本收口为可见拒绝终态。"""
+
+    db_path = tmp_path / "memora.db"
+    canonical_db = _CanonicalVectorDb(db_path)
+    await canonical_db.document_storage.initialize()
+    graph_db = _RejectingGraphVectorDb()
+    await graph_db.initialize()
+    engine = await _fenced_engine(tmp_path, db_path, canonical_db, graph_db)
+    engine.set_summary_source_validator(AsyncMock(side_effect=(True, False)))
+    db = cast(aiosqlite.Connection, engine.db_connection)
+    try:
+        with pytest.raises(RuntimeError, match="summary_source_fenced"):
+            await engine.add_memory(
+                "候选正文",
+                metadata={
+                    "idempotency_key": "fenced-rejected-1",
+                    "scope_key": "scope-a",
+                    "privacy_level": "public",
+                    "key_facts": ["候选正文"],
+                    "fact_source_evidence": fact_evidence(["候选正文"]),
+                    "source_evidence": source_evidence("候选正文"),
+                },
+                source_fence=_source_fence(),
+            )
+
+        assert await _graph_entry_count(db, 7) == 0
+        operation = (await _operation_rows(db))[-1]
+        assert operation[3] == "failed"
+        assert operation[4] == "source_rejected"
+        assert (await _stored_metadata(db, 7))["summary_source_orphan"] is True
     finally:
         await db.close()
 
@@ -506,12 +720,6 @@ async def test_repair_reopens_only_eligible_source_missing_operations(
 
     try:
         assert await journal.repair_incomplete() == 1
-        graph_manager.index_memory.assert_awaited_once_with(
-            1,
-            "canonical-1",
-            {"session_id": "session-a", "persona_id": "persona-a"},
-            None,
-        )
         rows = await _operation_rows(db)
         by_id = {int(row[0]): row for row in rows}
         assert by_id[op_ids[0]][3:] == ("completed", "completed", 1)

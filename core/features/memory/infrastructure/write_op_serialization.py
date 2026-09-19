@@ -9,7 +9,13 @@ import json
 import time
 from typing import Any
 
-from ..domain.memory_atom import AtomStatus, AtomType, DecayType, MemoryAtom
+from ..domain.memory_atom import (
+    AtomStatus,
+    AtomType,
+    DecayType,
+    MemoryAtom,
+    has_user_source_evidence,
+)
 
 
 def safe_json_dict(value: Any) -> dict[str, Any]:
@@ -37,6 +43,7 @@ def serialize_atom_for_repair(atom: Any) -> dict[str, Any]:
         "parent_revision": getattr(atom, "parent_revision", None),
         "parent_scope_key": getattr(atom, "parent_scope_key", None),
         "parent_privacy_level": getattr(atom, "parent_privacy_level", None),
+        "source_evidence": list(getattr(atom, "source_evidence", []) or []),
         "atom_type": getattr(atom_type, "value", str(atom_type)),
         "content": str(getattr(atom, "content", "")),
         "entities": list(getattr(atom, "entities", []) or []),
@@ -66,6 +73,9 @@ def _deserialize_atom_from_repair(
     persona_id: str | None,
 ) -> MemoryAtom | None:
     """从修复载荷重建 MemoryAtom。"""
+    evidence = payload.get("source_evidence")
+    if not has_user_source_evidence(evidence):
+        return None
     content = str(payload.get("content") or "")
     if not content.strip():
         return None
@@ -88,6 +98,7 @@ def _deserialize_atom_from_repair(
         parent_revision=payload.get("parent_revision"),
         parent_scope_key=payload.get("parent_scope_key"),
         parent_privacy_level=payload.get("parent_privacy_level"),
+        source_evidence=[dict(item) for item in evidence],
         atom_type=atom_type,
         content=content,
         entities=[str(item) for item in payload.get("entities", []) if item],

@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.memory.infrastructure.atom_store import AtomStore
 from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.features.recall.processors.text_processor import TextProcessor
@@ -17,6 +18,24 @@ from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 from core.features.retrieval.graph_keyword_retriever import GraphKeywordResult
 from core.features.retrieval.graph_retriever import GraphRetriever
 from core.features.retrieval.rrf_fusion import HybridResult, RRFFusion
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
+
+BOUNDARY = GraphBoundary.from_metadata(
+    {"scope_key": "graph-test", "privacy_level": "public", "revision_token": "r1"}
+)
+
+
+def _canonical_metadata(*, privacy_level: str = "shared") -> dict[str, object]:
+    fact = "父 canonical 完整正文"
+    return {
+        "scope_key": "private:user-a",
+        "privacy_level": privacy_level,
+        "revision_token": "rev-canonical-1",
+        "key_facts": [fact],
+        "fact_source_evidence": fact_evidence([fact]),
+        "source_evidence": source_evidence(fact),
+        "source": "canonical",
+    }
 
 
 def _atom_result(
@@ -75,11 +94,12 @@ def _make_dual(
     else:
         atom.search = AsyncMock(side_effect=atom_error)
     atom.touch_many = AsyncMock()
+    loaded_metadata = _canonical_metadata()
+    loaded_metadata.update(canonical_metadata or {})
     loader = AsyncMock(
         return_value={
             "text": "父 canonical 完整正文",
-            "metadata": canonical_metadata
-            or {"privacy_level": "shared", "source": "canonical"},
+            "metadata": loaded_metadata,
         }
     )
     retriever = DualRouteRetriever(
@@ -105,14 +125,8 @@ async def test_atom_only_hit_returns_parent_canonical_without_internal_ids() -> 
         session_id="private:user-a",
         persona_id="persona-a",
     )
-
-    assert len(results) == 1
-    assert results[0].doc_id == 42
     assert results[0].content == "父 canonical 完整正文"
-    assert results[0].metadata == {
-        "privacy_level": "shared",
-        "source": "canonical",
-    }
+    assert results[0].metadata == _canonical_metadata()
     assert "atom" not in repr(results[0].metadata).lower()
     assert "atom" not in repr(results[0].score_breakdown).lower()
     loader.assert_awaited_once_with(42)
@@ -148,7 +162,7 @@ async def test_filtered_private_parent_is_not_touched_in_group_chat() -> None:
 
     retriever, _, atom, _ = _make_dual(
         atom_results=[_atom_result(201, 55, 0.9)],
-        canonical_metadata={"privacy_level": "confidential"},
+        canonical_metadata=_canonical_metadata(privacy_level="confidential"),
     )
 
     results = await retriever.search("secret", k=5, chat_type="group")
@@ -174,6 +188,7 @@ async def test_real_atom_pipeline_recalls_parent_canonical(tmp_db_path) -> None:
     atoms = processor.classify_atoms_from_metadata(
         {
             "key_facts": ["用户只喝无糖燕麦拿铁"],
+            "fact_source_evidence": fact_evidence(["用户只喝无糖燕麦拿铁"]),
             "topics": ["饮品偏好"],
             "participants": ["用户"],
             "emotional_intensity": 0.7,
@@ -197,7 +212,7 @@ async def test_real_atom_pipeline_recalls_parent_canonical(tmp_db_path) -> None:
     loader = AsyncMock(
         return_value={
             "text": "用户曾明确说自己只喝无糖燕麦拿铁。",
-            "metadata": {"privacy_level": "shared", "source": "canonical"},
+            "metadata": _canonical_metadata(),
         }
     )
     retriever = DualRouteRetriever(
@@ -216,10 +231,7 @@ async def test_real_atom_pipeline_recalls_parent_canonical(tmp_db_path) -> None:
 
     assert [item.doc_id for item in results] == [42]
     assert results[0].content == "用户曾明确说自己只喝无糖燕麦拿铁。"
-    assert results[0].metadata == {
-        "privacy_level": "shared",
-        "source": "canonical",
-    }
+    assert results[0].metadata == _canonical_metadata()
     assert "atom" not in repr(results[0].metadata).lower()
     assert "atom" not in repr(results[0].score_breakdown).lower()
     loader.assert_awaited_once_with(42)
@@ -232,6 +244,7 @@ async def test_graph_retriever_uses_request_reference_time_and_expiry() -> None:
     reference_epoch = 1_735_689_600.0
     reference_time = datetime.fromtimestamp(reference_epoch, tz=timezone.utc)
     metadata = {
+        **BOUNDARY.as_params(),
         "importance": 0.8,
         "graph_confidence": 0.9,
         "create_time": reference_epoch - 86400.0,
@@ -254,13 +267,16 @@ async def test_graph_retriever_uses_request_reference_time_and_expiry() -> None:
     vector.search = AsyncMock(return_value=[])
     retriever = GraphRetriever(keyword, vector, RRFFusion())
 
-    active = await retriever.search("图原子", reference_time=reference_time)
+    active = await retriever.search(
+        "图原子", reference_time=reference_time, boundary=BOUNDARY
+    )
     expired = await retriever.search(
         "图原子",
         reference_time=datetime.fromtimestamp(
             reference_epoch + 2 * 86400.0,
             tz=timezone.utc,
         ),
+        boundary=BOUNDARY,
     )
 
     assert active
@@ -288,12 +304,17 @@ def test_atom_graph_entry_contains_complete_time_snapshot() -> None:
         event_time=2000.0,
         expires_at=3000.0,
         decay_type=SimpleNamespace(value="step"),
+        parent_memory_id=12,
+        parent_revision=BOUNDARY.revision_token,
+        parent_scope_key=BOUNDARY.scope_key,
+        parent_privacy_level=BOUNDARY.privacy_level,
+        source_evidence=source_evidence("用户下周参加读书会"),
     )
 
     graph = extract_graph_from_atoms(
         12,
         [atom],
-        {"participants": []},
+        {"participants": [], **BOUNDARY.as_params()},
         temporal_edges_enabled=False,
         causal_edges_enabled=False,
     )

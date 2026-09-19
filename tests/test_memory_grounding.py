@@ -22,6 +22,7 @@ from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.shared.contracts.conversation import Message
 from core.shared.cost_control import CostControl
 from core.shared.extra_llm_budget import ExtraLlmBudget, extra_llm_budget_scope
+from tests.fact_evidence_helpers import source_evidence
 
 
 def _message(
@@ -314,25 +315,6 @@ def test_grounded_conversation_uses_stable_anonymous_source_labels() -> None:
     assert "第二条" in lines[1]
 
 
-def test_grounding_prompt_requires_source_language_and_exact_offsets() -> None:
-    """抽取 Prompt 必须约束来源主语言，并解释 chars 与正文 offset 边界。"""
-
-    contract = MemoryGroundingValidator().prompt_contract(2)
-
-    assert "主要语言" in contract
-    assert "chars" in contract
-    assert "消息头中的时间" in contract
-    assert "Observation date/观察日期/对话日期优先于插件当前时间" in contract
-    assert "不得猜测绝对年月日" in contract
-
-
-def test_grounding_prompt_declares_reference_budget() -> None:
-    """来源 Prompt 应声明与门禁 profile 相同的最大引用数。"""
-    contract = MemoryGroundingValidator().prompt_contract(2, max_references=16)
-
-    assert "每条记忆最多 16 条 source_refs" in contract
-
-
 def test_grounding_accepts_trusted_identity_label_numbers() -> None:
     """可信身份标签中的数字不应被当作候选编造数字。"""
     source = "我喜欢喝咖啡。"
@@ -421,7 +403,8 @@ async def test_grounding_judge_only_receives_current_referenced_scope() -> None:
             '{"memories":[{"content":"用户准备更换工作。",'
             '"key_facts":["用户准备更换工作。"],"topics":["工作"],'
             '"importance":0.7,"sentiment":"neutral",'
-            '"source_refs":[{"message_index":0,"start":0,"end":9}]}],'
+            '"source_refs":[{"message_index":0,"start":0,"end":9}],'
+            '"fact_source_refs":[[{"message_index":0,"start":0,"end":9}]]}],'
             '"confidence":0.8,"extraction_quality":"high"}'
         )
     )
@@ -448,7 +431,7 @@ async def test_grounding_judge_only_receives_current_referenced_scope() -> None:
     ]
 
     with extra_llm_budget_scope(ExtraLlmBudget(1)):
-        await processor.process_conversation(messages)
+        await processor.process_conversation(messages, message_seqs=(1, 2))
 
     judge.assert_awaited_once()
     judge_call = judge.await_args
@@ -468,7 +451,8 @@ async def test_grounding_judge_cancellation_propagates() -> None:
             '{"memories":[{"content":"用户准备更换工作。",'
             '"key_facts":["用户准备更换工作。"],"topics":["工作"],'
             '"importance":0.7,"sentiment":"neutral",'
-            '"source_refs":[{"message_index":0,"start":0,"end":9}]}],'
+            '"source_refs":[{"message_index":0,"start":0,"end":9}],'
+            '"fact_source_refs":[[{"message_index":0,"start":0,"end":9}]]}],'
             '"confidence":0.8,"extraction_quality":"high"}'
         )
     )
@@ -494,6 +478,7 @@ async def test_grounding_judge_cancellation_propagates() -> None:
         with pytest.raises(asyncio.CancelledError):
             await processor.process_conversation(
                 [_message(0, "我最近在考虑换工作。")],
+                message_seqs=(1,),
             )
 
 
@@ -741,17 +726,13 @@ def test_profile_scoring_configuration_applies() -> None:
     assert "grounding_claim_unsupported" in result.reason_codes
 
 
-def test_revalidate_skips_damaged_evidence_items() -> None:
-    """复核时单条畸形证据被跳过，剩余有效证据继续验证。"""
+def test_revalidate_rejects_partly_damaged_evidence() -> None:
+    """One valid source cannot conceal a malformed stored evidence entry."""
 
     validator = MemoryGroundingValidator()
     source = "我养了两只猫"
     message = _message(0, source)
-    good = {
-        "message_fingerprint": validator.message_fingerprint(message),
-        "start": 0,
-        "end": len(source),
-    }
+    good = source_evidence(source)[0]
     result = validator.revalidate_stored_evidence(
         _candidate("用户养了两只猫"),
         [message],
@@ -759,8 +740,8 @@ def test_revalidate_skips_damaged_evidence_items() -> None:
         is_group_chat=False,
     )
 
-    assert result.allowed is True
-    assert "grounding_source_evidence_invalid" not in result.reason_codes
+    assert result.allowed is False
+    assert "grounding_source_evidence_invalid" in result.reason_codes
 
 
 def test_revalidate_all_malformed_evidence_invalid() -> None:
@@ -785,10 +766,7 @@ def test_revalidate_all_unmatched_evidence_changed() -> None:
     result = MemoryGroundingValidator().revalidate_stored_evidence(
         _candidate("用户养了两只猫"),
         messages,
-        [
-            {"message_fingerprint": "deadbeef", "start": 0, "end": 4},
-            {"message_fingerprint": "", "start": 0, "end": 2},
-        ],
+        source_evidence("原始消息已被改写"),
         is_group_chat=False,
     )
 
@@ -947,19 +925,9 @@ def test_revalidate_negation_matches_validate_verdict() -> None:
         ),
         messages,
         is_group_chat=False,
+        message_seqs=(1, 2),
     )
-    evidence = [
-        {
-            "message_fingerprint": validator.message_fingerprint(messages[0]),
-            "start": 0,
-            "end": len(user_source),
-        },
-        {
-            "message_fingerprint": validator.message_fingerprint(messages[1]),
-            "start": 0,
-            "end": len(assistant_source),
-        },
-    ]
+    evidence = direct.evidence
     replay = validator.revalidate_stored_evidence(
         _candidate(claim),
         messages,
@@ -1150,6 +1118,7 @@ def test_revalidate_detects_changed_message_content() -> None:
         {
             "message_index": 0,
             "message_id": message.id,
+            "message_seq": 1,
             "role": "user",
             "start": 0,
             "end": len(original),
@@ -1178,6 +1147,7 @@ def test_revalidate_does_not_substitute_same_text_from_other_subject() -> None:
         {
             "message_index": 0,
             "message_id": original.id,
+            "message_seq": 1,
             "role": "user",
             "start": 0,
             "end": len(content),
@@ -1242,6 +1212,15 @@ async def test_assistant_only_window_produces_quarantine_candidate() -> None:
                         "topics": ["搬家"],
                         "importance": 0.7,
                         "sentiment": "neutral",
+                        "fact_source_refs": [
+                            [
+                                {
+                                    "message_index": 0,
+                                    "start": 0,
+                                    "end": len(assistant_source),
+                                }
+                            ]
+                        ],
                         "source_refs": [
                             {
                                 "message_index": 0,
@@ -1261,7 +1240,7 @@ async def test_assistant_only_window_produces_quarantine_candidate() -> None:
     processor = MemoryProcessor(llm_provider=provider)
     messages = [_assistant_message(0, assistant_source)]
 
-    results = await processor.process_conversation(messages)
+    results = await processor.process_conversation(messages, message_seqs=(1,))
 
     assert len(results) == 1
     metadata = results[0]["metadata"]

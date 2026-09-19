@@ -11,12 +11,15 @@ from core.features.evaluation.application import (
     RetrievedDocument,
     evaluate_variants,
 )
+from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.retrieval.graph_keyword_retriever import (
     GraphKeywordResult,
     GraphKeywordRetriever,
 )
 from core.features.retrieval.graph_retriever import GraphRetriever
 from core.features.retrieval.rrf_fusion import RRFFusion
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 
 def _retriever(*, hops: int) -> tuple[GraphKeywordRetriever, AsyncMock]:
@@ -45,7 +48,7 @@ async def test_zero_hop_does_not_query_neighbors() -> None:
 
     retriever, store = _retriever(hops=0)
 
-    await retriever.search("项目", limit=5)
+    await retriever.search("项目", limit=5, boundary=BOUNDARY)
 
     store.get_neighbor_node_ids.assert_not_awaited()
 
@@ -56,12 +59,12 @@ async def test_one_and_two_hops_query_expected_neighbor_depth() -> None:
 
     one_hop, one_store = _retriever(hops=1)
     one_store.get_neighbor_node_ids.return_value = [2]
-    await one_hop.search("项目", limit=5)
+    await one_hop.search("项目", limit=5, boundary=BOUNDARY)
     assert one_store.get_neighbor_node_ids.await_count == 1
 
     two_hops, two_store = _retriever(hops=2)
     two_store.get_neighbor_node_ids.side_effect = [[2], [3]]
-    await two_hops.search("项目", limit=5)
+    await two_hops.search("项目", limit=5, boundary=BOUNDARY)
     assert two_store.get_neighbor_node_ids.await_count == 2
 
 
@@ -95,7 +98,7 @@ async def test_multi_path_hit_preserves_minimum_known_distance() -> None:
         ],
     ]
 
-    results = await retriever.search("项目", limit=5)
+    results = await retriever.search("项目", limit=5, boundary=BOUNDARY)
 
     assert len(results) == 1
     assert results[0].graph_distance == 0
@@ -119,7 +122,7 @@ async def test_graph_retriever_reports_minimum_distance_in_internal_breakdown() 
     vector.search.return_value = []
     retriever = GraphRetriever(keyword, vector, RRFFusion())
 
-    results = await retriever.search("项目", k=5)
+    results = await retriever.search("项目", k=5, boundary=BOUNDARY)
 
     assert len(results) == 1
     assert results[0].score_breakdown["graph_min_distance"] == 2.0
@@ -134,7 +137,7 @@ async def test_graph_retriever_reports_minimum_distance_in_internal_breakdown() 
             graph_distance=1,
         )
     ]
-    one_hop_results = await retriever.search("项目", k=5)
+    one_hop_results = await retriever.search("项目", k=5, boundary=BOUNDARY)
 
     assert one_hop_results[0].final_score == results[0].final_score
 

@@ -140,10 +140,6 @@ class GroundingJudgeMixin:
         payload = {
             "claim_text": grounding.claim_text,
             "source_text": grounding.source_text,
-            "is_group_chat": bool(is_group_chat),
-            "chat_type": "群聊" if is_group_chat else "私聊",
-            "topics": "、".join(topics) or "无",
-            "importance": str(importance),
         }
         try:
             if feature_allowed:
@@ -206,9 +202,9 @@ class GroundingJudgeMixin:
         prompt = template_text.format(
             claim_text=str(payload.get("claim_text") or "")[:1200],
             source_text=str(payload.get("source_text") or "")[:2400],
-            chat_type=payload.get("chat_type", "私聊"),
-            topics=payload.get("topics", "无"),
-            importance=payload.get("importance", "0.5"),
+            chat_type="",
+            topics="",
+            importance="",
         )
         response_text = await self.llm_client.call_llm_with_retry(
             prompt=prompt,

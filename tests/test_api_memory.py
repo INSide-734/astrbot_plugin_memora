@@ -9,7 +9,9 @@ Validates request validation, response format, and error handling.
 
 from __future__ import annotations
 
+import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -607,7 +609,11 @@ class TestMemoryReadValidation:
             result = await Stub().get_memory_detail()
         assert result["status"] == "ok"
         assert result["data"]["memory_id"] == 123
-        assert result["data"]["metadata"] == {}
+        assert "metadata" not in result["data"]
+        assert result["data"]["source_replayability"]["status"] == "unavailable"
+        assert result["data"]["source_replayability"]["reason_codes"] == [
+            "source_not_recorded"
+        ]
         assert result["data"]["summary"] == "hello"
         assert result["data"]["type"] == "GENERAL"
         assert result["data"]["status"] == "active"
@@ -637,7 +643,10 @@ class TestMemoryReadValidation:
                     "id": 123,
                     "doc_id": "doc-123",
                     "text": "hello",
-                    "metadata": {},
+                    "metadata": {
+                        "scope_key": "session:test",
+                        "privacy_level": "public",
+                    },
                     "created_at": "2024-01-01",
                     "updated_at": "2024-01-02",
                 }
@@ -648,7 +657,7 @@ class TestMemoryReadValidation:
                 return store
 
             def _normalize_metadata(self, md):
-                return {}
+                return md
 
         req = _mock_request(memory_id="123")
         with patch("core.platform.transport.page_api.memory_read_api.request", req):
@@ -661,10 +670,19 @@ class TestMemoryReadValidation:
     async def test_get_memory_detail_tolerates_malformed_subgraph_collections(
         self,
     ) -> None:
+        from core.features.memory.graph.domain.models import GraphBoundary
         from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
 
         class Stub:
             get_memory_detail = MemoryReadApiMixin.get_memory_detail
+            graph_store = MagicMock()
+            graph_store.get_subgraph_for_memories = AsyncMock(
+                return_value={
+                    "nodes": "bad-nodes",
+                    "edges": {"bad": "edges"},
+                    "entries": None,
+                }
+            )
 
             def _ok(self, d):
                 return {"status": "ok", "data": d}
@@ -681,24 +699,19 @@ class TestMemoryReadValidation:
                     "id": 123,
                     "doc_id": "doc-123",
                     "text": "hello",
-                    "metadata": {},
+                    "metadata": {
+                        "scope_key": "session:test",
+                        "privacy_level": "public",
+                    },
                     "created_at": "2024-01-01",
                     "updated_at": "2024-01-02",
                 }
 
             def _get_graph_store(self, engine):
-                store = MagicMock()
-                store.get_subgraph_for_memories = AsyncMock(
-                    return_value={
-                        "nodes": "bad-nodes",
-                        "edges": {"bad": "edges"},
-                        "entries": None,
-                    }
-                )
-                return store
+                return self.graph_store
 
             def _normalize_metadata(self, md):
-                return {}
+                return md
 
         req = _mock_request(memory_id="123")
         with patch("core.platform.transport.page_api.memory_read_api.request", req):
@@ -710,6 +723,10 @@ class TestMemoryReadValidation:
             "edges": [],
             "entries": [],
         }
+        call = Stub()._get_graph_store(None).get_subgraph_for_memories.await_args
+        assert call.kwargs["boundary"] == GraphBoundary(
+            "session:test", "public", "2024-01-02"
+        )
 
     @pytest.mark.asyncio
     async def test_get_memory_detail_normalizes_list_like_metadata_fields(self) -> None:
@@ -1110,6 +1127,279 @@ class TestMemoryReadValidation:
         assert result["status"] == "ok"
         assert result["data"]["total"] == 3
         assert [item["id"] for item in result["data"]["items"]] == [3, 2, 1]
+
+
+class TestMemoryDetailSourceReplayability:
+    """详情只暴露聚合可重放状态，Store 缺失或异常不影响详情读取。"""
+
+    @staticmethod
+    def _stub(store):
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
+
+        class Stub:
+            get_memory_detail = MemoryReadApiMixin.get_memory_detail
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                manager = SimpleNamespace(store=store)
+                return {
+                    "memory_engine": MagicMock(),
+                    "conversation_manager": manager,
+                }, None
+
+            async def _get_memory_record(self, mid):
+                return {
+                    "id": 123,
+                    "doc_id": "doc-123",
+                    "text": "hello",
+                    "metadata": dict(self.metadata),
+                    "created_at": "2024-01-01",
+                    "updated_at": "2024-01-02",
+                }
+
+            def _get_graph_store(self, engine):
+                return None
+
+            def _normalize_metadata(self, md):
+                return md
+
+        stub = Stub()
+        stub.metadata = {"k": "v"}
+        return stub
+
+    @pytest.mark.asyncio
+    async def test_detail_projects_only_aggregate_replayability(self) -> None:
+        from core.shared.contracts.conversation import (
+            message_evidence_fingerprint,
+        )
+
+        content = "用户事实来源"
+        reference = {
+            "message_index": 0,
+            "message_id": 7,
+            "message_seq": 1,
+            "role": "user",
+            "start": 0,
+            "end": len(content),
+            "message_fingerprint": message_evidence_fingerprint("user", content),
+            "inferred": False,
+        }
+
+        class Store:
+            async def get_message_identity_rows(self, message_ids):
+                return {
+                    7: {
+                        "session_id": "sess-1",
+                        "message_seq": 1,
+                        "role": "user",
+                        "content": content,
+                    }
+                }
+
+            async def get_summary_epoch(self, session_id):
+                return (1, 0)
+
+        stub = self._stub(Store())
+        stub.metadata = {
+            "session_id": "sess-1",
+            "source_epoch": 1,
+            "source_evidence": [reference],
+        }
+        req = _mock_request(memory_id="123")
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
+            result = await stub.get_memory_detail()
+
+        assert result["status"] == "ok"
+        assert result["data"]["memory_id"] == 123
+        assert not {"metadata", "session_id", "persona_id"} & set(result["data"])
+        payload = result["data"]["source_replayability"]
+        assert set(payload) == {"status", "references", "reason_codes"}
+        assert payload["status"] == "replayable"
+        assert payload["references"] == {
+            "total": 1,
+            "verified": 1,
+            "absent": 0,
+            "unverifiable": 0,
+        }
+        serialized = json.dumps(payload, ensure_ascii=False)
+        for secret in (
+            content,
+            reference["message_fingerprint"],
+            "sess-1",
+            "message_seq",
+            "scope_key",
+            "privacy_level",
+            "revision",
+        ):
+            assert secret not in serialized
+
+    @pytest.mark.asyncio
+    async def test_detail_projects_graph_context_without_sensitive_store_fields(
+        self,
+    ) -> None:
+        graph_store = MagicMock()
+        graph_store.get_subgraph_for_memories = AsyncMock(
+            return_value={
+                "nodes": [
+                    {
+                        "id": 7,
+                        "type": "person",
+                        "metadata": {"canary": "node-metadata"},
+                        "label": "node-identity",
+                        "entry_count": 2,
+                        "weight": 1.5,
+                    }
+                ],
+                "edges": [
+                    {
+                        "source": 7,
+                        "target": 8,
+                        "relation_type": "related",
+                        "metadata": {"canary": "edge-metadata"},
+                        "memory_id": 123,
+                        "confidence": 0.8,
+                    }
+                ],
+                "entries": [
+                    {
+                        "entry_type": "fact",
+                        "relation_type": "related",
+                        "content": "entry-content-canary",
+                        "metadata": {"canary": "entry-metadata"},
+                        "session_id": "entry-session-canary",
+                        "persona_id": "entry-persona-canary",
+                    }
+                ],
+            }
+        )
+        stub = self._stub(None)
+        stub._get_graph_store = lambda _engine: graph_store
+        stub.metadata = {
+            "scope_key": "session:test",
+            "privacy_level": "public",
+        }
+        req = _mock_request(memory_id="123")
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
+            result = await stub.get_memory_detail()
+
+        assert result["status"] == "ok"
+        context = result["data"]["graph_context"]
+        assert context == {
+            "nodes": [{"type": "person", "entry_count": 2, "weight": 1.5}],
+            "edges": [
+                {"relation_type": "related", "confidence": 0.8},
+            ],
+            "entries": [{"entry_type": "fact", "relation_type": "related"}],
+        }
+        serialized = json.dumps(result, ensure_ascii=False)
+        for canary in (
+            "node-metadata",
+            "node-identity",
+            "edge-metadata",
+            "entry-content-canary",
+            "entry-metadata",
+            "entry-session-canary",
+            "entry-persona-canary",
+        ):
+            assert canary not in serialized
+
+    @pytest.mark.asyncio
+    async def test_detail_reports_unknown_without_message_store(self) -> None:
+        stub = self._stub(None)
+        stub.metadata = {
+            "session_id": "sess-1",
+            "source_epoch": 1,
+            "source_evidence": [
+                {
+                    "message_index": 0,
+                    "message_id": 7,
+                    "message_seq": 1,
+                    "role": "user",
+                    "start": 0,
+                    "end": 1,
+                    "message_fingerprint": "a" * 64,
+                    "inferred": False,
+                }
+            ],
+        }
+        req = _mock_request(memory_id="123")
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
+            result = await stub.get_memory_detail()
+
+        assert result["status"] == "ok"
+        payload = result["data"]["source_replayability"]
+        assert payload["status"] == "unknown"
+        assert payload["reason_codes"] == ["source_store_unavailable"]
+
+    @pytest.mark.asyncio
+    async def test_detail_survives_message_store_error(self) -> None:
+        class BrokenStore:
+            async def get_message_identity_rows(self, message_ids):
+                raise RuntimeError("db locked")
+
+        stub = self._stub(BrokenStore())
+        stub.metadata = {
+            "session_id": "sess-1",
+            "source_evidence": [
+                {
+                    "message_index": 0,
+                    "message_id": 7,
+                    "message_seq": 1,
+                    "role": "user",
+                    "start": 0,
+                    "end": 1,
+                    "message_fingerprint": "a" * 64,
+                    "inferred": False,
+                }
+            ],
+        }
+        req = _mock_request(memory_id="123")
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
+            result = await stub.get_memory_detail()
+
+        assert result["status"] == "ok"
+        payload = result["data"]["source_replayability"]
+        assert payload["status"] == "unknown"
+        assert payload["reason_codes"] == ["source_store_error"]
+
+    @pytest.mark.asyncio
+    async def test_detail_omits_raw_metadata_and_identity(self) -> None:
+        stub = self._stub(None)
+        stub.metadata = {
+            "session_id": "sess-canary-identity",
+            "persona_id": "persona-canary-identity",
+            "scope_key": "scope-canary",
+            "privacy_level": "confidential-canary",
+            "revision": "revision-canary",
+            "source_fence": "fence-canary",
+            "_quarantine_approval_token_hash": "token-canary",
+            "source_digest": "digest-canary",
+            "memory_type": "FACT",
+            "importance": 0.7,
+        }
+        req = _mock_request(memory_id="123")
+        with patch("core.platform.transport.page_api.memory_read_api.request", req):
+            result = await stub.get_memory_detail()
+
+        assert result["status"] == "ok"
+        assert not {"metadata", "session_id", "persona_id"} & set(result["data"])
+        serialized = json.dumps(result, ensure_ascii=False)
+        for canary in (
+            "sess-canary-identity",
+            "persona-canary-identity",
+            "scope-canary",
+            "confidential-canary",
+            "revision-canary",
+            "fence-canary",
+            "token-canary",
+            "digest-canary",
+        ):
+            assert canary not in serialized
 
 
 # ---------------------------------------------------------------------------

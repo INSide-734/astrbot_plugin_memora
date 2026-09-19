@@ -73,16 +73,20 @@ async def test_fenced_write_is_left_nonrecallable_when_source_expires_mid_write(
     engine._set_summary_source_orphan = AsyncMock()
     engine.set_summary_source_validator(AsyncMock(side_effect=(True, False)))
 
+    fence = _fence()
     with pytest.raises(RuntimeError, match="summary_source_fenced"):
         await engine.add_memory(
             "候选正文",
             metadata={"idempotency_key": "summary-key"},
-            source_fence=_fence(),
+            source_fence=fence,
         )
 
     # type: ignore[attr-defined]
     engine._add_memory_unchecked.assert_awaited_once()
-    engine._set_summary_source_orphan.assert_awaited_once_with(17, True)  # type: ignore[attr-defined]
+    # 拒绝必须携带本次 claim 的 fence 做状态 CAS，避免误伤已接受来源。
+    engine._set_summary_source_orphan.assert_awaited_once_with(  # type: ignore[attr-defined]
+        17, True, source_fence=fence
+    )
 
 
 def _message(session_id: str, index: int) -> Message:

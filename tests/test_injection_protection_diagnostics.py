@@ -24,6 +24,7 @@ from core.features.injection.domain.models import (
     RoutingMode,
 )
 from core.platform.security import prompt_sanitizer as prompt_sanitizer_module
+from tests.injection_executor_support import resolved_reference
 
 
 def test_injection_protection_modules_use_astrbot_logger() -> None:
@@ -81,7 +82,13 @@ async def test_protection_failure_logs_only_safe_metadata(caplog) -> None:
                         "id": "diagnostic-memory",
                         "content": payload_canary,
                         "score": 1.0,
-                        "metadata": {},
+                        "metadata": {
+                            "key_facts": [payload_canary],
+                            "fact_source_evidence": [
+                                [resolved_reference(payload_canary)]
+                            ],
+                            "source_evidence": [resolved_reference(payload_canary)],
+                        },
                     }
                 ],
                 scope_id=scope_canary,

@@ -9,6 +9,11 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
+from ....features.memory.domain.revision import memory_revision
+from ....features.memory.graph.domain.models import GraphBoundary
+from ....shared.data_helpers import safe_parse_metadata
+from .response_utils import error_response
+
 _ONEBOT11_PERSON_LABEL = re.compile(r"QQ:([1-9][0-9]{0,18})", re.ASCII)
 _POSITIVE_INT64_MAX = 9_223_372_036_854_775_807
 _GRAPH_TIME_RANGE_MAX_HOURS = 720
@@ -26,18 +31,42 @@ class GraphApiMixin:
         return None, "request body must be a JSON object"
 
     @staticmethod
-    def _safe_score_breakdown(value: Any) -> dict[str, float]:
-        """把分数明细收敛为有限的数字映射。"""
+    def _graph_boundary_required_response() -> dict[str, Any]:
+        """返回不暴露来源细节的稳定图边界错误。"""
+        return error_response("图谱来源边界不可用", code="graph_boundary_required")
 
-        if not isinstance(value, dict):
-            return {}
-        normalized: dict[str, float] = {}
-        for key, item in value.items():
-            if isinstance(item, bool):
-                continue
-            if isinstance(item, (int, float)):
-                normalized[str(key)] = round(float(item), 6)
-        return normalized
+    @staticmethod
+    def _graph_boundary_from_memory(memory: Any) -> GraphBoundary | None:
+        """从 canonical 记录的权威时间快照构造图边界。"""
+        if not isinstance(memory, dict):
+            return None
+        metadata = dict(safe_parse_metadata(memory.get("metadata")))
+        revision = memory_revision(memory)
+        if not revision:
+            raw_revision = metadata.get("revision_token")
+            if isinstance(raw_revision, str) and raw_revision.strip():
+                revision = raw_revision.strip()
+        if not revision:
+            return None
+        metadata["revision_token"] = revision
+        try:
+            return GraphBoundary.from_metadata(metadata)
+        except ValueError:
+            return None
+
+    @staticmethod
+    async def _canonical_graph_boundary(
+        memory_engine: Any,
+        memory_id: int,
+    ) -> GraphBoundary | None:
+        """只从 canonical memory metadata 构造图查询边界。"""
+        try:
+            memory = await memory_engine.get_memory(memory_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return None
+        return GraphApiMixin._graph_boundary_from_memory(memory)
 
     @staticmethod
     def _coerce_memory_id(raw_id: Any) -> int:
@@ -46,17 +75,6 @@ class GraphApiMixin:
         if isinstance(raw_id, bool):
             raise TypeError("boolean values are not valid memory ids")
         return int(raw_id)
-
-    @staticmethod
-    def _safe_round_score(value: Any) -> float | None:
-        """把外部分数安全转换为六位小数，非法值返回 ``None``。"""
-
-        if value is None or isinstance(value, bool):
-            return None
-        try:
-            return round(float(value), 6)
-        except (TypeError, ValueError):
-            return None
 
     @staticmethod
     def _parse_graph_time_range(
@@ -101,36 +119,6 @@ class GraphApiMixin:
         oldest_timestamp = now - end_hours * 3600
         newest_timestamp = now - start_hours * 3600 if start_hours > 0 else None
         return (oldest_timestamp, newest_timestamp), None
-
-    @staticmethod
-    def _canvas_response_snapshot(
-        snapshot: dict[str, Any],
-    ) -> dict[str, list[dict[str, Any]]]:
-        """移除画布渲染不需要的内部字段、条目与记忆详情。"""
-        node_fields = (
-            "id",
-            "label",
-            "display_name",
-            "type",
-            "identity_namespace",
-            "stable_user_id",
-            "weight",
-            "memory_count",
-            "degree",
-            "entry_count",
-        )
-        edge_fields = ("id", "source", "target", "type", "weight", "timestamp")
-        nodes = [
-            {field: item[field] for field in node_fields if field in item}
-            for item in snapshot.get("nodes", [])
-            if isinstance(item, dict)
-        ]
-        edges = [
-            {field: item[field] for field in edge_fields if field in item}
-            for item in snapshot.get("edges", [])
-            if isinstance(item, dict)
-        ]
-        return {"nodes": nodes, "edges": edges}
 
     @staticmethod
     def _filter_graph_snapshot_by_time(
@@ -256,6 +244,83 @@ class GraphApiMixin:
 
         return {**snapshot, "nodes": projected_nodes}
 
+    @staticmethod
+    def _filter_graph_snapshot_by_query(
+        snapshot: dict[str, Any], query: str
+    ) -> dict[str, Any]:
+        """在已授权的记忆快照内匹配节点或条目，不放宽到全局图谱。"""
+        needle = query.strip().casefold()
+        if not needle:
+            return snapshot
+        entries = [
+            entry
+            for entry in snapshot.get("entries", [])
+            if needle in str(entry.get("content") or "").casefold()
+        ]
+        node_ids = {
+            str(node_id) for entry in entries for node_id in entry.get("node_ids", [])
+        }
+        nodes = snapshot.get("nodes", [])
+        node_ids.update(
+            str(node["id"])
+            for node in nodes
+            if any(
+                needle in str(node.get(key) or "").casefold()
+                for key in ("label", "canonical_value")
+            )
+        )
+        return {
+            **snapshot,
+            "nodes": [node for node in nodes if str(node["id"]) in node_ids],
+            "edges": [
+                edge
+                for edge in snapshot.get("edges", [])
+                if str(edge.get("source")) in node_ids
+                and str(edge.get("target")) in node_ids
+            ],
+            "entries": entries,
+            "memories": snapshot.get("memories", []) if node_ids or entries else [],
+        }
+
+    @staticmethod
+    def _filter_admin_canvas_by_query(
+        snapshot: dict[str, Any], query: str
+    ) -> dict[str, Any]:
+        """在管理员画布内匹配可见标签，并保留命中节点的一跳关联边与对端。"""
+        needle = query.strip().casefold()
+        if not needle:
+            return snapshot
+        nodes = [node for node in snapshot.get("nodes", []) if isinstance(node, dict)]
+        matched_node_ids = {
+            str(node.get("id"))
+            for node in nodes
+            if any(
+                needle in str(node.get(key) or "").casefold()
+                for key in ("label", "canonical_value")
+            )
+        }
+        if not matched_node_ids:
+            return {**snapshot, "nodes": [], "edges": []}
+
+        visible_node_ids = set(matched_node_ids)
+        visible_edges: list[dict[str, Any]] = []
+        for edge in snapshot.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            source = str(edge.get("source"))
+            target = str(edge.get("target"))
+            # 只沿命中节点展开一跳：对端不会成为新的扩散种子。
+            if source in matched_node_ids or target in matched_node_ids:
+                visible_edges.append(edge)
+                visible_node_ids.update((source, target))
+        return {
+            **snapshot,
+            "nodes": [
+                node for node in nodes if str(node.get("id")) in visible_node_ids
+            ],
+            "edges": visible_edges,
+        }
+
     # ---- 公开端点 ----
 
     async def search_graph(self):
@@ -281,114 +346,65 @@ class GraphApiMixin:
                     payload[key] = args.get(key)
             return await self._query_graph_impl(payload)
         except Exception as exc:
-            logger.error(f"[PageAPI] 图谱搜索失败: {exc}", exc_info=True)
-            return self._error(str(exc))
+            logger.error("[PageAPI] 图谱搜索失败: %s", type(exc).__name__)
+            return error_response("图谱搜索失败", code="internal_error")
 
     async def query_graph(self):
         """处理 POST /graph/query，并从 JSON 请求体读取参数。"""
-        payload = await request.get_json(silent=True) or {}
+        payload = await request.get_json(silent=True)
         payload, error = GraphApiMixin._graph_json_object_payload_or_error(payload)
         if error:
             return self._error(error)
         return await self._query_graph_impl(payload)
 
     async def get_graph_overview(self):
-        """返回全量图概览；显式限制参数继续使用有限快照。"""
-
-        ready, error = await self._ensure_plugin_ready()
-        if error:
-            return error
-        memory_engine = ready["memory_engine"]
-
+        """处理 GET /graph/overview，并返回与默认搜索相同的管理员总览。"""
         args = request.args
-        session_id = str(args.get("session_id", "")).strip() or None
-        persona_id = str(args.get("persona_id", "")).strip() or None
-        limit_keys = (
-            "limit_memories",
-            "limit_entries",
-            "limit_nodes",
-            "limit_edges",
-        )
-        has_explicit_limits = any(key in args for key in limit_keys)
-
-        try:
-            limit_memories = max(1, min(int(args.get("limit_memories", 12)), 24))
-            limit_entries = max(12, min(int(args.get("limit_entries", 36)), 80))
-            limit_nodes = max(12, min(int(args.get("limit_nodes", 48)), 80))
-            limit_edges = max(12, min(int(args.get("limit_edges", 72)), 120))
-        except (TypeError, ValueError):
-            return self._error("图谱分页参数无效")
-
-        try:
-            stats = await memory_engine.get_statistics()
-            graph_store = self._get_graph_store(memory_engine)
-            empty = {"nodes": [], "edges": [], "entries": [], "memories": []}
-            filters = {"session_id": session_id, "persona_id": persona_id}
-
-            if graph_store is None:
-                return self._ok(
-                    self._build_graph_view_payload(
-                        empty, stats, enabled=False, mode="overview", filters=filters
-                    )
-                )
-
-            if has_explicit_limits:
-                snapshot = await graph_store.get_graph_snapshot(
-                    session_id=session_id,
-                    persona_id=persona_id,
-                    limit_memories=limit_memories,
-                    limit_entries=limit_entries,
-                    limit_nodes=limit_nodes,
-                    limit_edges=limit_edges,
-                )
-            else:
-                snapshot = await graph_store.get_graph_snapshot(
-                    session_id=session_id,
-                    persona_id=persona_id,
-                    full=True,
-                )
-            identity_runtime = ready.get("identity_runtime")
-            snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
-                self, snapshot, identity_runtime
-            )
-            return self._ok(
-                self._build_graph_view_payload(
-                    snapshot, stats, enabled=True, mode="overview", filters=filters
-                )
-            )
-        except Exception as exc:
-            logger.error(f"[PageAPI] 获取图谱概览失败: {exc}", exc_info=True)
-            return self._error(str(exc))
+        payload: dict[str, Any] = {}
+        for key in ("session_id", "persona_id"):
+            value = str(args.get(key, "")).strip()
+            if value:
+                payload[key] = value
+        for key in ("time_start_hours", "time_end_hours"):
+            if key in args:
+                payload[key] = args.get(key)
+        return await self._admin_graph_snapshot_impl(payload)
 
     # ---- 内部实现 ----
 
     async def _query_graph_impl(self, payload: dict[str, Any]):
-        """图谱查询核心逻辑，由 search_graph (GET) 和 query_graph (POST) 共用"""
+        """按 canonical memory ID 聚焦查询，否则回退管理员只读总览/搜索。"""
+        memory_id_raw = payload.get("memory_id")
+        if memory_id_raw in (None, ""):
+            # 未提供 canonical memory ID 不是错误：返回管理员跨来源画布。
+            return await self._admin_graph_snapshot_impl(payload)
+
         ready, error = await self._ensure_plugin_ready()
         if error:
             return error
         memory_engine = ready["memory_engine"]
 
+        try:
+            memory_id = GraphApiMixin._coerce_memory_id(memory_id_raw)
+        except (TypeError, ValueError):
+            return self._error("memory_id 必须是整数")
+        boundary = await GraphApiMixin._canonical_graph_boundary(
+            memory_engine,
+            memory_id,
+        )
+        if boundary is None:
+            return GraphApiMixin._graph_boundary_required_response()
+
         query_text = str(payload.get("query", "")).strip()
         session_id = str(payload.get("session_id", "")).strip() or None
         persona_id = str(payload.get("persona_id", "")).strip() or None
-        memory_id_raw = payload.get("memory_id")
-        canvas_view = payload.get("canvas") is True
         filters = {"session_id": session_id, "persona_id": persona_id}
         time_range, time_range_error = GraphApiMixin._parse_graph_time_range(payload)
         if time_range_error:
             return self._error(time_range_error)
         oldest_timestamp, newest_timestamp = time_range
-        limit_keys = (
-            "limit_memories",
-            "limit_entries",
-            "limit_nodes",
-            "limit_edges",
-        )
-        has_explicit_limits = any(key in payload for key in limit_keys)
 
         try:
-            limit_memories = max(1, min(int(payload.get("limit_memories", 10)), 24))
             limit_entries = max(12, min(int(payload.get("limit_entries", 40)), 80))
             limit_nodes = max(12, min(int(payload.get("limit_nodes", 56)), 80))
             limit_edges = max(12, min(int(payload.get("limit_edges", 96)), 120))
@@ -399,7 +415,6 @@ class GraphApiMixin:
             stats = await memory_engine.get_statistics()
             graph_store = self._get_graph_store(memory_engine)
             empty = {"nodes": [], "edges": [], "entries": [], "memories": []}
-
             if graph_store is None:
                 return self._ok(
                     self._build_graph_view_payload(
@@ -412,154 +427,12 @@ class GraphApiMixin:
                     )
                 )
 
-            if memory_id_raw not in (None, ""):
-                try:
-                    memory_id = GraphApiMixin._coerce_memory_id(memory_id_raw)
-                except (TypeError, ValueError):
-                    return self._error("memory_id 必须是整数")
-                snapshot = await graph_store.get_subgraph_for_memories(
-                    [memory_id],
-                    limit_entries=limit_entries,
-                    limit_nodes=limit_nodes,
-                    limit_edges=limit_edges,
-                )
-                snapshot = GraphApiMixin._filter_graph_snapshot_by_time(
-                    snapshot,
-                    oldest_timestamp=oldest_timestamp,
-                    newest_timestamp=newest_timestamp,
-                )
-                identity_runtime = ready.get("identity_runtime")
-                snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
-                    self, snapshot, identity_runtime
-                )
-                return self._ok(
-                    self._build_graph_view_payload(
-                        snapshot,
-                        stats,
-                        enabled=True,
-                        mode="memory_focus",
-                        memory_id=memory_id,
-                        filters=filters,
-                    )
-                )
-
-            if not query_text:
-                if canvas_view and not has_explicit_limits:
-                    canvas_kwargs: dict[str, Any] = {
-                        "session_id": session_id,
-                        "persona_id": persona_id,
-                    }
-                    if oldest_timestamp is not None or newest_timestamp is not None:
-                        canvas_kwargs.update(
-                            {
-                                "oldest_timestamp": oldest_timestamp,
-                                "newest_timestamp": newest_timestamp,
-                            }
-                        )
-                    snapshot = await graph_store.get_canvas_snapshot(
-                        **canvas_kwargs,
-                    )
-                elif has_explicit_limits:
-                    snapshot = await graph_store.get_graph_snapshot(
-                        session_id=session_id,
-                        persona_id=persona_id,
-                        limit_memories=limit_memories,
-                        limit_entries=limit_entries,
-                        limit_nodes=limit_nodes,
-                        limit_edges=limit_edges,
-                    )
-                else:
-                    snapshot = await graph_store.get_graph_snapshot(
-                        session_id=session_id,
-                        persona_id=persona_id,
-                        full=True,
-                    )
-                identity_runtime = ready.get("identity_runtime")
-                snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
-                    self, snapshot, identity_runtime
-                )
-                if canvas_view and not has_explicit_limits:
-                    snapshot = GraphApiMixin._canvas_response_snapshot(snapshot)
-                return self._ok(
-                    self._build_graph_view_payload(
-                        snapshot, stats, enabled=True, mode="overview", filters=filters
-                    )
-                )
-
-            search_results = await memory_engine.search_memories(
-                query=query_text,
-                k=limit_memories,
-                session_id=session_id,
-                persona_id=persona_id,
-            )
-            retrieval_items = []
-            matched_memory_ids: list[int] = []
-            seen: set[int] = set()
-            for result in search_results:
-                try:
-                    mid = int(result.doc_id)
-                    final_score = GraphApiMixin._safe_round_score(result.final_score)
-                    rrf_score = GraphApiMixin._safe_round_score(result.rrf_score)
-                    bm25_score = GraphApiMixin._safe_round_score(result.bm25_score)
-                    vector_score = GraphApiMixin._safe_round_score(result.vector_score)
-                except (TypeError, ValueError, AttributeError):
-                    continue
-                if final_score is None or rrf_score is None:
-                    continue
-                if mid not in seen:
-                    seen.add(mid)
-                    matched_memory_ids.append(mid)
-                retrieval_items.append(
-                    {
-                        "memory_id": mid,
-                        "content": getattr(result, "content", ""),
-                        "metadata": getattr(result, "metadata", {}) or {},
-                        "final_score": final_score,
-                        "rrf_score": rrf_score,
-                        "bm25_score": bm25_score,
-                        "vector_score": vector_score,
-                        "score_breakdown": GraphApiMixin._safe_score_breakdown(
-                            getattr(result, "score_breakdown", None)
-                        ),
-                    }
-                )
-
-            tokens = self._tokenize_graph_query(query_text)
-            matched_node_ids: list[int] = []
-            if tokens:
-                node_hits = await graph_store.search_nodes_by_tokens(
-                    tokens, limit=max(8, min(limit_nodes, 24))
-                )
-                matched_node_ids = []
-                for item in node_hits:
-                    if not isinstance(item, dict):
-                        continue
-                    try:
-                        matched_node_ids.append(int(item["id"]))
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                node_entry_hits = await graph_store.get_entries_for_node_ids(
-                    matched_node_ids,
-                    limit=max(8, min(limit_entries, 24)),
-                    session_id=session_id,
-                    persona_id=persona_id,
-                )
-                for hit in node_entry_hits:
-                    if not isinstance(hit, dict):
-                        continue
-                    try:
-                        mid = int(hit["source_memory_id"])
-                    except (KeyError, TypeError, ValueError):
-                        continue
-                    if mid not in seen:
-                        seen.add(mid)
-                        matched_memory_ids.append(mid)
-
             snapshot = await graph_store.get_subgraph_for_memories(
-                matched_memory_ids[:limit_memories],
+                [memory_id],
                 limit_entries=limit_entries,
                 limit_nodes=limit_nodes,
                 limit_edges=limit_edges,
+                boundary=boundary,
             )
             snapshot = GraphApiMixin._filter_graph_snapshot_by_time(
                 snapshot,
@@ -570,18 +443,86 @@ class GraphApiMixin:
             snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
                 self, snapshot, identity_runtime
             )
+            snapshot = GraphApiMixin._filter_graph_snapshot_by_query(
+                snapshot, query_text
+            )
             return self._ok(
                 self._build_graph_view_payload(
                     snapshot,
                     stats,
                     enabled=True,
-                    mode="query",
-                    query=query_text,
-                    retrieval_items=retrieval_items,
-                    matched_node_ids=matched_node_ids,
+                    mode="memory_focus",
+                    memory_id=memory_id,
+                    filters=filters,
+                )
+            )
+        except ValueError as exc:
+            if str(exc) == "graph_boundary_required":
+                return GraphApiMixin._graph_boundary_required_response()
+            logger.error("[PageAPI] 图谱查询失败: %s", type(exc).__name__)
+            return error_response("图谱查询失败", code="internal_error")
+        except Exception as exc:
+            logger.error("[PageAPI] 图谱查询失败: %s", type(exc).__name__)
+            return error_response("图谱查询失败", code="internal_error")
+
+    async def _admin_graph_snapshot_impl(self, payload: dict[str, Any]):
+        """返回管理员总览：合法来源的轻量画布，可按查询词过滤可见标签。"""
+        ready, error = await self._ensure_plugin_ready()
+        if error:
+            return error
+        memory_engine = ready["memory_engine"]
+
+        query_text = str(payload.get("query", "")).strip()
+        session_id = str(payload.get("session_id", "")).strip() or None
+        persona_id = str(payload.get("persona_id", "")).strip() or None
+        filters = {"session_id": session_id, "persona_id": persona_id}
+        time_range, time_range_error = GraphApiMixin._parse_graph_time_range(payload)
+        if time_range_error:
+            return self._error(time_range_error)
+        oldest_timestamp, newest_timestamp = time_range
+        mode = "query" if query_text else "overview"
+
+        try:
+            stats = await memory_engine.get_statistics()
+            graph_store = self._get_graph_store(memory_engine)
+            empty = {"nodes": [], "edges": [], "entries": [], "memories": []}
+            if graph_store is None:
+                return self._ok(
+                    self._build_graph_view_payload(
+                        empty,
+                        stats,
+                        enabled=False,
+                        mode=mode,
+                        query=query_text or None,
+                        filters=filters,
+                    )
+                )
+
+            snapshot = await graph_store.get_admin_canvas_snapshot(
+                session_id=session_id,
+                persona_id=persona_id,
+                oldest_timestamp=oldest_timestamp,
+                newest_timestamp=newest_timestamp,
+            )
+            identity_runtime = ready.get("identity_runtime")
+            snapshot = await GraphApiMixin._enrich_graph_identity_nodes(
+                self, snapshot, identity_runtime
+            )
+            if query_text:
+                # 只匹配总览已授权的可见标签，并保留命中节点的一跳关联边。
+                snapshot = GraphApiMixin._filter_admin_canvas_by_query(
+                    snapshot, query_text
+                )
+            return self._ok(
+                self._build_graph_view_payload(
+                    snapshot,
+                    stats,
+                    enabled=True,
+                    mode=mode,
+                    query=query_text or None,
                     filters=filters,
                 )
             )
         except Exception as exc:
-            logger.error(f"[PageAPI] 图谱查询失败: {exc}", exc_info=True)
-            return self._error(str(exc))
+            logger.error("[PageAPI] 图谱总览失败: %s", type(exc).__name__)
+            return error_response("图谱总览失败", code="internal_error")

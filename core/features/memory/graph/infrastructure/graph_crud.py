@@ -2,31 +2,37 @@
 
 from __future__ import annotations
 
+import json
+
 import aiosqlite
 
 from ...infrastructure.base import BaseStore
-from ..domain.models import GraphEdge, GraphEntry, GraphNode
+from ..domain.models import GraphBoundary, GraphEdge, GraphEntry, GraphNode
 
 
 class GraphCRUDMixin(BaseStore):
     """GraphStore 的节点、边与条目 CRUD 混入类。"""
 
-    async def upsert_node(self, node: GraphNode) -> int:
+    async def upsert_node(self, node: GraphNode, *, boundary: GraphBoundary) -> int:
         """插入或更新单个图节点，并返回其标识符。"""
+        GraphBoundary.require(boundary)
         now = self._now_iso()
         async with self._connect() as db:
-            node_id = await self._upsert_node(db, node, now)
+            node_id = await self._upsert_node(db, node, now, boundary=boundary)
             await db.commit()
             return node_id
 
-    async def upsert_nodes(self, nodes: list[GraphNode]) -> dict[str, int]:
+    async def upsert_nodes(
+        self, nodes: list[GraphNode], *, boundary: GraphBoundary
+    ) -> dict[str, int]:
         """在单个事务中插入或更新多个节点。"""
+        GraphBoundary.require(boundary)
         if not nodes:
             return {}
 
         now = self._now_iso()
         async with self._connect() as db:
-            node_key_to_id = await self._upsert_nodes(db, nodes, now)
+            node_key_to_id = await self._upsert_nodes(db, nodes, now, boundary=boundary)
             await db.commit()
         return node_key_to_id
 
@@ -35,11 +41,15 @@ class GraphCRUDMixin(BaseStore):
         db: aiosqlite.Connection,
         nodes: list[GraphNode],
         now: str,
+        *,
+        boundary: GraphBoundary,
     ) -> dict[str, int]:
         """使用调用方连接插入或更新多个节点。"""
         node_key_to_id: dict[str, int] = {}
         for node in nodes:
-            node_key_to_id[node.node_key] = await self._upsert_node(db, node, now)
+            node_key_to_id[node.node_key] = await self._upsert_node(
+                db, node, now, boundary=boundary
+            )
         return node_key_to_id
 
     async def _upsert_node(
@@ -47,15 +57,18 @@ class GraphCRUDMixin(BaseStore):
         db: aiosqlite.Connection,
         node: GraphNode,
         now: str,
+        *,
+        boundary: GraphBoundary,
     ) -> int:
         """使用调用方连接插入或更新单个节点。"""
+        boundary.validate_metadata(node.metadata)
         cursor = await db.execute(
             """
             INSERT INTO graph_nodes(
                 node_key, node_type, node_value, canonical_value,
-                metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(node_key) DO UPDATE SET
+                metadata, created_at, updated_at, scope_key, privacy_level, revision_token
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(node_key, scope_key, privacy_level, revision_token) DO UPDATE SET
                 node_value = excluded.node_value,
                 metadata = excluded.metadata,
                 updated_at = excluded.updated_at
@@ -68,26 +81,35 @@ class GraphCRUDMixin(BaseStore):
                 self._to_json(node.metadata),
                 now,
                 now,
+                boundary.scope_key,
+                boundary.privacy_level,
+                boundary.revision_token,
             ),
         )
         cursor = await db.execute(
-            "SELECT id FROM graph_nodes WHERE node_key = ?",
-            (node.node_key,),
+            "SELECT id FROM graph_nodes WHERE node_key = ? "
+            "AND scope_key = ? AND privacy_level = ? AND revision_token = ?",
+            (
+                node.node_key,
+                boundary.scope_key,
+                boundary.privacy_level,
+                boundary.revision_token,
+            ),
         )
         row = await cursor.fetchone()
+        if row is None:
+            raise RuntimeError("graph_node_write_failed")
         return int(row[0])
 
     async def add_edge(
         self,
         edge: GraphEdge,
         node_key_to_id: dict[str, int],
+        *,
+        boundary: GraphBoundary,
     ) -> int:
-        """插入或更新单条图边，并返回其标识符。
-
-        使用 `semantic_edge_key` 支持跨记忆合并：
-        当相同语义边已存在于其他记忆中时，会通过 EMA 更新置信度，
-        同时累积权重作为额外证据。
-        """
+        """Insert or update an edge within one source and canonical boundary."""
+        GraphBoundary.require(boundary)
         source_node_id = node_key_to_id[edge.source_key]
         target_node_id = node_key_to_id[edge.target_key]
         now = self._now_iso()
@@ -98,6 +120,7 @@ class GraphCRUDMixin(BaseStore):
                 source_node_id,
                 target_node_id,
                 now,
+                boundary=boundary,
             )
             await db.commit()
             return edge_id
@@ -106,8 +129,11 @@ class GraphCRUDMixin(BaseStore):
         self,
         edges: list[GraphEdge],
         node_key_to_id: dict[str, int],
+        *,
+        boundary: GraphBoundary,
     ) -> dict[str, int]:
         """在单个事务中插入或更新多条边。"""
+        GraphBoundary.require(boundary)
         if not edges:
             return {}
 
@@ -118,6 +144,7 @@ class GraphCRUDMixin(BaseStore):
                 edges,
                 node_key_to_id,
                 now,
+                boundary=boundary,
             )
             await db.commit()
         return edge_key_to_id
@@ -128,6 +155,8 @@ class GraphCRUDMixin(BaseStore):
         edges: list[GraphEdge],
         node_key_to_id: dict[str, int],
         now: str,
+        *,
+        boundary: GraphBoundary,
     ) -> dict[str, int]:
         """使用调用方连接插入或更新多条边。"""
         edge_key_to_id: dict[str, int] = {}
@@ -142,6 +171,7 @@ class GraphCRUDMixin(BaseStore):
                 source_node_id,
                 target_node_id,
                 now,
+                boundary=boundary,
             )
         return edge_key_to_id
 
@@ -152,94 +182,89 @@ class GraphCRUDMixin(BaseStore):
         source_node_id: int,
         target_node_id: int,
         now: str,
+        *,
+        boundary: GraphBoundary,
     ) -> int:
-        """使用调用方连接插入或合并单条边。"""
-        # 先做精确键匹配（同一记忆、同一条边）
+        """Deduplicate only within source memory, endpoints and boundary."""
+        boundary.validate_metadata(edge.metadata)
+        await self._validate_node_boundary(
+            db, [source_node_id, target_node_id], boundary
+        )
+        params = {
+            **boundary.as_params(),
+            "source_memory_id": edge.source_memory_id,
+            "source_node_id": source_node_id,
+            "target_node_id": target_node_id,
+            "relation_type": edge.relation_type,
+        }
+        await db.execute(
+            """INSERT INTO graph_edges (
+                edge_key, source_node_id, target_node_id, relation_type,
+                source_memory_id, weight, confidence, status, metadata,
+                created_at, updated_at, scope_key, privacy_level, revision_token
+            ) VALUES (
+                :edge_key, :source_node_id, :target_node_id, :relation_type,
+                :source_memory_id, :weight, :confidence, :status, :metadata,
+                :now, :now, :scope_key, :privacy_level, :revision_token
+            ) ON CONFLICT(source_memory_id, source_node_id, target_node_id,
+                          relation_type, scope_key, privacy_level, revision_token)
+            DO UPDATE SET weight = excluded.weight, confidence = excluded.confidence,
+                status = excluded.status, metadata = excluded.metadata, updated_at = excluded.updated_at""",
+            {
+                **params,
+                "edge_key": edge.edge_key,
+                "weight": edge.weight,
+                "confidence": edge.confidence,
+                "status": edge.status,
+                "metadata": self._to_json(edge.metadata),
+                "now": now,
+            },
+        )
         cursor = await db.execute(
-            "SELECT id FROM graph_edges WHERE edge_key = ?",
-            (edge.edge_key,),
+            """SELECT id FROM graph_edges
+            WHERE source_memory_id = :source_memory_id
+              AND source_node_id = :source_node_id AND target_node_id = :target_node_id
+              AND relation_type = :relation_type AND scope_key = :scope_key
+              AND privacy_level = :privacy_level AND revision_token = :revision_token""",
+            params,
         )
         row = await cursor.fetchone()
-        if row:
-            await db.execute(
-                """
-                UPDATE graph_edges
-                SET weight = ?, confidence = ?, status = ?, metadata = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (
-                    edge.weight,
-                    edge.confidence,
-                    edge.status,
-                    self._to_json(edge.metadata),
-                    now,
-                    row[0],
-                ),
-            )
-            return int(row[0])
+        if row is None:
+            raise RuntimeError("graph_edge_write_failed")
+        return int(row[0])
 
-        # 跨记忆语义合并：查找相同节点之间的同类关系
-        semantic_cursor = await db.execute(
-            """
-            SELECT id, confidence, weight FROM graph_edges
-            WHERE source_node_id = ? AND target_node_id = ?
-              AND relation_type = ?
-            ORDER BY id ASC LIMIT 1
-            """,
-            (source_node_id, target_node_id, edge.relation_type),
-        )
-        semantic_row = await semantic_cursor.fetchone()
-
-        if semantic_row:
-            existing_id = int(semantic_row[0])
-            old_conf = float(semantic_row[1] or 0.8)
-            old_weight = float(semantic_row[2] or 1.0)
-            merged_confidence = old_conf * 0.7 + edge.confidence * 0.3
-            merged_weight = old_weight + 0.15
-            await db.execute(
-                """
-                UPDATE graph_edges
-                SET confidence = ?, weight = ?, updated_at = ?
-                WHERE id = ?
-                """,
-                (merged_confidence, merged_weight, now, existing_id),
-            )
-            return existing_id
-
+    async def _validate_node_boundary(
+        self, db: aiosqlite.Connection, node_ids: list[int], boundary: GraphBoundary
+    ) -> None:
+        node_ids = list(set(node_ids))
+        if not node_ids:
+            return
         cursor = await db.execute(
-            """
-            INSERT INTO graph_edges(
-                edge_key, source_node_id, target_node_id, relation_type,
-                source_memory_id, weight, confidence, status,
-                metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                edge.edge_key,
-                source_node_id,
-                target_node_id,
-                edge.relation_type,
-                edge.source_memory_id,
-                edge.weight,
-                edge.confidence,
-                edge.status,
-                self._to_json(edge.metadata),
-                now,
-                now,
-            ),
+            """SELECT COUNT(*) FROM graph_nodes
+            WHERE id IN (SELECT value FROM json_each(:node_ids))
+              AND scope_key = :scope_key AND privacy_level = :privacy_level
+              AND revision_token = :revision_token""",
+            {**boundary.as_params(), "node_ids": json.dumps(node_ids)},
         )
-        return int(cursor.lastrowid)
+        row = await cursor.fetchone()
+        if row is None or int(row[0]) != len(node_ids):
+            raise ValueError("graph_boundary_mismatch")
 
     async def add_entry(
         self,
         entry: GraphEntry,
         node_key_to_id: dict[str, int],
         edge_id: int | None = None,
+        *,
+        boundary: GraphBoundary,
     ) -> int:
         """插入或更新可搜索的图条目。"""
+        GraphBoundary.require(boundary)
         now = self._now_iso()
         async with self._connect() as db:
-            entry_id = await self._add_entry(db, entry, node_key_to_id, edge_id, now)
+            entry_id = await self._add_entry(
+                db, entry, node_key_to_id, edge_id, now, boundary=boundary
+            )
             await db.commit()
             return entry_id
 
@@ -248,8 +273,11 @@ class GraphCRUDMixin(BaseStore):
         entries: list[GraphEntry],
         node_key_to_id: dict[str, int],
         edge_key_to_id: dict[str, int],
+        *,
+        boundary: GraphBoundary,
     ) -> list[int]:
         """在单个事务中插入或更新可搜索的图条目。"""
+        GraphBoundary.require(boundary)
         if not entries:
             return []
 
@@ -261,6 +289,7 @@ class GraphCRUDMixin(BaseStore):
                 node_key_to_id,
                 edge_key_to_id,
                 now,
+                boundary=boundary,
             )
             await db.commit()
         return entry_ids
@@ -272,6 +301,8 @@ class GraphCRUDMixin(BaseStore):
         node_key_to_id: dict[str, int],
         edge_key_to_id: dict[str, int],
         now: str,
+        *,
+        boundary: GraphBoundary,
     ) -> list[int]:
         """使用调用方连接插入或更新多个可搜索图条目。"""
         entry_ids: list[int] = []
@@ -284,7 +315,9 @@ class GraphCRUDMixin(BaseStore):
                 )
                 edge_id = edge_key_to_id.get(edge_key)
             entry_ids.append(
-                await self._add_entry(db, entry, node_key_to_id, edge_id, now)
+                await self._add_entry(
+                    db, entry, node_key_to_id, edge_id, now, boundary=boundary
+                )
             )
         return entry_ids
 
@@ -295,11 +328,39 @@ class GraphCRUDMixin(BaseStore):
         node_key_to_id: dict[str, int],
         edge_id: int | None,
         now: str,
+        *,
+        boundary: GraphBoundary,
     ) -> int:
         """使用调用方连接插入或更新单个可搜索图条目。"""
+        boundary.validate_metadata(entry.metadata)
+        await self._validate_node_boundary(
+            db,
+            [node_key_to_id[key] for key in entry.node_keys if key in node_key_to_id],
+            boundary,
+        )
+        if edge_id is not None:
+            cursor = await db.execute(
+                """SELECT 1 FROM graph_edges WHERE id = :edge_id
+                AND source_memory_id = :source_memory_id AND scope_key = :scope_key
+                AND privacy_level = :privacy_level AND revision_token = :revision_token""",
+                {
+                    **boundary.as_params(),
+                    "edge_id": edge_id,
+                    "source_memory_id": entry.source_memory_id,
+                },
+            )
+            if await cursor.fetchone() is None:
+                raise ValueError("graph_boundary_mismatch")
         cursor = await db.execute(
-            "SELECT id FROM graph_entries WHERE entry_key = ?",
-            (entry.entry_key,),
+            "SELECT id FROM graph_entries WHERE entry_key = ? AND source_memory_id = ? "
+            "AND scope_key = ? AND privacy_level = ? AND revision_token = ?",
+            (
+                entry.entry_key,
+                entry.source_memory_id,
+                boundary.scope_key,
+                boundary.privacy_level,
+                boundary.revision_token,
+            ),
         )
         row = await cursor.fetchone()
 
@@ -338,8 +399,8 @@ class GraphCRUDMixin(BaseStore):
                 INSERT INTO graph_entries(
                     entry_key, source_memory_id, session_id, persona_id,
                     entry_type, relation_type, content, metadata,
-                    edge_id, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    edge_id, created_at, updated_at, scope_key, privacy_level, revision_token
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.entry_key,
@@ -353,8 +414,13 @@ class GraphCRUDMixin(BaseStore):
                     edge_id,
                     now,
                     now,
+                    boundary.scope_key,
+                    boundary.privacy_level,
+                    boundary.revision_token,
                 ),
             )
+            if cursor.lastrowid is None:
+                raise RuntimeError("graph_entry_write_failed")
             entry_id = int(cursor.lastrowid)
 
         await db.execute(
@@ -376,30 +442,50 @@ class GraphCRUDMixin(BaseStore):
         return entry_id
 
     async def update_entry_vector_doc_id(
-        self, entry_id: int, vector_doc_id: int
+        self, entry_id: int, vector_doc_id: int, *, boundary: GraphBoundary
     ) -> None:
         """持久化单个图条目的向量存储标识符。"""
+        GraphBoundary.require(boundary)
         async with self._connect() as db:
             await db.execute(
-                "UPDATE graph_entries SET vector_doc_id = ?, updated_at = ? WHERE id = ?",
-                (vector_doc_id, self._now_iso(), entry_id),
+                "UPDATE graph_entries SET vector_doc_id = ?, updated_at = ? WHERE id = ? "
+                "AND scope_key = ? AND privacy_level = ? AND revision_token = ?",
+                (
+                    vector_doc_id,
+                    self._now_iso(),
+                    entry_id,
+                    boundary.scope_key,
+                    boundary.privacy_level,
+                    boundary.revision_token,
+                ),
             )
             await db.commit()
 
     async def update_entry_vector_doc_ids(
         self,
         entry_vector_doc_ids: dict[int, int],
+        *,
+        boundary: GraphBoundary,
     ) -> None:
         """在单个事务中持久化多个图条目的向量存储标识符。"""
+        GraphBoundary.require(boundary)
         if not entry_vector_doc_ids:
             return
 
         now = self._now_iso()
         async with self._connect() as db:
             await db.executemany(
-                "UPDATE graph_entries SET vector_doc_id = ?, updated_at = ? WHERE id = ?",
+                "UPDATE graph_entries SET vector_doc_id = ?, updated_at = ? WHERE id = ? "
+                "AND scope_key = ? AND privacy_level = ? AND revision_token = ?",
                 [
-                    (vector_doc_id, now, entry_id)
+                    (
+                        vector_doc_id,
+                        now,
+                        entry_id,
+                        boundary.scope_key,
+                        boundary.privacy_level,
+                        boundary.revision_token,
+                    )
                     for entry_id, vector_doc_id in entry_vector_doc_ids.items()
                 ],
             )

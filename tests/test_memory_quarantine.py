@@ -23,6 +23,7 @@ from core.features.quality.domain.gate_config import GateConfig
 from core.features.quality.infrastructure.quarantine_store import MemoryQuarantineStore
 from core.features.recall.processors.memory_grounding import GroundingResult
 from core.shared.contracts.conversation import Message
+from tests.fact_evidence_helpers import source_evidence
 from tests.stable_approval_source import (
     StableApprovalConversation,
     source_correlation,
@@ -59,15 +60,8 @@ def _candidate(*, quality: str = "low") -> dict[str, Any]:
             "grounding_reason_codes": [],
             "key_facts": ["用户喜欢咖啡。"],
             "topics": ["咖啡"],
-            "source_evidence": [
-                {
-                    "message_index": 0,
-                    "start": 0,
-                    "end": len(source),
-                    "message_fingerprint": "placeholder",
-                    "inferred": False,
-                }
-            ],
+            "source_evidence": source_evidence(source),
+            "fact_source_evidence": [source_evidence(source)],
         },
     }
 
@@ -243,17 +237,6 @@ async def test_approve_creates_one_real_canonical_memory(
         conversation_manager=conversation_manager,
     )
     candidate = _candidate()
-    candidate["metadata"]["source_evidence"] = gate.grounding_validator.validate(
-        {
-            "summary": candidate["content"],
-            "key_facts": candidate["metadata"]["key_facts"],
-            "source_refs": [
-                {"message_index": 0, "start": 0, "end": len(message.content)}
-            ],
-        },
-        [message],
-        is_group_chat=False,
-    ).evidence
     staged = await gate.route_candidate(
         candidate,
         session_id="session-1",
@@ -300,17 +283,6 @@ async def test_approval_repair_finalizes_after_canonical_write_before_store_fina
         conversation_manager=conversation_manager,
     )
     candidate = _candidate()
-    candidate["metadata"]["source_evidence"] = gate.grounding_validator.validate(
-        {
-            "summary": candidate["content"],
-            "key_facts": candidate["metadata"]["key_facts"],
-            "source_refs": [
-                {"message_index": 0, "start": 0, "end": len(message.content)}
-            ],
-        },
-        [message],
-        is_group_chat=False,
-    ).evidence
     staged = await gate.route_candidate(
         candidate,
         session_id="session-1",
@@ -585,7 +557,7 @@ async def test_missing_source_evidence_blocks_approval(
     """批准时缺少原始证据不得回退为新的本地推断。"""
 
     candidate = _candidate()
-    candidate["metadata"]["source_evidence"] = []
+    candidate["metadata"]["fact_source_evidence"] = [[]]
     engine = MagicMock()
     engine.add_memory = AsyncMock()
     conversation_manager = _approval_conversation()
@@ -660,7 +632,7 @@ def _needs_judge_result(*, evidence: list | None = None) -> Any:
         allowed=False,
         status="needs_judge",
         reason_codes=("grounding_needs_judge",),
-        evidence=evidence or [],
+        evidence=evidence if evidence is not None else source_evidence("我喜欢咖啡。"),
         source_text="我喜欢咖啡。",
         claim_text="用户喜欢咖啡。",
         requires_judge=True,
@@ -674,7 +646,7 @@ def _judge_supported_result() -> GroundingResult:
         allowed=True,
         status="grounded",
         reason_codes=("grounding_judge_supported",),
-        evidence=[],
+        evidence=source_evidence("我喜欢咖啡。"),
         source_text="我喜欢咖啡。",
         claim_text="用户喜欢咖啡。",
         requires_judge=False,
@@ -698,7 +670,7 @@ async def test_approve_resolves_needs_judge_via_judge(
     )
     conversation_manager = _approval_conversation()
     validator = MagicMock()
-    validator.revalidate_stored_evidence = MagicMock(return_value=_needs_judge_result())
+    validator.revalidate_facts = MagicMock(return_value=[_needs_judge_result()])
     gate_runtime = MagicMock()
     gate_runtime.resolve_profile.return_value = GateProfile(name="p")
     gate = MemoryQualityGate(
@@ -758,7 +730,7 @@ async def test_approve_blocks_when_judge_unavailable(
     )
     conversation_manager = _approval_conversation()
     validator = MagicMock()
-    validator.revalidate_stored_evidence = MagicMock(return_value=_needs_judge_result())
+    validator.revalidate_facts = MagicMock(return_value=[_needs_judge_result()])
     gate_runtime = MagicMock()
     gate_runtime.resolve_profile.return_value = GateProfile(name="p")
     gate = MemoryQualityGate(
@@ -806,7 +778,7 @@ async def test_approve_judge_cancellation_blocks_and_propagates(
     processor.resolve_grounding_judge = AsyncMock(side_effect=asyncio.CancelledError)
     conversation_manager = _approval_conversation()
     validator = MagicMock()
-    validator.revalidate_stored_evidence = MagicMock(return_value=_needs_judge_result())
+    validator.revalidate_facts = MagicMock(return_value=[_needs_judge_result()])
     gate_runtime = MagicMock()
     gate_runtime.resolve_profile.return_value = GateProfile(name="p")
     gate = MemoryQualityGate(
@@ -885,23 +857,6 @@ async def test_approval_cancellation_before_write_blocks_and_propagates(
 
     message = _source_message()
     candidate = _candidate()
-    validator = MemoryQualityGate(
-        quarantine_store,
-        memory_engine=MagicMock(),
-        memory_processor=MagicMock(),
-        conversation_manager=MagicMock(),
-    ).grounding_validator
-    candidate["metadata"]["source_evidence"] = validator.validate(
-        {
-            "summary": candidate["content"],
-            "key_facts": candidate["metadata"]["key_facts"],
-            "source_refs": [
-                {"message_index": 0, "start": 0, "end": len(message.content)}
-            ],
-        },
-        [message],
-        is_group_chat=False,
-    ).evidence
     engine = MagicMock()
     engine.add_memory = AsyncMock()
     conversation_manager = _approval_conversation()
@@ -965,17 +920,6 @@ async def test_unknown_canonical_write_result_prevents_automatic_retry(
         memory_processor=processor,
         conversation_manager=conversation_manager,
     )
-    candidate["metadata"]["source_evidence"] = gate.grounding_validator.validate(
-        {
-            "summary": candidate["content"],
-            "key_facts": candidate["metadata"]["key_facts"],
-            "source_refs": [
-                {"message_index": 0, "start": 0, "end": len(message.content)}
-            ],
-        },
-        [message],
-        is_group_chat=False,
-    ).evidence
     staged = await gate.route_candidate(
         candidate,
         session_id="session-1",

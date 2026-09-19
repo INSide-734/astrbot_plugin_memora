@@ -4,8 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.domain.models import (
+    GraphBoundary,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 
 @pytest.mark.asyncio
@@ -20,7 +27,7 @@ async def test_canvas_snapshot_returns_all_scope_nodes_and_edges_without_entries
         GraphNode(node_type="fact", value="乙", canonical_value="scope-b"),
         GraphNode(node_type="fact", value="丙", canonical_value="scope-c"),
     ]
-    node_map = await store.upsert_nodes(nodes)
+    node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
     edges = [
         GraphEdge(
             source_key=nodes[0].node_key,
@@ -35,7 +42,7 @@ async def test_canvas_snapshot_returns_all_scope_nodes_and_edges_without_entries
             source_memory_id=2,
         ),
     ]
-    edge_map = await store.add_edges(edges, node_map)
+    edge_map = await store.add_edges(edges, node_map, boundary=BOUNDARY)
     await store.add_entries(
         [
             GraphEntry(
@@ -63,11 +70,13 @@ async def test_canvas_snapshot_returns_all_scope_nodes_and_edges_without_entries
         ],
         node_map,
         edge_map,
+        boundary=BOUNDARY,
     )
 
     snapshot = await store.get_canvas_snapshot(
         session_id="session-a",
         persona_id="persona-a",
+        boundary=BOUNDARY,
     )
 
     assert {item["label"] for item in snapshot["nodes"]} == {"甲", "乙"}
@@ -94,7 +103,7 @@ async def test_canvas_snapshot_filters_edges_and_orphan_nodes_by_time_range(
         GraphNode(node_type="fact", value="旧甲", canonical_value="old-a"),
         GraphNode(node_type="fact", value="旧乙", canonical_value="old-b"),
     ]
-    node_map = await store.upsert_nodes(nodes)
+    node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
     edges = [
         GraphEdge(
             source_key=nodes[0].node_key,
@@ -111,7 +120,7 @@ async def test_canvas_snapshot_filters_edges_and_orphan_nodes_by_time_range(
             metadata={"event_time": now - 10 * 24 * 3600},
         ),
     ]
-    edge_map = await store.add_edges(edges, node_map)
+    edge_map = await store.add_edges(edges, node_map, boundary=BOUNDARY)
     await store.add_entries(
         [
             GraphEntry(
@@ -137,10 +146,12 @@ async def test_canvas_snapshot_filters_edges_and_orphan_nodes_by_time_range(
         ],
         node_map,
         edge_map,
+        boundary=BOUNDARY,
     )
 
     snapshot = await store.get_canvas_snapshot(
         oldest_timestamp=now - 7 * 24 * 3600,
+        boundary=BOUNDARY,
     )
 
     assert {item["label"] for item in snapshot["nodes"]} == {"近期甲", "近期乙"}
@@ -150,6 +161,7 @@ async def test_canvas_snapshot_filters_edges_and_orphan_nodes_by_time_range(
     historical_snapshot = await store.get_canvas_snapshot(
         oldest_timestamp=now - 20 * 24 * 3600,
         newest_timestamp=now - 2 * 24 * 3600,
+        boundary=BOUNDARY,
     )
 
     assert {item["label"] for item in historical_snapshot["nodes"]} == {

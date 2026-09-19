@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.features.memory.graph.domain.models import ExtractedGraph
+from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.recall.processors.graph_extractor import (
     CAUSAL_CAUSED_BY,
     CAUSAL_PREVENTS,
@@ -17,6 +17,19 @@ from core.features.recall.processors.graph_extractor import (
     TEMPORAL_DURING,
     GraphExtractor,
 )
+from tests.fact_evidence_helpers import source_evidence
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
+
+
+def _atom() -> MagicMock:
+    return MagicMock(
+        parent_memory_id=1,
+        parent_scope_key=BOUNDARY.scope_key,
+        parent_privacy_level=BOUNDARY.privacy_level,
+        parent_revision=BOUNDARY.revision_token,
+        source_evidence=source_evidence(),
+    )
 
 
 class TestGraphExtractorLegacy:
@@ -26,26 +39,11 @@ class TestGraphExtractorLegacy:
     def extractor(self) -> GraphExtractor:
         return GraphExtractor()
 
-    def test_extract_basic_metadata(self, extractor: GraphExtractor) -> None:
-        graph = extractor.extract(
-            source_memory_id=1,
-            content="测试内容",
-            metadata={
-                "topics": ["咖啡", "饮食"],
-                "key_facts": ["用户喜欢喝咖啡"],
-                "participants": ["张三", "李四"],
-            },
-        )
-        assert isinstance(graph, ExtractedGraph)
-        assert len(graph.nodes) > 0
-        assert len(graph.edges) > 0
-        assert len(graph.entries) > 0
-
     def test_fact_nodes_created(self, extractor: GraphExtractor) -> None:
         graph = extractor.extract(
             source_memory_id=1,
             content="fallback",
-            metadata={"key_facts": ["事实A", "事实B"]},
+            metadata={**BOUNDARY.as_params(), "key_facts": ["事实A", "事实B"]},
         )
         fact_nodes = [n for n in graph.nodes if n.node_type == "fact"]
         assert len(fact_nodes) >= 2
@@ -54,7 +52,7 @@ class TestGraphExtractorLegacy:
         graph = extractor.extract(
             source_memory_id=1,
             content="fallback",
-            metadata={"topics": ["t1", "t2", "t3"]},
+            metadata={**BOUNDARY.as_params(), "topics": ["t1", "t2", "t3"]},
         )
         topic_nodes = [n for n in graph.nodes if n.node_type == "topic"]
         assert len(topic_nodes) >= 3
@@ -63,7 +61,7 @@ class TestGraphExtractorLegacy:
         graph = extractor.extract(
             source_memory_id=1,
             content="fallback",
-            metadata={"participants": ["Alice", "Bob"]},
+            metadata={**BOUNDARY.as_params(), "participants": ["Alice", "Bob"]},
         )
         person_nodes = [n for n in graph.nodes if n.node_type == "person"]
         assert len(person_nodes) >= 2
@@ -77,7 +75,7 @@ class TestGraphExtractorLegacy:
         graph = extractor.extract(
             source_memory_id=1,
             content="fallback",
-            metadata={"participants": ["QQ:10001"]},
+            metadata={**BOUNDARY.as_params(), "participants": ["QQ:10001"]},
         )
 
         assert any(node.node_key == "person:qq:10001" for node in graph.nodes)
@@ -87,6 +85,7 @@ class TestGraphExtractorLegacy:
             source_memory_id=1,
             content="fallback",
             metadata={
+                **BOUNDARY.as_params(),
                 "participants": ["Alice", "Bob", "Charlie"],
                 "key_facts": ["something happened"],
             },
@@ -99,6 +98,7 @@ class TestGraphExtractorLegacy:
             source_memory_id=1,
             content="fallback",
             metadata={
+                **BOUNDARY.as_params(),
                 "topics": ["topic1"],
                 "key_facts": ["fact1"],
             },
@@ -106,30 +106,12 @@ class TestGraphExtractorLegacy:
         describe_edges = [e for e in graph.edges if e.relation_type == "describes"]
         assert len(describe_edges) >= 1
 
-    def test_empty_metadata_uses_content(self, extractor: GraphExtractor) -> None:
-        graph = extractor.extract(
-            source_memory_id=1,
-            content="唯一内容作为摘要",
-            metadata={},
-        )
-        assert isinstance(graph, ExtractedGraph)
-
-    def test_summary_fallback_when_no_entries(self, extractor: GraphExtractor) -> None:
-        graph = extractor.extract(
-            source_memory_id=1,
-            content="only summary content",
-            metadata={},
-        )
-        # When metadata has no entries, content is used as summary fallback
-        # The summary nodes may or may not exist depending on topics/key_facts presence
-        # At minimum, we always get a valid ExtractedGraph
-        assert isinstance(graph, ExtractedGraph)
-
     def test_dedup_preserves_order_in_metadata(self, extractor: GraphExtractor) -> None:
         graph = extractor.extract(
             source_memory_id=1,
             content="test",
             metadata={
+                **BOUNDARY.as_params(),
                 "topics": ["咖啡", "咖啡", "coffee", "饮食"],
                 "key_facts": ["fact1"],
             },
@@ -145,7 +127,7 @@ class TestGraphExtractorLegacy:
         graph = extractor_with_config.extract(
             source_memory_id=1,
             content="test",
-            metadata={"key_facts": ["f1", "f2", "f3", "f4"]},
+            metadata={**BOUNDARY.as_params(), "key_facts": ["f1", "f2", "f3", "f4"]},
         )
         fact_nodes = [n for n in graph.nodes if n.node_type == "fact"]
         assert len(fact_nodes) <= 2
@@ -157,6 +139,7 @@ class TestGraphExtractorLegacy:
             source_memory_id=42,
             content="用户A 正在学习 Python",
             metadata={
+                **BOUNDARY.as_params(),
                 "session_id": "s1",
                 "canonical_summary": "用户A 学习 Python",
                 "graph_extraction": {
@@ -191,12 +174,13 @@ class TestGraphExtractorLegacy:
             source_memory_id=7,
             content="Alice knows Bob",
             metadata={
+                **BOUNDARY.as_params(),
                 "graph": (
                     '{"entities":[{"name":"Alice","type":"person"},'
                     '{"name":"Bob","type":"person"}],'
                     '"relations":[{"source":"Alice","target":"Bob",'
                     '"relation":"knows"}]}'
-                )
+                ),
             },
         )
 
@@ -211,6 +195,7 @@ class TestGraphExtractorLegacy:
             source_memory_id=1,
             content="fallback content",
             metadata={
+                **BOUNDARY.as_params(),
                 "graph_extraction": {
                     "entities": [{"type": "person"}],
                     "relations": [{"source": "Alice", "relation": "knows"}],
@@ -240,7 +225,7 @@ class TestGraphExtractorAtoms:
 
     @pytest.fixture
     def sample_atoms(self) -> list:
-        atom_a = MagicMock()
+        atom_a = _atom()
         atom_a.content = "Atom A - 用户喜欢咖啡"
         atom_a.confidence = 0.9
         atom_a.session_id = "s1"
@@ -251,7 +236,7 @@ class TestGraphExtractorAtoms:
         atom_a.ttl_days = 30.0
         atom_a.event_time = time.time() - 3600
 
-        atom_b = MagicMock()
+        atom_b = _atom()
         atom_b.content = "Atom B - 用户计划明天去爬山"
         atom_b.confidence = 0.85
         atom_b.session_id = "s1"
@@ -270,17 +255,17 @@ class TestGraphExtractorAtoms:
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=sample_atoms,
         )
-        assert len(graph.nodes) > 0
-        assert len(graph.entries) > 0
-        assert len(graph.edges) > 0
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            atom.content for atom in sample_atoms
+        }
 
     def test_atom_entries_preserve_business_time_metadata(
         self, extractor: GraphExtractor
     ) -> None:
-        atom = MagicMock()
+        atom = _atom()
         atom.content = "用户上周开始学习图谱筛选"
         atom.confidence = 0.8
         atom.session_id = "s1"
@@ -293,7 +278,7 @@ class TestGraphExtractorAtoms:
         atom.event_time = 1699900000.0
 
         graph = extractor.extract(
-            source_memory_id=1, content="", metadata=None, atoms=[atom]
+            source_memory_id=1, content="", metadata=BOUNDARY.as_params(), atoms=[atom]
         )
 
         timed_entries = [
@@ -308,7 +293,7 @@ class TestGraphExtractorAtoms:
         )
 
     def test_atom_without_content_skipped(self, extractor: GraphExtractor) -> None:
-        atom = MagicMock()
+        atom = _atom()
         atom.content = ""
         atom.confidence = 0.5
         atom.session_id = None
@@ -320,12 +305,12 @@ class TestGraphExtractorAtoms:
         atom.ttl_days = 1.0
 
         graph = extractor.extract(
-            source_memory_id=1, content="", metadata=None, atoms=[atom]
+            source_memory_id=1, content="", metadata=BOUNDARY.as_params(), atoms=[atom]
         )
         assert len(graph.entries) == 0
 
     def test_atom_with_entities(self, extractor: GraphExtractor) -> None:
-        atom = MagicMock()
+        atom = _atom()
         atom.content = "事实内容"
         atom.confidence = 0.8
         atom.session_id = "s1"
@@ -337,7 +322,7 @@ class TestGraphExtractorAtoms:
         atom.ttl_days = 30.0
 
         graph = extractor.extract(
-            source_memory_id=1, content="", metadata=None, atoms=[atom]
+            source_memory_id=1, content="", metadata=BOUNDARY.as_params(), atoms=[atom]
         )
         topic_nodes = [n for n in graph.nodes if n.node_type == "topic"]
         assert len(topic_nodes) >= 2
@@ -348,7 +333,7 @@ class TestGraphExtractorAtoms:
     ) -> None:
         """Atom 路径应从父记忆参与者恢复稳定 QQ 的 person 角色。"""
 
-        atom = MagicMock()
+        atom = _atom()
         atom.content = "稳定身份参与了讨论"
         atom.confidence = 0.8
         atom.session_id = "s1"
@@ -363,34 +348,11 @@ class TestGraphExtractorAtoms:
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata={"participants": ["QQ:10001"]},
+            metadata={**BOUNDARY.as_params(), "participants": ["QQ:10001"]},
             atoms=[atom],
         )
 
         assert any(node.node_key == "person:qq:10001" for node in graph.nodes)
-
-    def test_atom_fallback_to_summary_entry(self, extractor: GraphExtractor) -> None:
-        # When an atom creates no fact node (empty canonical), fallback creates summary
-        atom = MagicMock()
-        atom.content = "only atom"
-        atom.confidence = 0.5
-        atom.session_id = None
-        atom.persona_id = None
-        atom.entities = []
-        atom.atom_type = MagicMock()
-        atom.atom_type.value = "unknown"
-        atom.importance = 0.3
-        atom.ttl_days = 1.0
-
-        graph = extractor.extract(
-            source_memory_id=1, content="", metadata=None, atoms=[atom]
-        )
-        # The atom content should be used; fallback creates summary if no entries
-        summary_nodes = [n for n in graph.nodes if n.node_type == "summary"]
-        # The fallback path creates summary nodes when entries are empty
-        assert (
-            len(summary_nodes) >= 0
-        )  # May or may not trigger depending on canonicalize
 
 
 class TestTemporalEdges:
@@ -402,10 +364,10 @@ class TestTemporalEdges:
 
     def test_temporal_edges_between_atoms(self) -> None:
         now = time.time()
-        atom_a = MagicMock()
+        atom_a = _atom()
         atom_a.content = "Event A"
         atom_a.event_time = now - 7200
-        atom_b = MagicMock()
+        atom_b = _atom()
         atom_b.content = "Event B"
         atom_b.event_time = now - 3600  # 1 hour later
 
@@ -413,7 +375,7 @@ class TestTemporalEdges:
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom_a, atom_b],
         )
         temporal_edges = [
@@ -425,10 +387,10 @@ class TestTemporalEdges:
 
     def test_temporal_edge_during_same_hour(self) -> None:
         now = time.time()
-        atom_a = MagicMock()
+        atom_a = _atom()
         atom_a.content = "Event C"
         atom_a.event_time = now
-        atom_b = MagicMock()
+        atom_b = _atom()
         atom_b.content = "Event D"
         atom_b.event_time = now + 1800  # 30 min later = DURING
 
@@ -436,14 +398,14 @@ class TestTemporalEdges:
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom_a, atom_b],
         )
         during_edges = [e for e in graph.edges if e.relation_type == TEMPORAL_DURING]
         assert len(during_edges) >= 1
 
     def test_single_atom_no_temporal_edges(self) -> None:
-        atom = MagicMock()
+        atom = _atom()
         atom.content = "Only event"
         atom.event_time = time.time()
 
@@ -451,7 +413,7 @@ class TestTemporalEdges:
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom],
         )
         temporal_edges = [
@@ -463,10 +425,10 @@ class TestTemporalEdges:
 
     def test_temporal_edges_disabled(self) -> None:
         now = time.time()
-        atom_a = MagicMock()
+        atom_a = _atom()
         atom_a.content = "Event A"
         atom_a.event_time = now - 3600
-        atom_b = MagicMock()
+        atom_b = _atom()
         atom_b.content = "Event B"
         atom_b.event_time = now
 
@@ -476,7 +438,7 @@ class TestTemporalEdges:
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom_a, atom_b],
         )
         temporal_edges = [
@@ -495,15 +457,15 @@ class TestCausalEdges:
         return GraphExtractor(config={"graph_memory.causal_edges_enabled": True})
 
     def test_causal_results_in(self, extractor: GraphExtractor) -> None:
-        atom_a = MagicMock()
+        atom_a = _atom()
         atom_a.content = "下雨导致了交通堵塞"
-        atom_b = MagicMock()
+        atom_b = _atom()
         atom_b.content = "因此我们迟到了"
 
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
@@ -514,15 +476,15 @@ class TestCausalEdges:
         assert len(causal_edges) >= 1
 
     def test_causal_caused_by(self, extractor: GraphExtractor) -> None:
-        atom_a = MagicMock()
+        atom_a = _atom()
         atom_a.content = "因为下雨了所以没去"
-        atom_b = MagicMock()
+        atom_b = _atom()
         atom_b.content = "导致我们取消计划"
 
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
@@ -533,15 +495,15 @@ class TestCausalEdges:
         assert len(causal_edges) >= 1
 
     def test_causal_prevents(self, extractor: GraphExtractor) -> None:
-        atom_a = MagicMock()
+        atom_a = _atom()
         atom_a.content = "提前备份防止数据丢失"
-        atom_b = MagicMock()
+        atom_b = _atom()
         atom_b.content = "避免错误发生"
 
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
@@ -552,13 +514,13 @@ class TestCausalEdges:
         assert len(causal_edges) >= 1
 
     def test_single_causal_atom_no_edges(self, extractor: GraphExtractor) -> None:
-        atom = MagicMock()
+        atom = _atom()
         atom.content = "因为下雨所以没去"
 
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom],
         )
         causal_edges = [
@@ -570,15 +532,15 @@ class TestCausalEdges:
 
     def test_causal_edges_disabled(self) -> None:
         extractor = GraphExtractor(config={"graph_memory.causal_edges_enabled": False})
-        atom_a = MagicMock()
+        atom_a = _atom()
         atom_a.content = "导致问题发生"
-        atom_b = MagicMock()
+        atom_b = _atom()
         atom_b.content = "因此需要解决"
 
         graph = extractor.extract(
             source_memory_id=1,
             content="",
-            metadata=None,
+            metadata=BOUNDARY.as_params(),
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
@@ -587,3 +549,27 @@ class TestCausalEdges:
             if e.relation_type in (CAUSAL_CAUSED_BY, CAUSAL_RESULTS_IN, CAUSAL_PREVENTS)
         ]
         assert len(causal_edges) == 0
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("parent_scope_key", None, "graph_boundary_required"),
+        ("parent_revision", "r2", "graph_boundary_mismatch"),
+        ("parent_memory_id", 2, "graph_boundary_mismatch"),
+        ("source_evidence", [], "grounding_user_source_missing"),
+        (
+            "source_evidence",
+            source_evidence(role="assistant"),
+            "grounding_user_source_missing",
+        ),
+    ],
+)
+def test_atom_graph_rejects_missing_evidence_or_foreign_parent(field, value, reason):
+    accepted = _atom()
+    accepted.content = "Alice likes coffee"
+    rejected = _atom()
+    rejected.content = "An unsupported assistant claim"
+    setattr(rejected, field, value)
+    with pytest.raises(ValueError, match=reason):
+        GraphExtractor().extract(1, "", BOUNDARY.as_params(), [accepted, rejected])

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +24,7 @@ class AdapterKind(str, Enum):
     DERIVED_READER = "derived_reader"
     PERSISTENT_STORE = "persistent_store"
     RERANKER = "reranker"
+    HOST_RESPONSE_BOUNDARY = "host_response_boundary"
 
 
 class AdapterCapability(str, Enum):
@@ -42,6 +44,9 @@ class AdapterCapability(str, Enum):
     EMBEDDING = "embedding"
     TOOL_DELIVERY = "tool_delivery"
     VECTOR_ACCESS = "vector_access"
+    STREAMING_PRECHECK = "streaming_precheck"
+    EXPLICIT_FAILURE_TERMINAL = "explicit_failure_terminal"
+    DELIVERY_ACK = "delivery_ack"
 
 
 class SupportLevel(str, Enum):
@@ -69,6 +74,17 @@ class NormalizationScope(str, Enum):
     PER_QUERY = "per_query"
     CALLER = "caller"
     UNKNOWN = "unknown"
+
+
+class ResponseDelivery(str, Enum):
+    """AstrBot 事件当前已发布的可见投递路径。"""
+
+    DIRECT = "direct"
+    """宿主尚未发布流式结果：结果链在发送前仍可被调用方替换。"""
+    STREAMING = "streaming"
+    """宿主已把本次回复标记为流式：可见分片先于响应后处理交付。"""
+    UNKNOWN = "unknown"
+    """事件没有暴露可验证的投递信号；不得据此宣称保护先于投递。"""
 
 
 def _enum_value(enum_type, value, reason_code: str):
@@ -184,13 +200,16 @@ class AdapterCapabilityContract:
             capability.value: self.level(capability).value
             for capability in AdapterCapability
         }
+        score_semantics = self.score
+        if isinstance(score_semantics, Mapping):
+            score_semantics = ScoreSemantics(**dict(score_semantics))
         score = None
-        if self.score is not None:
+        if isinstance(score_semantics, ScoreSemantics):
             score = {
-                "direction": self.score.direction.value,
-                "minimum": self.score.minimum,
-                "maximum": self.score.maximum,
-                "normalization": self.score.normalization.value,
+                "direction": score_semantics.direction.value,
+                "minimum": score_semantics.minimum,
+                "maximum": score_semantics.maximum,
+                "normalization": score_semantics.normalization.value,
             }
         return {"kind": self.kind.value, "capabilities": levels, "score": score}
 
@@ -232,6 +251,44 @@ ASTRBOT_FAISS_CAPABILITIES = AdapterCapabilityContract(
     ),
     score=ScoreSemantics(direction=ScoreDirection.HIGHER_IS_BETTER),
 )
+
+ASTRBOT_HOST_RESPONSE_CAPABILITIES = AdapterCapabilityContract(
+    kind=AdapterKind.HOST_RESPONSE_BOUNDARY,
+)
+"""真实 AstrBot 安装包（4.27/4.28）只读复核结论：插件侧没有可用的显式失败终态、
+请求级缓冲或发送回执。
+
+- 宿主 `pipeline/respond/stage.py` 对非流式结果在 `OnLLMResponseEvent` 之后才建立
+  结果链并发送，因此插件可以在发送前替换文本；但空链只会被静默跳过，不存在
+  插件可设置的失败终态（`ResultContentType.AGENT_RUNNER_ERROR` 与 `role="err"`
+  由宿主 runner 内部产生）。
+- 流式结果 `STREAMING_RESULT` 直接交给 `event.send_streaming()`，分片在
+  `OnLLMResponseEvent` 之前已交付平台适配器。
+- `event.send()`/`send_streaming()` 不返回送达回执；`after_message_sent` 只表示
+  已尝试发送。
+
+三项能力均未声明，按 `unsupported` 处理，调用方不得把它们当作可用保证。
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class HostResponseBoundary:
+    """AstrBot 事件暴露的响应对投递边界快照，不含请求内容或身份。"""
+
+    delivery: ResponseDelivery = ResponseDelivery.UNKNOWN
+    send_operation_started: bool | None = None
+    contract: AdapterCapabilityContract = ASTRBOT_HOST_RESPONSE_CAPABILITIES
+
+    def __post_init__(self) -> None:
+        """规范化投递枚举；非布尔发送信号按未知处理。"""
+
+        object.__setattr__(
+            self,
+            "delivery",
+            _enum_value(ResponseDelivery, self.delivery, "response_delivery_invalid"),
+        )
+        if not isinstance(self.send_operation_started, bool):
+            object.__setattr__(self, "send_operation_started", None)
 
 
 def declared_adapter_contract(adapter: Any) -> AdapterCapabilityContract | None:
@@ -293,12 +350,89 @@ def require_capability(
     return level
 
 
+_STREAMING_RESULT_NAMES = frozenset({"STREAMING_RESULT", "STREAMING_FINISH"})
+_DIRECT_RESULT_NAMES = frozenset({"LLM_RESULT", "AGENT_RUNNER_ERROR", "GENERAL_RESULT"})
+
+
+def _published_delivery(result: Any) -> ResponseDelivery:
+    """按宿主已核对的 ``ResultContentType`` 成员名判断投递路径。"""
+
+    try:
+        content_type = getattr(result, "result_content_type", None)
+        if not isinstance(content_type, Enum):
+            return ResponseDelivery.UNKNOWN
+        name = getattr(content_type, "name", "")
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return ResponseDelivery.UNKNOWN
+    if name in _STREAMING_RESULT_NAMES:
+        return ResponseDelivery.STREAMING
+    if name in _DIRECT_RESULT_NAMES:
+        return ResponseDelivery.DIRECT
+    return ResponseDelivery.UNKNOWN
+
+
+def probe_host_response_boundary(event: Any) -> HostResponseBoundary:
+    """只读探测 AstrBot 事件当前已发布的响应对投递边界。
+
+    只接受宿主显式类型信号：`MessageEventResult.result_content_type` 与宿主文档化
+    语义的 `_has_send_oper` 发送记录。事件缺失、形状不同或读取异常时返回保守
+    `unknown`，不根据方法名猜测能力，也不修改事件、结果或宿主对象。
+
+    参数:
+        event: 当前 AstrBot 消息事件或等价替身；允许为 `None`。
+
+    返回:
+        不含请求内容、身份或正文字段的投递边界快照。
+    """
+
+    try:
+        raw_send_operation = getattr(event, "_has_send_oper", None)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return HostResponseBoundary()
+    send_operation_started: bool | None = (
+        raw_send_operation if isinstance(raw_send_operation, bool) else None
+    )
+
+    try:
+        getter = getattr(event, "get_result", None)
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return HostResponseBoundary(send_operation_started=send_operation_started)
+    if not callable(getter):
+        return HostResponseBoundary(send_operation_started=send_operation_started)
+    try:
+        result = getter()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return HostResponseBoundary(send_operation_started=send_operation_started)
+    if result is None:
+        # clear_result() is used between tool steps and after streaming deltas;
+        # absence of a result cannot prove direct, pre-send delivery.
+        return HostResponseBoundary(
+            delivery=ResponseDelivery.UNKNOWN,
+            send_operation_started=send_operation_started,
+        )
+    return HostResponseBoundary(
+        delivery=_published_delivery(result),
+        send_operation_started=send_operation_started,
+    )
+
+
 __all__ = [
     "AdapterCapability",
     "AdapterCapabilityContract",
     "AdapterKind",
     "ASTRBOT_FAISS_CAPABILITIES",
+    "ASTRBOT_HOST_RESPONSE_CAPABILITIES",
+    "HostResponseBoundary",
     "NormalizationScope",
+    "ResponseDelivery",
     "ScoreDirection",
     "ScoreSemantics",
     "SupportLevel",
@@ -307,5 +441,6 @@ __all__ = [
     "adapter_contract",
     "bind_default_adapter_contract",
     "declared_adapter_contract",
+    "probe_host_response_boundary",
     "require_capability",
 ]

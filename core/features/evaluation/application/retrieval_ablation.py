@@ -440,6 +440,9 @@ def _snapshot_engine(engine: Any) -> Any:
         retrieval._dual_route_retriever = dual
         retrieval._search_memories = snapshot.search_memories
         retrieval._update_memory = None
+        # 评测必须零副作用：测试效应与干扰衰减的运行态写入口同样停用。
+        retrieval._reinforce_recall_state = None
+        retrieval._apply_interference_decay = None
         retrieval._create_tracked_task = _discard_background_work
         if callable(getattr(snapshot, "get_memory", None)):
             retrieval._get_memory = snapshot.get_memory

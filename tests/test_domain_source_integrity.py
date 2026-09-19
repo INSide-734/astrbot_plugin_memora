@@ -14,6 +14,7 @@ from core.features.memory.application.atom_source_binding import (
 from core.features.memory.domain.memory_atom import AtomType, MemoryAtom
 from core.features.memory.infrastructure.atom_store import AtomStore
 from core.features.retrieval.atom_retriever import AtomRetriever
+from tests.fact_evidence_helpers import source_evidence
 
 
 async def _create_document(
@@ -67,6 +68,7 @@ def _source_bound_atom(**overrides) -> MemoryAtom:
         "confidence": 0.9,
     }
     defaults.update(overrides)
+    defaults.setdefault("source_evidence", source_evidence(defaults["content"]))
     return MemoryAtom(**defaults)
 
 
@@ -133,13 +135,17 @@ async def test_legacy_atom_without_parent_provenance_is_not_recalled(
 
     store = AtomStore(tmp_db_path)
     await store.initialize()
-    legacy_id = await store.insert(
-        MemoryAtom(
-            parent_memory_id=17,
-            atom_type=AtomType.FACTUAL,
-            content="旧版原子内容",
-        )
+    legacy_atom = MemoryAtom(
+        parent_memory_id=17,
+        atom_type=AtomType.FACTUAL,
+        content="旧版原子内容",
+        source_evidence=[],
     )
+    with pytest.raises(ValueError, match="grounding_source_evidence_invalid"):
+        await store.insert(legacy_atom)
+    async with store._connect() as db:
+        legacy_id = await store._insert_atom(db, legacy_atom)
+        await db.commit()
     await _create_document(tmp_db_path)
 
     stored = await store.get_raw(legacy_id)
@@ -152,6 +158,7 @@ async def test_legacy_atom_without_parent_provenance_is_not_recalled(
     assert stored.parent_revision is None
     assert stored.parent_scope_key is None
     assert stored.parent_privacy_level is None
+    assert stored.source_evidence == []
     assert public_value is None
     assert [atom.atom_id for atom in raw_children] == [legacy_id]
     assert public_children == []
@@ -338,7 +345,11 @@ async def test_atom_insert_many_is_atomic_on_parent_source_failure(
 def test_atom_binding_requires_current_canonical_revision() -> None:
     """绑定辅助函数只接受带稳定 ID 与 revision 的 canonical 快照。"""
 
-    atom = MemoryAtom(parent_memory_id=0, content="事实")
+    atom = MemoryAtom(
+        parent_memory_id=0,
+        content="事实",
+        source_evidence=source_evidence("事实"),
+    )
     bound = bind_atoms_to_canonical_source(
         [atom],
         {

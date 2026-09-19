@@ -4,11 +4,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
 from core.features.recall.processors.graph_extractor import GraphExtractor
 
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
-def _make_atom(content: str, entities: list[str]) -> MagicMock:
+
+def _make_atom(content: str, entities: list[str], memory_id: int = 1) -> MagicMock:
     """构造带确定性字段的测试记忆原子。"""
     atom = MagicMock()
     atom.content = content
@@ -21,6 +24,20 @@ def _make_atom(content: str, entities: list[str]) -> MagicMock:
     atom.ttl_days = 30.0
     atom.created_at = None
     atom.event_time = None
+    atom.parent_memory_id = memory_id
+    atom.parent_scope_key = BOUNDARY.scope_key
+    atom.parent_privacy_level = BOUNDARY.privacy_level
+    atom.parent_revision = BOUNDARY.revision_token
+    atom.source_evidence = [
+        {
+            "message_id": 1,
+            "message_seq": 1,
+            "role": "user",
+            "start": 0,
+            "end": 1,
+            "message_fingerprint": "a" * 64,
+        }
+    ]
     return atom
 
 
@@ -36,6 +53,7 @@ def test_atom_graph_preserves_participant_and_topic_roles() -> None:
         source_memory_id=1,
         content=atom.content,
         metadata={
+            **BOUNDARY.as_params(),
             "topics": ["图谱设计", "INSide_734"],
             "participants": ["INSide_734"],
         },
@@ -57,6 +75,7 @@ def test_same_participant_uses_stable_person_key_across_memories() -> None:
     """不同记忆中的同一参与者应生成相同的 person 节点键。"""
     extractor = GraphExtractor()
     metadata = {
+        **BOUNDARY.as_params(),
         "topics": ["群聊"],
         "participants": ["INSide_734"],
     }
@@ -71,7 +90,7 @@ def test_same_participant_uses_stable_person_key_across_memories() -> None:
         source_memory_id=2,
         content="第二条事实",
         metadata=metadata,
-        atoms=[_make_atom("第二条事实", ["群聊", "INSide_734"])],
+        atoms=[_make_atom("第二条事实", ["群聊", "INSide_734"], 2)],
     )
 
     first_people = {node.node_key for node in first.nodes if node.node_type == "person"}
@@ -90,6 +109,7 @@ async def test_shared_participant_connects_two_memories_in_subgraph(
     store = GraphStore(tmp_db_path)
     await store.initialize()
     metadata = {
+        **BOUNDARY.as_params(),
         "topics": ["群聊"],
         "participants": ["INSide_734"],
     }
@@ -99,13 +119,13 @@ async def test_shared_participant_connects_two_memories_in_subgraph(
             source_memory_id=memory_id,
             content=fact,
             metadata=metadata,
-            atoms=[_make_atom(fact, ["群聊", "INSide_734"])],
+            atoms=[_make_atom(fact, ["群聊", "INSide_734"], memory_id)],
         )
-        node_ids = await store.upsert_nodes(graph.nodes)
-        edge_ids = await store.add_edges(graph.edges, node_ids)
-        await store.add_entries(graph.entries, node_ids, edge_ids)
+        node_ids = await store.upsert_nodes(graph.nodes, boundary=BOUNDARY)
+        edge_ids = await store.add_edges(graph.edges, node_ids, boundary=BOUNDARY)
+        await store.add_entries(graph.entries, node_ids, edge_ids, boundary=BOUNDARY)
 
-    snapshot = await store.get_subgraph_for_memories([1, 2])
+    snapshot = await store.get_subgraph_for_memories([1, 2], boundary=BOUNDARY)
     person_nodes = [
         node for node in snapshot["nodes"] if node["key"] == "person:inside_734"
     ]

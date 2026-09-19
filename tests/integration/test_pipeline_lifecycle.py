@@ -29,6 +29,7 @@ from core.features.memory.domain.memory_atom import (
     MemoryAtom,
     compute_decay_score,
 )
+from tests.fact_evidence_helpers import source_evidence
 
 # ============================================================================
 # test_memory_decay_over_time
@@ -58,6 +59,7 @@ async def test_memory_decay_over_time(
         parent_memory_id=1,
         atom_type=AtomType.EPISODIC,
         content="周末和小明去了西湖划船，天气很好",
+        source_evidence=source_evidence("周末和小明去了西湖划船，天气很好"),
         importance=0.8,
         confidence=0.85,
         entities=["西湖", "小明", "周末"],
@@ -178,6 +180,7 @@ async def test_expired_memories_cleanup(
         parent_memory_id=2,
         atom_type=AtomType.EPISODIC,
         content="今天中午吃了麻辣烫 —— 已过期",
+        source_evidence=source_evidence("今天中午吃了麻辣烫 —— 已过期"),
         importance=0.3,
         confidence=0.7,
         entities=["麻辣烫", "午饭"],
@@ -193,6 +196,7 @@ async def test_expired_memories_cleanup(
         parent_memory_id=2,
         atom_type=AtomType.FACTUAL,
         content="杭州位于浙江省，是长三角重要城市",
+        source_evidence=source_evidence("杭州位于浙江省，是长三角重要城市"),
         importance=0.65,
         confidence=0.75,
         entities=["杭州", "浙江", "长三角"],
@@ -207,6 +211,7 @@ async def test_expired_memories_cleanup(
         parent_memory_id=2,
         atom_type=AtomType.FACTUAL,
         content="西湖被列为世界文化遗产",
+        source_evidence=source_evidence("西湖被列为世界文化遗产"),
         importance=0.7,
         confidence=0.8,
         entities=["西湖", "文化遗产"],
@@ -345,6 +350,7 @@ async def test_backup_and_restore_roundtrip(
             parent_memory_id=3,
             atom_type=AtomType.EPISODIC,
             content="周末去西湖划船，天气很好",
+            source_evidence=source_evidence("周末去西湖划船，天气很好"),
             importance=0.75,
             confidence=0.85,
             entities=["西湖", "划船", "周末"],
@@ -357,6 +363,7 @@ async def test_backup_and_restore_roundtrip(
             parent_memory_id=3,
             atom_type=AtomType.FACTUAL,
             content="杭州位于浙江省，是长三角重要城市",
+            source_evidence=source_evidence("杭州位于浙江省，是长三角重要城市"),
             importance=0.65,
             confidence=0.75,
             entities=["杭州", "浙江", "长三角"],
@@ -369,6 +376,7 @@ async def test_backup_and_restore_roundtrip(
             parent_memory_id=3,
             atom_type=AtomType.PREFERENCE,
             content="用户喜欢喝深度烘焙的咖啡，尤其是拿铁",
+            source_evidence=source_evidence("用户喜欢喝深度烘焙的咖啡，尤其是拿铁"),
             importance=0.55,
             confidence=0.7,
             entities=["咖啡", "拿铁", "偏好"],

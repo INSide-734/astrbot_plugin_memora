@@ -10,6 +10,7 @@ from typing import Any
 from ....shared.number_utils import safe_float
 from ....shared.temporal import reference_time_key
 from ...retrieval.rrf_fusion import HybridResult
+from ..graph.domain.models import GraphQueryScope
 
 
 class RetrievalCacheMixin:
@@ -89,6 +90,16 @@ class RetrievalCacheMixin:
             return ""
         return str(getattr(recall_strategy, "name", recall_strategy)).casefold()
 
+    @staticmethod
+    def _query_scope_cache_key(
+        query_scope: GraphQueryScope | None,
+    ) -> tuple[str, str]:
+        """把请求级图作用域纳入缓存隔离键。"""
+        if query_scope is None:
+            return ("", "")
+        resolved = GraphQueryScope.require(query_scope)
+        return (resolved.scope_key, resolved.privacy_level)
+
     def cache_key(
         self,
         query: str,
@@ -104,6 +115,8 @@ class RetrievalCacheMixin:
         recall_strategy: Any | None = None,
         reference_time: Any | None = None,
         include_mark_write: bool = False,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> tuple[Any, ...]:
         return (
             self._cache_generation,
@@ -123,7 +136,9 @@ class RetrievalCacheMixin:
             round(float(self._config.get("document_route_weight", 0.65)), 4),
             round(float(self._config.get("graph_route_weight", 0.35)), 4),
             int(self._config.get("graph_expansion_hops", 1)),
+            self._query_scope_cache_key(query_scope),
             bool(include_mark_write),
+            bool(require_user_evidence),
         )
 
     def get_cached(self, cache_key: tuple[Any, ...]) -> list[HybridResult] | None:
@@ -179,6 +194,8 @@ class RetrievalCacheMixin:
         recall_strategy: Any | None = None,
         reference_time: Any | None = None,
         include_mark_write: bool = False,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> tuple[Any, ...]:
         return (
             cls._normalize_query(query),
@@ -193,7 +210,9 @@ class RetrievalCacheMixin:
             cls._normalize_sequence(emotion_context),
             cls._strategy_cache_key(recall_strategy),
             reference_time_key(reference_time),
+            cls._query_scope_cache_key(query_scope),
             bool(include_mark_write),
+            bool(require_user_evidence),
         )
 
     def get_session_cached(
@@ -211,6 +230,8 @@ class RetrievalCacheMixin:
         recall_strategy: Any | None = None,
         reference_time: Any | None = None,
         include_mark_write: bool = False,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> list[HybridResult] | None:
         """按完整检索语义键控的请求级缓存。"""
         if not self._session_cache_enabled or self._session_cache_ttl <= 0:
@@ -229,6 +250,8 @@ class RetrievalCacheMixin:
             recall_strategy=recall_strategy,
             reference_time=reference_time,
             include_mark_write=include_mark_write,
+            query_scope=query_scope,
+            require_user_evidence=require_user_evidence,
         )
         cached = self._session_cache.get(key)
         if cached is None:
@@ -255,6 +278,8 @@ class RetrievalCacheMixin:
         recall_strategy: Any | None = None,
         reference_time: Any | None = None,
         include_mark_write: bool = False,
+        query_scope: GraphQueryScope | None = None,
+        require_user_evidence: bool = False,
     ) -> None:
         """将检索结果写入请求级会话缓存。"""
         if not self._session_cache_enabled or self._session_cache_ttl <= 0:
@@ -273,6 +298,8 @@ class RetrievalCacheMixin:
             recall_strategy=recall_strategy,
             reference_time=reference_time,
             include_mark_write=include_mark_write,
+            query_scope=query_scope,
+            require_user_evidence=require_user_evidence,
         )
         self._session_cache[key] = (time.time(), copy.deepcopy(results))
 

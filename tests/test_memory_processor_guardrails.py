@@ -53,6 +53,9 @@ async def test_processor_accepts_sixteen_prompt_source_references() -> None:
                     "summary": "阿明喜欢喝咖啡。",
                     "topics": ["咖啡偏好"],
                     "key_facts": ["阿明喜欢喝咖啡"],
+                    "fact_source_refs": [
+                        [{"message_index": 0, "start": 0, "end": len(source)}]
+                    ],
                     "sentiment": "positive",
                     "importance": 0.8,
                     "source_refs": [
@@ -64,7 +67,9 @@ async def test_processor_accepts_sixteen_prompt_source_references() -> None:
         }
     )
 
-    results = await _processor(response).process_conversation(_messages())
+    results = await _processor(response).process_conversation(
+        _messages(), message_seqs=(1,)
+    )
 
     assert len(results) == 1
     assert results[0]["metadata"]["guardrails_validated"] is True

@@ -18,6 +18,11 @@ from ...shared.adapter_capabilities import (
     ScoreSemantics,
     bind_default_adapter_contract,
 )
+from ..memory.graph.domain.models import (
+    GraphBoundary,
+    GraphQueryScope,
+    resolve_graph_query_scope,
+)
 
 
 @dataclass(slots=True)
@@ -28,6 +33,7 @@ class GraphVectorResult:
     score: float
     content: str
     metadata: dict[str, Any]
+    source_boundary: GraphBoundary | None = None
 
 
 class GraphVectorRetriever:
@@ -79,19 +85,62 @@ class GraphVectorRetriever:
             return parsed if isinstance(parsed, dict) else {}
         return {}
 
-    async def add_entry(self, content: str, metadata: dict[str, Any]) -> int:
+    @classmethod
+    def _metadata_in_boundary(
+        cls, raw_metadata: Any, boundary: GraphBoundary
+    ) -> dict[str, Any] | None:
+        """Return metadata only when its persisted boundary matches exactly."""
+
+        metadata = cls._coerce_metadata(raw_metadata)
+        try:
+            return (
+                metadata if GraphBoundary.from_metadata(metadata) == boundary else None
+            )
+        except ValueError:
+            return None
+
+    @classmethod
+    def _metadata_boundary(cls, raw_metadata: Any) -> GraphBoundary | None:
+        """Read the persisted source proof; rows without one stay unproven."""
+
+        try:
+            return GraphBoundary.from_metadata(cls._coerce_metadata(raw_metadata))
+        except ValueError:
+            return None
+
+    async def add_entry(
+        self,
+        content: str,
+        metadata: dict[str, Any],
+        *,
+        boundary: GraphBoundary | None = None,
+    ) -> int:
         """将一条图条目插入向量数据库。"""
-        return await self.faiss_db.insert(content=content, metadata=metadata)
+
+        resolved_boundary = GraphBoundary.require(boundary)
+        resolved_boundary.validate_metadata(metadata)
+        return await self.faiss_db.insert(
+            content=content,
+            metadata={**metadata, **resolved_boundary.as_params()},
+        )
 
     async def add_entries(
         self,
         entries: list[tuple[str, dict[str, Any]]],
         *,
         batch_size: int | None = None,
+        boundary: GraphBoundary | None = None,
     ) -> list[int]:
         """按外层批次写入，限制宿主 embedding 子请求并保留 ID 顺序。"""
 
-        if not entries:
+        resolved_boundary = GraphBoundary.require(boundary)
+        normalized_entries: list[tuple[str, dict[str, Any]]] = []
+        for content, metadata in entries:
+            resolved_boundary.validate_metadata(metadata)
+            normalized_entries.append(
+                (content, {**metadata, **resolved_boundary.as_params()})
+            )
+        if not normalized_entries:
             return []
         insert_batch = getattr(self.faiss_db, "insert_batch", None)
         if not callable(insert_batch):
@@ -106,8 +155,8 @@ class GraphVectorRetriever:
             limit = self._DEFAULT_INSERT_BATCH_SIZE
         limit = max(1, min(limit, self._MAX_INSERT_BATCH_SIZE))
         vector_doc_ids: list[int] = []
-        for start in range(0, len(entries), limit):
-            chunk = entries[start : start + limit]
+        for start in range(0, len(normalized_entries), limit):
+            chunk = normalized_entries[start : start + limit]
             ids = await cast(Callable[..., Awaitable[Any]], insert_batch)(
                 contents=[content for content, _metadata in chunk],
                 metadatas=[dict(metadata) for _content, metadata in chunk],
@@ -134,38 +183,56 @@ class GraphVectorRetriever:
         k: int = 10,
         session_id: str | None = None,
         persona_id: str | None = None,
+        *,
+        boundary: GraphBoundary | None = None,
+        query_scope: GraphQueryScope | None = None,
     ) -> list[GraphVectorResult]:
-        """通过向量相似度搜索图条目。"""
+        """通过向量相似度搜索请求 scope 内的图条目。"""
+
+        scope, revision_token = resolve_graph_query_scope(
+            boundary=boundary,
+            query_scope=query_scope,
+        )
         if not query or not query.strip():
             return []
 
-        metadata_filters: dict[str, Any] = {}
+        metadata_filters: dict[str, Any] = dict(scope.as_params())
+        if revision_token is not None:
+            metadata_filters["revision_token"] = revision_token
         if session_id is not None:
             metadata_filters["session_id"] = session_id
         if persona_id is not None:
             metadata_filters["persona_id"] = persona_id
 
-        if metadata_filters and not self.backend_capabilities.supports(
-            AdapterCapability.FILTERING
-        ):
+        if not self.backend_capabilities.supports(AdapterCapability.FILTERING):
             return []
 
-        fetch_k = k * 2 if metadata_filters else k
+        fetch_k = k * 2
         raw_results = await self.faiss_db.retrieve(
             query=query,
             k=k,
             fetch_k=fetch_k,
             rerank=False,
-            metadata_filters=metadata_filters if metadata_filters else None,
+            metadata_filters=metadata_filters,
         )
 
         results: list[GraphVectorResult] = []
         for result in raw_results:
             data = result.data
             metadata = self._coerce_metadata(data.get("metadata"))
-            if metadata_filters and any(
-                metadata.get(field) != expected
-                for field, expected in metadata_filters.items()
+            source_boundary = self._metadata_boundary(metadata)
+            if (
+                source_boundary is None
+                or source_boundary.scope_key != scope.scope_key
+                or source_boundary.privacy_level != scope.privacy_level
+                or (
+                    revision_token is not None
+                    and source_boundary.revision_token != revision_token
+                )
+                or any(
+                    metadata.get(field) != expected
+                    for field, expected in metadata_filters.items()
+                )
             ):
                 continue
             source_memory_id = metadata.get("source_memory_id")
@@ -180,50 +247,118 @@ class GraphVectorRetriever:
                     score=similarity,
                     content=str(data.get("text") or ""),
                     metadata=metadata,
+                    source_boundary=source_boundary,
                 )
             )
         return results
 
-    async def _get_uuid_from_id(self, vector_doc_id: int) -> str | None:
+    async def _get_uuid_from_id(
+        self,
+        vector_doc_id: int,
+        *,
+        boundary: GraphBoundary | None = None,
+    ) -> str | None:
         """解析底层向量存储使用的内部 UUID。"""
+
+        resolved_boundary = GraphBoundary.require(boundary)
+        if not self.backend_capabilities.supports(AdapterCapability.FILTERING):
+            return None
         docs = await self.faiss_db.document_storage.get_documents(
-            metadata_filters={},
+            metadata_filters=resolved_boundary.as_params(),
             ids=[vector_doc_id],
             limit=1,
         )
         if not docs:
             return None
-        return docs[0].get("doc_id")
+        document = docs[0]
+        if (
+            self._metadata_in_boundary(document.get("metadata"), resolved_boundary)
+            is None
+        ):
+            return None
+        return document.get("doc_id")
 
-    async def delete_entry(self, vector_doc_id: int) -> bool:
+    async def delete_entry(
+        self, vector_doc_id: int, *, boundary: GraphBoundary | None = None
+    ) -> bool:
         """从向量存储中删除一条图条目。"""
-        if not self.backend_capabilities.supports(AdapterCapability.DELETE):
+
+        resolved_boundary = GraphBoundary.require(boundary)
+        if not self.backend_capabilities.supports(
+            AdapterCapability.DELETE
+        ) or not self.backend_capabilities.supports(AdapterCapability.FILTERING):
             return False
-        uuid_doc_id = await self._get_uuid_from_id(vector_doc_id)
+        uuid_doc_id = await self._get_uuid_from_id(
+            vector_doc_id, boundary=resolved_boundary
+        )
         if not uuid_doc_id:
             return False
         await self.faiss_db.delete(uuid_doc_id)
         return True
 
-    async def delete_entries_for_memory(self, source_memory_id: int) -> int:
-        """删除属于指定源记忆的全部图向量，并返回删除数量。"""
+    async def delete_entries_for_memory(
+        self,
+        source_memory_id: int,
+        *,
+        boundary: GraphBoundary | None = None,
+    ) -> int:
+        """删除同一图边界内属于指定源记忆的全部图向量。"""
+
+        resolved_boundary = GraphBoundary.require(boundary)
+        return await self._delete_matching_entries(
+            source_memory_id, boundary=resolved_boundary
+        )
+
+    async def reap_entries_for_memory(self, source_memory_id: int) -> int:
+        """跨全部 revision 与 legacy 行回收源记忆图向量；以源记忆 ID 为准。"""
+
+        return await self._delete_matching_entries(source_memory_id, boundary=None)
+
+    async def _delete_matching_entries(
+        self,
+        source_memory_id: int,
+        *,
+        boundary: GraphBoundary | None,
+    ) -> int:
+        """删除已核对来源的图向量；每个候选文档都必须证明自己的源记忆 ID。"""
+
         if not self.backend_capabilities.supports(AdapterCapability.DELETE):
             raise RuntimeError("图向量后端不支持删除")
+        if not self.backend_capabilities.supports(AdapterCapability.FILTERING):
+            raise RuntimeError("graph_vector_filtering_required")
 
+        metadata_filters: dict[str, Any] = {"source_memory_id": source_memory_id}
+        if boundary is not None:
+            metadata_filters.update(boundary.as_params())
         deleted = 0
         deleted_document_ids: set[str] = set()
         while True:
             documents = await self.faiss_db.document_storage.get_documents(
-                metadata_filters={"source_memory_id": source_memory_id},
+                metadata_filters=metadata_filters,
                 limit=self._DELETE_BATCH_SIZE,
                 offset=0,
             )
             if not documents:
                 return deleted
 
+            matching_documents = []
+            for document in documents:
+                metadata = (
+                    self._metadata_in_boundary(document.get("metadata"), boundary)
+                    if boundary is not None
+                    else self._coerce_metadata(document.get("metadata"))
+                )
+                if (
+                    metadata is not None
+                    and metadata.get("source_memory_id") == source_memory_id
+                ):
+                    matching_documents.append(document)
+            if not matching_documents:
+                return deleted
+
             document_ids = [
                 document.get("doc_id")
-                for document in documents
+                for document in matching_documents
                 if document.get("doc_id")
             ]
             if not document_ids:
@@ -240,13 +375,22 @@ class GraphVectorRetriever:
                 deleted_document_ids.add(str(document_id))
 
     async def update_metadata(
-        self, vector_doc_id: int, metadata: dict[str, Any]
+        self,
+        vector_doc_id: int,
+        metadata: dict[str, Any],
+        *,
+        boundary: GraphBoundary | None = None,
     ) -> bool:
-        """更新向量文档存储中的图条目元数据。"""
-        if not self.backend_capabilities.supports(AdapterCapability.UPDATE):
+        """更新同一图边界内的向量文档元数据。"""
+
+        resolved_boundary = GraphBoundary.require(boundary)
+        resolved_boundary.validate_metadata(metadata)
+        if not self.backend_capabilities.supports(
+            AdapterCapability.UPDATE
+        ) or not self.backend_capabilities.supports(AdapterCapability.FILTERING):
             return False
         docs = await self.faiss_db.document_storage.get_documents(
-            metadata_filters={},
+            metadata_filters=resolved_boundary.as_params(),
             ids=[vector_doc_id],
             limit=1,
         )
@@ -254,8 +398,16 @@ class GraphVectorRetriever:
             return False
 
         current_doc = docs[0]
-        merged_metadata = dict(self._coerce_metadata(current_doc.get("metadata")))
-        merged_metadata.update(metadata)
+        current_metadata = self._metadata_in_boundary(
+            current_doc.get("metadata"), resolved_boundary
+        )
+        if current_metadata is None:
+            return False
+        merged_metadata = {
+            **current_metadata,
+            **metadata,
+            **resolved_boundary.as_params(),
+        }
         async with (
             self.faiss_db.document_storage.get_session() as session,
             session.begin(),

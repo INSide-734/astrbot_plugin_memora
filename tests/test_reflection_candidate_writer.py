@@ -20,6 +20,7 @@ from core.features.quality.application.near_duplicate_detector import (
 )
 from core.features.reflection.application import candidate_writer as feature_writer
 from core.features.reflection.domain.storage_outcomes import ReflectionStoreOutcome
+from tests.fact_evidence_helpers import fact_evidence
 
 
 def test_idempotency_key_is_stable_and_does_not_expose_content() -> None:
@@ -393,6 +394,7 @@ class _UnusedSearch:
 def _owner_document() -> dict[str, Any]:
     """构造同 scope 的既有 canonical 记录。"""
 
+    owner_facts = ["项目使用 SQLite 存储会话记录", "每周五发布一次版本"]
     return {
         "id": 100,
         "text": _MERGE_CONTENT,
@@ -401,11 +403,13 @@ def _owner_document() -> dict[str, Any]:
         "metadata": {
             "scope_key": "group:group-1:topic-a",
             "privacy_level": "public",
+            "resolver_revision": "revision-1",
             "chat_type": "group",
             "session_id": "session-1",
             "persona_id": None,
             "participant_ids": ["user-1", "user-2"],
-            "key_facts": ["项目使用 SQLite 存储会话记录", "每周五发布一次版本"],
+            "key_facts": owner_facts,
+            "fact_source_evidence": fact_evidence(owner_facts),
             "status": "active",
             "importance": 0.4,
             "merge_count": 0,
@@ -444,6 +448,7 @@ async def _store_candidate(
     candidate_metadata: dict[str, Any] = {
         "idempotency_key": "reflection-key-1",
         "key_facts": ["项目使用 SQLite 存储会话记录"],
+        "fact_source_evidence": fact_evidence(["项目使用 SQLite 存储会话记录"]),
         "participant_ids": ["user-1"],
         "source_refs": [{"message_index": 1, "start": 0, "end": 3}],
         "topics": ["发布流程"],

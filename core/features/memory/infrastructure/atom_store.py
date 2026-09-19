@@ -15,6 +15,7 @@ from ..domain.memory_atom import (
     DecayType,
     MemoryAtom,
     compute_ttl,
+    has_user_source_evidence,
 )
 from .atom_fts import AtomFTSMixin
 from .atom_source_integrity import (
@@ -163,11 +164,14 @@ class AtomStore(BaseStore, AtomFTSMixin):
 
     def _prepare_atom_for_insert(self, atom: MemoryAtom) -> None:
         """在持久化前补齐基于时间推导的字段。"""
+        if not has_user_source_evidence(atom.source_evidence):
+            raise ValueError("grounding_source_evidence_invalid")
         now = time.time()
         atom.created_at = now
         atom.last_accessed_at = now
         metadata = dict(atom.metadata or {})
         metadata.setdefault("emotion_tags", list(atom.emotion_tags))
+        metadata["source_evidence"] = [dict(item) for item in atom.source_evidence]
         atom.metadata = metadata
         persona_modifier = float(metadata.get("persona_decay_modifier", 1.0))
         emotional_intensity = max(
@@ -727,6 +731,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
             session_id=row["session_id"],
             persona_id=row["persona_id"],
             metadata=metadata,
+            source_evidence=metadata.get("source_evidence", []),
         )
 
 

@@ -1,15 +1,20 @@
 """记忆读取 API"""
 
+import asyncio
 from typing import Any
 
 import aiosqlite
 from astrbot.api import logger
 from quart import request
 
+from ....features.memory.application.source_replayability import (
+    SourceReplayabilityAssessor,
+)
 from ....features.memory.infrastructure.base import apply_perf_pragmas
 from ....shared.memory_status import effective_memory_status
 from ....shared.number_utils import clamp_float
 from ....shared.sql import MEMORY_STATUS_SQL
+from .graph_api import GraphApiMixin
 from .response_utils import error_response
 
 
@@ -235,19 +240,17 @@ class MemoryReadApiMixin:
             "id": memory.get("id"),
             "content": memory_text,
             "type": metadata.get("memory_type", "GENERAL"),
-            # 后端完整字段
+            # 后端字段：只投影管理员详情 allowlist；原始 metadata、会话/人格身份、
+            # source mapping、scope/privacy/revision 不进入响应。
             "memory_id": memory.get("id"),
             "doc_id": memory.get("doc_id"),
             "text": memory_text,
             "summary": metadata.get("canonical_summary") or memory.get("text", ""),
             "created_at": memory.get("created_at"),
             "updated_at": memory.get("updated_at"),
-            "metadata": metadata,
             "memory_type": metadata.get("memory_type", "GENERAL"),
             "importance": clamp_float(metadata.get("importance"), default=0.5),
             "status": effective_memory_status(metadata),
-            "session_id": metadata.get("session_id"),
-            "persona_id": metadata.get("persona_id"),
             "key_facts": key_facts if isinstance(key_facts, list) else [],
             "topics": topics if isinstance(topics, list) else [],
             "create_time": metadata.get("create_time"),
@@ -257,29 +260,89 @@ class MemoryReadApiMixin:
             else [],
         }
 
+        assessor = SourceReplayabilityAssessor(_source_store(ready))
+        detail["source_replayability"] = (await assessor.assess(metadata)).to_payload()
+
         graph_store = self._get_graph_store(ready["memory_engine"])
-        if graph_store is not None:
+        boundary = GraphApiMixin._graph_boundary_from_memory(
+            {**memory, "metadata": metadata}
+        )
+
+        if graph_store is not None and boundary is not None:
             try:
                 subgraph = await graph_store.get_subgraph_for_memories(
                     [memory_id],
                     limit_entries=20,
                     limit_nodes=20,
                     limit_edges=30,
+                    boundary=boundary,
                 )
                 if not isinstance(subgraph, dict):
                     raise TypeError("subgraph payload must be a mapping")
-                nodes = subgraph.get("nodes", [])
-                edges = subgraph.get("edges", [])
-                entries = subgraph.get("entries", [])
-                detail["graph_context"] = {
-                    "nodes": nodes if isinstance(nodes, list) else [],
-                    "edges": edges if isinstance(edges, list) else [],
-                    "entries": entries if isinstance(entries, list) else [],
-                }
-            except Exception as e:
-                logger.debug(f"获取子图上下文失败 (memory_id={memory_id}): {e}")
+                detail["graph_context"] = _project_graph_context(subgraph)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.debug(
+                    "获取子图上下文失败 operation=get_memory_detail error_class=%s",
+                    type(exc).__name__,
+                )
                 detail["graph_context"] = None
         else:
             detail["graph_context"] = None
 
         return self._ok(detail)
+
+
+def _source_store(ready: dict[str, Any]) -> Any | None:
+    """解析会话消息存储；缺失时返回 None，由评估器判为 unknown。"""
+
+    conversation_manager = ready.get("conversation_manager")
+    if conversation_manager is None:
+        return None
+    return getattr(conversation_manager, "store", None)
+
+
+_GRAPH_NODE_SAFE_FIELDS = ("type", "entry_count", "memory_count", "degree", "weight")
+_GRAPH_EDGE_SAFE_FIELDS = (
+    "relation_type",
+    "type",
+    "weight",
+    "confidence",
+    "status",
+    "timestamp",
+)
+_GRAPH_ENTRY_SAFE_FIELDS = ("entry_type", "relation_type")
+
+
+def _project_graph_context(payload: Any) -> dict[str, list[dict[str, Any]]]:
+    """只返回图统计字段，拒绝内部正文、身份和来源映射。"""
+
+    if not isinstance(payload, dict):
+        return {"nodes": [], "edges": [], "entries": []}
+    return {
+        "nodes": _project_graph_items(payload.get("nodes"), _GRAPH_NODE_SAFE_FIELDS),
+        "edges": _project_graph_items(payload.get("edges"), _GRAPH_EDGE_SAFE_FIELDS),
+        "entries": _project_graph_items(
+            payload.get("entries"), _GRAPH_ENTRY_SAFE_FIELDS
+        ),
+    }
+
+
+def _project_graph_items(items: Any, fields: tuple[str, ...]) -> list[dict[str, Any]]:
+    """投影有限标量字段，不透传任意 Store 字典或嵌套对象。"""
+
+    if not isinstance(items, list):
+        return []
+    projected: list[dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        safe = {
+            field: item[field]
+            for field in fields
+            if field in item and isinstance(item[field], (str, int, float, bool))
+        }
+        if safe:
+            projected.append(safe)
+    return projected

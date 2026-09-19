@@ -354,6 +354,96 @@ describe("MemoryPage", () => {
     expect(within(drawer).getByRole("button", { name: /^edit$/i })).toBeTruthy();
   });
 
+  it("renders the sanitized source replayability status in the detail sheet", async () => {
+    bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
+      if (path === "page/memories") {
+        return Promise.resolve(ok({
+          items: [
+            {
+              id: "mem-src",
+              summary: "Memory with source status",
+              type: "fact",
+              importance: 0.6,
+              status: "active",
+            },
+          ],
+          total: 1,
+        }));
+      }
+      if (path === "page/memory/detail") {
+        return Promise.resolve(ok({
+          memory: {
+            id: params.id,
+            content: "Memory body",
+            type: "fact",
+            importance: 0.6,
+            status: "active",
+            source_replayability: {
+              status: "partial",
+              references: { total: 2, verified: 1, absent: 1, unverifiable: 0 },
+              reason_codes: ["source_partial"],
+            },
+          },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<MemoryPage showToast={showToast} />);
+    fireEvent.click(await screen.findByText("Memory with source status"));
+
+    const detailTitle = await screen.findByText("Memory Detail");
+    const drawer = detailTitle.closest("div")?.parentElement;
+    if (!drawer) throw new Error("expected detail drawer");
+
+    expect(within(drawer).getByText(EN_MAP["detail.sourceReplayability"])).toBeTruthy();
+    expect(within(drawer).getByText(EN_MAP["detail.sourceStatus.partial"])).toBeTruthy();
+    expect(within(drawer).getByText("source_partial")).toBeTruthy();
+    expect(
+      within(drawer).getByText(
+        EN_MAP["detail.sourceCounts"]
+          .replace("{0}", "1")
+          .replace("{1}", "2")
+          .replace("{2}", "1")
+          .replace("{3}", "0"),
+      ),
+    ).toBeTruthy();
+  });
+
+  it("omits the replayability section when the detail payload has no status", async () => {
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/memories") {
+        return Promise.resolve(ok({
+          items: [
+            {
+              id: "mem-plain",
+              summary: "Memory without source status",
+              type: "fact",
+              importance: 0.5,
+              status: "active",
+            },
+          ],
+          total: 1,
+        }));
+      }
+      if (path === "page/memory/detail") {
+        return Promise.resolve(ok({
+          memory: { id: "mem-plain", content: "Plain body", type: "fact", status: "active" },
+        }));
+      }
+      return Promise.resolve(ok({}));
+    });
+
+    render(<MemoryPage showToast={showToast} />);
+    fireEvent.click(await screen.findByText("Memory without source status"));
+
+    const detailTitle = await screen.findByText("Memory Detail");
+    const drawer = detailTitle.closest("div")?.parentElement;
+    if (!drawer) throw new Error("expected detail drawer");
+
+    expect(within(drawer).queryByText(EN_MAP["detail.sourceReplayability"])).toBeNull();
+  });
+
   it("shows a non-field save failure in the form's only live validation summary", async () => {
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
       if (path === "page/memories") {

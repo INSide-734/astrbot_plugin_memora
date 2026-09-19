@@ -353,6 +353,7 @@ class TestFormatMemoriesForFakeToolCall:
         assert (
             result[0]["tool_calls"][0]["function"]["name"] == "recall_long_term_memory"
         )
+        assert "s1" not in result[1]["content"]
 
     def test_tool_message_contains_results(self) -> None:
         memories: list[dict[str, Any]] = [
@@ -367,7 +368,11 @@ class TestFormatMemoriesForFakeToolCall:
         tool_content = json.loads(result[1]["content"])
         assert tool_content["count"] == 1
         assert len(tool_content["results"]) == 1
-        assert tool_content["results"][0]["id"] == "mem_002"
+        assert tool_content["results"][0] == {
+            "content": "记忆内容",
+            "score": 0.75,
+            "importance": 0.6,
+        }
 
     def test_filters_are_passed_through(self) -> None:
         memories: list[dict[str, Any]] = [
@@ -394,14 +399,6 @@ class TestFormatMemoriesForFakeToolCall:
         assistant_args = json.loads(result[0]["tool_calls"][0]["function"]["arguments"])
         assert len(assistant_args["query"]) == 200
 
-    def test_uses_doc_id_if_id_missing(self) -> None:
-        memories: list[dict[str, Any]] = [
-            {"doc_id": "doc_123", "content": "test", "score": 0.5, "metadata": {}}
-        ]
-        result = format_memories_for_fake_tool_call(memories, "q")
-        tool_content = json.loads(result[1]["content"])
-        assert tool_content["results"][0]["id"] == "doc_123"
-
     def test_object_like_memory_with_attrs(self) -> None:
         mem = MagicMock()
         mem.doc_id = "obj_001"
@@ -411,8 +408,12 @@ class TestFormatMemoriesForFakeToolCall:
 
         result = format_memories_for_fake_tool_call([mem], "q")
         tool_content = json.loads(result[1]["content"])
-        assert tool_content["results"][0]["id"] == "obj_001"
-        assert tool_content["results"][0]["content"] == "对象记忆"
+        assert tool_content["results"][0] == {
+            "content": "对象记忆",
+            "score": 0.92,
+            "importance": 0.8,
+        }
+        assert "obj_001" not in result[1]["content"]
 
 
 class TestFormatMemoriesForFakeToolCallDeepSeekV4:

@@ -1,6 +1,7 @@
 """ConversationStore 的只读查询与数据完整性操作。"""
 
 import json
+from collections.abc import Sequence
 from typing import Any
 
 from astrbot.api import logger
@@ -211,6 +212,52 @@ class MessageQueryMixin:
             )
             for row in rows
         ]
+
+    async def get_message_identity_rows(
+        self, message_ids: Sequence[int]
+    ) -> dict[int, dict[str, Any]]:
+        """按主键批量读取消息稳定身份，供只读来源对账。
+
+        只返回主键、会话、序号、角色与正文；布尔值和小于 1 的 ID 被忽略，
+        连接未初始化时显式失败，调用方据此区分「无法核对」与「消息不存在」。
+        """
+        if self.connection is None:
+            raise RuntimeError("数据库连接未初始化")
+        normalized = sorted(
+            {
+                int(message_id)
+                for message_id in message_ids
+                if isinstance(message_id, int)
+                and not isinstance(message_id, bool)
+                and message_id >= 1
+            }
+        )
+        if not normalized:
+            return {}
+        rows: dict[int, dict[str, Any]] = {}
+        for start in range(0, len(normalized), 200):
+            chunk = tuple(normalized[start : start + 200])
+            placeholders = ",".join("?" for _ in chunk)
+            async with self.connection.execute(
+                f"SELECT id,session_id,message_seq,role,content FROM messages "
+                f"WHERE id IN ({placeholders})",
+                chunk,
+            ) as cursor:
+                for row in await cursor.fetchall():
+                    message_id = int(row["id"])
+                    raw_seq = row["message_seq"]
+                    rows[message_id] = {
+                        "session_id": str(row["session_id"]),
+                        "message_seq": (
+                            int(raw_seq)
+                            if isinstance(raw_seq, int)
+                            and not isinstance(raw_seq, bool)
+                            else None
+                        ),
+                        "role": str(row["role"]),
+                        "content": str(row["content"]),
+                    }
+        return rows
 
     async def get_messages_range(
         self, session_id: str, offset: int = 0, limit: int = 50

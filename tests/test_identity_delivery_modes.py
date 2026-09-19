@@ -19,6 +19,7 @@ from core.features.injection.domain.models import (
     PresetName,
     RoutingMode,
 )
+from tests.injection_executor_support import resolved_reference
 
 
 class _FixedAdapter:
@@ -127,6 +128,9 @@ async def test_identity_reference_reaches_every_delivery_without_system_prompt(
                     "metadata": {
                         "importance": 0.8,
                         "identity_reference_lines": [line],
+                        "key_facts": ["历史事实"],
+                        "fact_source_evidence": [[resolved_reference("历史事实")]],
+                        "source_evidence": [resolved_reference("历史事实")],
                     },
                 }
             ],

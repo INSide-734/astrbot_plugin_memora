@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from core.features.memory.graph.domain.models import GraphBoundary
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
+
 
 def _make_graph_kw_result(doc_id: int, score: float, content: str = "") -> Any:
     from core.features.retrieval.graph_keyword_retriever import GraphKeywordResult
@@ -54,14 +58,16 @@ class TestGraphRetriever:
     @pytest.mark.asyncio
     async def test_search_empty_query(self, retriever: Any) -> None:
         """Empty query returns empty list."""
-        assert await retriever.search("") == []
-        assert await retriever.search("   ") == []
+        assert await retriever.search("", boundary=BOUNDARY) == []
+        assert await retriever.search("   ", boundary=BOUNDARY) == []
 
     @pytest.mark.asyncio
     async def test_search_both_empty(self, retriever: Any) -> None:
         """When both routes return nothing, result is empty."""
         timing: dict[str, float] = {}
-        results = await retriever.search("nothing matches", k=5, timing_sink=timing)
+        results = await retriever.search(
+            "nothing matches", k=5, timing_sink=timing, boundary=BOUNDARY
+        )
         assert results == []
         assert "graph_route_degraded" not in timing
         assert timing["graph_fusion_ms"] == 0.0
@@ -82,7 +88,9 @@ class TestGraphRetriever:
         )
         timing: dict[str, float | bool] = {}
 
-        results = await retriever.search("test", k=5, timing_sink=timing)
+        results = await retriever.search(
+            "test", k=5, timing_sink=timing, boundary=BOUNDARY
+        )
 
         assert results == []
         assert timing["graph_route_degraded"] is True
@@ -93,7 +101,7 @@ class TestGraphRetriever:
         retriever.keyword_retriever.search.return_value = [
             _make_graph_kw_result(1, 0.9, "keyword hit"),
         ]
-        results = await retriever.search("test", k=5)
+        results = await retriever.search("test", k=5, boundary=BOUNDARY)
         assert len(results) == 1
         assert results[0].doc_id == 1
         assert results[0].keyword_score == 0.9
@@ -105,7 +113,7 @@ class TestGraphRetriever:
         retriever.vector_retriever.search.return_value = [
             _make_graph_vec_result(2, 0.85, "vector hit"),
         ]
-        results = await retriever.search("test", k=5)
+        results = await retriever.search("test", k=5, boundary=BOUNDARY)
         assert len(results) == 1
         assert results[0].doc_id == 2
         assert results[0].vector_score == 0.85
@@ -120,7 +128,7 @@ class TestGraphRetriever:
         retriever.vector_retriever.search.return_value = [
             _make_graph_vec_result(2, 0.9, "vec_only"),
         ]
-        results = await retriever.search("test", k=5)
+        results = await retriever.search("test", k=5, boundary=BOUNDARY)
         assert len(results) == 2
         for r in results:
             assert r.score_breakdown is not None
@@ -143,5 +151,7 @@ class TestGraphRetriever:
             "graph_relation_type"
         ] = "friend"
 
-        results = await retriever.search("test", k=5, memory_types=["relational"])
+        results = await retriever.search(
+            "test", k=5, memory_types=["relational"], boundary=BOUNDARY
+        )
         assert len(results) >= 1

@@ -90,7 +90,7 @@
   "rebuild_graph": {
     "action_name": "Rebuild graph memory",
     "starting": "Starting graph memory index rebuild, this may take some time...",
-    "success": "Graph memory rebuild complete.\n\n• Rebuilt: {rebuilt} items\n• Skipped: {skipped} items"
+    "success": "Graph memory rebuild complete.\n\n• Rebuilt: {rebuilt} items\n• Skipped: {skipped} items\n• Failed: {failed} items"
   },
   "webui": {
     "guide": "Memora Management Interface\n\nPlease access via AstrBot official WebUI:\n• Open AstrBot Dashboard\n• Go to Plugins -> Memora -> Pages -> dashboard\n\nTips:\n• Plugin page reuses AstrBot login state, no extra login needed\n• Requires AstrBot >= 4.24.2\n\nAvailable in interface:\n• Memory editing and management\n• Visual statistics and analysis\n• Graph browsing and recall debugging\n• Data migration and index maintenance"
@@ -799,10 +799,10 @@
       "nodes": "Nodes",
       "edges": "Edges",
       "queryPh": "Search entities, topics, or memories...",
-      "memoryIdPh": "Memory ID",
+      "memoryIdPh": "Memory ID (optional)",
       "searchBtn": "Search Graph",
       "overviewBtn": "Overview",
-      "canvasDefault": "Search to explore the graph",
+      "canvasDefault": "No graph data for these filters. Adjust the filters or return to Overview.",
       "nodeTopic": "Topic",
       "nodePerson": "Person",
       "nodeFact": "Fact",
@@ -886,6 +886,15 @@
       "viewMode": "View mode",
       "editMode": "Edit mode",
       "title": "Memory Detail",
+      "sourceReplayability": "Source replayability",
+      "sourceCounts": "Verified {0}/{1} references, missing {2}, unverifiable {3}",
+      "sourceReasons": "Reason codes",
+      "sourceStatus": {
+        "replayable": "Replayable",
+        "partial": "Partially replayable",
+        "unavailable": "Not replayable",
+        "unknown": "Unable to verify"
+      },
       "edit": "Edit",
       "nodeMemories": "Memory Count",
       "nodeDegree": "Degree",

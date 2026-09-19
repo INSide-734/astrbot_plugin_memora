@@ -365,6 +365,9 @@ async def test_metrics_summary_exposes_scheduler_run_metadata(tmp_path) -> None:
     assert schedulers["decay"]["last_decay_date"] == "2026-07-04"
     assert schedulers["decay"]["last_completed_at"] == 1783140000.5
     assert schedulers["decay"]["retry_count"] == 1
+    assert schedulers["decay"]["startup_failed"] is False
+    assert "startup_error" not in schedulers["decay"]
+    assert "suggestion" not in schedulers["decay"]
 
 
 @pytest.mark.asyncio

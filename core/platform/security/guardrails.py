@@ -28,9 +28,11 @@ T = TypeVar("T", bound=BaseModel)
 class SourceReferenceSchema(BaseModel):
     """限制单条抽取结果只能引用当前匿名消息窗口。"""
 
-    message_index: int = Field(ge=0, le=4095, description="当前窗口内的消息序号")
-    start: int = Field(ge=0, le=100_000, description="正文引用起点，左闭")
-    end: int = Field(ge=1, le=100_000, description="正文引用终点，右开")
+    message_index: int = Field(
+        ge=0, le=4095, strict=True, description="当前窗口内的消息序号"
+    )
+    start: int = Field(ge=0, le=100_000, strict=True, description="正文引用起点，左闭")
+    end: int = Field(ge=1, le=100_000, strict=True, description="正文引用终点，右开")
 
     @model_validator(mode="after")
     def _validate_range(self) -> "SourceReferenceSchema":
@@ -92,6 +94,26 @@ class MemoryAtomSchema(BaseModel):
         max_length=16,
         description="当前匿名消息窗口中的受控来源引用，最多 16 条",
     )
+    fact_source_refs: list[list[SourceReferenceSchema]] = Field(
+        default_factory=list,
+        description="与 key_facts 按下标一一对应的匿名来源引用",
+    )
+
+    @field_validator("fact_source_refs", mode="wrap")
+    @classmethod
+    def _parse_fact_references(cls, value: Any, handler: Any) -> Any:
+        try:
+            return handler(value)
+        except ValueError as error:
+            raise ValueError("grounding_fact_evidence_mismatch") from error
+
+    @model_validator(mode="after")
+    def _validate_fact_alignment(self) -> "MemoryAtomSchema":
+        if len(self.fact_source_refs) != len(self.key_facts):
+            raise ValueError("grounding_fact_evidence_mismatch")
+        if any(len(refs) > 16 for refs in self.fact_source_refs):
+            raise ValueError("grounding_fact_evidence_mismatch")
+        return self
 
     @model_validator(mode="before")
     @classmethod

@@ -216,6 +216,31 @@ async def test_reader_returns_baseline_on_store_error() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["empty_store", "store_error"])
+async def test_reader_never_returns_unverified_projections_on_baseline(
+    failure,
+) -> None:
+    """未通过本次校验的原始 projection 不得随 baseline/回退进入候选。"""
+
+    canary = "ASSISTANT_ONLY_CANARY"
+    reader = make_reader(bundle()) if failure == "store_error" else make_reader()
+    if failure == "store_error":
+        reader.store.active_projection_bundles_for_seeds = AsyncMock(
+            side_effect=RuntimeError("内部错误")
+        )
+    seed = candidate(17)
+    seed.metadata["derived_projections"] = [
+        {"type": "episode_summary", "summary": canary, "confidence": 0.9}
+    ]
+
+    result = await reader.attach([seed], scope=read_scope(), budget=read_budget())
+
+    assert result[0].metadata.get("derived_projections") is None
+    assert result[0] is not seed
+    assert seed.metadata["derived_projections"][0]["summary"] == canary
+
+
+@pytest.mark.asyncio
 async def test_reader_propagates_cancelled_error() -> None:
     reader = make_reader(bundle())
     reader.store.active_projection_bundles_for_seeds = AsyncMock(

@@ -104,6 +104,8 @@ class MemoryEngine(
             get_memory_cb=self.get_memory,
             update_memory_cb=self.update_memory,
             create_tracked_task_cb=self._create_tracked_task,
+            reinforce_recall_state_cb=self.reinforce_recall_state,
+            apply_interference_decay_cb=self.apply_interference_decay,
         )
         self.topic_catalog_store = TopicCatalogStore(db_connection=None)
         self._write_journal = WriteOpJournal(
@@ -186,7 +188,7 @@ class MemoryEngine(
     async def maintain_storage(self, *, vacuum: bool = False) -> dict[str, Any]:
         return await self._maintenance.maintain_storage(vacuum=vacuum)
 
-    async def rebuild_graph_index(self) -> dict[str, int]:
+    async def rebuild_graph_index(self) -> dict[str, Any]:
         return await self._maintenance.rebuild_graph_index()
 
     async def register_trigger(self, word: str, memory_id: int) -> None:

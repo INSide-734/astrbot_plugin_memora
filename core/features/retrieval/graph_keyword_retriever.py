@@ -13,6 +13,11 @@ from ...shared.adapter_capabilities import (
     ScoreDirection,
     ScoreSemantics,
 )
+from ..memory.graph.domain.models import (
+    GraphBoundary,
+    GraphQueryScope,
+    resolve_graph_query_scope,
+)
 from ..memory.graph.infrastructure.graph_store import GraphStore
 from ..memory.infrastructure.hierarchy_store import EntityHierarchyStore
 from ..recall.processors.text_processor import TextProcessor
@@ -27,6 +32,7 @@ class GraphKeywordResult:
     content: str
     metadata: dict[str, Any]
     graph_distance: int | None = None
+    source_boundary: GraphBoundary | None = None
 
 
 class GraphKeywordRetriever:
@@ -72,8 +78,12 @@ class GraphKeywordRetriever:
         limit: int = 10,
         session_id: str | None = None,
         persona_id: str | None = None,
+        *,
+        boundary: GraphBoundary | None = None,
+        query_scope: GraphQueryScope | None = None,
     ) -> list[GraphKeywordResult]:
         """通过关键词匹配搜索图路由。"""
+        resolve_graph_query_scope(boundary=boundary, query_scope=query_scope)
         if not query or not query.strip():
             return []
 
@@ -83,41 +93,48 @@ class GraphKeywordRetriever:
 
         escaped_tokens = ['"' + token.replace('"', '""') + '"' for token in tokens]
         fts_query = " OR ".join(escaped_tokens)
-
         direct_hits = await self.graph_store.search_entries_by_bm25(
             fts_query=fts_query,
             limit=max(limit * 3, 12),
             session_id=session_id,
             persona_id=persona_id,
+            boundary=boundary,
+            query_scope=query_scope,
         )
         matched_nodes = await self.graph_store.search_nodes_by_tokens(
             tokens=tokens,
             limit=max(limit * 3, 12),
+            boundary=boundary,
+            query_scope=query_scope,
         )
         matched_node_ids = [item["id"] for item in matched_nodes]
 
-        # G3: hierarchy expansion — search entries for ancestor entities
         hierarchy_hits: list[dict[str, Any]] = []
         if self.hierarchy_store is not None and matched_node_ids:
             ancestor_ids: set[int] = set()
             for item in matched_nodes:
                 node_val = item.get("canonical_value") or item.get("node_value", "")
-                if node_val:
-                    ancestors = await self.hierarchy_store.get_ancestors(
-                        str(node_val), max_depth=3
+                if not node_val:
+                    continue
+                ancestors = await self.hierarchy_store.get_ancestors(
+                    str(node_val), max_depth=3
+                )
+                for ancestor in ancestors:
+                    anc_nodes = await self.graph_store.search_nodes_by_tokens(
+                        tokens=[ancestor],
+                        limit=3,
+                        boundary=boundary,
+                        query_scope=query_scope,
                     )
-                    for ancestor in ancestors:
-                        anc_nodes = await self.graph_store.search_nodes_by_tokens(
-                            tokens=[ancestor], limit=3
-                        )
-                        for an in anc_nodes:
-                            ancestor_ids.add(an["id"])
+                    ancestor_ids.update(an["id"] for an in anc_nodes)
             if ancestor_ids:
                 hierarchy_hits = await self.graph_store.get_entries_for_node_ids(
                     node_ids=list(ancestor_ids),
                     limit=max(self.expansion_limit, limit * 3),
                     session_id=session_id,
                     persona_id=persona_id,
+                    boundary=boundary,
+                    query_scope=query_scope,
                 )
 
         expansion_hits = await self.graph_store.get_entries_for_node_ids(
@@ -125,6 +142,8 @@ class GraphKeywordRetriever:
             limit=max(self.expansion_limit, limit * 3),
             session_id=session_id,
             persona_id=persona_id,
+            boundary=boundary,
+            query_scope=query_scope,
         )
         edge_neighbor_hits: list[dict[str, Any]] = []
         second_hop_hits: list[dict[str, Any]] = []
@@ -132,6 +151,8 @@ class GraphKeywordRetriever:
             first_hop_node_ids = await self.graph_store.get_neighbor_node_ids(
                 node_ids=matched_node_ids,
                 limit=max(self.expansion_limit, limit * 3),
+                boundary=boundary,
+                query_scope=query_scope,
             )
             matched_node_set = set(matched_node_ids)
             first_hop_node_ids = [
@@ -144,12 +165,15 @@ class GraphKeywordRetriever:
                 limit=max(self.expansion_limit, limit * 3),
                 session_id=session_id,
                 persona_id=persona_id,
+                boundary=boundary,
+                query_scope=query_scope,
             )
-
             if self.expansion_hops >= 2 and first_hop_node_ids:
                 second_hop_node_ids = await self.graph_store.get_neighbor_node_ids(
                     node_ids=first_hop_node_ids,
                     limit=max(self.expansion_limit, limit * 3),
+                    boundary=boundary,
+                    query_scope=query_scope,
                 )
                 excluded_node_ids = matched_node_set | set(first_hop_node_ids)
                 second_hop_node_ids = [
@@ -162,9 +186,12 @@ class GraphKeywordRetriever:
                     limit=max(self.expansion_limit, limit * 3),
                     session_id=session_id,
                     persona_id=persona_id,
+                    boundary=boundary,
+                    query_scope=query_scope,
                 )
 
         aggregated: dict[int, GraphKeywordResult] = {}
+        conflicted_doc_ids: set[int] = set()
 
         def merge_hit(
             hit: dict[str, Any],
@@ -173,14 +200,24 @@ class GraphKeywordRetriever:
             graph_distance: int | None,
         ) -> None:
             """按 canonical ID 合并命中，并保留最小已知图距离。"""
-
             doc_id = int(hit["source_memory_id"])
+            if doc_id in conflicted_doc_ids:
+                return
+            source_boundary = hit.get("source_boundary")
+            if not isinstance(source_boundary, GraphBoundary):
+                source_boundary = boundary
+            if source_boundary is None:
+                return
+            current = aggregated.get(doc_id)
+            if current is not None and current.source_boundary != source_boundary:
+                conflicted_doc_ids.add(doc_id)
+                aggregated.pop(doc_id, None)
+                return
             weighted_score = max(0.0, min(1.0, float(hit["score"]) * weight))
             hit_metadata = dict(hit.get("metadata") or {})
             hit_metadata["graph_match_source"] = match_source
             hit_metadata["graph_entry_type"] = hit.get("entry_type")
             hit_metadata["graph_relation_type"] = hit.get("relation_type")
-            current = aggregated.get(doc_id)
             minimum_distance = graph_distance
             if current is not None and current.graph_distance is not None:
                 minimum_distance = (
@@ -195,6 +232,7 @@ class GraphKeywordRetriever:
                     content=str(hit.get("content") or ""),
                     metadata=hit_metadata,
                     graph_distance=minimum_distance,
+                    source_boundary=source_boundary,
                 )
                 return
             current.graph_distance = minimum_distance
@@ -205,33 +243,16 @@ class GraphKeywordRetriever:
                 )
 
         for hit in direct_hits:
-            merge_hit(hit, weight=1.0, match_source="graph_keyword", graph_distance=0)
-
+            merge_hit(hit, 1.0, "graph_keyword", 0)
         for hit in expansion_hits:
-            merge_hit(hit, weight=0.7, match_source="graph_neighbor", graph_distance=0)
-
+            merge_hit(hit, 0.7, "graph_neighbor", 0)
         for hit in hierarchy_hits:
-            merge_hit(
-                hit,
-                weight=0.5,
-                match_source="graph_hierarchy",
-                graph_distance=None,
-            )
-
+            merge_hit(hit, 0.5, "graph_hierarchy", None)
         for hit in edge_neighbor_hits:
-            merge_hit(
-                hit,
-                weight=0.7,
-                match_source="graph_edge_neighbor",
-                graph_distance=1,
-            )
-
+            merge_hit(hit, 0.7, "graph_edge_neighbor", 1)
         for hit in second_hop_hits:
             merge_hit(
-                hit,
-                weight=max(0.0, min(1.0, self.second_hop_weight)),
-                match_source="graph_second_hop",
-                graph_distance=2,
+                hit, max(0.0, min(1.0, self.second_hop_weight)), "graph_second_hop", 2
             )
 
         results = sorted(aggregated.values(), key=lambda item: item.score, reverse=True)

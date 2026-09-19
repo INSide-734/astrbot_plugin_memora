@@ -16,6 +16,7 @@ from core.features.memory.infrastructure.write_op_serialization import (
     safe_json_dict,
     serialize_atom_for_repair,
 )
+from tests.fact_evidence_helpers import source_evidence
 
 
 class TestSafeJsonDict:
@@ -58,6 +59,7 @@ class TestSerializeAtomForRepair:
             parent_memory_id=42,
             atom_type=AtomType.EPISODIC,
             content="test content",
+            source_evidence=source_evidence("test content"),
             entities=["entity1"],
             importance=0.8,
             confidence=0.9,
@@ -82,6 +84,7 @@ class TestSerializeAtomForRepair:
         atom = MemoryAtom(
             parent_memory_id=1,
             content="minimal",
+            source_evidence=source_evidence("minimal"),
         )
         result = serialize_atom_for_repair(atom)
         assert result["parent_memory_id"] == 1
@@ -125,6 +128,7 @@ class TestSerializeAtomForRepair:
             parent_memory_id=10,
             atom_type=AtomType.PLANNED,
             content="meeting tomorrow",
+            source_evidence=source_evidence("meeting tomorrow"),
             decay_type=DecayType.STEP,
             event_time=time.time() + 86400,
             ttl_days=3.0,
@@ -142,6 +146,7 @@ class TestDeserializeAtomFromRepair:
     def test_deserializes_valid_payload(self) -> None:
         payload: dict[str, Any] = {
             "content": "deserialized content",
+            "source_evidence": source_evidence("deserialized content"),
             "atom_type": "factual",
             "decay_type": "exponential",
             "status": "active",
@@ -171,14 +176,47 @@ class TestDeserializeAtomFromRepair:
         assert atom.persona_id == "my_persona"
 
     def test_returns_none_for_empty_content(self) -> None:
-        assert _deserialize_atom_from_repair({"content": ""}, 1, None, None) is None
-        assert _deserialize_atom_from_repair({"content": "  "}, 1, None, None) is None
+        assert (
+            _deserialize_atom_from_repair(
+                {
+                    "content": "",
+                    "source_evidence": source_evidence("empty content fixture"),
+                },
+                1,
+                None,
+                None,
+            )
+            is None
+        )
+        assert (
+            _deserialize_atom_from_repair(
+                {
+                    "content": "  ",
+                    "source_evidence": source_evidence("blank content fixture"),
+                },
+                1,
+                None,
+                None,
+            )
+            is None
+        )
 
     def test_returns_none_for_missing_content(self) -> None:
-        assert _deserialize_atom_from_repair({}, 1, None, None) is None
+        assert (
+            _deserialize_atom_from_repair(
+                {"source_evidence": source_evidence("missing content fixture")},
+                1,
+                None,
+                None,
+            )
+            is None
+        )
 
     def test_falls_back_session_persona(self) -> None:
-        payload = {"content": "test"}
+        payload = {
+            "content": "test",
+            "source_evidence": source_evidence("test"),
+        }
         atom = _deserialize_atom_from_repair(payload, 1, "fb_sess", "fb_pers")
         assert atom is not None
         assert atom.session_id == "fb_sess"
@@ -187,6 +225,7 @@ class TestDeserializeAtomFromRepair:
     def test_defaults_for_unknown_enum_values(self) -> None:
         payload = {
             "content": "test",
+            "source_evidence": source_evidence("test"),
             "atom_type": "bogus_type",
             "decay_type": "bogus_decay",
             "status": "bogus_status",
@@ -198,7 +237,10 @@ class TestDeserializeAtomFromRepair:
         assert atom.status == AtomStatus.ACTIVE
 
     def test_all_defaults_applied(self) -> None:
-        payload: dict[str, Any] = {"content": "bare minimum"}
+        payload: dict[str, Any] = {
+            "content": "bare minimum",
+            "source_evidence": source_evidence("bare minimum"),
+        }
         atom = _deserialize_atom_from_repair(payload, 7, None, None)
         assert atom is not None
         assert atom.parent_memory_id == 7

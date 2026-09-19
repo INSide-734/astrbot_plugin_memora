@@ -27,7 +27,14 @@ from .gate_context import resolve_reflection_gate
 from .grounding_judge import GroundingJudgeCallable, GroundingJudgeMixin
 from .json_parser import JsonParser, SummaryParseError
 from .llm_client import LLMClient
-from .memory_grounding import GroundingResult, MemoryGroundingValidator
+from .memory_fact_evidence import (
+    admit_candidate_facts,
+    apply_admission_metadata,
+    apply_fact_admission,
+    guarded_result_to_structured_data,
+    has_trusted_fact_evidence,
+)
+from .memory_grounding import MemoryGroundingValidator
 from .memory_processor_candidate_mixin import MemoryProcessorCandidateMixin
 from .prompt_builder import (
     PromptBuilder,
@@ -174,12 +181,12 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
         :class:`SummaryParseError`，合法空候选返回空列表。
 
         ``message_seqs`` 是窗口稳定序号，必须与 ``messages`` 同序等长；
-        缺失时来源证据仍带消息标识与指纹，但不带序号。
+        缺失时无法生成可脱离窗口重定位的事实证据，候选保守隔离。
         """
         if not messages:
             raise ValueError("消息列表不能为空")
         if message_seqs is not None and len(message_seqs) != len(messages):
-            raise ValueError("message_seqs 必须与 messages 等长")
+            raise ValueError("grounding_message_sequence_invalid")
         profile, gate_enabled = resolve_reflection_gate(
             self._gate_runtime,
             is_group_chat=is_group_chat,
@@ -341,7 +348,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
                 if isinstance(mem, str):
                     continue
                 mem_summary = str(mem.get("summary", "") or "")
-                mem_facts = [str(f) for f in (mem.get("key_facts") or []) if f]
+                mem_facts = mem.get("key_facts") or []
                 mem_topics = [str(t) for t in (mem.get("topics") or []) if t]
                 if not mem_summary and not mem_facts:
                     continue
@@ -367,6 +374,22 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
                 mem_emotion_tags = mem.get("emotion_tags") or []
                 if not mem_emotion_tags:
                     mem_emotion_tags = emotion_tags or []
+
+                admission = await admit_candidate_facts(
+                    validator=self.grounding_validator,
+                    resolve_judge=self.resolve_grounding_judge,
+                    mem=mem,
+                    facts=mem_facts,
+                    messages=messages,
+                    is_group_chat=is_group_chat,
+                    profile=profile,
+                    message_seqs=message_seqs,
+                    gate_enabled=gate_enabled,
+                    topics=mem_topics,
+                    importance=mem_importance,
+                )
+                mem, mem_topics = apply_fact_admission(mem, admission, mem_topics)
+                rejected_candidate = admission.quarantine_candidate
 
                 mem_content, mem_metadata = self.storage.build_storage_format(
                     fallback_excerpt, mem, is_group_chat
@@ -401,49 +424,12 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
                 elif is_group_chat and mem.get("participants"):
                     mem_metadata["participants"] = mem["participants"]
 
-                if gate_enabled:
-                    grounding = self.grounding_validator.validate(
-                        mem,
-                        messages,
-                        is_group_chat=is_group_chat,
-                        profile=profile,
-                        message_seqs=message_seqs,
-                    )
-                    if grounding.requires_judge:
-                        grounding = await self.resolve_grounding_judge(
-                            grounding,
-                            is_group_chat=is_group_chat,
-                            profile=profile,
-                            topics=tuple(mem_topics),
-                            importance=mem_importance,
-                        )
-                else:
-                    # 门禁关闭时跳过判定，但仍把受控引用解析为来源证据。
-                    grounding = GroundingResult(
-                        allowed=True,
-                        status="grounded",
-                        reason_codes=(),
-                        evidence=self.grounding_validator.resolve_evidence(
-                            mem,
-                            messages,
-                            is_group_chat=is_group_chat,
-                            profile=profile,
-                            message_seqs=message_seqs,
-                        ),
-                    )
-                mem_metadata["grounding_status"] = grounding.status
-                mem_metadata["grounding_reason_codes"] = list(grounding.reason_codes)
-                mem_metadata["source_evidence"] = grounding.evidence
-                subject_ids = _referenced_subject_ids(
-                    grounding.evidence,
-                    messages,
-                    identity_metadata,
-                )
-                if subject_ids:
-                    mem_metadata["subject_ids"] = list(subject_ids)
-                should_quarantine = quality == "low" or not grounding.allowed
-                mem_metadata["quality_gate_action"] = (
-                    "quarantine" if should_quarantine else "allow"
+                should_quarantine = apply_admission_metadata(
+                    mem_metadata,
+                    admission,
+                    quality=quality,
+                    messages=messages,
+                    identity_metadata=identity_metadata,
                 )
 
                 # 记录首因与近因位置效应。
@@ -482,6 +468,12 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
                         "atoms": atoms,
                     }
                 )
+                if rejected_candidate is not None:
+                    rejected_candidate["metadata"].update(identity_metadata)
+                    rejected_candidate["metadata"]["privacy_level"] = mem_metadata[
+                        "privacy_level"
+                    ]
+                    results.append(rejected_candidate)
 
             _report_generation_stage(
                 "grounding",
@@ -564,7 +556,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
         """按调用边界选择严格总结或既有兼容解析。"""
         if strict_summary:
             guarded = self.json_parser.parse_summary_response(response_text)
-            return self._guarded_result_to_structured_data(guarded)
+            return guarded_result_to_structured_data(guarded)
         if self.config.get("security.guardrails_enabled", True):
             try:
                 guarded = validate_llm_response(
@@ -574,7 +566,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
                 )
                 if guarded is not None and guarded.memories:
                     logger.info("[MemoryProcessor] guardrails 结构验证通过")
-                    return self._guarded_result_to_structured_data(guarded)
+                    return guarded_result_to_structured_data(guarded)
                 logger.warning(
                     "[MemoryProcessor] guardrails 结构验证失败，回退旧 JSON 解析器"
                 )
@@ -591,50 +583,6 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
         )
         return data
 
-    @staticmethod
-    def _guarded_result_to_structured_data(
-        guarded: MemoryExtractionResult,
-    ) -> dict[str, Any]:
-        """把通过护栏的结构转换为处理器既有字段契约。"""
-        memories: list[dict[str, Any]] = []
-        for atom in guarded.memories:
-            content = atom.content.strip()
-            if not content:
-                continue
-            key_facts = [fact for fact in atom.key_facts if fact.strip()]
-            memories.append(
-                {
-                    "summary": content,
-                    "key_facts": key_facts or [content],
-                    "topics": list(atom.topics or atom.entities),
-                    "importance": atom.importance,
-                    "sentiment": atom.sentiment,
-                    "emotion_tags": list(atom.emotion_tags),
-                    "participants": list(atom.participants),
-                    "causal_relations": list(atom.causal_relations),
-                    "source_refs": [
-                        reference.model_dump() for reference in atom.source_refs
-                    ],
-                    "confidence": atom.confidence,
-                    "atom_type": (
-                        atom.atom_type if "atom_type" in atom.model_fields_set else None
-                    ),
-                }
-            )
-
-        first = memories[0] if memories else {}
-        return {
-            "summary": first.get("summary", ""),
-            "topics": first.get("topics", []),
-            "key_facts": first.get("key_facts", []),
-            "sentiment": first.get("sentiment", "neutral"),
-            "importance": first.get("importance", 0.5),
-            "memories": memories,
-            "confidence": guarded.confidence,
-            "extraction_quality": guarded.extraction_quality,
-            "_guardrails_validated": True,
-        }
-
     def build_memory_from_structured_data(
         self,
         structured_data: dict[str, Any],
@@ -644,6 +592,12 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
         """从结构化数据构建包含 Atom 分类结果的记忆字典。"""
         quality = self.quality.validate_summary_quality(structured_data)
         normalized = self.quality.normalize_parsed_data(structured_data, is_group_chat)
+        facts = normalized.get("key_facts")
+        evidence = normalized.get("fact_source_evidence")
+        trusted = has_trusted_fact_evidence(facts, evidence)
+        if trusted and isinstance(facts, list):
+            # This entry point has no source window to independently verify a summary.
+            normalized["summary"] = "；".join(facts)
 
         content, metadata = self.storage.build_storage_format(
             fallback_excerpt or normalized.get("summary", ""),
@@ -652,6 +606,11 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
         )
         metadata["summary_quality"] = quality
         metadata["schema_version"] = "v3"
+        metadata["grounding_status"] = "grounded" if trusted else "quarantine"
+        metadata["grounding_reason_codes"] = (
+            [] if trusted else ["grounding_fact_evidence_mismatch"]
+        )
+        metadata["quality_gate_action"] = "allow" if trusted else "quarantine"
         metadata["emotional_intensity"] = max(
             0.0,
             min(1.0, float(structured_data.get("emotional_intensity", 0.5))),
@@ -660,9 +619,13 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
             metadata["atom_type"] = str(structured_data["atom_type"])
 
         importance = self.quality.validate_importance(normalized.get("importance"))
-        atoms = self.classify_atoms_from_metadata(
-            metadata=metadata,
-            parent_importance=importance,
+        atoms = (
+            self.classify_atoms_from_metadata(
+                metadata=metadata,
+                parent_importance=importance,
+            )
+            if trusted and quality != "low"
+            else []
         )
         return {
             "content": content,
@@ -685,12 +648,16 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
         key_facts: list[str] = metadata.get("key_facts", [])
         if not key_facts:
             return []
+        evidence = metadata.get("fact_source_evidence")
+        if not isinstance(evidence, list) or len(evidence) != len(key_facts):
+            return []
         topics = metadata.get("topics", [])
         participants = metadata.get("participants", [])
         emotion_tags = metadata.get("emotion_tags")
         emotional_intensity = float(metadata.get("emotional_intensity", 0.5))
         return classify_atoms(
             key_facts=key_facts,
+            fact_source_evidence=evidence,
             topics=topics,
             participants=participants,
             parent_importance=parent_importance,
@@ -722,31 +689,3 @@ def _resolved_generic_terms(profile: GateProfile) -> tuple[str, ...]:
     if config.mode == "replace":
         return tuple(config.items)
     return BUILTIN_GENERIC_TERMS + tuple(config.items)
-
-
-def _referenced_subject_ids(
-    evidence: list[dict[str, Any]],
-    messages: list[Message],
-    identity_metadata: dict[str, Any],
-) -> tuple[str, ...]:
-    """从候选实际引用的消息提取可信 canonical 参与者。"""
-
-    raw_trusted = identity_metadata.get("participant_ids")
-    if not isinstance(raw_trusted, list):
-        return ()
-    trusted = {
-        item.strip() for item in raw_trusted if isinstance(item, str) and item.strip()
-    }
-    if not trusted:
-        return ()
-    subjects: list[str] = []
-    for item in evidence:
-        index = item.get("message_index") if isinstance(item, dict) else None
-        if isinstance(index, bool) or not isinstance(index, int):
-            continue
-        if index < 0 or index >= len(messages):
-            continue
-        sender_id = messages[index].sender_id
-        if sender_id in trusted and sender_id not in subjects:
-            subjects.append(sender_id)
-    return tuple(subjects)

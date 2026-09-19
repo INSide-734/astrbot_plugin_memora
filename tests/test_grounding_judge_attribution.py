@@ -433,7 +433,7 @@ async def test_approval_missing_profile_logs_and_stays_fail_closed(
     processor = MagicMock()
     processor.classify_atoms_from_metadata.return_value = []
     validator = MagicMock()
-    validator.revalidate_stored_evidence.return_value = _needs_judge()
+    validator.revalidate_facts.return_value = [_needs_judge()]
     gate_runtime = MagicMock()
     gate_runtime.resolve_profile.return_value = None
     gate = MemoryQualityGate(

@@ -5,8 +5,10 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from ...memory.domain.memory_atom import has_user_source_evidence
 from ...memory.graph.domain.models import (
     ExtractedGraph,
+    GraphBoundary,
     GraphEdge,
     GraphEntry,
     GraphNode,
@@ -71,6 +73,20 @@ def extract_graph_from_atoms(
     返回:
         保留人物、主题和事实类型的图快照。
     """
+    boundary = GraphBoundary.from_metadata(metadata)
+    for atom in atoms:
+        atom_boundary = GraphBoundary(
+            getattr(atom, "parent_scope_key", None),
+            getattr(atom, "parent_privacy_level", None),
+            getattr(atom, "parent_revision", None),
+        )
+        if (
+            atom_boundary != boundary
+            or getattr(atom, "parent_memory_id", None) != source_memory_id
+        ):
+            raise ValueError("graph_boundary_mismatch")
+        if not has_user_source_evidence(getattr(atom, "source_evidence", None)):
+            raise ValueError("grounding_user_source_missing")
     graph = ExtractedGraph()
     node_map: dict[str, GraphNode] = {}
     participant_values = _canonical_metadata_values(metadata, "participants")

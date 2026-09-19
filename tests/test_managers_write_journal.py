@@ -11,6 +11,7 @@ import pytest
 
 from core.features.memory.infrastructure.schema_manager import SchemaManager
 from core.features.memory.infrastructure.write_op_journal import WriteOpJournal
+from tests.fact_evidence_helpers import source_evidence
 
 
 async def _create_test_schema(
@@ -432,6 +433,8 @@ class TestWriteOpRepairAddIntegration:
                 "status": "active",
                 "reinforcement_count": 0,
                 "decay_type": "exponential",
+                # 现代修复载荷必须自带逐事实用户证据，否则反序列化 fail-closed。
+                "source_evidence": source_evidence("atom content"),
             }
             op_id = await journal.start_op(
                 "add",
@@ -522,6 +525,7 @@ class TestWriteOpRepairAddIntegration:
                 atom_type=AtomType.FACTUAL,
                 session_id="s1",
                 persona_id="p1",
+                source_evidence=source_evidence("existing atom"),
             )
             mock_atom = MagicMock()
             mock_atom.get_by_parent = AsyncMock(return_value=[existing_atom])
@@ -551,6 +555,7 @@ class TestWriteOpRepairAddIntegration:
                 "decay_type": "exponential",
                 "session_id": "s1",
                 "persona_id": "p1",
+                "source_evidence": source_evidence("existing atom"),
             }
             op_id = await journal.start_op(
                 "add",

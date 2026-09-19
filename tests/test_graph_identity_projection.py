@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -147,13 +147,13 @@ async def test_graph_identity_projection_degrades_errors_and_propagates_cancella
 
 
 @pytest.mark.asyncio
-async def test_graph_overview_projects_identity_runtime_into_response() -> None:
-    """图谱概览端点把共享身份运行时的当前昵称投影到响应节点。"""
+async def test_graph_memory_focus_projects_identity_runtime_into_response() -> None:
+    """有 canonical 来源的图谱聚焦端点仍投影当前昵称。"""
 
     from core.platform.transport.page_api.graph_api import GraphApiMixin
 
     graph_store = MagicMock()
-    graph_store.get_graph_snapshot = AsyncMock(
+    graph_store.get_subgraph_for_memories = AsyncMock(
         return_value={"nodes": [_stable_person_node()], "edges": []}
     )
     identity_runtime = SimpleNamespace(
@@ -161,9 +161,16 @@ async def test_graph_overview_projects_identity_runtime_into_response() -> None:
     )
     engine = MagicMock()
     engine.get_statistics = AsyncMock(return_value={})
+    engine.get_memory = AsyncMock(
+        return_value={
+            "id": 42,
+            "updated_at": "current-revision",
+            "metadata": {"scope_key": "scope-a", "privacy_level": "public"},
+        }
+    )
 
     class Harness:
-        get_graph_overview = GraphApiMixin.get_graph_overview
+        _query_graph_impl = GraphApiMixin._query_graph_impl
 
         async def _ensure_plugin_ready(self):
             """返回图谱概览所需的最小就绪组件。"""
@@ -195,9 +202,7 @@ async def test_graph_overview_projects_identity_runtime_into_response() -> None:
 
             return {"status": "error", "message": message}
 
-    request = SimpleNamespace(args={})
-    with patch("core.platform.transport.page_api.graph_api.request", request):
-        result = await Harness().get_graph_overview()
+    result = await Harness()._query_graph_impl({"memory_id": 42})
 
     assert result["data"]["nodes"][0]["label"] == "当前昵称"
     assert result["data"]["nodes"][0]["stable_user_id"] == "10001"

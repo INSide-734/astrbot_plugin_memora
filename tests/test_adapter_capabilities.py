@@ -10,6 +10,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.memory.graph.domain.models import GraphBoundary
+
+BOUNDARY = GraphBoundary.from_metadata(
+    {"scope_key": "scope-a", "privacy_level": "public", "revision_token": "r1"}
+)
+
+
 if TYPE_CHECKING:
     from core.shared.adapter_capabilities import AdapterCapabilityContract
 
@@ -368,6 +375,7 @@ async def test_graph_vector_filter_unsupported_fails_closed() -> None:
         "查询",
         k=5,
         session_id="scope-a",
+        boundary=BOUNDARY,
     )
 
     assert results == []
@@ -384,13 +392,21 @@ async def test_graph_vector_rechecks_scope_and_rejects_non_finite_scores() -> No
     wrong_scope.similarity = 0.9
     wrong_scope.data = {
         "text": "跨 scope",
-        "metadata": {"source_memory_id": 7, "session_id": "scope-b"},
+        "metadata": {
+            "source_memory_id": 7,
+            **BOUNDARY.as_params(),
+            "session_id": "scope-b",
+        },
     }
     non_finite = MagicMock()
     non_finite.similarity = nan
     non_finite.data = {
         "text": "坏分数",
-        "metadata": {"source_memory_id": 8, "session_id": "scope-a"},
+        "metadata": {
+            "source_memory_id": 8,
+            **BOUNDARY.as_params(),
+            "session_id": "scope-a",
+        },
     }
     backend = MagicMock()
     backend.retrieve = AsyncMock(return_value=[wrong_scope, non_finite])
@@ -399,6 +415,7 @@ async def test_graph_vector_rechecks_scope_and_rejects_non_finite_scores() -> No
         "查询",
         k=5,
         session_id="scope-a",
+        boundary=BOUNDARY,
     )
 
     assert results == []
@@ -420,8 +437,11 @@ async def test_vector_mutations_unsupported_do_not_touch_backend() -> None:
 
     assert await vector.update_metadata(1, {"importance": 0.5}) is False
     assert await vector.delete_document(1) is False
-    assert await graph_vector.update_metadata(2, {"scope": "a"}) is False
-    assert await graph_vector.delete_entry(2) is False
+    assert (
+        await graph_vector.update_metadata(2, {"scope": "a"}, boundary=BOUNDARY)
+        is False
+    )
+    assert await graph_vector.delete_entry(2, boundary=BOUNDARY) is False
     backend.document_storage.get_documents.assert_not_awaited()
     backend.delete.assert_not_awaited()
 

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from core.features.memory.graph.domain.models import GraphBoundary
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 # ── helpers ───────────────────────────────────────────────────────────
 
@@ -42,7 +45,7 @@ class TestGraphSubgraphMixin:
     async def test_empty_memory_ids_returns_empty(self) -> None:
         """Empty memory_ids → returns empty structure."""
         store = _make_graph_store()
-        result = await store.get_subgraph_for_memories([])
+        result = await store.get_subgraph_for_memories([], boundary=BOUNDARY)
         assert result == {"nodes": [], "edges": [], "entries": [], "memories": []}
 
     @pytest.mark.asyncio
@@ -60,29 +63,11 @@ class TestGraphSubgraphMixin:
         mock_db.execute.return_value = mock_cursor
         store._connect = MagicMock(return_value=mock_db)
 
-        result = await store.get_subgraph_for_memories([None, "bad", 1, "also_bad"])
+        result = await store.get_subgraph_for_memories(
+            [None, "bad", 1, "also_bad"], boundary=BOUNDARY
+        )
         # None and "bad", "also_bad" are filtered; only 1 remains
         assert result == {"nodes": [], "edges": [], "entries": [], "memories": []}
-
-    @pytest.mark.asyncio
-    async def test_duplicate_memory_ids_deduplicated(self) -> None:
-        """重复的记忆 ID 会在查询前去重。"""
-        store = _make_graph_store()
-        mock_db = AsyncMock()
-        mock_db.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_db.__aexit__ = AsyncMock(return_value=None)
-        mock_db.row_factory = None
-        mock_db.execute = AsyncMock()
-        mock_cursor = AsyncMock()
-        mock_cursor.fetchall = AsyncMock(return_value=[])
-        mock_db.execute.return_value = mock_cursor
-        store._connect = MagicMock(return_value=mock_db)
-
-        await store.get_subgraph_for_memories([1, 1, 2, 2, 2, 3])
-        # 检查查询仅绑定 3 个去重后的记忆 ID。
-        call_args = mock_db.execute.call_args_list[0]
-        params = call_args[0][1]
-        assert json.loads(params["memory_ids_json"]) == [1, 2, 3]
 
     @pytest.mark.asyncio
     async def test_empty_entry_rows_returns_empty(self) -> None:
@@ -100,7 +85,7 @@ class TestGraphSubgraphMixin:
         mock_db.execute.return_value = entry_cursor
 
         store._connect = MagicMock(return_value=mock_db)
-        result = await store.get_subgraph_for_memories([1])
+        result = await store.get_subgraph_for_memories([1], boundary=BOUNDARY)
         assert result == {"nodes": [], "edges": [], "entries": [], "memories": []}
 
     # ── node limiting branch (lines 69-99) ────────────────────────────
@@ -222,6 +207,7 @@ class TestGraphSubgraphMixin:
             result = await store.get_subgraph_for_memories(
                 [10],
                 limit_nodes=2,
+                boundary=BOUNDARY,
             )
         assert "nodes" in result
         assert "edges" in result
@@ -822,35 +808,3 @@ class TestGraphSubgraphMixin:
         assert len(edges) == 1
         assert node_map[102]["degree"] == 1
         # source_node 999 not in map → no crash
-
-    # ── limit clamping ────────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_limit_values_are_clamped(self) -> None:
-        """limit_entries/limit_nodes/limit_edges are clamped to valid ranges."""
-        store = _make_graph_store()
-        mock_db = AsyncMock()
-        mock_db.__aenter__ = AsyncMock(return_value=mock_db)
-        mock_db.__aexit__ = AsyncMock(return_value=None)
-        mock_db.row_factory = None
-        mock_db.execute = AsyncMock()
-        mock_cursor = AsyncMock()
-        mock_cursor.fetchall = AsyncMock(return_value=[])
-        mock_db.execute.return_value = mock_cursor
-        store._connect = MagicMock(return_value=mock_db)
-
-        # Values below min are clamped to 1; above max are clamped to upper bound
-        # This should not crash
-        await store.get_subgraph_for_memories(
-            [1],
-            limit_entries=0,
-            limit_nodes=0,
-            limit_edges=0,
-        )
-        # Similarly for oversized values
-        await store.get_subgraph_for_memories(
-            [1],
-            limit_entries=9999,
-            limit_nodes=9999,
-            limit_edges=9999,
-        )

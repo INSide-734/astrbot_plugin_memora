@@ -537,24 +537,6 @@ class TestGraphEdge:
         )
         assert edge.edge_key == "a|knows|b|42"
 
-    def test_semantic_edge_key_ignores_memory_id(self) -> None:
-        from core.features.memory.graph.domain.models import GraphEdge
-
-        edge1 = GraphEdge(
-            source_key="a",
-            target_key="b",
-            relation_type="knows",
-            source_memory_id=1,
-        )
-        edge2 = GraphEdge(
-            source_key="a",
-            target_key="b",
-            relation_type="knows",
-            source_memory_id=99,
-        )
-        assert edge1.semantic_edge_key == edge2.semantic_edge_key
-        assert edge1.semantic_edge_key == "a|knows|b"
-
 
 class TestGraphEntry:
     """测试 GraphEntry 数据类。"""

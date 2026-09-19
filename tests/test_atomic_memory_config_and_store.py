@@ -16,6 +16,7 @@ from core.features.memory.infrastructure.atom_store import AtomStore
 from core.features.recall.processors.memory_processor import MemoryProcessor
 from core.platform.composition.component_factory import ComponentFactory
 from core.platform.config.config_validator import validate_config
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
 
 
 class _ConfigManager:
@@ -98,6 +99,7 @@ def test_memory_processor_applies_runtime_quality_thresholds() -> None:
     atoms = processor.classify_atoms_from_metadata(
         {
             "key_facts": ["用户喜欢拿铁咖啡"],
+            "fact_source_evidence": fact_evidence(["用户喜欢拿铁咖啡"]),
             "emotional_intensity": 0.8,
         },
         parent_importance=0.8,
@@ -116,6 +118,7 @@ def test_memory_processor_passes_emotional_intensity_to_atom_metadata() -> None:
     atoms = processor.classify_atoms_from_metadata(
         {
             "key_facts": ["用户喜欢拿铁咖啡"],
+            "fact_source_evidence": fact_evidence(["用户喜欢拿铁咖啡"]),
             "emotion_tags": ["开心"],
             "emotional_intensity": 0.91,
         },
@@ -143,6 +146,7 @@ async def test_store_uses_emotional_intensity_and_restores_tags(
         parent_memory_id=1,
         atom_type=AtomType.FACTUAL,
         content="一次情绪强烈的重要经历",
+        source_evidence=source_evidence("一次情绪强烈的重要经历"),
         importance=0.8,
         confidence=0.9,
         emotion_tags=["感动"],
@@ -167,8 +171,16 @@ async def test_store_touch_many_updates_one_transaction_boundary(
     store = AtomStore(tmp_db_path)
     await store.initialize()
     atoms = [
-        MemoryAtom(parent_memory_id=1, content="原子一"),
-        MemoryAtom(parent_memory_id=2, content="原子二"),
+        MemoryAtom(
+            parent_memory_id=1,
+            content="原子一",
+            source_evidence=source_evidence("原子一"),
+        ),
+        MemoryAtom(
+            parent_memory_id=2,
+            content="原子二",
+            source_evidence=source_evidence("原子二"),
+        ),
     ]
     ids = await store.insert_many(atoms)
     before = [await store.get(atom_id) for atom_id in ids]
@@ -192,6 +204,7 @@ async def test_manual_reinforcement_is_scoped_and_revalidates_source() -> None:
         atom_id=91,
         parent_memory_id=4,
         content="用户喜欢喝无糖燕麦拿铁",
+        source_evidence=source_evidence("用户喜欢喝无糖燕麦拿铁"),
         session_id="session-a",
         persona_id="persona-a",
     )
@@ -203,6 +216,7 @@ async def test_manual_reinforcement_is_scoped_and_revalidates_source() -> None:
     new_atom = MemoryAtom(
         parent_memory_id=5,
         content="用户喜欢喝无糖燕麦拿铁",
+        source_evidence=source_evidence("用户喜欢喝无糖燕麦拿铁"),
         confidence=0.88,
         session_id="session-a",
         persona_id="persona-a",
@@ -267,11 +281,13 @@ async def test_add_memory_deduplicates_and_indexes_only_persisted_atoms() -> Non
     lower = MemoryAtom(
         parent_memory_id=0,
         content="用户喜欢喝无糖燕麦拿铁",
+        source_evidence=source_evidence("用户喜欢喝无糖燕麦拿铁"),
         confidence=0.7,
     )
     higher = MemoryAtom(
         parent_memory_id=0,
         content="用户喜欢喝无糖燕麦拿铁",
+        source_evidence=source_evidence("用户喜欢喝无糖燕麦拿铁"),
         confidence=0.9,
     )
 
@@ -311,8 +327,16 @@ async def test_add_memory_partial_failure_excludes_failed_atoms_from_graph() -> 
     """部分 Atom 写入失败时，图索引只能消费已获得 ID 的成功子集。"""
 
     engine = _make_write_engine({"atom_dedup_enabled": False})
-    succeeded = MemoryAtom(parent_memory_id=0, content="已成功原子")
-    failed = MemoryAtom(parent_memory_id=0, content="失败原子")
+    succeeded = MemoryAtom(
+        parent_memory_id=0,
+        content="已成功原子",
+        source_evidence=source_evidence("已成功原子"),
+    )
+    failed = MemoryAtom(
+        parent_memory_id=0,
+        content="失败原子",
+        source_evidence=source_evidence("失败原子"),
+    )
 
     async def insert_many(atoms: list[MemoryAtom]) -> list[int]:
         """模拟前一分块成功、后一分块失败的真实批量边界。"""

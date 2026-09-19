@@ -249,7 +249,8 @@ async def test_provider_retry_then_parse_success_has_separate_denominators(
     """Provider 首次失败后重试成功只产生一次解析结果。"""
 
     payload = (
-        '{"memories":[{"content":"用户喜欢手冲咖啡","key_facts":["用户喜欢手冲咖啡"]}]}'
+        '{"memories":[{"content":"用户喜欢手冲咖啡",'
+        '"key_facts":["用户喜欢手冲咖啡"],"fact_source_refs":[[]]}]}'
     )
     provider = MagicMock()
     provider.text_chat = AsyncMock(

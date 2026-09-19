@@ -170,8 +170,16 @@ class TestBackfillScheduler:
         s._max_per_run = 500
 
         batch = [
-            (10, self._legacy_meta(schema_version="v2", key_facts=["a", "b", "c"])),
-            (20, self._legacy_meta(schema_version="v1", key_facts=["d", "e", "f"])),
+            (
+                10,
+                self._legacy_meta(schema_version="v2", key_facts=["a", "b", "c"]),
+                "rev-10",
+            ),
+            (
+                20,
+                self._legacy_meta(schema_version="v1", key_facts=["d", "e", "f"]),
+                "rev-20",
+            ),
         ]
         s._fetch_legacy_batch = AsyncMock(side_effect=[batch, []])
         s._backfill_one = AsyncMock()
@@ -190,9 +198,9 @@ class TestBackfillScheduler:
         s._job_id = "bf_test"
         s._max_per_run = 3
 
-        batch1 = [(1, self._legacy_meta(key_facts=["a", "b"]))]
-        batch2 = [(2, self._legacy_meta(key_facts=["c", "d"]))]
-        batch3 = [(3, self._legacy_meta(key_facts=["e", "f"]))]
+        batch1 = [(1, self._legacy_meta(key_facts=["a", "b"]), "rev-1")]
+        batch2 = [(2, self._legacy_meta(key_facts=["c", "d"]), "rev-2")]
+        batch3 = [(3, self._legacy_meta(key_facts=["e", "f"]), "rev-3")]
         s._fetch_legacy_batch = AsyncMock(side_effect=[batch1, batch2, batch3])
         s._backfill_one = AsyncMock()
 
@@ -210,8 +218,8 @@ class TestBackfillScheduler:
         s._job_id = "bf_test"
 
         batch = [
-            (1, self._legacy_meta(key_facts=["a", "b", "c"])),
-            (2, self._legacy_meta(key_facts=["d", "e", "f"])),
+            (1, self._legacy_meta(key_facts=["a", "b", "c"]), "rev-1"),
+            (2, self._legacy_meta(key_facts=["d", "e", "f"]), "rev-2"),
         ]
         s._fetch_legacy_batch = AsyncMock(side_effect=[batch, []])
         s._backfill_one = AsyncMock(side_effect=[None, RuntimeError("boom")])
@@ -241,8 +249,8 @@ class TestBackfillScheduler:
         s._job_id = "bf_test"
 
         batch = [
-            (5, self._legacy_meta(key_facts=["a", "b", "c"])),
-            (12, self._legacy_meta(key_facts=["d", "e", "f"])),
+            (5, self._legacy_meta(key_facts=["a", "b", "c"]), "rev-5"),
+            (12, self._legacy_meta(key_facts=["d", "e", "f"]), "rev-12"),
         ]
         s._fetch_legacy_batch = AsyncMock(side_effect=[batch, []])
         s._backfill_one = AsyncMock()
@@ -299,7 +307,7 @@ class TestBackfillScheduler:
         result = await s._fetch_legacy_batch()
 
         # 只有文档 1、4、5 符合回填条件。
-        ids = [doc_id for doc_id, _meta in result]
+        ids = [doc_id for doc_id, _meta, _revision in result]
         assert ids == [1, 4, 5]
 
     @pytest.mark.asyncio
@@ -322,7 +330,7 @@ class TestBackfillScheduler:
 
         result = await s._fetch_legacy_batch()
 
-        ids = [doc_id for doc_id, _meta in result]
+        ids = [doc_id for doc_id, _meta, _revision in result]
         assert ids == [10, 15]
 
     @pytest.mark.asyncio
@@ -333,7 +341,11 @@ class TestBackfillScheduler:
         ds = MagicMock()
         ds.get_documents_after_id = AsyncMock(
             return_value=[
-                {"id": 12, "metadata": self._legacy_meta("v2", ["a", "b", "c"])},
+                {
+                    "id": 12,
+                    "metadata": self._legacy_meta("v2", ["a", "b", "c"]),
+                    "updated_at": "rev-12",
+                },
             ]
         )
         engine.faiss_db = MagicMock()
@@ -346,7 +358,8 @@ class TestBackfillScheduler:
 
         result = await s._fetch_legacy_batch()
 
-        assert [doc_id for doc_id, _meta in result] == [12]
+        assert [item[0] for item in result] == [12]
+        assert result[0][2] == "rev-12"
         ds.get_documents_after_id.assert_called_once_with(last_id=10, limit=5)
 
     @pytest.mark.asyncio
@@ -358,18 +371,20 @@ class TestBackfillScheduler:
             await db.execute("""
                 CREATE TABLE documents (
                     id INTEGER PRIMARY KEY,
-                    metadata TEXT
+                    metadata TEXT,
+                    updated_at TEXT
                 )
             """)
             for doc_id in (1, 2, 3, 4):
                 await db.execute(
-                    "INSERT INTO documents(id, metadata) VALUES (?, ?)",
+                    "INSERT INTO documents(id, metadata, updated_at) VALUES (?, ?, ?)",
                     (
                         doc_id,
                         json.dumps(
                             self._legacy_meta("v2", [f"fact-{doc_id}", "b"]),
                             ensure_ascii=False,
                         ),
+                        f"rev-{doc_id}",
                     ),
                 )
             await db.commit()
@@ -385,7 +400,8 @@ class TestBackfillScheduler:
 
             result = await s._fetch_legacy_batch()
 
-            assert [doc_id for doc_id, _meta in result] == [3]
+            assert [item[0] for item in result] == [3]
+            assert result[0][2] == "rev-3"
 
     @pytest.mark.asyncio
     async def test_fetch_legacy_batch_respects_batch_size(self):
@@ -429,7 +445,7 @@ class TestBackfillScheduler:
         s._batch_size = 10
         result = await s._fetch_legacy_batch()
 
-        ids = [doc_id for doc_id, _meta in result]
+        ids = [doc_id for doc_id, _meta, _revision in result]
         assert ids == [1, 3]
 
     @pytest.mark.asyncio
@@ -758,7 +774,7 @@ class TestBackfillScheduler:
         s = self._make_scheduler(engine=engine)
         s._batch_size = 10
         result = await s._fetch_legacy_batch()
-        ids = [doc_id for doc_id, _meta in result]
+        ids = [doc_id for doc_id, _meta, _revision in result]
         assert ids == [5]
 
     def test_progress_is_readonly_snapshot(self):

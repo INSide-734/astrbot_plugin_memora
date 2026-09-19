@@ -84,6 +84,8 @@ class VectorRetriever:
         # 优化 3：ID 映射缓存（int_id -> uuid）
         self._id_cache: dict[int, str] = {}
         self._cache_max_size = self.config.get("recall_engine.id_cache_size", 1000)
+        # 最近一次 metadata 更新的稳定失败原因；供上层区分 CAS 冲突与存储失败。
+        self._last_update_reason: str | None = None
 
     @staticmethod
     def _fit_content_for_embedding(content: str, max_chars: int) -> str:
@@ -304,6 +306,7 @@ class VectorRetriever:
             是否成功更新。
         """
         if not self.backend_capabilities.supports(AdapterCapability.UPDATE):
+            self._last_update_reason = "update_unsupported"
             return False
 
         if expected_revision is not None:
@@ -314,6 +317,7 @@ class VectorRetriever:
                 advance_revision=advance_revision,
             )
 
+        self._last_update_reason = None
         import json
 
         from astrbot.api import logger
@@ -328,6 +332,7 @@ class VectorRetriever:
 
             if not docs or len(docs) == 0:
                 logger.warning("[元数据更新] 文档不存在")
+                self._last_update_reason = "source_not_found"
                 return False
 
             doc = docs[0]
@@ -394,6 +399,7 @@ class VectorRetriever:
                 "[元数据更新] 失败，异常类型=%s",
                 exc.__class__.__name__,
             )
+            self._last_update_reason = "metadata_update_failed"
             return False
 
     async def _update_metadata_if_revision(
@@ -410,10 +416,12 @@ class VectorRetriever:
 
         from astrbot.api import logger
 
+        self._last_update_reason = None
         doc_storage = self.faiss_db.document_storage
         try:
             from sqlalchemy import text
         except ModuleNotFoundError:
+            self._last_update_reason = "update_unsupported"
             return False
 
         session = None
@@ -430,12 +438,14 @@ class VectorRetriever:
                 row = result.mappings().first()
                 if row is None:
                     await session.rollback()
+                    self._last_update_reason = "source_not_found"
                     return False
                 current_revision = row.get("updated_at") or row.get("created_at")
                 if hasattr(current_revision, "isoformat"):
                     current_revision = current_revision.isoformat()
                 if str(current_revision or "").strip() != str(expected_revision):
                     await session.rollback()
+                    self._last_update_reason = "source_revision_mismatch"
                     return False
                 current_metadata = row.get("metadata")
                 if isinstance(current_metadata, str):
@@ -467,6 +477,7 @@ class VectorRetriever:
                 update_result = await session.execute(statement, parameters)
                 if update_result.rowcount != 1:
                     await session.rollback()
+                    self._last_update_reason = "source_revision_mismatch"
                     return False
                 await session.commit()
                 logger.debug("[元数据更新] revision 校验通过并完成原子更新")
@@ -483,6 +494,7 @@ class VectorRetriever:
                 "[元数据更新] revision 原子更新失败，异常类型=%s",
                 exc.__class__.__name__,
             )
+            self._last_update_reason = "metadata_update_failed"
             return False
 
     async def update_content_if_revision(

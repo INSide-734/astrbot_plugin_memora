@@ -98,9 +98,13 @@ def _make_memory_dicts_for_xihu() -> list[dict]:
 def _make_mock_hybrid_results(memory_dicts: list[dict]) -> list:
     """Convert memory dicts to mock HybridResult objects."""
     from core.features.retrieval.rrf_fusion import HybridResult
+    from tests.fact_evidence_helpers import candidate_evidence_metadata
 
     results = []
     for md in memory_dicts:
+        metadata = dict(md["metadata"])
+        # 生产候选携带逐事实用户来源证据；注入门在排序前要求它存在。
+        metadata.update(candidate_evidence_metadata(md["content"]))
         results.append(
             HybridResult(
                 doc_id=md["id"],
@@ -109,7 +113,7 @@ def _make_mock_hybrid_results(memory_dicts: list[dict]) -> list:
                 bm25_score=None,
                 vector_score=None,
                 content=md["content"],
-                metadata=md["metadata"],
+                metadata=metadata,
             )
         )
     return results

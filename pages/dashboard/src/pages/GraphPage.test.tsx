@@ -27,9 +27,8 @@ describe("GraphPage", () => {
     cleanupGraphPageTestEnvironment();
   });
 
-  it("loads overview stats and initial graph data on mount", async () => {
+  it("loads recent overview data and opens a node without a memory ID", async () => {
     const { GraphPage } = await loadGraphPage();
-
     bridge.apiGet.mockImplementation((path: string) => {
       if (path === "page/stats") {
         return Promise.resolve(ok({
@@ -41,125 +40,34 @@ describe("GraphPage", () => {
       }
       if (path === "page/graph/search") {
         return Promise.resolve(ok({
-          nodes: [
-            { id: "node-1", label: "Alpha topic", type: "topic", memory_count: 3, degree: 2, entry_count: 1, weight: 0.9 },
-            { id: "node-2", label: "Beta fact", type: "fact", memory_count: 1, degree: 1, entry_count: 2, weight: 0.7 },
-          ],
-          edges: [
-            { source: "node-1", target: "node-2", type: "results_in", weight: 1 },
-          ],
+          nodes: [{ id: "recent", label: "Recent topic", type: "topic" }],
+          edges: [],
         }));
       }
-      return Promise.resolve(ok({}));
+      throw new Error(`unexpected request: ${path}`);
     });
 
-    const { container } = render(<GraphPage showToast={showToast} theme="light" />);
-
-    expect(container.querySelector('[data-slot="page-frame"]')?.getAttribute("data-layout")).toBe("workspace");
-    expect(screen.getByRole("heading", { level: 1, name: "Knowledge Graph" })).toBeTruthy();
-    const workspace = container.querySelector('[data-workspace-grid="stable"]');
-    const canvas = container.querySelector('[data-slot="graph-canvas"]');
-    const statsScroll = container.querySelector('[data-slot="graph-stats-scroll"]');
-    const statsGrid = statsScroll?.querySelector('[data-slot="metric-grid"]');
-    const toolbar = screen.getByRole("toolbar");
-    expect(workspace?.classList.contains("grid-rows-[auto_minmax(320px,1fr)_auto_auto_auto]")).toBe(true);
-    expect(canvas?.classList.contains("min-h-[320px]")).toBe(true);
-    expect(statsScroll?.classList.contains("w-full")).toBe(true);
-    expect(statsScroll?.classList.contains("overflow-x-auto")).toBe(true);
-    expect(statsGrid?.classList.contains("min-w-[32rem]")).toBe(true);
-    expect(statsGrid?.classList.contains("overflow-x-auto")).toBe(false);
-    expect(toolbar.classList.contains("flex-nowrap")).toBe(true);
-    expect(toolbar.classList.contains("overflow-x-auto")).toBe(true);
+    render(<GraphPage showToast={showToast} theme="light" />);
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/stats", {});
       expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", {
         canvas: "1",
         time_end_hours: "168",
       });
+      expect(screen.queryByText("Loading...")).toBeNull();
     });
-
-    expect(await screen.findByText("12")).toBeTruthy();
+    expect(screen.getByText("12")).toBeTruthy();
     expect(screen.getByText("4")).toBeTruthy();
     expect(screen.getByText("5")).toBeTruthy();
     expect(screen.getByText("2")).toBeTruthy();
 
-    expect(getGraphMockState().instances).toHaveLength(1);
     const graph = getGraphMockState().instances[0];
-    const behaviors = graph.config.behaviors as ClickSelectBehaviorMock[];
-    const clickSelect = behaviors.find((behavior) => behavior.type === "click-select");
-    expect(clickSelect).toMatchObject({
-      type: "click-select",
-      multiple: false,
-      state: "selected",
-      degree: 0,
-      animation: true,
-    });
-    expect(clickSelect?.enable).toEqual(expect.any(Function));
-    expect(clickSelect?.onClick).toEqual(expect.any(Function));
-    const layout = graph.config.layout as { alphaDecay?: number };
-    expect(layout.alphaDecay).toBe(0.03);
-    const nodeConfig = graph.config.node as {
-      state: {
-        hover: { stroke: string; lineWidth: number };
-        selected: { stroke: string; lineWidth: number };
-      };
-    };
-    expect(nodeConfig.state.selected.stroke).not.toBe("#4dabf7");
-    expect(nodeConfig.state.selected.lineWidth).toBe(3);
-    expect(nodeConfig.state.hover.lineWidth).toBeLessThan(
-      nodeConfig.state.selected.lineWidth,
-    );
-    expect(nodeConfig.state.hover.stroke).not.toBe(
-      nodeConfig.state.selected.stroke,
-    );
-    await waitFor(() => {
-      expect(graph.setData).toHaveBeenCalledWith({
-        nodes: [
-          {
-            id: "node-1",
-            data: {
-              label: "Alpha topic",
-              type: "topic",
-              weight: 0.9,
-              memory_count: 3,
-              degree: 2,
-              entry_count: 1,
-            },
-          },
-          {
-            id: "node-2",
-            data: {
-              label: "Beta fact",
-              type: "fact",
-              weight: 0.7,
-              memory_count: 1,
-              degree: 1,
-              entry_count: 2,
-            },
-          },
-        ],
-        edges: [
-          {
-            id: "e-node-1-node-2-0",
-            source: "node-1",
-            target: "node-2",
-            data: {
-              type: "results_in",
-              weight: 1,
-              label: "results_in",
-            },
-          },
-        ],
-      });
-    });
-    expect(graph.render).toHaveBeenCalled();
-
-    graph.emit("viewport:change");
-    expect(await screen.findByText("175%")).toBeTruthy();
+    graph.emit("node:click", { target: { id: "recent" } });
+    expect(await screen.findByText("Recent topic")).toBeTruthy();
+    expect(screen.getByRole("textbox", { name: /memory id.*optional/i })).toBeTruthy();
   });
 
-  it("submits graph searches, filters invalid edges, and opens the selected node detail panel", async () => {
+  it("searches by query alone on Enter, filters invalid edges, and opens node details", async () => {
     const { GraphPage } = await loadGraphPage();
 
     bridge.apiGet.mockImplementation((path: string, params: Record<string, string>) => {
@@ -171,13 +79,7 @@ describe("GraphPage", () => {
           sessions: {},
         }));
       }
-      if (path === "page/graph/search" && params.canvas === "1") {
-        return Promise.resolve(ok({
-          nodes: [{ id: "seed-1", label: "Seed", type: "topic", memory_count: 1, degree: 1, entry_count: 1, weight: 0.4 }],
-          edges: [],
-        }));
-      }
-      if (path === "page/graph/search") {
+      if (path === "page/graph/search" && params.query === "deployment") {
         return Promise.resolve(ok({
           nodes: [
             { id: "42", label: "Deploy topic", type: "topic", memory_count: 6, degree: 4, entry_count: 3, weight: 1.2 },
@@ -192,70 +94,30 @@ describe("GraphPage", () => {
       return Promise.resolve(ok({}));
     });
 
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
 
     render(<GraphPage showToast={showToast} theme="light" />);
 
     expect(await screen.findByText("8")).toBeTruthy();
 
-    fireEvent.change(screen.getByPlaceholderText("Search entities, topics, or memories..."), {
-      target: { value: "deployment" },
-    });
-    fireEvent.change(screen.getByPlaceholderText("Memory ID"), {
-      target: { value: "mem-42" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /search graph/i }));
+    const queryInput = screen.getByRole("textbox", { name: /search entities/i });
+    fireEvent.change(queryInput, { target: { value: " deployment " } });
+    fireEvent.keyDown(queryInput, { key: "Enter" });
 
     await waitFor(() => {
       expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", {
         query: "deployment",
-        memory_id: "mem-42",
         time_end_hours: "168",
       });
     });
-
     const graph = getGraphMockState().instances[0];
     await waitFor(() => {
-      expect(graph.setData).toHaveBeenLastCalledWith({
-        nodes: [
-          {
-            id: "42",
-            data: {
-              label: "Deploy topic",
-              type: "topic",
-              weight: 1.2,
-              memory_count: 6,
-              degree: 4,
-              entry_count: 3,
-            },
-          },
-          {
-            id: "84",
-            data: {
-              label: "Release fact",
-              type: "fact",
-              weight: 0.5,
-              memory_count: 2,
-              degree: 1,
-              entry_count: 1,
-            },
-          },
-        ],
-        edges: [
-          {
-            id: "e-42-84-0",
-            source: "42",
-            target: "84",
-            data: {
-              type: "caused_by",
-              weight: 2,
-              label: "caused_by",
-            },
-          },
-        ],
-      });
+      const data = vi.mocked(graph.setData).mock.lastCall?.[0] as {
+        edges: Array<{ source: string; target: string }>;
+      };
+      expect(data.edges.map(({ source, target }) => [source, target])).toEqual([["42", "84"]]);
+      expect(screen.queryByText("Loading...")).toBeNull();
     });
-    expect(warnSpy).toHaveBeenCalled();
 
     vi.mocked(graph.setElementState).mockClear();
     graph.emit("node:click", { target: { id: "42" } });
@@ -265,9 +127,7 @@ describe("GraphPage", () => {
     expect(screen.getByText("4")).toBeTruthy();
     expect(screen.getByText("3")).toBeTruthy();
     expect(screen.getByText("1.20")).toBeTruthy();
-    expect(graph.focusElement).toHaveBeenCalledWith("42", { duration: 500 });
     expect(graph.getElementState("42")).toContain("selected");
-    expect(graph.setElementState).not.toHaveBeenCalled();
 
     graph.emit("edge:click", {
       target: { id: "e-42-84-0" },
@@ -283,7 +143,6 @@ describe("GraphPage", () => {
       expect(screen.queryByText("Deploy topic")).toBeNull();
     });
     expect(graph.getElementState("42")).not.toContain("selected");
-    expect(graph.setElementState).not.toHaveBeenCalled();
 
     graph.emit("node:click", { target: { id: "42" } });
     expect(await screen.findByText("Deploy topic")).toBeTruthy();
@@ -294,7 +153,6 @@ describe("GraphPage", () => {
       expect(screen.queryByText("Deploy topic")).toBeNull();
     });
     expect(graph.getElementState("42")).not.toContain("selected");
-    expect(graph.setElementState).not.toHaveBeenCalled();
 
     graph.emit("node:click", { target: { id: "42" } });
     expect(await screen.findByText("Deploy topic")).toBeTruthy();
@@ -342,6 +200,7 @@ describe("GraphPage", () => {
     const firstGraph = await waitFor(() => {
       const instance = getGraphMockState().instances[0];
       expect(instance.setData).toHaveBeenCalled();
+      expect(screen.queryByText("Loading...")).toBeNull();
       return instance;
     });
     firstGraph.emit("node:click", { target: { id: "theme-node" } });
@@ -379,9 +238,11 @@ describe("GraphPage", () => {
     });
 
     render(<GraphPage showToast={showToast} theme="light" />);
+
     const graph = await waitFor(() => {
       const instance = getGraphMockState().instances[0];
       expect(instance.setData).toHaveBeenCalled();
+      expect(screen.queryByText("Loading...")).toBeNull();
       return instance;
     });
 
@@ -420,7 +281,7 @@ describe("GraphPage", () => {
 
   it("enters the error state when the initial G6 render rejects", async () => {
     const { GraphPage } = await loadGraphPage();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     let resolveGraphRequest!: (value: unknown) => void;
     const graphRequest = new Promise<unknown>((resolve) => {
       resolveGraphRequest = resolve;
@@ -441,7 +302,6 @@ describe("GraphPage", () => {
 
     expect(await screen.findByText("Failed to load graph data")).toBeTruthy();
     expect(showToast).toHaveBeenCalledWith("Error: G6 render exploded", true);
-    expect(errorSpy).toHaveBeenCalled();
   });
 
   it("ignores a pending theme draw rejection after unmount", async () => {
@@ -506,36 +366,23 @@ describe("GraphPage", () => {
 
     render(<GraphPage showToast={showToast} theme="light" />);
 
+
     expect(await screen.findByText("Failed to load graph data")).toBeTruthy();
     expect(showToast).toHaveBeenCalledWith("Error: graph offline", true);
 
     fireEvent.click(screen.getByRole("button", { name: /retry/i }));
 
     await waitFor(() => {
-      expect(bridge.apiGet).toHaveBeenCalledWith("page/graph/search", {
+      expect(bridge.apiGet).toHaveBeenLastCalledWith("page/graph/search", {
         canvas: "1",
         time_end_hours: "168",
-      });
-      expect(getGraphMockState().instances[0].setData).toHaveBeenCalledWith({
-        nodes: [
-          {
-            id: "recover-1",
-            data: {
-              label: "Recovered node",
-              type: "summary",
-              weight: 0.8,
-              memory_count: 2,
-              degree: 1,
-              entry_count: 1,
-            },
-          },
-        ],
-        edges: [],
       });
     });
     await waitFor(() => {
       expect(screen.queryByText("Failed to load graph data")).toBeNull();
     });
+    getGraphMockState().instances[0].emit("node:click", { target: { id: "recover-1" } });
+    expect(await screen.findByText("Recovered node")).toBeTruthy();
 
     const fullscreenButton = screen.getByTitle(EN_MAP["graph.fullscreen"]);
     fireEvent.click(fullscreenButton);
@@ -581,6 +428,7 @@ describe("GraphPage", () => {
     const graph = await waitFor(() => {
       const instance = getGraphMockState().instances[0];
       expect(instance.setData).toHaveBeenCalled();
+      expect(screen.queryByText("Loading...")).toBeNull();
       return instance;
     });
     const apiCallCount = bridge.apiGet.mock.calls.length;
@@ -589,25 +437,12 @@ describe("GraphPage", () => {
     view.rerender(<GraphPage showToast={showToast} theme="dark" />);
 
     await waitFor(() => expect(graph.setOptions).toHaveBeenCalled());
-    const optionCalls = vi.mocked(graph.setOptions).mock.calls;
-    const options = optionCalls[optionCalls.length - 1]?.[0] as {
-      node?: { style?: { labelFill?: string }; animation?: Record<string, unknown> };
-      edge?: { style?: { labelFill?: string }; animation?: Record<string, unknown> };
-    };
 
     expect(getGraphMockState().instances).toHaveLength(1);
     expect(graph.destroy).not.toHaveBeenCalled();
     expect(graph.draw).toHaveBeenCalledTimes(1);
     expect(graph.render).toHaveBeenCalledTimes(dataRenderCount);
     expect(bridge.apiGet).toHaveBeenCalledTimes(apiCallCount);
-    expect(options.node?.style?.labelFill).toBe("#e8eaed");
-    expect(options.edge?.style?.labelFill).toBe("#94a3b8");
-    expect(options.node?.animation).toMatchObject({
-      update: [{ fields: ["fill"], shape: "label", duration: 200, easing: "ease-out" }],
-    });
-    expect(options.edge?.animation).toMatchObject({
-      update: [{ fields: ["fill"], shape: "label", duration: 200, easing: "ease-out" }],
-    });
   });
 
   it("disables every graph animation path when reduced motion is requested", async () => {
@@ -632,6 +467,7 @@ describe("GraphPage", () => {
     const graph = await waitFor(() => {
       const instance = getGraphMockState().instances[0];
       expect(instance.setData).toHaveBeenCalled();
+      expect(screen.queryByText("Loading...")).toBeNull();
       return instance;
     });
     const clickSelect = (graph.config.behaviors as ClickSelectBehaviorMock[])

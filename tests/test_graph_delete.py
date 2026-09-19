@@ -2,8 +2,15 @@
 
 import pytest
 
-from core.features.memory.graph.domain.models import GraphEdge, GraphEntry, GraphNode
+from core.features.memory.graph.domain.models import (
+    GraphBoundary,
+    GraphEdge,
+    GraphEntry,
+    GraphNode,
+)
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
+
+BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
 
 class TestGraphDeleteBatchWithEntries:
@@ -27,7 +34,7 @@ class TestGraphDeleteBatchWithEntries:
                     canonical_value=f"f{i}",
                 ),
             ]
-            node_map = await store.upsert_nodes(nodes)
+            node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
             all_node_maps[mem_id] = node_map
 
             edge = GraphEdge(
@@ -36,7 +43,7 @@ class TestGraphDeleteBatchWithEntries:
                 relation_type="related",
                 source_memory_id=mem_id,
             )
-            edge_id = await store.add_edge(edge, node_map)
+            edge_id = await store.add_edge(edge, node_map, boundary=BOUNDARY)
 
             entry = GraphEntry(
                 entry_key=f"mem{mem_id}:entry",
@@ -48,7 +55,7 @@ class TestGraphDeleteBatchWithEntries:
                 node_keys=[f"entity:e{i}", f"entity:f{i}"],
                 relation_type="related",
             )
-            await store.add_entry(entry, node_map, edge_id)
+            await store.add_entry(entry, node_map, edge_id, boundary=BOUNDARY)
 
             # Set vector_doc_id via direct SQL (add_entry doesn't set it)
             async with store._connect() as db:
@@ -73,7 +80,7 @@ class TestGraphDeleteBatchWithEntries:
         assert stats_before["graph_entries"] == 3
         assert stats_before["graph_edges"] == 3
 
-        result = await store.batch_delete_memories([300, 301, 302])
+        result = await store.batch_delete_memories([300, 301, 302], boundary=BOUNDARY)
         # result should map memory_id -> [vector_doc_id...]
         assert 300 in result
         assert 301 in result
@@ -101,7 +108,7 @@ class TestGraphDeleteBatchWithEntries:
                 GraphNode(node_type="entity", value=f"X{i}", canonical_value=f"x{i}"),
                 GraphNode(node_type="entity", value=f"Y{i}", canonical_value=f"y{i}"),
             ]
-            node_map = await store.upsert_nodes(nodes)
+            node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
 
             edge = GraphEdge(
                 source_key=f"entity:x{i}",
@@ -109,7 +116,7 @@ class TestGraphDeleteBatchWithEntries:
                 relation_type="related",
                 source_memory_id=mem_id,
             )
-            edge_id = await store.add_edge(edge, node_map)
+            edge_id = await store.add_edge(edge, node_map, boundary=BOUNDARY)
 
             for j in range(2):
                 entry = GraphEntry(
@@ -122,7 +129,7 @@ class TestGraphDeleteBatchWithEntries:
                     node_keys=[f"entity:x{i}", f"entity:y{i}"],
                     relation_type="related",
                 )
-                await store.add_entry(entry, node_map, edge_id)
+                await store.add_entry(entry, node_map, edge_id, boundary=BOUNDARY)
 
             # Set vector_doc_id
             async with store._connect() as db:
@@ -132,14 +139,14 @@ class TestGraphDeleteBatchWithEntries:
                 )
                 await db.commit()
 
-        result = await store.batch_delete_memories([400, 401, 402])
+        result = await store.batch_delete_memories([400, 401, 402], boundary=BOUNDARY)
         assert len(result) == 3
         stats = await store.get_memory_entry_stats()
         assert stats["graph_entries"] == 0
 
 
 class TestGraphDeleteSharedEdges:
-    """delete_memory should not remove shared semantic edges still referenced by entries."""
+    """Deleting one source preserves another source's independently owned edge."""
 
     @pytest.mark.asyncio
     async def test_delete_memory_keeps_edge_referenced_by_other_memory(
@@ -152,14 +159,19 @@ class TestGraphDeleteSharedEdges:
             GraphNode(node_type="entity", value="Alice", canonical_value="alice"),
             GraphNode(node_type="entity", value="Bob", canonical_value="bob"),
         ]
-        node_map = await store.upsert_nodes(nodes)
+        node_map = await store.upsert_nodes(nodes, boundary=BOUNDARY)
         edge = GraphEdge(
             source_key="entity:alice",
             target_key="entity:bob",
             relation_type="knows",
             source_memory_id=100,
         )
-        edge_id = await store.add_edge(edge, node_map)
+        edge_id = await store.add_edge(edge, node_map, boundary=BOUNDARY)
+        other_edge_id = await store.add_edge(
+            GraphEdge("entity:alice", "entity:bob", "knows", 200),
+            node_map,
+            boundary=BOUNDARY,
+        )
 
         entry_100 = GraphEntry(
             entry_key="mem100:alice-bob",
@@ -181,10 +193,10 @@ class TestGraphDeleteSharedEdges:
             node_keys=["entity:alice", "entity:bob"],
             relation_type="knows",
         )
-        await store.add_entry(entry_100, node_map, edge_id)
-        await store.add_entry(entry_200, node_map, edge_id)
+        await store.add_entry(entry_100, node_map, edge_id, boundary=BOUNDARY)
+        await store.add_entry(entry_200, node_map, other_edge_id, boundary=BOUNDARY)
 
-        await store.delete_memory(100)
+        await store.delete_memory(100, boundary=BOUNDARY)
 
         stats = await store.get_memory_entry_stats()
         assert stats["graph_entries"] == 1
@@ -196,7 +208,7 @@ class TestGraphDeleteSharedEdges:
             )
             rows = await cursor.fetchall()
 
-        assert [(int(row[0]), int(row[1])) for row in rows] == [(200, edge_id)]
+        assert [(int(row[0]), int(row[1])) for row in rows] == [(200, other_edge_id)]
 
     @pytest.mark.asyncio
     async def test_batch_delete_partial_vectors(self, tmp_db_path):
@@ -209,14 +221,14 @@ class TestGraphDeleteSharedEdges:
             GraphNode(node_type="entity", value="A500", canonical_value="a500"),
             GraphNode(node_type="entity", value="B500", canonical_value="b500"),
         ]
-        node_map_a = await store.upsert_nodes(nodes_a)
+        node_map_a = await store.upsert_nodes(nodes_a, boundary=BOUNDARY)
         edge_a = GraphEdge(
             source_key="entity:a500",
             target_key="entity:b500",
             relation_type="related",
             source_memory_id=500,
         )
-        edge_id_a = await store.add_edge(edge_a, node_map_a)
+        edge_id_a = await store.add_edge(edge_a, node_map_a, boundary=BOUNDARY)
         entry_a = GraphEntry(
             entry_key="mem500:entry",
             source_memory_id=500,
@@ -227,7 +239,7 @@ class TestGraphDeleteSharedEdges:
             node_keys=["entity:a500", "entity:b500"],
             relation_type="related",
         )
-        await store.add_entry(entry_a, node_map_a, edge_id_a)
+        await store.add_entry(entry_a, node_map_a, edge_id_a, boundary=BOUNDARY)
         async with store._connect() as db:
             await db.execute(
                 "UPDATE graph_entries SET vector_doc_id = ? WHERE source_memory_id = ?",
@@ -240,14 +252,14 @@ class TestGraphDeleteSharedEdges:
             GraphNode(node_type="entity", value="C501", canonical_value="c501"),
             GraphNode(node_type="entity", value="D501", canonical_value="d501"),
         ]
-        node_map_b = await store.upsert_nodes(nodes_b)
+        node_map_b = await store.upsert_nodes(nodes_b, boundary=BOUNDARY)
         edge_b = GraphEdge(
             source_key="entity:c501",
             target_key="entity:d501",
             relation_type="related",
             source_memory_id=501,
         )
-        edge_id_b = await store.add_edge(edge_b, node_map_b)
+        edge_id_b = await store.add_edge(edge_b, node_map_b, boundary=BOUNDARY)
         entry_b = GraphEntry(
             entry_key="mem501:entry",
             source_memory_id=501,
@@ -258,10 +270,10 @@ class TestGraphDeleteSharedEdges:
             node_keys=["entity:c501", "entity:d501"],
             relation_type="related",
         )
-        await store.add_entry(entry_b, node_map_b, edge_id_b)
+        await store.add_entry(entry_b, node_map_b, edge_id_b, boundary=BOUNDARY)
         # Leave vector_doc_id as NULL (default)
 
-        result = await store.batch_delete_memories([500, 501])
+        result = await store.batch_delete_memories([500, 501], boundary=BOUNDARY)
         # Memory 500 should have a vector_doc_id; 501 should not
         assert 500 in result
         assert result[500] == [5000]

@@ -22,7 +22,6 @@ from core.features.memory.application.canonical_merge import (
     DEDUP_REASON_OBSERVED,
     MAX_MERGED_IDEMPOTENCY_KEYS,
     MAX_SOURCE_EVIDENCE,
-    MAX_SOURCE_REFS,
     MAX_TOPICS,
     CanonicalMergeCoordinator,
     DedupMetricsRecorder,
@@ -35,6 +34,7 @@ from core.features.quality.application.near_duplicate_detector import (
     DedupDocument,
     DedupQuery,
 )
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
 
 _OWNER_ID = 100
 _CONTENT = "项目使用 SQLite 存储会话记录，每周五发布一次版本，发布前必须跑完回归测试"
@@ -122,6 +122,7 @@ def _document(
         "importance": 0.4,
     }
     base.update(metadata or {})
+    base.setdefault("fact_source_evidence", fact_evidence(base["key_facts"]))
     return {
         "id": _OWNER_ID,
         "text": content,
@@ -156,6 +157,7 @@ def _candidate(
         "topics": ["发布流程"],
     }
     base.update(metadata or {})
+    base.setdefault("fact_source_evidence", fact_evidence(base["key_facts"]))
     return MergeCandidate(
         content=content,
         metadata=base,
@@ -256,40 +258,76 @@ async def test_importance_never_decreases() -> None:
 
 
 @pytest.mark.asyncio
-async def test_union_deduplicates_and_caps_payloads() -> None:
-    """来源证据与主题并集去重，且各自遵守上限。"""
-
+async def test_union_deduplicates_and_caps_fact_evidence() -> None:
+    """Each fact keeps its own bounded, deduplicated relocatable evidence."""
+    first, second = "项目使用 SQLite 存储会话记录", "每周五发布一次版本"
+    group = [
+        source_evidence(first, message_id=index + 1)[0]
+        for index in range(MAX_SOURCE_EVIDENCE)
+    ]
+    second_group = source_evidence(second, message_id=90)
     document = _document(
         metadata={
-            "source_refs": [
-                {"message_index": index, "start": 0, "end": 3}
-                for index in range(MAX_SOURCE_REFS)
-            ],
-            "source_evidence": [
-                {"message_index": index, "role": "user"}
-                for index in range(MAX_SOURCE_EVIDENCE)
-            ],
+            "key_facts": [first, second],
+            "fact_source_evidence": [group, second_group],
+            "source_evidence": source_evidence(first),
             "topics": [f"主题-{index}" for index in range(MAX_TOPICS)],
         }
     )
     engine = _Engine(document)
-
     outcome = await _coordinator(engine, _Search([_stored(document)])).merge(
         _candidate(
             metadata={
-                "source_refs": [{"message_index": 0, "start": 0, "end": 3}],
-                "source_evidence": [{"message_index": 0, "role": "user"}],
+                "key_facts": [first, second],
+                "fact_source_evidence": [
+                    [group[0], source_evidence(first, message_id=99)[0]],
+                    second_group,
+                ],
+                "source_evidence": source_evidence(second),
                 "topics": ["主题-0", "主题-9"],
             }
         )
     )
-
-    assert outcome.status is MergeStatus.MERGED
+    assert outcome.merged
     metadata = engine.document["metadata"]
-    assert len(metadata["source_refs"]) == MAX_SOURCE_REFS
-    assert len(metadata["source_evidence"]) == MAX_SOURCE_EVIDENCE
-    assert len(metadata["topics"]) == MAX_TOPICS
+    assert metadata["fact_source_evidence"] == [group, second_group]
+    assert metadata["source_evidence"] == source_evidence(first)
     assert metadata["topics"] == [f"主题-{index}" for index in range(MAX_TOPICS)]
+
+
+@pytest.mark.asyncio
+async def test_merge_pairs_evidence_by_normalized_fact_not_position():
+    first, second = "项目使用 SQLite 存储会话记录", "每周五发布一次版本"
+    original = [
+        source_evidence(first, message_id=10),
+        source_evidence(second, message_id=20),
+    ]
+    addition = source_evidence(second, message_id=30)
+    document = _document(metadata={"fact_source_evidence": original})
+    engine = _Engine(document)
+    outcome = await _coordinator(engine, _Search([_stored(document)])).merge(
+        _candidate(
+            metadata={
+                "key_facts": [f" {second} ", first],
+                "fact_source_evidence": [addition, original[0]],
+            }
+        )
+    )
+    assert outcome.merged
+    groups = engine.document["metadata"]["fact_source_evidence"]
+    assert groups[0] == original[0]
+    assert {ref["message_id"] for ref in groups[1]} == {20, 30}
+
+
+@pytest.mark.asyncio
+async def test_merge_refuses_legacy_fact_evidence():
+    document = _document(metadata={"fact_source_evidence": []})
+    engine = _Engine(document)
+    outcome = await _coordinator(engine, _Search([_stored(document)])).merge(
+        _candidate()
+    )
+    assert outcome.status is MergeStatus.CONFLICT
+    assert engine.updates == []
 
 
 @pytest.mark.asyncio

@@ -7,12 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.retrieval.dual_route_retriever import DualRouteRetriever
 from core.features.retrieval.graph_keyword_retriever import GraphKeywordResult
 from core.features.retrieval.graph_retriever import GraphRetriever
 from core.features.retrieval.graph_vector_retriever import GraphVectorResult
 from core.features.retrieval.rrf_fusion import HybridResult, RRFFusion
 from core.shared.adapter_capabilities import ASTRBOT_FAISS_CAPABILITIES
+
+BOUNDARY = GraphBoundary("retrieval-ranking", "public", "r1")
 
 
 def _candidate(doc_id: int, score: float, content: str) -> HybridResult:
@@ -189,7 +192,7 @@ async def test_graph_retriever_exposes_numeric_minimum_distance() -> None:
     vector = SimpleNamespace(search=AsyncMock(return_value=[]))
     retriever = GraphRetriever(keyword, vector, RRFFusion(), config={})
 
-    results = await retriever.search("事实", k=1)
+    results = await retriever.search("事实", k=1, boundary=BOUNDARY)
 
     assert len(results) == 1
     assert results[0].score_breakdown is not None
@@ -216,7 +219,7 @@ async def test_vector_only_graph_result_does_not_invent_distance() -> None:
     )
     retriever = GraphRetriever(keyword, vector, RRFFusion(), config={})
 
-    results = await retriever.search("事实", k=1)
+    results = await retriever.search("事实", k=1, boundary=BOUNDARY)
 
     assert len(results) == 1
     assert results[0].score_breakdown is not None
