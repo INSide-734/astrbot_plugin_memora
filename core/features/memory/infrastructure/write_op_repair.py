@@ -223,6 +223,76 @@ class WriteOpRepairMixin:
                     return False
         return True
 
+    async def _resolve_pending_add_document(
+        self,
+        op_id: int,
+        payload: dict[str, Any],
+    ) -> int | None:
+        """按预写 ``doc_id`` 找回已提交但账本尚未记账的 canonical 行。
+
+        写入端在 INSERT 前把该行的 ``doc_id`` 预写进本次操作的 ``pending_doc_id``
+        （``documents`` 的宿主引擎与 ``memory_write_ops`` 的 aiosqlite 连接是同一
+        个 ``memora.db`` 文件上的两个连接，无法共享事务）。这里用账本自身的
+        canonical 连接按 ``documents.doc_id`` 唯一索引取回整数 ID，并就地补记
+        ``documents_committed`` 与 ``indexes_pending``，后续阶段仍走既有的 add
+        修复路径，不复制宿主插入语义。
+
+        返回 ``None`` 时调用方不得继续按猜想的 ID 补索引：没有 ``pending_doc_id``
+        的旧账本保持 ``unrepairable`` 终态；意图存在却没有 canonical 行说明 INSERT
+        未提交，记 ``document_absent`` 终态而不是空转重试；查询本身失败只降级为
+        ``needs_repair``（``pending_document_lookup_failed``）等下一轮有界重试。
+        """
+
+        doc_id = payload.get("pending_doc_id")
+        if not isinstance(doc_id, str) or not doc_id:
+            await self.advance_op(
+                op_id,
+                "unrepairable",
+                status="failed",
+                error="missing memory_id for add repair",
+            )
+            return None
+        try:
+            cursor = await self._db.execute(
+                "SELECT id FROM documents WHERE doc_id = ? LIMIT 1",
+                (doc_id,),
+            )
+            row = await cursor.fetchone()
+            await cursor.close()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "[WriteOpJournal] 预写意图定位失败 "
+                "reason_code=pending_document_lookup_failed"
+            )
+            await self.advance_op(
+                op_id,
+                "document_lookup_degraded",
+                status="needs_repair",
+                error="pending_document_lookup_failed",
+            )
+            return None
+        if row is None or row[0] is None:
+            await self.advance_op(
+                op_id,
+                "document_absent",
+                status="failed",
+                error="pending_document_missing",
+            )
+            return None
+        memory_id = int(row[0])
+        # 预写意图早于 INSERT，索引阶段必然未执行：恢复后必须补索引。
+        payload["memory_id"] = memory_id
+        payload["indexes_pending"] = True
+        await self.advance_op(
+            op_id,
+            "documents_committed",
+            memory_id=memory_id,
+            payload_patch={"memory_id": memory_id, "indexes_pending": True},
+        )
+        return memory_id
+
     async def _repair_add(
         self,
         op_id: int,
@@ -232,13 +302,9 @@ class WriteOpRepairMixin:
         """重放未完成的 canonical 添加派生步骤。"""
 
         if memory_id is None:
-            await self.advance_op(
-                op_id,
-                "unrepairable",
-                status="failed",
-                error="missing memory_id for add repair",
-            )
-            return False
+            memory_id = await self._resolve_pending_add_document(op_id, payload)
+            if memory_id is None:
+                return False
 
         if self._get_memory is None:
             await self.advance_op(

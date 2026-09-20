@@ -7,6 +7,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import aiosqlite
 import faiss
 import numpy as np
 import pytest
@@ -638,7 +639,8 @@ async def test_semantic_metadata_update_replaces_derived_atoms(
         seeded_facts = ["用户喜欢苹果"]
         memory_id = await store.insert_document(
             "doc-old",
-            "用户喜欢苹果和香蕉",
+            # 正文必须逐字包含新旧两组事实：重派生只在事实属于当前正文时保留。
+            "用户喜欢苹果，用户喜欢香蕉",
             {
                 "session_id": "s1",
                 "privacy_level": "shared",
@@ -688,5 +690,140 @@ async def test_semantic_metadata_update_replaces_derived_atoms(
 
         atoms = await atom_store.get_by_parent_raw(memory_id)
         assert [atom.content for atom in atoms] == grown_facts
+    finally:
+        await db.close()
+
+
+class _LedgerCrash(BaseException):
+    """进程退出替身：绕开所有 ``except Exception``，模拟账本推进前断电。"""
+
+
+def _crash_before_step(journal, step: str):
+    """把指定 step 的账本推进替换成进程退出替身，返回可恢复的原方法。"""
+
+    original = journal.advance_op
+
+    async def crash(op_id, target_step, **kwargs):
+        if target_step == step:
+            raise _LedgerCrash(target_step)
+        return await original(op_id, target_step, **kwargs)
+
+    journal.advance_op = crash
+    return original
+
+
+async def _canonical_doc_ids(db_path: str) -> list[tuple[int, str]]:
+    """返回 canonical 行的整数 ID 与宿主 ``doc_id``，用于核对账本预写意图。"""
+
+    async with aiosqlite.connect(db_path) as db:
+        cursor = await db.execute("SELECT id, doc_id FROM documents ORDER BY id")
+        return [(int(row[0]), str(row[1])) for row in await cursor.fetchall()]
+
+
+async def _add_op_row(db: aiosqlite.Connection) -> aiosqlite.Row:
+    """读取最近一条 add 账本行（含整数 ``memory_id``）以核对崩溃窗口记账状态。"""
+
+    cursor = await db.execute(
+        "SELECT id, memory_id, status, step, error, payload FROM memory_write_ops "
+        "WHERE op_type = 'add' ORDER BY id DESC LIMIT 1"
+    )
+    return await cursor.fetchone()
+
+
+@pytest.mark.asyncio
+async def test_add_crash_before_documents_committed_repairs_indexes(
+    tmp_db_path: str,
+) -> None:
+    """canonical 已提交但账本停在预写意图：repair 必须把该行收敛为已建索引。
+
+    这是分段写入拆出索引阶段后的损失面：崩溃后 canonical 行既不在 FAISS 也不在
+    FTS，只能靠账本里预写的 ``doc_id`` 找回同一行，且不得产生第二行 canonical。
+    """
+
+    engine, db, host, bm25 = await _staged_engine(tmp_db_path)
+    try:
+        original_advance = _crash_before_step(
+            engine._write_journal,
+            "documents_committed",
+        )
+        with pytest.raises(_LedgerCrash):
+            await engine.add_memory("崩溃窗口事实", session_id="s1")
+
+        rows = await _canonical_rows(tmp_db_path)
+        assert rows == [(1, "崩溃窗口事实")]
+        memory_id = rows[0][0]
+        row = await _add_op_row(db)
+        assert (row["status"], row["step"]) == ("pending", "document_intent")
+        assert row["memory_id"] is None
+        # 预写意图必须指向真正提交的那一行，否则修复端无从定位。
+        assert await _canonical_doc_ids(tmp_db_path) == [
+            (memory_id, json.loads(row["payload"])["pending_doc_id"])
+        ]
+        # 崩溃发生在索引阶段之前：这正是本用例要修复的不可召回状态。
+        assert host.embedding_storage.index.ntotal == 0
+        assert await _fts_count(db, memory_id) == 0
+
+        engine._write_journal.advance_op = original_advance
+        assert await engine._write_journal.repair_incomplete() == 1
+
+        row = await _add_op_row(db)
+        assert (row["status"], row["step"]) == ("completed", "completed")
+        assert row["memory_id"] == memory_id
+        assert await _canonical_rows(tmp_db_path) == [(memory_id, "崩溃窗口事实")]
+        assert host.embedding_storage.index.ntotal == 1
+        assert [
+            int(value)
+            for value in faiss.vector_to_array(host.embedding_storage.index.id_map)
+        ] == [memory_id]
+        assert await _fts_count(db, memory_id) == 1
+        assert [
+            result.doc_id for result in await bm25.search("崩溃窗口事实", limit=5)
+        ] == [memory_id]
+        # 重复修复不得再选中该操作，也不得产生第二行 canonical。
+        assert await engine._write_journal.repair_incomplete() == 0
+        assert await _canonical_rows(tmp_db_path) == [(memory_id, "崩溃窗口事实")]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_add_crash_before_canonical_insert_marks_document_absent(
+    tmp_db_path: str,
+) -> None:
+    """预写意图已落库但 INSERT 未提交：repair 记终态，不补索引也不伪造行。"""
+
+    engine, db, host, _bm25 = await _staged_engine(tmp_db_path)
+    try:
+        store = host.document_storage
+        original_insert = store.insert_document
+
+        async def abort_insert(doc_id: str, text: str, metadata: dict) -> int:
+            """模拟 INSERT 未提交时的进程退出：取消继续传播，账本无整数 ID。"""
+
+            raise asyncio.CancelledError()
+
+        store.insert_document = abort_insert
+        with pytest.raises(asyncio.CancelledError):
+            await engine.add_memory("未提交事实", session_id="s1")
+        store.insert_document = original_insert
+
+        row = await _add_op_row(db)
+        assert (row["status"], row["step"]) == ("pending", "document_intent")
+        assert json.loads(row["payload"])["pending_doc_id"]
+        assert await _canonical_rows(tmp_db_path) == []
+
+        assert await engine._write_journal.repair_incomplete() == 0
+        row = await _add_op_row(db)
+        assert (row["status"], row["step"], row["error"]) == (
+            "failed",
+            "document_absent",
+            "pending_document_missing",
+        )
+        # 终态不空转：既不再重放，也不补索引、不凭空造出 canonical 行。
+        assert await engine._write_journal.repair_incomplete() == 0
+        assert (await _add_op_row(db))["step"] == "document_absent"
+        assert await _canonical_rows(tmp_db_path) == []
+        assert host.embedding_storage.index.ntotal == 0
+        assert await _fts_count(db, 1) == 0
     finally:
         await db.close()

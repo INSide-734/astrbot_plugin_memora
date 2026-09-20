@@ -568,10 +568,18 @@ class MemoryEngineIdempotencyMixin:
         ports: _StagedIndexPorts,
         content: str,
         full_metadata: dict[str, Any],
+        op_id: int | None,
     ) -> tuple[int, Any]:
-        """先算向量再落 canonical 行，返回整数 ID 与待写入的向量。
+        """先预写 ``doc_id`` 意图，再算向量并落 canonical 行，返回整数 ID 与向量。
 
-        顺序与宿主 ``FaissVecDB.insert`` 一致（embedding → documents → 向量），
+        ``documents``（宿主文档存储的 SQLAlchemy 引擎）与 ``memory_write_ops``
+        （本插件的 aiosqlite 连接）是同一个 ``memora.db`` 文件上的两个连接，无法
+        共享事务：INSERT 提交与账本推进之间必然存在崩溃窗口。因此 INSERT 前先把
+        该行的 ``doc_id`` 预写进账本（step ``document_intent``），让修复端按同一
+        UUID 找回已提交的 canonical 行补索引，既不必复制宿主插入语义，也不会
+        产生第二行 canonical。
+
+        其余顺序与宿主 ``FaissVecDB.insert`` 一致（embedding → documents → 向量），
         区别只在把 documents 提交与向量写入拆开，好让整数 canonical ID 在派生
         索引失败前就能进入账本。embedding 输入沿用向量层的字符预算规则。
         """
@@ -591,8 +599,16 @@ class MemoryEngineIdempotencyMixin:
                 await ports.embedding_provider.get_embedding(embedding_content),
                 dtype=np.float32,
             )
+            # 预写意图紧贴 INSERT：这之后任何时刻崩溃，账本都能证明「哪一行属于
+            # 这次 add」，而不必等整数 ID 回填。
+            pending_doc_id = str(uuid.uuid4())
+            await self._write_journal.advance_op(
+                op_id,
+                "document_intent",
+                payload_patch={"pending_doc_id": pending_doc_id},
+            )
             doc_id = await ports.document_storage.insert_document(
-                str(uuid.uuid4()),
+                pending_doc_id,
                 content,
                 full_metadata,
             )
@@ -607,11 +623,15 @@ class MemoryEngineIdempotencyMixin:
     ) -> DocumentWriteOutcome:
         """提交 canonical 行，并把 canonical 之后的索引失败降级为待修复。
 
+        分段写入时 INSERT 前先在账本登记该行的 ``doc_id``（step
+        ``document_intent``）：documents 的提交与账本推进跨连接、无法共享事务，
+        预写意图让「已提交但未记账」的崩溃窗口仍可由修复端按 UUID 找回该行。
         canonical 提交后立即用整数 ID 与正文摘要登记 ``documents_committed``
         意图；FAISS/FTS 阶段失败只记 ``needs_repair``（原因码
         ``index_stage_degraded``）并返回该 ID，调用方不会把已提交的 canonical
         当成写失败重试。只有 canonical 提交本身失败才向上报错；缺少分段端口时
-        保持既有单段 ``add_memory`` 语义。
+        保持既有单段 ``add_memory`` 语义（宿主在一次调用内同时提交 canonical
+        与索引，没有可提前登记的 ``doc_id``）。
         """
 
         ports = self._staged_index_ports()
@@ -628,6 +648,7 @@ class MemoryEngineIdempotencyMixin:
                     ports,
                     content,
                     full_metadata,
+                    op_id,
                 )
         except asyncio.CancelledError:
             raise
