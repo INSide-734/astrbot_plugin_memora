@@ -30,11 +30,15 @@ Memora 支持校验后的备份快照、定时备份和保留策略。备份操�
 flowchart LR
     Restore["恢复 canonical 数据"] --> Verify["校验 SQLite"]
     Verify --> Search["重建 FTS5 / FAISS"]
-    Search --> Graph["重建图索引"]
+    Search --> Catalog["重建主题目录"]
+    Catalog --> Atoms["重派生原子信号"]
+    Atoms --> Graph["重建图索引"]
     Graph --> Derived["重建 Relation / Projection"]
+    Derived --> Compression["重建语义摘要"]
+    Compression --> Notes["重建自动笔记"]
 ```
 
-阶段失败只降级对应派生能力，不删除已经恢复的 canonical 数据。
+阶段失败只降级对应派生能力，不删除已经恢复的 canonical 数据；重建严格按上述固定阶段顺序执行。
 
 ## 导出
 

@@ -48,7 +48,7 @@ flowchart LR
 
 1. `ConfigManager` 从 AstrBot 注入映射建立深拷贝快照：旧键迁移 → 默认值深合并 → Pydantic 校验/分支降级 → SHA-256 revision；Page API 的配置更新在锁内做 Schema、CAS、原子保存和保存后重读。
 2. `PluginInitializer` 通过 `ProviderLoader` 选择候选，`ProviderWaiter` 以有界重试等待两类 Provider；就绪后由 `ComponentFactory` 统一构造数据库、引擎、处理器、身份、索引、调度与演化组件，再发布完整运行时。
-3. `DerivedRebuildCoordinator` 只处理可丢弃派生面，顺序为 canonical 可访问性确认 → FTS/BM25/FAISS → graph → relation/projection/evolution（可选 notes/compression 阶段由当前装配决定）；阶段失败不得删除 canonical。
+3. `DerivedRebuildCoordinator` 只处理可丢弃派生面，按 canonical 可访问性确认 → indexes（FTS/BM25/FAISS）→ catalog → atoms → graph → evolution → semantic_compression → notes 的固定相对顺序执行；阶段失败只降级记录，不得删除 canonical。
 4. 关停先停止 scheduler、回填和引擎后台生产者，再清理 Prompt protection、RealtimeHub、演化/注入组件，最后关闭 manager/store/数据库；路由清理由 transport 的内部生命周期适配器完成。
 
 ## 跨模块不变量

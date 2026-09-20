@@ -46,11 +46,11 @@ flowchart LR
 
 ## 派生重建链
 
-`DerivedRebuildCoordinator` 只读确认 canonical 后，按 `canonical → FTS5/FAISS → graph → relation/projection` 顺序执行：
+`DerivedRebuildCoordinator` 只读确认 canonical 后，按 `canonical → indexes（FTS5/FAISS）→ catalog → atoms → graph → evolution → semantic_compression → notes` 的固定相对顺序执行（请求子集只改变执行范围，不改变相对顺序）：
 
-- 阶段失败只报告降级，不删除 canonical 数据。
+- 阶段失败只报告降级（例如原子阶段 `atoms_rebuild_partial_failed`），不删除 canonical 数据；canonical 不可读时不执行任何派生阶段。
 - Evolution worker 在启动期重建完成或安全降级后再启动。
-- 管理员可通过 `/memora rebuild-index` 与 `/memora rebuild-graph` 触发维护重建。
+- 管理员可通过 `/memora rebuild-index` 与 `/memora rebuild-graph` 触发维护重建，两者与维护 API 都经统一阶段入口。
 
 ## 召回与注入链
 
