@@ -56,8 +56,9 @@ class TopicBatchPreparer:
     ) -> list[list]:
         """将 *history_messages* 切分为按话题组织的批次。
 
-        返回消息子列表组成的列表。当当前策略既不是 C 也不是 D，
-        或者当前批次过小不适合继续切分时，返回仅包含完整输入的单元素列表。
+        返回消息子列表组成的列表。当当前策略既不是 C 也不是 D、当前批次过小
+        不适合继续切分，或切分结果没有逐条覆盖全部输入时，返回仅包含完整
+        输入的单元素列表。
         """
         strategy_key = self._config_manager.get(
             "topic_segmentation.strategy", "a_b_hybrid"
@@ -71,12 +72,26 @@ class TopicBatchPreparer:
         topic_cfg = self._build_topic_config()
 
         if strategy_key == "c":
-            return await self._prepare_strategy_c(history_messages, topic_cfg)
+            batches = await self._prepare_strategy_c(history_messages, topic_cfg)
+        elif strategy_key == "d":
+            batches = await self._prepare_strategy_d(history_messages, topic_cfg)
+        else:
+            return [list(history_messages)]
 
-        if strategy_key == "d":
-            return await self._prepare_strategy_d(history_messages, topic_cfg)
-
-        return [list(history_messages)]
+        # worker 合并批次后必须与源窗口逐条一致（summary_worker._prepare_base_batch，
+        # 不一致即 SOURCE_INCOMPLETE 非重试失败）。话题漏标会丢消息、line_range 重叠
+        # 会重复消息，两者都破坏该不变量，因此这里统一回退为单批次。
+        flattened: list[Any] = []
+        for batch in batches:
+            if not isinstance(batch, (list, tuple)):
+                return [list(history_messages)]
+            flattened.extend(batch)
+        if flattened != list(history_messages):
+            logger.warning(
+                "[话题批次准备器] 话题批次未完整覆盖来源窗口，已回退为单批次处理。"
+            )
+            return [list(history_messages)]
+        return batches
 
     # ------------------------------------------------------------------
     # 策略实现

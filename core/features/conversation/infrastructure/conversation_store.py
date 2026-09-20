@@ -7,7 +7,7 @@ import asyncio
 import inspect
 import json
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any, cast
@@ -15,7 +15,11 @@ from typing import Any, cast
 import aiosqlite
 from astrbot.api import logger
 
-from ....shared.contracts.conversation import Session, serialize_to_json
+from ....shared.contracts.conversation import (
+    Session,
+    deserialize_from_json,
+    serialize_to_json,
+)
 from ....shared.sql import apply_perf_pragmas
 from .message_store import MessageStoreMixin
 from .summary_schema import migrate_conversation_schema
@@ -246,6 +250,63 @@ class ConversationStore(SummaryStoreMixin, MessageStoreMixin):
                 (now, session_id),
             )
             await self.connection.commit()
+
+    async def write_session_metadata(
+        self,
+        session_id: str,
+        updates: Mapping[str, Any],
+        *,
+        replace: bool = False,
+    ) -> dict[str, Any] | None:
+        """在 ``_write_lock`` 内读改写会话 metadata，返回落库后的完整字典。
+
+        合并必须在锁内完成：连接由多个写入方共享，锁外「读—改—写」会互相覆盖，
+        而锁外的 commit/rollback 还会终结别的写入方尚未完成的事务。
+
+        Args:
+            session_id: 统一会话标识。
+            updates: 要写入的字段。
+            replace: ``True`` 时整体替换现有 metadata；``False`` 时合并进现有值。
+
+        Returns:
+            落库后的完整 metadata；会话不存在或数据库连接不可用时返回 ``None``。
+
+        Raises:
+            asyncio.CancelledError: 调用方取消写入时原样传播。
+            Exception: 其它写入失败在回滚后原样抛出。
+        """
+        if self.connection is None:
+            return None
+        async with self._write_lock:
+            try:
+                await self.connection.execute("BEGIN IMMEDIATE")
+                async with self.connection.execute(
+                    "SELECT metadata FROM sessions WHERE session_id = ?",
+                    (session_id,),
+                ) as cursor:
+                    row = await cursor.fetchone()
+                if row is None:
+                    await self.connection.rollback()
+                    return None
+                merged: dict[str, Any] = {}
+                if not replace:
+                    raw = deserialize_from_json(row["metadata"])
+                    if isinstance(raw, dict):
+                        merged.update(raw)
+                merged.update(dict(updates))
+                await self.connection.execute(
+                    """
+                    UPDATE sessions
+                    SET metadata = ?
+                    WHERE session_id = ?
+                    """,
+                    (json.dumps(merged, ensure_ascii=False), session_id),
+                )
+                await self.connection.commit()
+            except BaseException:
+                await self._rollback_write("write_session_metadata")
+                raise
+        return merged
 
     async def get_recent_sessions(self, limit: int = 10) -> list[Session]:
         """

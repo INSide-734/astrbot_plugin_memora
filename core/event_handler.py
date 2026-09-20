@@ -425,9 +425,26 @@ class EventHandler(CognitiveComponentsMixin):
             return
         try:
             await self.conversation_manager.clear_session(session_id)
-            logger.info(f"[{session_id}] 已同步清空插件会话上下文（/reset 或 /new）")
-        except Exception as e:
-            logger.error(f"[{session_id}] 清空插件会话上下文失败: {e}", exc_info=True)
+        except Exception as error:
+            if (
+                isinstance(error, RuntimeError)
+                and str(error) == "summary_source_protected"
+            ):
+                # 设计内 fail-closed：会话仍有待处置隔离候选，消息必须保留到
+                # 候选被批准/拒绝，宿主 /new 已切换而插件侧等待再次清理。
+                report_debug_event(
+                    "maintenance_task",
+                    component="maintenance",
+                    stage="context_cleanup",
+                    status="skipped",
+                    reason_code="write_blocked",
+                    task_type="cleanup",
+                )
+                logger.warning("会话清理被待处置隔离来源保护拒绝，保留消息")
+                return
+            logger.error("清空插件会话上下文失败", exc_info=True)
+            return
+        logger.info("已同步清空插件会话上下文（/reset 或 /new）")
 
     async def shutdown(self) -> None:
         """关闭事件处理器，等待所有存储任务完成"""

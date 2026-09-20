@@ -4,16 +4,100 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
 import pytest
 
 from core.features.backfill.application import BackfillScheduler
+from core.features.backfill.application.scheduler import BackfillError
+from core.features.recall.processors.topic_splitter import MemorySegment
 
 # ---------------------------------------------------------------------------
 # 测试夹具
 # ---------------------------------------------------------------------------
+
+
+class _IdempotentEngine:
+    """按 ``metadata.idempotency_key`` 收敛的假引擎：同键复用既有 canonical ID。"""
+
+    def __init__(
+        self,
+        *,
+        fail_on_content: str | None = None,
+        fail_delete_once: bool = False,
+    ) -> None:
+        """配置可选的一次性片段写入/删除失败，用于构造中途失败现场。"""
+
+        self.canonical: dict[str, int] = {}
+        self.deleted: list[int] = []
+        self._next_id = 100
+        self._fail_on_content = fail_on_content
+        self._failed_once = False
+        self._fail_delete_once = fail_delete_once
+        self.hybrid_retriever = MagicMock()
+        self.hybrid_retriever.update_metadata = AsyncMock(return_value=True)
+
+    async def add_memory(self, *, content: str, metadata: dict, **kwargs) -> int:
+        """同幂等键复用既有 ID，新键分配新 ID；可选一次性写入失败。"""
+
+        key = metadata["idempotency_key"]
+        existing = self.canonical.get(key)
+        if existing is not None:
+            return existing
+        if self._fail_on_content == content and not self._failed_once:
+            self._failed_once = True
+            raise RuntimeError("segment write failed")
+        self.canonical[key] = self._next_id
+        self._next_id += 1
+        return self.canonical[key]
+
+    async def delete_memory(self, doc_id: int) -> None:
+        """记录删除的旧文档 ID；可选一次性删除失败。"""
+
+        if self._fail_delete_once:
+            self._fail_delete_once = False
+            raise RuntimeError("delete error")
+        self.deleted.append(doc_id)
+
+
+def _segment(content: str, fact: str) -> MemorySegment:
+    """构造一个单事实片段，metadata 每次都是全新的字典。"""
+
+    return MemorySegment(
+        content=content,
+        importance=0.5,
+        metadata={},
+        key_facts=[fact],
+        topics=[],
+        atoms=[],
+    )
+
+
+def _two_segments() -> list[MemorySegment]:
+    """构造两个不同话题的片段，供多片段回填路径使用。"""
+
+    return [_segment("topic A", "a"), _segment("topic B", "b")]
+
+
+def _page_api_last_error(scheduler: BackfillScheduler) -> object:
+    """取 Page API 对回填进度暴露的 ``last_error``，用于验证 API 面不外泄异常原文。"""
+
+    from core.platform.transport.page_api.metrics_api import MetricsApiMixin
+
+    stub = SimpleNamespace(
+        plugin=SimpleNamespace(
+            initializer=SimpleNamespace(
+                backfill_scheduler=scheduler,
+                decay_scheduler=None,
+            )
+        )
+    )
+    summary = MetricsApiMixin._build_scheduler_summary(cast(Any, stub))
+    return summary["backfill"]["last_error"]
 
 
 class TestBackfillScheduler:
@@ -231,16 +315,40 @@ class TestBackfillScheduler:
         assert s.progress["status"] == "completed_with_errors"
 
     @pytest.mark.asyncio
-    async def test_run_marks_failed_on_unhandled_exception(self):
-        """未处理异常应把任务状态设置为 ``failed``。"""
+    async def test_run_marks_failed_on_unhandled_exception(self, caplog):
+        """未处理异常应置 ``failed`` 且只外传稳定失败码，异常原文不外泄。"""
+        caplog.set_level(logging.ERROR)
+        canary = "AUDIT_CANARY_private_payload"
         s = self._make_scheduler()
         s._job_id = "bf_test"
-        s._fetch_legacy_batch = AsyncMock(side_effect=RuntimeError("db down"))
+        s._fetch_legacy_batch = AsyncMock(side_effect=RuntimeError(canary))
 
         await s._run()
 
         assert s.progress["status"] == "failed"
-        assert "db down" in s.progress["error"]
+        assert s.progress["error"] == "backfill_run_failed"
+        assert canary not in json.dumps(s.progress)
+        assert canary not in caplog.text
+        assert "error_class=RuntimeError" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_run_rejects_foreign_reason_code(self):
+        """非白名单的 ``reason_code`` 不得进入进度，必须 fail-closed 回落通用失败码。"""
+
+        class _ForeignError(RuntimeError):
+            """模拟携带任意 reason_code 属性的外部异常。"""
+
+            reason_code = "AUDIT_CANARY_private_payload"
+
+        s = self._make_scheduler()
+        s._job_id = "bf_test"
+        s._fetch_legacy_batch = AsyncMock(side_effect=_ForeignError("boom"))
+
+        await s._run()
+
+        assert s.progress["status"] == "failed"
+        assert s.progress["error"] == "backfill_run_failed"
+        assert "AUDIT_CANARY_private_payload" not in json.dumps(s.progress)
 
     @pytest.mark.asyncio
     async def test_run_checkpoint_advances(self):
@@ -466,16 +574,42 @@ class TestBackfillScheduler:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_fetch_legacy_batch_exception_returns_empty(self):
-        """文档读取异常时批次查询应安全降级为空列表。"""
+    async def test_fetch_legacy_batch_exception_propagates(self):
+        """文档读取异常必须携带稳定失败码向上传播，不回显异常原文。"""
+        canary = "AUDIT_CANARY_private_payload"
         engine = MagicMock()
-        ds = self._make_doc_storage(side_effect=RuntimeError("db locked"))
+        ds = self._make_doc_storage(side_effect=RuntimeError(canary))
         engine.faiss_db = MagicMock()
         engine.faiss_db.document_storage = ds
 
         s = self._make_scheduler(engine=engine)
-        result = await s._fetch_legacy_batch()
-        assert result == []
+        with pytest.raises(RuntimeError) as excinfo:
+            await s._fetch_legacy_batch()
+
+        assert str(excinfo.value) == "legacy_batch_read_failed"
+        assert canary not in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_run_marks_failed_when_batch_read_fails(self, caplog):
+        """读取批次失败应上报稳定失败码，异常原文不得进入进度、API 或日志。"""
+        caplog.set_level(logging.ERROR)
+        canary = "AUDIT_CANARY_private_payload"
+        engine = MagicMock()
+        ds = self._make_doc_storage(side_effect=RuntimeError(canary))
+        engine.faiss_db = MagicMock()
+        engine.faiss_db.document_storage = ds
+
+        s = self._make_scheduler(engine=engine)
+        s._job_id = "bf_test"
+
+        await s._run()
+
+        assert s.progress["status"] == "failed"
+        assert s.progress["error"] == "legacy_batch_read_failed"
+        assert canary not in json.dumps(s.progress)
+        assert canary not in caplog.text
+        # Page API 只搬运 progress 字段：同样的稳定码进入 last_error，不带异常原文。
+        assert _page_api_last_error(s) == "legacy_batch_read_failed"
 
     # ---- _backfill_one ----
 
@@ -630,6 +764,85 @@ class TestBackfillScheduler:
         assert seg.metadata["existing"] == "val"
 
     @pytest.mark.asyncio
+    async def test_backfill_one_segment_keys_are_stable_per_segment(self):
+        """重跑同一旧文档时每个片段必须复用同一幂等键，片段之间互不相同。"""
+
+        engine = MagicMock()
+        engine.add_memory = AsyncMock(return_value=11)
+        engine.delete_memory = AsyncMock()
+
+        s = self._make_scheduler(engine=engine)
+        s._cluster_strategy = MagicMock()
+        s._cluster_strategy.segment = AsyncMock(
+            side_effect=[_two_segments(), _two_segments()]
+        )
+
+        meta = self._legacy_meta(key_facts=["a", "b"])
+        await s._backfill_one(7, meta)
+        await s._backfill_one(7, meta)
+
+        keys = [
+            call.kwargs["metadata"]["idempotency_key"]
+            for call in engine.add_memory.call_args_list
+        ]
+        assert len(keys) == 4
+        assert keys[0] == keys[2] and keys[1] == keys[3]
+        assert keys[0] != keys[1]
+        # 幂等键不得把正文原样带出。
+        assert "topic A" not in keys[0]
+
+    @pytest.mark.asyncio
+    async def test_backfill_retry_after_partial_write_reuses_canonical(self):
+        """部分片段写失败后重跑：复用既有 canonical、补齐片段并删除旧项，不新增重复记忆。"""
+
+        engine = _IdempotentEngine(fail_on_content="topic B")
+        s = self._make_scheduler(engine=engine)
+        s._cluster_strategy = MagicMock()
+        s._cluster_strategy.segment = AsyncMock(
+            side_effect=[_two_segments(), _two_segments()]
+        )
+
+        meta = self._legacy_meta(key_facts=["a", "b"])
+        await s._backfill_one(7, meta)
+
+        # 第一轮：仅一个片段落库（部分写入），旧项保留。
+        assert engine.deleted == []
+        assert len(engine.canonical) == 1
+        first_ids = dict(engine.canonical)
+
+        await s._backfill_one(7, meta)
+
+        # 第二轮：已成功片段复用同一 canonical，补齐后删除旧项，不新增 canonical。
+        assert engine.deleted == [7]
+        assert len(engine.canonical) == 2
+        assert set(first_ids.values()) <= set(engine.canonical.values())
+
+    @pytest.mark.asyncio
+    async def test_backfill_retry_after_delete_failure_does_not_duplicate(self):
+        """写入成功后删除失败（崩溃/重启语义）：重跑复用同一 canonical 并删除旧项。"""
+
+        engine = _IdempotentEngine(fail_delete_once=True)
+        s = self._make_scheduler(engine=engine)
+        s._cluster_strategy = MagicMock()
+        s._cluster_strategy.segment = AsyncMock(
+            side_effect=[_two_segments(), _two_segments()]
+        )
+
+        meta = self._legacy_meta(key_facts=["a", "b"])
+        with pytest.raises(RuntimeError):
+            await s._backfill_one(7, meta)
+
+        # 旧项仍在：两个片段都已落库，重跑不得新增 canonical。
+        landed = dict(engine.canonical)
+        assert engine.deleted == []
+        assert len(landed) == 2
+
+        await s._backfill_one(7, meta)
+
+        assert engine.deleted == [7]
+        assert dict(engine.canonical) == landed
+
+    @pytest.mark.asyncio
     async def test_backfill_one_handles_delete_failure(self):
         """删除旧记忆失败时应标记证据并向任务上抛错误。"""
         from core.features.recall.processors.topic_splitter import MemorySegment
@@ -662,8 +875,11 @@ class TestBackfillScheduler:
         s._cluster_strategy.segment = AsyncMock(return_value=[seg, seg2])
 
         meta = self._legacy_meta(key_facts=["a", "b"])
-        with pytest.raises(RuntimeError, match="delete error"):
+        with pytest.raises(BackfillError) as excinfo:
             await s._backfill_one(1, meta)
+
+        assert excinfo.value.reason_code == "backfill_memory_delete_failed"
+        assert "delete error" not in str(excinfo.value)
 
         engine.add_memory.assert_called()
         engine.delete_memory.assert_called_once()

@@ -196,6 +196,56 @@ class TestEventHandlerShutdown:
         await handler.handle_session_reset(event)
         conv.clear_session.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_handle_session_reset_classifies_source_protection(
+        self, monkeypatch
+    ) -> None:
+        """隔离来源保护属设计内 fail-closed：结构化记录且不写入会话标识。"""
+        from core.event_handler import EventHandler
+
+        conv = MagicMock()
+        conv.clear_session = AsyncMock(
+            side_effect=RuntimeError("summary_source_protected")
+        )
+        handler = EventHandler(
+            context=MagicMock(),
+            config_manager=MagicMock(),
+            memory_engine=MagicMock(),
+            memory_processor=MagicMock(),
+            conversation_manager=conv,
+        )
+        event = MagicMock()
+        event.unified_msg_origin = "test-session-001"
+        captured: list[dict] = []
+        warnings: list[str] = []
+        errors: list[str] = []
+        monkeypatch.setattr(
+            "core.event_handler.report_debug_event",
+            lambda *args, **kwargs: captured.append({**kwargs, "event": args[0]}),
+        )
+        monkeypatch.setattr(
+            "core.event_handler.logger.warning",
+            lambda message, *args, **kwargs: warnings.append(str(message)),
+        )
+        monkeypatch.setattr(
+            "core.event_handler.logger.error",
+            lambda message, *args, **kwargs: errors.append(str(message)),
+        )
+
+        await handler.handle_session_reset(event)
+
+        assert captured
+        recorded = captured[-1]
+        assert recorded["event"] == "maintenance_task"
+        assert recorded["stage"] == "context_cleanup"
+        assert recorded["reason_code"] == "write_blocked"
+        assert recorded["status"] == "skipped"
+        assert warnings == ["会话清理被待处置隔离来源保护拒绝，保留消息"]
+        assert errors == []
+        assert all(
+            "test-session-001" not in str(entry) for entry in (*warnings, *errors)
+        )
+
 
 class TestEventHandlerGroupMessages:
     """验证群聊消息捕获入口。"""

@@ -3,8 +3,6 @@
 提供消息范围查询和会话元数据读写能力。
 """
 
-import asyncio
-import json
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, cast
 
@@ -176,14 +174,15 @@ class RangeAndMetadataMixin:
             asyncio.CancelledError: 调用方取消写入时原样传播。
 
         Side Effects:
-            只有完整字段集合提交成功后才更新内存会话；普通失败会尝试
-            回滚，避免游标推进与恢复状态清理出现部分提交。
+            只有完整字段集合提交成功后才更新内存会话；事务与回滚由
+            Store 在写锁内完成，应用层不再直接操作共享连接。
         """
 
         if not updates:
             logger.warning(f"[{session_id}] 会话元数据更新字段为空，跳过写入")
             return False
 
+        # 预读只服务内存对象与日志；存在性判断与原子合并都由 Store 在写锁内完成。
         session = await self.store.get_session(session_id)
         if not session:
             logger.warning(
@@ -191,45 +190,20 @@ class RangeAndMetadataMixin:
             )
             return False
 
-        if self.store.connection is None:
+        try:
+            updated_metadata = await self.store.write_session_metadata(
+                session_id,
+                dict(updates),
+            )
+        except Exception as error:
+            logger.error(f"[{session_id}] 更新会话元数据失败：{error}", exc_info=True)
+            return False
+
+        if updated_metadata is None:
             logger.error(
                 f"[ConversationManager] 会话 {session_id} 没有可用数据库连接，"
                 "元数据未持久化"
             )
-            return False
-
-        previous_metadata = dict(session.metadata or {})
-        updated_metadata = dict(previous_metadata)
-        updated_metadata.update(dict(updates))
-
-        try:
-            await self.store.connection.execute(
-                """
-                UPDATE sessions
-                SET metadata = ?
-                WHERE session_id = ?
-            """,
-                (json.dumps(updated_metadata, ensure_ascii=False), session_id),
-            )
-            await self.store.connection.commit()
-        except asyncio.CancelledError:
-            try:
-                await self.store.connection.rollback()
-            except Exception as rollback_error:
-                logger.error(
-                    f"[{session_id}] 取消元数据写入后的事务回滚失败：{rollback_error}",
-                    exc_info=True,
-                )
-            raise
-        except Exception as error:
-            try:
-                await self.store.connection.rollback()
-            except Exception as rollback_error:
-                logger.error(
-                    f"[{session_id}] 元数据写入失败后的事务回滚失败：{rollback_error}",
-                    exc_info=True,
-                )
-            logger.error(f"[{session_id}] 更新会话元数据失败：{error}", exc_info=True)
             return False
 
         session.metadata = updated_metadata
@@ -273,8 +247,8 @@ class RangeAndMetadataMixin:
             asyncio.CancelledError: 调用方取消写入时原样传播。
 
         Side Effects:
-            只有数据库提交成功后才清空内存缓存；普通失败会尝试回滚未提交
-            事务，避免 reset 只在缓存中生效。
+            只有数据库提交成功后才清空内存缓存；事务与回滚由 Store 在写锁内
+            完成，应用层不再直接操作共享连接。
         """
         session = await self.store.get_session(session_id)
         if not session:
@@ -282,41 +256,25 @@ class RangeAndMetadataMixin:
                 f"[ConversationManager] 尝试重置元数据失败，会话 {session_id} 不存在"
             )
             return False
-        if self.store.connection is None:
-            logger.error(f"[{session_id}] 没有可用数据库连接，元数据未重置")
-            return False
 
         try:
-            await self.store.connection.execute(
-                """
-                UPDATE sessions
-                SET metadata = ?
-                WHERE session_id = ?
-            """,
-                ("{}", session_id),
+            updated_metadata = await self.store.write_session_metadata(
+                session_id,
+                {},
+                replace=True,
             )
-            await self.store.connection.commit()
-        except asyncio.CancelledError:
-            try:
-                await self.store.connection.rollback()
-            except Exception as rollback_error:
-                logger.error(
-                    f"[{session_id}] 取消元数据重置后的事务回滚失败：{rollback_error}",
-                    exc_info=True,
-                )
-            raise
         except Exception as error:
-            try:
-                await self.store.connection.rollback()
-            except Exception as rollback_error:
-                logger.error(
-                    f"[{session_id}] 元数据重置失败后的事务回滚失败：{rollback_error}",
-                    exc_info=True,
-                )
             logger.error(f"[{session_id}] 重置会话元数据失败：{error}", exc_info=True)
             return False
 
-        session.metadata = {}
+        if updated_metadata is None:
+            logger.error(
+                f"[ConversationManager] 会话 {session_id} 没有可用数据库连接，"
+                "元数据未重置"
+            )
+            return False
+
+        session.metadata = updated_metadata
         logger.info(
             f"[ConversationManager] 已重置会话 {session_id} 的元数据 (记忆总结计数器已清零)"
         )

@@ -29,7 +29,11 @@ class SummarySchedulerMetricsMixin:
         value = getattr(reader, "get", lambda *_: None)(
             "topic_segmentation.candidate_reuse.metrics_retention_days", 30
         )
-        return value if isinstance(value, int) and value > 0 else 30
+        # bool 是 int 子类，True 会被下游 store 的保留期校验按非法值拒绝，
+        # 表现为「清理静默不执行」，因此必须一并排除。
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            return 30
+        return value
 
     async def _cleanup_metric_retention(self) -> None:
         """按配置的保留期清理过期候选指标窗口样本。
@@ -38,8 +42,19 @@ class SummarySchedulerMetricsMixin:
         清理失败只记固定 reason code，不阻塞总结主链。
         """
         recorder = self._metrics_recorder
+        if recorder is None:
+            return
         cleanup = getattr(recorder, "cleanup_metric_windows", None)
-        if recorder is None or not callable(cleanup):
+        if not callable(cleanup):
+            # 生产 recorder（TopicCandidateMetricsRecorder）只暴露 record_success
+            # 写入端口，窗口样本清理由它绑定的 TopicCatalogStore 提供；不解析
+            # 这一层会让 metrics_retention_days 永远空转、指标表无限增长。
+            cleanup = getattr(
+                getattr(recorder, "_store", None),
+                "cleanup_metric_windows",
+                None,
+            )
+        if not callable(cleanup):
             return
         try:
             result = cleanup(

@@ -37,6 +37,11 @@ def valid_window_outcome(outcome: WindowOutcome) -> bool:
                 return False
         elif intent.status is not CandidateLedgerStatus.COMMITTED:
             return False
+        elif intent.disposition is not None and intent.disposition.value == "failed":
+            # ledger 要求 disposition='failed' 必须对应 status='failed'
+            # （见 summary_store_ledger.ledger_blocks_trim）；committed 携带
+            # failed 会写出被判定为不一致的 ledger，并永久阻塞该 epoch 的 trim。
+            return False
         if intent.disposition is None or intent.disposition.value not in actual:
             return False
         actual[intent.disposition.value] += 1

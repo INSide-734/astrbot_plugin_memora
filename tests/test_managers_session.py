@@ -22,19 +22,19 @@ class _TestSessionManager(SessionCacheMixin, SessionLifecycleMixin):
 
     def __init__(self, store=None):
         self.store = store or MagicMock()
-        self._cache: OrderedDict[str, tuple[list, float]] = OrderedDict()
+        self._cache: OrderedDict[str, tuple[list, int, float]] = OrderedDict()
         self._cache_lock = MagicMock()
         self.max_cache_size = 10
         self.session_ttl = 3600
         self.summary_scheduler: object | None = None
 
-    async def _get_from_cache(self, session_id):
+    async def _get_from_cache(self, session_id, limit):
         """Delegate to mixin."""
-        return await SessionCacheMixin._get_from_cache(self, session_id)
+        return await SessionCacheMixin._get_from_cache(self, session_id, limit)
 
-    async def _update_cache(self, session_id, messages):
+    async def _update_cache(self, session_id, messages, limit):
         """Delegate to mixin."""
-        return await SessionCacheMixin._update_cache(self, session_id, messages)
+        return await SessionCacheMixin._update_cache(self, session_id, messages, limit)
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ class TestSessionCacheMixin:
                 platform="test",
             )
         ]
-        await mgr._update_cache("s1", msgs)
+        await mgr._update_cache("s1", msgs, len(msgs))
         assert "s1" in mgr._cache
 
     @pytest.mark.asyncio
@@ -101,9 +101,9 @@ class TestSessionCacheMixin:
             )
         ]
 
-        await mgr._update_cache("s1", msgs1)
-        await mgr._update_cache("s2", msgs2)
-        await mgr._update_cache("s1", msgs3)  # s1 moves to end
+        await mgr._update_cache("s1", msgs1, len(msgs1))
+        await mgr._update_cache("s2", msgs2, len(msgs2))
+        await mgr._update_cache("s1", msgs3, len(msgs3))  # s1 moves to end
 
         keys = list(mgr._cache.keys())
         assert keys[-1] == "s1"  # s1 is now most recent
@@ -124,8 +124,8 @@ class TestSessionCacheMixin:
                 platform="test",
             )
         ]
-        await mgr._update_cache("s1", msgs)
-        result = await mgr._get_from_cache("s1")
+        await mgr._update_cache("s1", msgs, len(msgs))
+        result = await mgr._get_from_cache("s1", len(msgs))
         assert result is not None
         assert len(result) == 1
         assert result[0].content == "test"
@@ -157,11 +157,11 @@ class TestSessionCacheMixin:
             )
         ]
 
-        await mgr._update_cache("s1", msgs1)
-        await mgr._update_cache("s2", msgs2)
+        await mgr._update_cache("s1", msgs1, len(msgs1))
+        await mgr._update_cache("s2", msgs2, len(msgs2))
 
         # Access s1 — moves to end
-        await mgr._get_from_cache("s1")
+        await mgr._get_from_cache("s1", len(msgs1))
         keys = list(mgr._cache.keys())
         assert keys[-1] == "s1"
 
@@ -169,7 +169,7 @@ class TestSessionCacheMixin:
     async def test_get_from_cache_missing_returns_none(self) -> None:
         """当 session is not in cache, returns None."""
         mgr = _TestSessionManager()
-        result = await mgr._get_from_cache("nonexistent")
+        result = await mgr._get_from_cache("nonexistent", 10)
         assert result is None
 
     @pytest.mark.asyncio
@@ -188,7 +188,7 @@ class TestSessionCacheMixin:
                 platform="test",
             )
         ]
-        await mgr._update_cache("s1", msgs)
+        await mgr._update_cache("s1", msgs, len(msgs))
         assert "s1" in mgr._cache
 
         await mgr.invalidate_cache("s1")
@@ -218,7 +218,7 @@ class TestSessionCacheMixin:
                     platform="test",
                 )
             ]
-            await mgr._update_cache(f"s{i}", msgs)
+            await mgr._update_cache(f"s{i}", msgs, len(msgs))
 
         assert len(mgr._cache) <= 3
         # s0 and s1 should be evicted (oldest)
@@ -336,7 +336,7 @@ class TestSessionLifecycleMixin:
                 platform="test",
             )
         ]
-        await mgr._update_cache("s1", msgs)
+        await mgr._update_cache("s1", msgs, len(msgs))
 
         result = await mgr.cleanup_expired_sessions()
         assert result == 5

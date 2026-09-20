@@ -23,7 +23,7 @@ from ...identity.application.scope_resolver import (
     CanonicalScopeResolver,
     ScopeResolution,
 )
-from ...identity.domain.models import ResolvedIdentity
+from ...identity.domain.models import IdentityTrust, ResolvedIdentity
 from ...observability.application import runtime as observability
 from ...quality.application.gate_runtime import capture_gate_snapshot_json
 from ...recall.processors.memory_processor import MemoryProcessor
@@ -313,6 +313,22 @@ class ReflectionHandler(ReflectionContextMixin):
                 logger.debug("检测到 Provider 错误响应，跳过记录")
                 return
 
+            if identity is not None and identity.trust_status in {
+                IdentityTrust.CONFLICT,
+                IdentityTrust.INVALID,
+            }:
+                # 与群捕获/用户消息门保持一致：不可信协议身份的事件不进入插件
+                # 会话与总结链路，避免产生只有助手一方的会话；可见回复不受影响。
+                observability.report_debug_event(
+                    "reflection_state",
+                    component="reflection",
+                    stage="identity",
+                    status="skipped",
+                    reason_code="identity_untrusted",
+                )
+                logger.debug("协议身份不可信，跳过助手回复写入与总结入队")
+                return
+
             await self._conversation_manager.add_message_from_event(
                 event=event,
                 role="assistant",
@@ -466,6 +482,9 @@ class ReflectionHandler(ReflectionContextMixin):
                 scope_key=scope_resolution.scope_key,
                 privacy_level=scope_resolution.privacy_level,
                 resolver_revision=scope_resolution.resolver_revision,
+                scope_subject_id=(
+                    scope_resolution.scope_id if scope_resolution.available else ""
+                ),
                 scope_reason_code=(
                     "scope_resolved"
                     if scope_resolution.available

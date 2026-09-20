@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from core.features.conversation.application.message_operations import (
     MessageOperationsMixin,
 )
+from core.features.conversation.application.session_cache import SessionCacheMixin
 from core.shared.contracts.conversation import Message
 
 # ---------------------------------------------------------------------------
@@ -16,25 +18,23 @@ from core.shared.contracts.conversation import Message
 # ---------------------------------------------------------------------------
 
 
-class _TestMsgManager(MessageOperationsMixin):
+class _TestMsgManager(MessageOperationsMixin, SessionCacheMixin):
     """提供 Mixin 所需依赖的具体类。"""
 
-    def __init__(self, store=None, cache=None):
+    def __init__(self, store=None):
         self.store = store or MagicMock()
-        self._cache = cache or {}
+        self._cache: OrderedDict[str, tuple[list[Message], int, float]] = OrderedDict()
         self._cache_lock = MagicMock()
+        self.max_cache_size = 10
         self.context_window_size = 20
 
-    async def _get_from_cache(self, session_id):
-        """返回缓存中的消息，若无则返回 None。"""
-        if session_id in self._cache:
-            msgs, _ = self._cache[session_id]
-            return msgs
-        return None
+    async def _get_from_cache(self, session_id, limit):
+        """Delegate to mixin."""
+        return await SessionCacheMixin._get_from_cache(self, session_id, limit)
 
-    async def _update_cache(self, session_id, messages):
-        """将消息存入缓存。"""
-        self._cache[session_id] = [messages, 0.0]
+    async def _update_cache(self, session_id, messages, limit):
+        """Delegate to mixin."""
+        return await SessionCacheMixin._update_cache(self, session_id, messages, limit)
 
 
 # ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ class TestAddMessage:
     @pytest.mark.asyncio
     async def test_cache_invalidated_on_add(self, mgr: _TestMsgManager) -> None:
         """添加消息将从缓存中清除该会话。"""
-        mgr._cache["s1"] = [MagicMock()]
+        mgr._cache["s1"] = ([MagicMock()], 50, 0.0)
         await mgr.add_message(session_id="s1", role="user", content="test")
         assert "s1" not in mgr._cache
 
@@ -177,7 +177,7 @@ class TestGetMessages:
                 platform="test",
             )
         ]
-        mgr._cache["s1"] = [cached, MagicMock()]
+        mgr._cache["s1"] = (cached, 50, 0.0)
 
         msgs = [
             Message(
@@ -228,7 +228,7 @@ class TestGetMessages:
                 platform="test",
             ),
         ]
-        mgr._cache["s1"] = [cached, 0.0]
+        mgr._cache["s1"] = (cached, 50, 0.0)
 
         result = await mgr.get_messages("s1", limit=2)
         assert len(result) == 2
@@ -251,10 +251,83 @@ class TestGetMessages:
                 platform="test",
             ),
         ]
-        mgr._cache["s1"] = [cached, 0.0]
+        mgr._cache["s1"] = (cached, 0, 0.0)
 
         result = await mgr.get_messages("s1", limit=0)  # limit=0 → 全部
         assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_small_limit_cache_does_not_truncate_larger_request(self) -> None:
+        """缓存按更小 limit 加载且已被截断时，更大的请求必须回落数据库。"""
+        mgr = self._make_mgr()
+        cached = [
+            Message(
+                id=index,
+                session_id="s1",
+                role="user",
+                content=f"cached-{index}",
+                sender_id="u1",
+                platform="test",
+            )
+            for index in range(5)
+        ]
+        mgr._cache["s1"] = (cached, 5, 0.0)
+
+        fresh = [
+            Message(
+                id=index,
+                session_id="s1",
+                role="user",
+                content=f"db-{index}",
+                sender_id="u1",
+                platform="test",
+            )
+            for index in range(50)
+        ]
+        mgr.store.get_messages = AsyncMock(return_value=fresh)
+
+        # 不限量请求（limit=0）同样不能由截断缓存服务：此时缓存仍只有 5 条。
+        assert await mgr.get_messages("s1", limit=0) == fresh
+        mgr.store.get_messages.assert_awaited_once_with(
+            session_id="s1", limit=0, sender_id=None
+        )
+
+        # 更大的正数 limit 也要回落数据库。
+        mgr.store.get_messages.reset_mock()
+        mgr._cache["s1"] = (cached, 5, 0.0)
+        result = await mgr.get_messages("s1", limit=50)
+
+        assert result == fresh
+        mgr.store.get_messages.assert_awaited_once_with(
+            session_id="s1", limit=50, sender_id=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_complete_cache_serves_larger_request(self) -> None:
+        """缓存已包含全部历史（未截断）时，更大的请求仍可直接命中。"""
+        mgr = self._make_mgr()
+        cached = [
+            Message(
+                id=index,
+                session_id="s1",
+                role="user",
+                content=f"cached-{index}",
+                sender_id="u1",
+                platform="test",
+            )
+            for index in range(3)
+        ]
+        mgr._cache["s1"] = (cached, 50, 0.0)
+
+        result = await mgr.get_messages("s1", limit=50)
+
+        assert result == cached
+        mgr.store.get_messages.assert_not_called()
+
+        # limit=0 表示不限量，缓存持有全部历史，同样可以服务更大的请求。
+        mgr._cache["s1"] = (cached, 0, 0.0)
+        assert await mgr.get_messages("s1", limit=50) == cached
+        mgr.store.get_messages.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

@@ -393,3 +393,160 @@ async def test_snapshot_read_cancellation_reaches_reflection_handler(
     assert await store.get_summary_scope_snapshot(_SESSION) == {
         key: getattr(context, key) for key in _SCOPE_FIELDS
     }
+
+
+_PRIVATE_SESSION = "synthetic-private-session"
+_PRIVATE_USER = "synthetic-private-user"
+
+
+async def _capture_private(store: ConversationStore) -> None:
+    """写入两条纯合成私聊消息；legacy 投影只能给出会话标识。"""
+
+    for index in range(2):
+        await store.add_message(
+            Message.from_dict(
+                {
+                    "id": 0,
+                    "session_id": _PRIVATE_SESSION,
+                    "role": "user",
+                    "content": "synthetic private fact",
+                    "sender_id": _PRIVATE_USER,
+                    "sender_name": None,
+                    "group_id": None,
+                    "platform": "test",
+                    "timestamp": float(index),
+                    "metadata": {},
+                }
+            )
+        )
+
+
+async def _private_context(store: ConversationStore) -> SummaryWindowContext:
+    """由可信私聊身份构造规划上下文，主体来自 resolver 而非会话标识。"""
+
+    identity = ResolvedIdentity(
+        protocol="test",
+        identity_namespace="test",
+        stable_user_id=_PRIVATE_USER,
+        canonical_user_id=_PRIVATE_USER,
+        scope_type="private",
+        scope_id=_PRIVATE_USER,
+        global_name=None,
+        scope_name=None,
+        display_name=None,
+        observed_at=100.0,
+        trust_status=IdentityTrust.TRUSTED,
+        name_field_states={},
+    )
+    legacy_scope = await store.get_summary_scope(_PRIVATE_SESSION)
+    resolution = await _handler(store)._resolve_summary_scope(
+        _PRIVATE_SESSION, identity, legacy_scope
+    )
+    assert resolution.available is True
+    epoch, cursor = await store.get_summary_epoch(_PRIVATE_SESSION)
+    gate = default_gate_snapshot()
+    return SummaryWindowContext(
+        session_id=_PRIVATE_SESSION,
+        session_epoch=epoch,
+        start_seq=cursor,
+        chat_type=resolution.chat_type,
+        group_id=None,
+        scope_id=legacy_scope[2],
+        gate_revision=gate.revision,
+        gate_snapshot_json=gate_snapshot_to_json(gate),
+        scope_key=resolution.scope_key,
+        privacy_level=resolution.privacy_level,
+        resolver_revision=resolution.resolver_revision,
+        scope_subject_id=resolution.scope_id,
+        scope_reason_code=resolution.reason_code,
+        scope_provenance_complete=resolution.available,
+    )
+
+
+async def _private_metadata(store: ConversationStore) -> dict[str, Any]:
+    """读取私聊会话的原始持久化元数据。"""
+
+    assert store.connection is not None
+    cursor = await store.connection.execute(
+        "SELECT metadata FROM sessions WHERE session_id=?", (_PRIVATE_SESSION,)
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+    return json.loads(row[0])
+
+
+@pytest.mark.asyncio
+async def test_private_snapshot_binds_canonical_subject_for_startup_scan(
+    captured_store: ConversationStore,
+) -> None:
+    """私聊快照必须固化 canonical 主体，使启动扫描（无 live 身份）可复核。"""
+
+    store = captured_store
+    await _capture_private(store)
+    legacy = await store.get_summary_scope(_PRIVATE_SESSION)
+    assert legacy[2] == _PRIVATE_SESSION
+
+    # 只有 legacy 会话标识时，启动扫描不可用（fail-closed，不猜主体）。
+    assert (
+        await _handler(store)._resolve_summary_scope(_PRIVATE_SESSION, None, legacy)
+    ).available is False
+
+    context = await _private_context(store)
+    assert (await store.plan_and_enqueue_windows(context, 2)).queued == 1
+
+    metadata = await _private_metadata(store)
+    assert metadata["scope_subject_id"] == _PRIVATE_USER
+    # legacy 投影字段保持原语义，不被主体绑定覆盖。
+    assert metadata["scope_id"] == _PRIVATE_SESSION
+
+    snapshot = await store.get_summary_scope_snapshot(_PRIVATE_SESSION)
+    assert snapshot is not None
+    assert snapshot["scope_id"] == _PRIVATE_USER
+    assert {key: snapshot[key] for key in _SCOPE_FIELDS if key != "scope_id"} == {
+        key: getattr(context, key) for key in _SCOPE_FIELDS if key != "scope_id"
+    }
+
+    await store.close()
+    await store.initialize()
+    resolution = await _handler(store)._resolve_summary_scope(
+        _PRIVATE_SESSION, None, legacy
+    )
+    assert resolution.available is True
+    assert resolution.scope_id == _PRIVATE_USER
+    assert resolution.scope_key == context.scope_key
+
+
+@pytest.mark.asyncio
+async def test_private_snapshot_without_subject_stays_unavailable(
+    captured_store: ConversationStore,
+) -> None:
+    """缺少主体绑定的旧私聊快照保持不可用，不被会话标识伪装成完整。"""
+
+    store = captured_store
+    await _capture_private(store)
+    assert store.connection is not None
+    await store.connection.execute(
+        "UPDATE sessions SET metadata=? WHERE session_id=?",
+        (
+            json.dumps(
+                {
+                    "chat_type": "private",
+                    "group_id": None,
+                    "scope_id": _PRIVATE_SESSION,
+                    "scope_key": f"private:test:{_PRIVATE_USER}",
+                    "privacy_level": "confidential",
+                    "resolver_revision": "canonical-scope-v1",
+                    "scope_provenance_complete": True,
+                }
+            ),
+            _PRIVATE_SESSION,
+        ),
+    )
+    await store.connection.commit()
+
+    legacy = await store.get_summary_scope(_PRIVATE_SESSION)
+    resolution = await _handler(store)._resolve_summary_scope(
+        _PRIVATE_SESSION, None, legacy
+    )
+    assert resolution.available is False
+    assert resolution.scope_key == ""

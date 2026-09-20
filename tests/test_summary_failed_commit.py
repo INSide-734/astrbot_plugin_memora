@@ -133,3 +133,72 @@ async def test_mixed_batch_failure_persists_canonical_ledger(tmp_db_path: str) -
         assert await store.confirm_abandon_session_jobs("mixed", 1) == 0
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_committed_status_with_failed_disposition_stays_unknown(
+    tmp_db_path: str,
+) -> None:
+    """committed 状态不得携带 failed 处置：该组合会写出阻塞 trim 的 ledger。"""
+    store = ConversationStore(tmp_db_path)
+    await store.initialize()
+    store.set_summary_clock(lambda: 100.0)
+    try:
+        for index in range(2):
+            await store.add_message(_message("contradictory", index))
+        assert (
+            await store.plan_and_enqueue_windows(
+                await _context("contradictory", 1, 0), 2
+            )
+        ).queued == 1
+        claims = await store.claim_ready(100.0, "scheduler", 1)
+        assert len(claims) == 1
+        assert await store.begin_candidate_intents(
+            claims[0],
+            (
+                CandidateIntent(slot=0, content_digest="d1", idempotency_key="k1"),
+                CandidateIntent(slot=1, content_digest="d2", idempotency_key="k2"),
+            ),
+        )
+        outcome = WindowOutcome(
+            can_advance=False,
+            canonical_count=1,
+            failed_count=1,
+            candidate_slots=(
+                CandidateIntent(
+                    slot=0,
+                    content_digest="d1",
+                    idempotency_key="k1",
+                    disposition=CandidateDisposition.CANONICAL,
+                    status=CandidateLedgerStatus.COMMITTED,
+                    canonical_id=42,
+                ),
+                CandidateIntent(
+                    slot=1,
+                    content_digest="d2",
+                    idempotency_key="k2",
+                    disposition=CandidateDisposition.FAILED,
+                    status=CandidateLedgerStatus.COMMITTED,
+                ),
+            ),
+            failed_stage="candidate_write",
+            reason_code=SummaryReasonCode.UNKNOWN,
+        )
+        committed = await store.commit_window(claims[0], outcome)
+
+        assert committed.accepted is True
+        assert committed.status.value == "unknown"
+        assert store.connection is not None
+        ledger_cursor = await store.connection.execute(
+            "SELECT status,disposition FROM summary_job_candidates WHERE job_id=?",
+            (claims[0].job_id,),
+        )
+        rows = [tuple(row) for row in await ledger_cursor.fetchall()]
+        # 不接受 committed+failed 的组合：整个窗口保持未收口的 unknown。
+        assert rows == [("unknown", None), ("unknown", None)]
+        assert (
+            await store.has_trim_blocker("contradictory", 1, include_quarantine=False)
+            is True
+        )
+    finally:
+        await store.close()

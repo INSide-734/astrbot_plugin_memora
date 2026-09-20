@@ -15,6 +15,15 @@ class MessageQueryMixin:
     connection: Any
     _write_lock: Any
 
+    async def _rollback_write(self, stage: str) -> None:
+        """回滚未提交的写事务；回滚自身失败只记日志，不掩盖原始异常。"""
+        if self.connection is None:
+            return
+        try:
+            await self.connection.rollback()
+        except Exception:
+            logger.error(f"[ConversationStore] 回滚写事务失败: {stage}", exc_info=True)
+
     async def get_message_count(self, session_id: str) -> int:
         """
         获取会话的消息总数
@@ -88,20 +97,27 @@ class MessageQueryMixin:
 
         try:
             async with self._write_lock:
-                await self.connection.execute(
-                    """
-                    UPDATE messages
-                    SET metadata = ?
-                    WHERE id = ?
-                    """,
-                    (json.dumps(metadata, ensure_ascii=False), message_id),
-                )
-                await self.connection.commit()
-            logger.debug(f"[ConversationStore] 更新消息metadata: id={message_id}")
-            return True
+                try:
+                    # 显式事务，且回滚必须与事务同锁：锁外回滚会回滚其他协程
+                    # 刚开启的事务（例如等待写锁时被取消的调用）。
+                    await self.connection.execute("BEGIN IMMEDIATE")
+                    await self.connection.execute(
+                        """
+                        UPDATE messages
+                        SET metadata = ?
+                        WHERE id = ?
+                        """,
+                        (json.dumps(metadata, ensure_ascii=False), message_id),
+                    )
+                    await self.connection.commit()
+                except BaseException:
+                    await self._rollback_write("update_message_metadata")
+                    raise
         except Exception as e:
             logger.error(f"更新消息metadata失败: {e}", exc_info=True)
             return False
+        logger.debug(f"[ConversationStore] 更新消息metadata: id={message_id}")
+        return True
 
     async def search_messages(
         self, session_id: str, keyword: str, limit: int = 20
@@ -329,53 +345,57 @@ class MessageQueryMixin:
         if self.connection is None:
             return {}
 
-        fixed_sessions = {}
+        fixed_sessions: dict[str, int] = {}
 
         try:
             async with self._write_lock:
-                async with self.connection.execute(
-                    """
-                    SELECT s.session_id,
-                           s.message_count AS recorded_count,
-                           COUNT(m.id) AS actual_count
-                    FROM sessions s
-                    LEFT JOIN messages m ON m.session_id = s.session_id
-                    GROUP BY s.session_id
-                    HAVING s.message_count != COUNT(m.id)
-                    """
-                ) as cursor:
-                    rows = await cursor.fetchall()
-
-                for row in rows:
-                    session_id = row["session_id"]
-                    recorded_count = row["recorded_count"]
-                    actual_count = int(row["actual_count"] or 0)
-                    await self.connection.execute(
+                try:
+                    # 显式事务，且回滚必须与事务同锁；锁外回滚会连带回滚
+                    # 其他协程在同一共享连接上刚开启的事务。
+                    await self.connection.execute("BEGIN IMMEDIATE")
+                    async with self.connection.execute(
                         """
-                        UPDATE sessions
-                        SET message_count = ?
-                        WHERE session_id = ?
-                        """,
-                        (actual_count, session_id),
-                    )
-                    fixed_sessions[session_id] = actual_count
-                    logger.info(
-                        f"[ConversationStore] 修复会话 message_count: "
-                        f"{session_id} ({recorded_count} -> {actual_count})"
-                    )
+                        SELECT s.session_id,
+                               s.message_count AS recorded_count,
+                               COUNT(m.id) AS actual_count
+                        FROM sessions s
+                        LEFT JOIN messages m ON m.session_id = s.session_id
+                        GROUP BY s.session_id
+                        HAVING s.message_count != COUNT(m.id)
+                        """
+                    ) as cursor:
+                        rows = await cursor.fetchall()
 
-                if fixed_sessions:
+                    for row in rows:
+                        session_id = row["session_id"]
+                        recorded_count = row["recorded_count"]
+                        actual_count = int(row["actual_count"] or 0)
+                        await self.connection.execute(
+                            """
+                            UPDATE sessions
+                            SET message_count = ?
+                            WHERE session_id = ?
+                            """,
+                            (actual_count, session_id),
+                        )
+                        fixed_sessions[session_id] = actual_count
+                        logger.info(
+                            f"[ConversationStore] 修复会话 message_count: "
+                            f"{session_id} ({recorded_count} -> {actual_count})"
+                        )
+
                     await self.connection.commit()
-                    logger.info(
-                        f"[ConversationStore] 共修复 {len(fixed_sessions)} 个会话的 message_count"
-                    )
-                else:
-                    logger.info(
-                        "[ConversationStore] 所有会话的 message_count 均正确，无需修复"
-                    )
-
-            return fixed_sessions
-
+                except BaseException:
+                    await self._rollback_write("sync_message_counts")
+                    raise
         except Exception as e:
             logger.error(f"同步 message_count 失败: {e}", exc_info=True)
             return {}
+
+        if fixed_sessions:
+            logger.info(
+                f"[ConversationStore] 共修复 {len(fixed_sessions)} 个会话的 message_count"
+            )
+        else:
+            logger.info("[ConversationStore] 所有会话的 message_count 均正确，无需修复")
+        return fixed_sessions

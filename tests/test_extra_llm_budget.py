@@ -456,3 +456,42 @@ async def test_quality_runtime_constructs_llm_reranker(tmp_db_path: str) -> None
         assert reranker_call.kwargs["cost_control"] is control
     finally:
         await engine.close()
+
+
+@pytest.mark.asyncio
+async def test_topic_batch_preparer_falls_back_when_topics_miss_messages() -> None:
+    """话题漏标或重叠的批次必须回退为单批次，避免 SOURCE_INCOMPLETE 硬失败。"""
+
+    from core.features.reflection.application.topic_batch_preparer import (
+        TopicBatchPreparer,
+    )
+
+    messages = [object(), object(), object(), object()]
+
+    class _ScriptedPreparer(TopicBatchPreparer):
+        """绕过 LLM，直接返回脚本给定的策略 D 批次。"""
+
+        def __init__(self, batches: list[list[object]]) -> None:
+            super().__init__(
+                config_manager=cast(
+                    "ConfigManager",
+                    _ConfigStub({"topic_segmentation.strategy": "d"}),
+                )
+            )
+            self._batches = batches
+
+        async def _prepare_strategy_d(
+            self, _history_messages: list, _topic_cfg: dict
+        ) -> list[list]:
+            return self._batches
+
+    async def _prepare(batches: list[list[object]]) -> list[list]:
+        preparer = _ScriptedPreparer(batches)
+        return await preparer.prepare_batches(list(messages), is_group_chat=False)
+
+    assert await _prepare([messages[:2], messages[2:]]) == [
+        messages[:2],
+        messages[2:],
+    ]
+    assert await _prepare([messages[:2], messages[3:]]) == [messages]
+    assert await _prepare([messages[:3], messages[2:]]) == [messages]

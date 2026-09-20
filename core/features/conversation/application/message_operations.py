@@ -134,12 +134,11 @@ class MessageOperationsMixin:
         if sender_id:
             use_cache = False
 
-        # 尝试从缓存获取
+        # 尝试从缓存获取（缓存按更小的 limit 加载时由缓存层判定未命中）
         if use_cache:
-            cached_messages = await self._get_from_cache(session_id)
+            cached_messages = await self._get_from_cache(session_id, limit)
             if cached_messages is not None:
-                # 从缓存中截取需要的数量
-                return cached_messages[-limit:] if limit else cached_messages
+                return cached_messages
 
         # 从数据库获取
         messages = await self.store.get_messages(
@@ -148,6 +147,6 @@ class MessageOperationsMixin:
 
         # 更新缓存(仅当不是过滤查询时)
         if not sender_id and use_cache:
-            await self._update_cache(session_id, messages)
+            await self._update_cache(session_id, messages, limit)
 
         return messages

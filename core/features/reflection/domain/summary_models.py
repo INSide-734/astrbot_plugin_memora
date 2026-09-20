@@ -214,6 +214,9 @@ class SummaryWindowContext:
     resolver_revision: str = ""
     scope_reason_code: str = "scope_unavailable"
     scope_provenance_complete: bool | None = None
+    # canonical 主体绑定（私聊为协议主体如 QQ 号，群聊为群实例）；与仅供会话
+    # 归属与 legacy 投影使用的 scope_id 分离，供启动扫描复核持久化快照。
+    scope_subject_id: str = ""
 
     def __post_init__(self) -> None:
         """检查范围、身份标签和固定窗口大小。"""
@@ -299,6 +302,11 @@ class SummaryWindowContext:
         object.__setattr__(self, "resolver_revision", resolver_revision)
         object.__setattr__(self, "scope_reason_code", scope_reason_code)
         object.__setattr__(self, "scope_provenance_complete", marker)
+        object.__setattr__(
+            self,
+            "scope_subject_id",
+            _text(self.scope_subject_id, "scope_subject_id") or "",
+        )
 
     @property
     def scope_available(self) -> bool:
@@ -542,7 +550,10 @@ class ClaimedJob:
 
     def __getattr__(self, name: str) -> Any:
         """兼容 scheduler 直接读取任务字段，同时不复制可变状态。"""
-        return getattr(self.job, name)
+        # ``job`` 槽尚未赋值时（反序列化/copy 早期访问）必须直接失败，
+        # 否则自引用会退化成无限递归，掩盖真正的 AttributeError。
+        job = object.__getattribute__(self, "job")
+        return getattr(job, name)
 
 
 @dataclass(frozen=True, slots=True)

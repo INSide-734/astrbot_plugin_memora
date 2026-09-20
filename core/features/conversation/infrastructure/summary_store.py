@@ -256,6 +256,11 @@ class SummaryStoreMixin(
                             "scope_id",
                         )
                     }
+                    # 私聊 legacy 投影的 scope_id 是会话标识，不能作为主体绑定；
+                    # 快照写入的主体字段优先，缺失时保持旧语义（fail-closed）。
+                    subject_id = metadata.get("scope_subject_id")
+                    if isinstance(subject_id, str) and subject_id.strip():
+                        snapshot["scope_id"] = subject_id
                     if all(
                         isinstance(value, str) and value.strip()
                         for value in snapshot.values()
@@ -336,6 +341,11 @@ class SummaryStoreMixin(
             "resolver_revision": context.resolver_revision,
             "scope_id": context.scope_id,
         }
+        # 主体绑定是启动扫描复核私聊快照的唯一依据；旧快照没有该键时保持
+        # 缺失（fail-closed），不把会话标识当作主体。
+        subject_id = str(getattr(context, "scope_subject_id", "") or "").strip()
+        if subject_id:
+            values["scope_subject_id"] = subject_id
         if metadata.get("scope_provenance_complete") is True and any(
             metadata.get(key) not in (None, value) for key, value in values.items()
         ):

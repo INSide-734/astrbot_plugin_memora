@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -153,15 +152,17 @@ class TestUpdateSessionMetadata:
         session = MagicMock()
         session.metadata = {}
         mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = AsyncMock()
-        mgr.store.connection.execute = AsyncMock()
-        mgr.store.connection.commit = AsyncMock()
+        mgr.store.write_session_metadata = AsyncMock(
+            return_value={"last_summarized_index": 42}
+        )
 
         result = await mgr.update_session_metadata("s1", "last_summarized_index", 42)
+
         assert result is True
-        assert session.metadata["last_summarized_index"] == 42
-        mgr.store.connection.execute.assert_called_once()
-        mgr.store.connection.commit.assert_called_once()
+        assert session.metadata == {"last_summarized_index": 42}
+        mgr.store.write_session_metadata.assert_awaited_once_with(
+            "s1", {"last_summarized_index": 42}
+        )
 
     @pytest.mark.asyncio
     async def test_updates_multiple_fields_in_one_commit(self) -> None:
@@ -171,9 +172,13 @@ class TestUpdateSessionMetadata:
         session = MagicMock()
         session.metadata = {"preserved": True, "pending_summary": {"end_index": 2}}
         mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = AsyncMock()
-        mgr.store.connection.execute = AsyncMock()
-        mgr.store.connection.commit = AsyncMock()
+        mgr.store.write_session_metadata = AsyncMock(
+            return_value={
+                "preserved": True,
+                "last_summarized_index": 2,
+                "pending_summary": None,
+            }
+        )
 
         result = await mgr.update_session_metadata_fields(
             "s1",
@@ -184,24 +189,28 @@ class TestUpdateSessionMetadata:
         )
 
         assert result is True
+        # 一次调用 = 一次 Store 写锁内提交，游标与恢复状态不会部分提交。
+        mgr.store.write_session_metadata.assert_awaited_once_with(
+            "s1",
+            {
+                "last_summarized_index": 2,
+                "pending_summary": None,
+            },
+        )
         assert session.metadata == {
             "preserved": True,
             "last_summarized_index": 2,
             "pending_summary": None,
         }
-        mgr.store.connection.execute.assert_awaited_once()
-        stored_metadata = json.loads(mgr.store.connection.execute.await_args.args[1][0])
-        assert stored_metadata == session.metadata
-        mgr.store.connection.commit.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_no_connection_skips_save(self) -> None:
-        """没有数据库连接时返回失败且不污染内存元数据。"""
+    async def test_store_unavailable_skips_save(self) -> None:
+        """Store 无连接（写入返回 None）时返回失败且不污染内存元数据。"""
         mgr = _TestRangeManager()
         session = MagicMock()
         session.metadata = {}
         mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = None
+        mgr.store.write_session_metadata = AsyncMock(return_value=None)
 
         result = await mgr.update_session_metadata("s1", "key", "value")
         assert result is False
@@ -209,37 +218,16 @@ class TestUpdateSessionMetadata:
 
     @pytest.mark.asyncio
     async def test_db_error_handled(self) -> None:
-        """execute 失败时返回失败、回滚事务并保留旧缓存。"""
-        mgr = _TestRangeManager()
-        session = MagicMock()
-        session.metadata = {}
-        mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = AsyncMock()
-        mgr.store.connection.execute = AsyncMock(side_effect=Exception("DB error"))
-        mgr.store.connection.commit = AsyncMock()
-
-        result = await mgr.update_session_metadata("s1", "key", "value")
-        assert result is False
-        assert session.metadata == {}
-        mgr.store.connection.rollback.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_commit_error_restores_previous_metadata(self) -> None:
-        """commit 失败时不推进缓存，并尝试回滚未提交事务。"""
+        """Store 写入抛错时返回失败且保留旧缓存。"""
         mgr = _TestRangeManager()
         session = MagicMock()
         session.metadata = {"old_key": "old_value"}
         mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = AsyncMock()
-        mgr.store.connection.execute = AsyncMock()
-        mgr.store.connection.commit = AsyncMock(side_effect=Exception("commit error"))
-        mgr.store.connection.rollback = AsyncMock()
+        mgr.store.write_session_metadata = AsyncMock(side_effect=Exception("DB error"))
 
         result = await mgr.update_session_metadata("s1", "key", "value")
-
         assert result is False
         assert session.metadata == {"old_key": "old_value"}
-        mgr.store.connection.rollback.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -306,24 +294,23 @@ class TestResetSessionMetadata:
         session = MagicMock()
         session.metadata = {"old_key": "old_val", "last_summarized_index": 100}
         mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = AsyncMock()
-        mgr.store.connection.execute = AsyncMock()
-        mgr.store.connection.commit = AsyncMock()
+        mgr.store.write_session_metadata = AsyncMock(return_value={})
 
         result = await mgr.reset_session_metadata("s1")
         assert result is True
         assert session.metadata == {}
-        mgr.store.connection.execute.assert_called_once()
-        mgr.store.connection.commit.assert_called_once()
+        mgr.store.write_session_metadata.assert_awaited_once_with(
+            "s1", {}, replace=True
+        )
 
     @pytest.mark.asyncio
-    async def test_no_connection_skips_save(self) -> None:
-        """没有数据库连接时返回失败且保留旧 metadata。"""
+    async def test_store_unavailable_skips_save(self) -> None:
+        """Store 无连接（写入返回 None）时返回失败且保留旧 metadata。"""
         mgr = _TestRangeManager()
         session = MagicMock()
         session.metadata = {"old": "data"}
         mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = None
+        mgr.store.write_session_metadata = AsyncMock(return_value=None)
 
         result = await mgr.reset_session_metadata("s1")
         assert result is False
@@ -331,34 +318,13 @@ class TestResetSessionMetadata:
 
     @pytest.mark.asyncio
     async def test_db_error_handled(self) -> None:
-        """数据库写入失败时返回失败、回滚事务并保留旧 metadata。"""
+        """数据库写入失败时返回失败并保留旧 metadata。"""
         mgr = _TestRangeManager()
         session = MagicMock()
         session.metadata = {"old": "data"}
         mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = AsyncMock()
-        mgr.store.connection.execute = AsyncMock(side_effect=Exception("DB down"))
-        mgr.store.connection.commit = AsyncMock()
+        mgr.store.write_session_metadata = AsyncMock(side_effect=Exception("DB down"))
 
         result = await mgr.reset_session_metadata("s1")
         assert result is False
         assert session.metadata == {"old": "data"}
-        mgr.store.connection.rollback.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_commit_error_restores_previous_metadata(self) -> None:
-        """commit 失败时不清空缓存，并尝试回滚未提交事务。"""
-        mgr = _TestRangeManager()
-        session = MagicMock()
-        session.metadata = {"old": "data"}
-        mgr.store.get_session = AsyncMock(return_value=session)
-        mgr.store.connection = AsyncMock()
-        mgr.store.connection.execute = AsyncMock()
-        mgr.store.connection.commit = AsyncMock(side_effect=Exception("commit error"))
-        mgr.store.connection.rollback = AsyncMock()
-
-        result = await mgr.reset_session_metadata("s1")
-
-        assert result is False
-        assert session.metadata == {"old": "data"}
-        mgr.store.connection.rollback.assert_awaited_once()

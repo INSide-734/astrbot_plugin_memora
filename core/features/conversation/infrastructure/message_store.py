@@ -141,13 +141,15 @@ class MessageStoreMixin(MessageQueryMixin):
         获取会话消息 (支持按发送者过滤)
 
         Args:
-            session_id: 会话ID
-            limit: 限制数量
+            session_id: 会话标识
+            limit: 限制数量；非正数表示不限量（与缓存命中路径语义一致）
             sender_id: 可选,按发送者ID过滤
 
         Returns:
             List[Message]: 消息列表 (按时间升序)
         """
+        # SQLite 的 LIMIT -1 表示不设上限。
+        sql_limit = limit if limit > 0 else -1
         if sender_id:
             # 按发送者过滤
             query = """
@@ -158,7 +160,7 @@ class MessageStoreMixin(MessageQueryMixin):
                 ORDER BY message_seq DESC
                 LIMIT ?
             """
-            params = (session_id, sender_id, limit)
+            params = (session_id, sender_id, sql_limit)
         else:
             # 获取所有消息
             query = """
@@ -169,7 +171,7 @@ class MessageStoreMixin(MessageQueryMixin):
                 ORDER BY message_seq DESC
                 LIMIT ?
             """
-            params = (session_id, limit)
+            params = (session_id, sql_limit)
 
         if self.connection is None:
             return []
@@ -263,44 +265,50 @@ class MessageStoreMixin(MessageQueryMixin):
             "private_platform": private_platform,
         }
         async with self._write_lock:
-            cursor = await self.connection.execute(
-                """
-                SELECT DISTINCT session_id
-                FROM messages
-                WHERE role = 'user' AND sender_id = :sender_id
-                  AND (
-                    (:session_id IS NOT NULL AND session_id = :session_id)
-                    OR (
-                      :private_platform IS NOT NULL
-                      AND platform = :private_platform
-                      AND group_id IS NULL
+            try:
+                # 显式事务：任何异常都要回滚，避免把未结束的写事务留给后续写入方
+                # （下一个 add_message 的 BEGIN IMMEDIATE 会因此直接失败）。
+                await self.connection.execute("BEGIN IMMEDIATE")
+                cursor = await self.connection.execute(
+                    """
+                    SELECT DISTINCT session_id
+                    FROM messages
+                    WHERE role = 'user' AND sender_id = :sender_id
+                      AND (
+                        (:session_id IS NOT NULL AND session_id = :session_id)
+                        OR (
+                          :private_platform IS NOT NULL
+                          AND platform = :private_platform
+                          AND group_id IS NULL
+                        )
+                      )
+                      AND (sender_name IS NULL OR sender_name <> :sender_name)
+                    """,
+                    params,
+                )
+                changed_sessions = {str(row[0]) for row in await cursor.fetchall()}
+                if changed_sessions:
+                    await self.connection.execute(
+                        """
+                        UPDATE messages
+                        SET sender_name = :sender_name
+                        WHERE role = 'user' AND sender_id = :sender_id
+                          AND (
+                            (:session_id IS NOT NULL AND session_id = :session_id)
+                            OR (
+                              :private_platform IS NOT NULL
+                              AND platform = :private_platform
+                              AND group_id IS NULL
+                            )
+                          )
+                          AND (sender_name IS NULL OR sender_name <> :sender_name)
+                        """,
+                        params,
                     )
-                  )
-                  AND (sender_name IS NULL OR sender_name <> :sender_name)
-                """,
-                params,
-            )
-            changed_sessions = {str(row[0]) for row in await cursor.fetchall()}
-            if not changed_sessions:
-                return set()
-            await self.connection.execute(
-                """
-                UPDATE messages
-                SET sender_name = :sender_name
-                WHERE role = 'user' AND sender_id = :sender_id
-                  AND (
-                    (:session_id IS NOT NULL AND session_id = :session_id)
-                    OR (
-                      :private_platform IS NOT NULL
-                      AND platform = :private_platform
-                      AND group_id IS NULL
-                    )
-                  )
-                  AND (sender_name IS NULL OR sender_name <> :sender_name)
-                """,
-                params,
-            )
-            await self.connection.commit()
+                await self.connection.commit()
+            except BaseException:
+                await self.connection.rollback()
+                raise
         return changed_sessions
 
     @staticmethod

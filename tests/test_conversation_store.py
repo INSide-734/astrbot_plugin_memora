@@ -4,12 +4,27 @@ import asyncio
 import json
 import time
 
+import aiosqlite
 import pytest
 
 from core.features.conversation.infrastructure.conversation_store import (
     ConversationStore,
 )
 from core.shared.contracts.conversation import Message
+
+
+class _CommitFailConnection:
+    """转发真实连接，但让业务 ``commit`` 抛错，用于验证提交失败后的回滚。"""
+
+    def __init__(self, connection, message: str = "commit failed") -> None:
+        self._connection = connection
+        self._message = message
+
+    def __getattr__(self, name: str):
+        return getattr(self._connection, name)
+
+    async def commit(self) -> None:
+        raise RuntimeError(self._message)
 
 
 class TestConversationStoreSessions:
@@ -69,6 +84,140 @@ class TestConversationStoreSessions:
             updated = await store.get_session("sess-act")
             assert updated is not None
             assert updated.last_active_at > original.last_active_at
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_write_session_metadata_merges_and_replaces(self, tmp_db_path):
+        """写锁内合并保留既有键，replace=True 时整体替换。"""
+        store = ConversationStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.create_session("sess-write-meta", "qq")
+            await store.write_session_metadata(
+                "sess-write-meta", {"last_summarized_index": 2}
+            )
+
+            merged = await store.write_session_metadata(
+                "sess-write-meta", {"pending_summary": None}
+            )
+            assert merged == {"last_summarized_index": 2, "pending_summary": None}
+            session = await store.get_session("sess-write-meta")
+            assert session is not None
+            assert session.metadata == {
+                "last_summarized_index": 2,
+                "pending_summary": None,
+            }
+
+            cleared = await store.write_session_metadata(
+                "sess-write-meta", {}, replace=True
+            )
+            assert cleared == {}
+            session = await store.get_session("sess-write-meta")
+            assert session is not None
+            assert session.metadata == {}
+
+            assert await store.write_session_metadata("missing-sess", {"k": 1}) is None
+            assert await store.get_session("missing-sess") is None
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_write_session_metadata_failure_rolls_back_transaction(
+        self, tmp_db_path
+    ):
+        """写入失败必须回滚，后续写路径不得因子事务残留而失败。"""
+        store = ConversationStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.create_session("sess-meta-fail", "qq")
+            with pytest.raises(TypeError):
+                # set 无法序列化为 JSON：在已开启的写事务内失败。
+                await store.write_session_metadata("sess-meta-fail", {"bad": {1, 2}})
+
+            # 若失败未回滚，这里会因未结束的事务抛
+            # "cannot start a transaction within a transaction"。
+            await store.add_message(
+                Message(
+                    id=0,
+                    session_id="sess-meta-fail",
+                    role="user",
+                    content="正文",
+                    sender_id="user-1",
+                    platform="qq",
+                    timestamp=100.0,
+                    metadata={},
+                )
+            )
+            session = await store.get_session("sess-meta-fail")
+            assert session is not None
+            assert "bad" not in session.metadata
+            assert session.message_count == 1
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_write_session_metadata_commit_failure_rolls_back(self, tmp_db_path):
+        """UPDATE 之后的 commit 失败必须回滚：旧值保留且后续写入仍可用。"""
+        store = ConversationStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.create_session("sess-commit-fail", "qq")
+            assert await store.write_session_metadata(
+                "sess-commit-fail", {"kept": 1}
+            ) == {"kept": 1}
+
+            real = store.connection
+            assert real is not None
+
+            async def persisted_metadata() -> dict:
+                """用独立连接读取落库值，排除本连接事务视图的干扰。"""
+                async with aiosqlite.connect(tmp_db_path) as reader:
+                    cursor = await reader.execute(
+                        "SELECT metadata FROM sessions WHERE session_id = ?",
+                        ("sess-commit-fail",),
+                    )
+                    row = await cursor.fetchone()
+                assert row is not None
+                return json.loads(row[0])
+
+            store.connection = _CommitFailConnection(real)
+            try:
+                with pytest.raises(RuntimeError, match="commit failed"):
+                    await store.write_session_metadata("sess-commit-fail", {"lost": 2})
+                with pytest.raises(RuntimeError, match="commit failed"):
+                    await store.write_session_metadata(
+                        "sess-commit-fail", {}, replace=True
+                    )
+            finally:
+                store.connection = real
+
+            # 合并与整体替换都在回滚后保持提交成功前的旧值。
+            assert await persisted_metadata() == {"kept": 1}
+
+            # 连接未残留事务：后续写入必须正常。
+            assert await store.write_session_metadata(
+                "sess-commit-fail", {"after": 3}
+            ) == {"kept": 1, "after": 3}
+            await store.add_message(
+                Message(
+                    id=0,
+                    session_id="sess-commit-fail",
+                    role="user",
+                    content="正文",
+                    sender_id="user-1",
+                    platform="qq",
+                    timestamp=100.0,
+                    metadata={},
+                )
+            )
+            assert await persisted_metadata() == {
+                "kept": 1,
+                "after": 3,
+                "chat_type": "private",
+                "group_id": None,
+                "scope_id": "sess-commit-fail",
+            }
         finally:
             await store.close()
 
@@ -196,6 +345,24 @@ class TestMessageStore:
             assert msg_id > 0
             sess = await store.get_session("auto-sess")
             assert sess is not None
+        finally:
+            await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_messages_non_positive_limit_returns_all(self, tmp_db_path):
+        """limit<=0 表示不限量，与缓存命中路径的语义保持一致。"""
+        store = ConversationStore(tmp_db_path)
+        await store.initialize()
+        try:
+            await store.create_session("sess-limit", "qq")
+            for index in range(3):
+                await store.add_message(
+                    self._make_msg(session_id="sess-limit", content=f"msg-{index}")
+                )
+
+            assert len(await store.get_messages("sess-limit", limit=0)) == 3
+            assert len(await store.get_messages("sess-limit", limit=-1)) == 3
+            assert len(await store.get_messages("sess-limit", limit=2)) == 2
         finally:
             await store.close()
 
