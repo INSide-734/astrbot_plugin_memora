@@ -55,12 +55,14 @@ derived from `documents`, holds no independent identity, and may be invalidated 
 | API and export | integer `id` | no | validated per request; JSONL export carries explicit `memory_id` and `status` |
 
 `MemoryAtom` is a derived retrieval signal, not a memory unit. It is written after a canonical
-commit, re-derived from the current canonical facts (`rederive_for_sources`), consumed only by
-prospective-recall ranking and graph fact extraction, and rebuilt by the `atoms` stage of
+commit, re-derived from the current canonical facts (`rederive_for_sources`), consumed by the
+atom evidence route of passive recall (`atom_route_weight`, default 0.25) and by prospective
+recall and graph fact extraction, and rebuilt by the `atoms` stage of
 `DerivedRebuildCoordinator` (batches of 200, degradation code `atoms_rebuild_partial_failed`).
 Atom status/TTL only decides whether that signal participates in ranking or prospective
 candidates; it never changes whether a canonical fact exists, is visible, or is recalled, and
-the canonical recall path does not read atoms. Model-visible text always comes from the current
+stale atoms are dropped by the parent revision/scope/privacy filter before they contribute
+evidence. Model-visible text always comes from the current
 canonical fact set, so stale atom rows cannot carry rewritten facts into injection or graph
 nodes. The detailed scenario matrix lives in the local Trellis contract
 `.trellis/spec/core/features/memory/backend/canonical-fact-ownership.md` (project-local spec store, not tracked).

@@ -74,7 +74,7 @@ flowchart LR
 ## 不可破坏的跨模块契约
 
 - **权威数据：** SQLite canonical memory（`documents` 行 + 整数 ID + revision/status）是唯一权威身份与唯一权威事实正文。FTS、FAISS、图、Atom、relation/Projection、topic catalog 和画像/知识/笔记派生对象都是带 source/revision 证据、可失效且可重建的派生数据，不能形成第二套 canonical memory 或 `doc_id`。`MemoryAtom` 只是排序/前瞻/图信号的派生平面：它的状态与 TTL 不改变 canonical 事实的存在、可见性与召回，模型可见正文必须取当前 canonical 事实原文。
-- **写入与演化：** `EventHandler` 经 `ConversationManager`/`MemoryProcessor`、质量门和 `MemoryEngine` 写 canonical。只有 canonical 成功提交并重读 source 后才能调度演化；派生失败只能降级报告，不能回滚或删除 canonical。正文更新是无 `expected_revision` 的两阶段替换：新行先以不可召回的暂存状态写入，再在单事务内切换可见性并删除旧行，任一失败路径都必须由写账本收敛到「最多一条可召回 owner」。`key_facts`/`fact_source_evidence` 是同一声明的准入元数据，与正文不一致时拒绝写入（`fact_evidence_mismatch`）或清除，读取面按 canonical 正文回落。
+- **写入与演化：** `EventHandler` 经 `ConversationManager`/`MemoryProcessor`、质量门和 `MemoryEngine` 写 canonical。只有 canonical 成功提交并重读 source 后才能调度演化；派生失败只能降级报告，不能回滚或删除 canonical。正文更新是无 `expected_revision` 的两阶段替换：新行先以不可召回的暂存状态写入，再在单事务内切换可见性（赢家恢复原状态、输家隐藏），随后单独删除旧行；删除未完成记 `replacement_cleanup_pending`，补偿成功/失败分别记 `replacement_rolled_back`/`replacement_rollback_failed`（`needs_repair`），失败只记录不回滚，任一失败路径都必须由写账本收敛到「最多一条可召回 owner」。`key_facts`/`fact_source_evidence` 是同一声明的准入元数据，与正文不一致时拒绝写入（`fact_evidence_mismatch`）或清除，读取面按 canonical 正文回落。
 - **读取门：** 缓存命中、记忆列表、召回测试、聚焦图查询与统计都必须按当前 canonical 重校验（存在、revision/正文、可召回、mark_write、来源证据），失效项剔除并计数，不得回显旧正文或旧派生行。
 - **重建顺序：** `DerivedRebuildCoordinator` 必须按 canonical → indexes（FTS5/FAISS）→ catalog → atoms → graph → evolution → semantic_compression → notes 的固定相对顺序工作；阶段失败只记稳定降级码，不删除 canonical。启动期重建成功或安全降级后，才启动 Evolution worker。
 - **质量门：** profile 按绑定顺序首个精确匹配解析，未命中使用 `default_profile`；处置优先级是规则 `force_disposition`、原因码 override、profile 默认。`discard` 不落库，`quarantine` 经人工批准重取证，`mark_write` 默认不进入召回、注入和演化。
