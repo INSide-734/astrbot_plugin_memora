@@ -379,6 +379,39 @@ async def test_legacy_migration_conflict_preserves_latest_legacy_file(
 
 
 @pytest.mark.asyncio
+async def test_unloaded_store_maps_corrupt_primary_to_recovery_required(
+    tmp_path: Path,
+) -> None:
+    """未加载即写入时，损坏主文件必须收敛为恢复态而不是漏出校验异常。"""
+
+    malformed_dir = tmp_path / "malformed"
+    malformed_dir.mkdir()
+    malformed_path = malformed_dir / "auto_learning.json"
+    malformed_path.write_text("{broken-primary", encoding="utf-8")
+    checksum_dir = tmp_path / "checksum"
+    checksum_dir.mkdir()
+    checksum_path = checksum_dir / "auto_learning.json"
+    _write_envelope(
+        checksum_path,
+        _payload("CandidateAlphaToken000001", marker="stale"),
+        checksum_override="0" * 64,
+    )
+
+    payload = _payload("CandidateBetaToken0000002", marker="v2")
+    for state_path in (malformed_path, checksum_path):
+        store = AutoLearningStateStore(state_path)
+        original = state_path.read_bytes()
+
+        with pytest.raises(AutoLearningStatePersistenceError) as exc_info:
+            await store.save(payload)
+
+        assert exc_info.value.reason_code == "learning_state_recovery_required"
+        assert state_path.read_bytes() == original
+        assert not store.backup_path.exists()
+        assert not list(state_path.parent.glob("*.tmp"))
+
+
+@pytest.mark.asyncio
 async def test_backup_write_failure_keeps_existing_primary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

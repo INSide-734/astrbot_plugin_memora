@@ -82,8 +82,12 @@ class EvaluationDatasetRepository:
     def save(self, prepared: PreparedEvaluationDataset) -> dict[str, Any]:
         """将已校验数据集原子写入目标文件，并返回无路径的安全摘要。"""
 
+        # PreparedEvaluationDataset 是公开导出类型，直接构造的实例不能
+        # 信任：文件名与名称都参与落盘路径，必须重新过 allowlist 校验。
+        filename = self._normalize_filename(prepared.filename)
+        name = filename.removesuffix(".jsonl")
         self.directory.mkdir(parents=True, exist_ok=True)
-        target = self.directory / prepared.filename
+        target = self.directory / filename
         replaced = target.is_file()
         temporary_path: Path | None = None
         try:
@@ -92,7 +96,7 @@ class EvaluationDatasetRepository:
                 encoding="utf-8",
                 newline="\n",
                 dir=self.directory,
-                prefix=f".{prepared.name}.",
+                prefix=f".{name}.",
                 suffix=".tmp",
                 delete=False,
             ) as handle:
@@ -106,8 +110,8 @@ class EvaluationDatasetRepository:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
         return {
-            "name": prepared.name,
-            "filename": prepared.filename,
+            "name": name,
+            "filename": filename,
             "case_count": len(prepared.cases),
             "replaced": replaced,
         }

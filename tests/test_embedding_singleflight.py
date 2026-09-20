@@ -43,6 +43,32 @@ def test_proxy_preserves_original_embedding_capability_surface() -> None:
     assert proxy.get_dim() == 1
 
 
+def test_proxy_preserves_batch_signature_probe() -> None:
+    """代理包装不得把不支持扩展参数的 batch 入口误判为支持。"""
+
+    from core.platform.provider.adapters import (
+        EmbeddingProviderAdapter,
+        _accepts_extended_batch,
+    )
+
+    class _CompactBatchProvider:
+        """只接受 contents 一个参数、不接受 AstrBot 扩展参数的 Provider。"""
+
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        async def get_embeddings_batch(self, contents: list[str]) -> list[list[float]]:
+            self.calls.append(list(contents))
+            return [[1.0] for _ in contents]
+
+    provider = _CompactBatchProvider()
+    proxy = InFlightEmbeddingProviderProxy(provider)
+
+    assert _accepts_extended_batch(proxy.get_embeddings_batch) is False
+    adapter = EmbeddingProviderAdapter.from_provider(proxy)
+    assert adapter._extended_batch is False
+
+
 @pytest.mark.asyncio
 async def test_concurrent_identical_calls_share_one_provider_task() -> None:
     """并发相同输入只调用一次底层 Provider。"""

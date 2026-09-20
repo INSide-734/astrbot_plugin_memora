@@ -466,6 +466,67 @@ async def test_prefilter_failure_in_compat_mode_falls_back_to_local_mmr() -> Non
 
 
 @pytest.mark.asyncio
+async def test_prefilter_failure_never_returns_unvalidated_candidate() -> None:
+    """严格模式下预过滤故障也不得把未通过校验的候选交回调用方。"""
+
+    client = MagicMock()
+    client.complete_sync.return_value = "[1.0, 9.0, 5.0]"
+    retriever = _dual_retriever(
+        [
+            _candidate(1, 0.7, "第一条"),
+            _candidate(2, 0.9, "跨作用域候选", scope_key="group:99"),
+            _candidate(3, 0.8, "第三条"),
+        ],
+        client,
+        strict_mode=True,
+    )
+    retriever._provider_prefilter = _FailingPrefilter()
+
+    with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+        results = await retriever.search(
+            "匿名查询",
+            k=2,
+            session_id="group:42",
+            chat_type="group",
+            user_id="stable-user",
+        )
+
+    client.complete_sync.assert_not_called()
+    assert [item.doc_id for item in results] == [3, 1]
+
+
+@pytest.mark.asyncio
+async def test_prefilter_failure_local_mmr_never_backfills_unvalidated() -> None:
+    """兼容模式下预过滤故障的本地 MMR 也不得回填未通过校验的候选。"""
+
+    client = MagicMock()
+    client.complete_sync.return_value = "[1.0, 9.0, 5.0]"
+    retriever = _dual_retriever(
+        [
+            _candidate(1, 0.9, "第一条"),
+            _candidate(2, 0.8, "非法角色候选", role="system"),
+            _candidate(3, 0.7, "第三条"),
+        ],
+        client,
+        strict_mode=False,
+        mmr_lambda=0.7,
+    )
+    retriever._provider_prefilter = _FailingPrefilter()
+
+    with extra_llm_budget_scope(ExtraLlmBudget(max_calls=1)):
+        results = await retriever.search(
+            "匿名查询",
+            k=2,
+            session_id="group:42",
+            chat_type="group",
+            user_id="stable-user",
+        )
+
+    client.complete_sync.assert_not_called()
+    assert sorted(item.doc_id for item in results) == [1, 3]
+
+
+@pytest.mark.asyncio
 async def test_prefilter_cancellation_propagates() -> None:
     """预过滤阶段的取消异常不得被重排降级逻辑吞掉。"""
 

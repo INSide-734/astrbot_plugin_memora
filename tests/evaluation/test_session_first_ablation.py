@@ -353,6 +353,116 @@ async def test_safe_report_omits_query_identity_ids_and_exception_text() -> None
         assert canary not in serialized
 
 
+@pytest.mark.asyncio
+async def test_short_circuit_dropping_baseline_relevant_fact_is_counted() -> None:
+    """短路丢弃完整基线已召回标注事实时必须计为错误短路。"""
+
+    case = _single_case()
+    case.relevant_doc_ids = {"mem-relevant", "mem-secondary"}
+
+    async def baseline(_case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
+        """返回完整召回中的两条标注相关事实。"""
+
+        return [
+            {"doc_id": "mem-relevant", "score": 0.99},
+            {"doc_id": "mem-secondary", "score": 0.6},
+        ]
+
+    async def session(_case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
+        """只返回证据门保证的关键长期事实。"""
+
+        return [_candidate(case, "mem-relevant", 0.95)]
+
+    report = await run_session_first([case], baseline, session, k=2)
+
+    assert report.would_short_circuit == 1
+    assert report.wrong_short_circuit == 1
+
+
+@pytest.mark.asyncio
+async def test_covered_short_circuit_is_not_counted_as_wrong() -> None:
+    """会话分支保留全部基线相关事实时不得计为错误短路。"""
+
+    case = _single_case()
+    case.relevant_doc_ids = {"mem-relevant", "mem-secondary"}
+
+    async def baseline(_case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
+        """返回完整召回中的两条标注相关事实。"""
+
+        return [
+            {"doc_id": "mem-relevant", "score": 0.99},
+            {"doc_id": "mem-secondary", "score": 0.6},
+        ]
+
+    async def session(_case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
+        """返回覆盖同样相关事实但顺序不同的会话候选。"""
+
+        return [
+            _candidate(case, "mem-secondary", 0.95),
+            _candidate(case, "mem-relevant", 0.8),
+        ]
+
+    report = await run_session_first([case], baseline, session, k=2)
+
+    assert report.would_short_circuit == 1
+    assert report.wrong_short_circuit == 0
+
+
+@pytest.mark.asyncio
+async def test_wrong_short_circuit_counts_correct_negative_regression() -> None:
+    """基线正确空命中而会话短路给出命中时必须计为错误短路。"""
+
+    case = _single_case(
+        expected_no_hit=True,
+        critical_long_term_doc_ids=[],
+    )
+    case.relevant_doc_ids = {"__no_relevant__"}
+
+    async def baseline(_case: EvaluationCase, _k: int) -> list[Any]:
+        """返回正确的空命中基线。"""
+
+        return []
+
+    async def session(_case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
+        """返回一个通过可见性检查的会话噪声命中。"""
+
+        return [_candidate(case, "mem-noise", 0.95)]
+
+    report = await run_session_first([case], baseline, session, k=1)
+
+    assert report.would_short_circuit == 1
+    assert report.baseline is not None and report.baseline.recall_at_k == 1.0
+    assert report.effective is not None and report.effective.recall_at_k == 0.0
+    assert report.wrong_short_circuit == 1
+
+
+@pytest.mark.asyncio
+async def test_wrong_short_circuit_counts_top_k_drop_of_baseline_hit() -> None:
+    """相关项仍在会话候选全集但被 top-K 丢掉时也必须计为错误短路。"""
+
+    case = _single_case(critical_long_term_doc_ids=["mem-relevant"])
+
+    async def baseline(_case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
+        """返回首位为相关事实的完整基线。"""
+
+        return [{"doc_id": "mem-relevant", "score": 0.99}]
+
+    async def session(_case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
+        """返回分数更高但已越过 K 的相关项。"""
+
+        return [
+            _candidate(case, "mem-noise", 0.95),
+            _candidate(case, "mem-relevant", 0.8),
+        ]
+
+    report = await run_session_first([case], baseline, session, k=1)
+
+    assert report.would_short_circuit == 1
+    assert report.baseline is not None and report.baseline.recall_at_k == 1.0
+    assert report.effective is not None and report.effective.recall_at_k == 0.0
+    assert report.wrong_short_circuit == 1
+
+
 def test_preset_rejects_invalid_thresholds() -> None:
     """固定 preset 必须拒绝非有限或越界阈值。"""
 

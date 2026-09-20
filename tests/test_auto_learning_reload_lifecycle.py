@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
@@ -10,6 +11,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from core.features.learning.application.auto_learning import AutoLearningManager
+from core.features.learning.infrastructure.auto_learning_state import (
+    AutoLearningStatePersistenceError,
+)
 from core.platform.composition.reload_lifecycle import run_scheduled_plugin_reload
 
 if TYPE_CHECKING:
@@ -199,6 +203,110 @@ async def test_reload_failure_callback_is_persisted(tmp_path: Path) -> None:
     assert result is not None
     assert result["state"] == "failed"
     assert result["reason_code"] == "host_reload_failed"
+
+
+@pytest.mark.asyncio
+async def test_unmigratable_legacy_state_is_fail_closed_without_breaking_startup(
+    tmp_path: Path,
+) -> None:
+    """legacy 载荷无法迁移时只能进入 fail-closed 恢复态，不能中断启动。"""
+
+    legacy = {
+        "candidates": {},
+        "published": {"global:legacy": {}},
+        "publish_intents": {},
+    }
+    (tmp_path / "auto_learning.json").write_text(
+        json.dumps(legacy),
+        encoding="utf-8",
+    )
+    manager = _manager(str(tmp_path))
+
+    await manager.load_state()
+
+    assert manager._state_corrupt is True
+    assert manager._state_recovery_required is True
+    assert manager._state_reason_code == "learning_state_payload_invalid"
+    with pytest.raises(AutoLearningStatePersistenceError):
+        await manager.save_state()
+    assert (
+        json.loads((tmp_path / "auto_learning.json").read_text(encoding="utf-8"))
+        == legacy
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_migration_write_failure_is_fail_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """迁移写入失败（旧文件已被改写）不得冒泡，只能标记恢复态。"""
+
+    legacy = {"candidates": {}, "published": {}, "publish_intents": {}}
+    state_path = tmp_path / "auto_learning.json"
+    state_path.write_text(json.dumps(legacy), encoding="utf-8")
+    manager = _manager(str(tmp_path))
+    state_store = manager._state_store
+    assert state_store is not None
+    monkeypatch.setattr(
+        state_store,
+        "migrate_legacy",
+        AsyncMock(
+            side_effect=AutoLearningStatePersistenceError(
+                "learning_state_migration_conflict"
+            )
+        ),
+    )
+
+    await manager.load_state()
+
+    assert manager._state_recovery_required is True
+    assert manager._state_reason_code == "learning_state_migration_conflict"
+    assert json.loads(state_path.read_text(encoding="utf-8")) == legacy
+
+
+@pytest.mark.asyncio
+async def test_reload_failure_callback_after_own_running_write_is_persisted(
+    tmp_path: Path,
+) -> None:
+    """调度后本实例写入 running 时，携带调度 revision 的失败回调仍必须落库。"""
+
+    manager = _manager(str(tmp_path))
+    _install_active_publication(manager)
+    await manager.record_reload_operation(
+        action="publish",
+        candidate_id=_CANDIDATE_ID,
+        operation_id=_OPERATION_ID,
+        applied_revision="config-revision-2",
+        changed_paths=_LEARNING_PATHS,
+        state="queued",
+    )
+    scheduled_revision = manager._state_revision
+    assert scheduled_revision is not None
+
+    started = await manager.update_reload_operation(
+        _OPERATION_ID,
+        state="running",
+        reason_code="reload_started",
+        expected_state_revision=scheduled_revision,
+    )
+    failed = await manager.update_reload_operation(
+        _OPERATION_ID,
+        state="failed",
+        reason_code="host_reload_failed",
+        expected_state_revision=scheduled_revision,
+    )
+
+    assert started is not None
+    assert started["state"] == "running"
+    assert failed is not None
+    assert failed["state"] == "failed"
+    assert failed["reason_code"] == "host_reload_failed"
+    state_store = manager._state_store
+    assert state_store is not None
+    persisted = await state_store.load()
+    assert persisted.payload is not None
+    assert persisted.payload["reload_operation"]["state"] == "failed"
 
 
 @pytest.mark.asyncio

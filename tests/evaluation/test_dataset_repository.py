@@ -7,6 +7,7 @@ import pytest
 from core.features.evaluation.infrastructure.dataset_repository import (
     EvaluationDatasetRepository,
     EvaluationDatasetValidationError,
+    PreparedEvaluationDataset,
 )
 
 VALID_DATASET = """{"case_id":"coffee","query":"用户喜欢什么咖啡","relevant_doc_ids":["17"],"metadata":{"session_id":"private:user-1"}}\n"""
@@ -64,6 +65,25 @@ def test_repository_rejects_untrusted_dataset_inputs(
 
     assert exc_info.value.code == code
     assert list(tmp_path.glob("*")) == []
+
+
+def test_repository_rejects_forged_prepared_dataset_paths(tmp_path) -> None:
+    """直接构造的 Prepared 数据集不得绕过文件名 allowlist 写出目录。"""
+
+    repository = EvaluationDatasetRepository(tmp_path / "datasets")
+    forged = PreparedEvaluationDataset(
+        name="../../outside",
+        filename="../../outside.jsonl",
+        content=VALID_DATASET,
+        cases=(),
+    )
+
+    with pytest.raises(EvaluationDatasetValidationError) as exc_info:
+        repository.save(forged)
+
+    assert exc_info.value.code == "evaluation_dataset_invalid_name"
+    assert list(tmp_path.rglob("*.jsonl")) == []
+    assert not (tmp_path / "datasets").exists()
 
 
 def test_repository_rejects_dataset_name_mismatch(tmp_path) -> None:

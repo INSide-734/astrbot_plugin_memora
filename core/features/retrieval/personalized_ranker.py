@@ -25,8 +25,8 @@ class PersonalizedRanker:
             boost = self._compute_boost(r, tag_weights)
             if profile is not None:
                 boost += self._preference_boost(r, profile)
-            if boost > 0:
-                r.final_score = min(1.0, r.final_score + boost)
+            if boost != 0:
+                r.final_score = max(0.0, min(1.0, r.final_score + boost))
 
         results.sort(key=lambda item: item.final_score, reverse=True)
         return results

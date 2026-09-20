@@ -702,18 +702,16 @@ def _has_negative_case_regression(
 
 
 def _group_recall_gap(rows: Sequence[_Row], k: int) -> float:
-    """计算匿名 fixture 分组的最大 Recall 差异，不输出分组名称。"""
+    """计算匿名 fixture 分组的最大 Recall 差异，不输出分组名称。
+
+    分组分数复用逐问题口径，因此正确空命中的负例记为成功，不会把全对分组
+    压低成差距；只有真实漏召回才会产生非零分组差距。
+    """
 
     groups: dict[str, list[float]] = defaultdict(list)
     for row in rows:
         label = str(row.case.metadata.get("group_label") or "default")
-        groups[label].append(
-            recall_at_k(
-                [item.doc_id for item in row.candidates],
-                row.case.relevant_doc_ids,
-                k=k,
-            )
-        )
+        groups[label].append(_row_quality(row, k)[0])
     means = [_mean(values) for values in groups.values()]
     return round(max(means) - min(means), 4) if means else 0.0
 

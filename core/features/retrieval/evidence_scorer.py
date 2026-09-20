@@ -15,6 +15,9 @@ from .rrf_fusion import HybridResult
 if TYPE_CHECKING:
     from .query_planner import QueryPlan
 
+_MAX_CROSS_QUERY_BONUS = 0.08
+"""multi_query_fusion 写入 ``score_breakdown.cross_query_support`` 的原始奖励上限。"""
+
 
 @dataclass(frozen=True, slots=True)
 class EvidenceWeights:
@@ -297,9 +300,15 @@ class RetrievalEvidenceScorer:
         每个查询变体检查候选内容是否包含其关键词；
         支持查询越多，cross_query_support 越高。
         """
-        existing = (candidate.score_breakdown or {}).get("cross_query_support")
+        breakdown = candidate.score_breakdown or {}
+        existing = breakdown.get("cross_query_support")
         if isinstance(existing, (int, float)) and not isinstance(existing, bool):
-            return min(1.0, max(0.0, float(existing)) / 0.08)
+            support = min(1.0, max(0.0, float(existing)))
+            # score() 会把归一化支持度写回同一 key：已评分的候选直接沿用，
+            # 否则会把 [0, 1] 值再次除以原始奖励上限而放大到满额。
+            if "evidence_bonus" in breakdown:
+                return support
+            return support / _MAX_CROSS_QUERY_BONUS
         if not queries or len(queries) <= 1:
             return 0.0
 

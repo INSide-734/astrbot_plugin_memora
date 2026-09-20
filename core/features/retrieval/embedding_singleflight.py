@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping
@@ -43,6 +44,7 @@ class InFlightEmbeddingProviderProxy:
         if not callable(original):
             return
 
+        @functools.wraps(original)
         async def coalesced(*args: Any, **kwargs: Any) -> Any:
             """按调用模式与参数摘要合并当前正在执行的相同请求。"""
 

@@ -198,9 +198,11 @@ class RuntimeUpdateInstaller:
                 cancelled = exc
                 try:
                     await switch_task
-                except Exception as switch_exc:
+                except Exception:
+                    # 目录切换已经失败，状态必须记为失败；但调用方取消优先，
+                    # 不能把取消改写成普通失败。
                     self._finish_state(initial_state, "failed", "switch_failed")
-                    raise RuntimeUpdateError("切换 runtime 更新失败。") from switch_exc
+                    raise cancelled
             except Exception as exc:
                 self._finish_state(initial_state, "failed", "switch_failed")
                 raise RuntimeUpdateError("切换 runtime 更新失败。") from exc
@@ -286,12 +288,13 @@ class RuntimeUpdateInstaller:
         try:
             return await asyncio.shield(prepare_task)
         except asyncio.CancelledError:
-            candidate_container, _ = await prepare_task
-            self._remove_operation_tree(
-                candidate_container,
-                binding.plugin_root.parent,
-                f".{binding.root_dir_name}.update-",
-            )
+            candidate_container: Path | None = None
+            try:
+                candidate_container, _ = await prepare_task
+            except Exception:
+                # 工作线程已自行清理失败候选；取消仍必须区分于普通失败。
+                candidate_container = None
+            self._cleanup_candidate_if_present(binding, candidate_container)
             raise
 
     def _cleanup_candidate_if_present(
@@ -614,12 +617,9 @@ class RuntimeUpdateInstaller:
         if state.get("status") == "reload_scheduled" and current_version == state.get(
             "version"
         ):
+            # 只收敛终态：此处仍处于 AstrBot 重载调用内部，重载随后可能被判为
+            # 失败并需要 backup 回滚，所以备份由成功路径 _reload_and_finalize 清理。
             self._finish_state(state, "succeeded", None)
-            try:
-                binding = self._resolve_binding()
-                self._cleanup_after_success(binding, state)
-            except Exception:
-                logger.warning("更新成功后的旧 runtime 清理将在后续重试")
         elif state.get("status") == "rolling_back" and current_version == state.get(
             "previous_version"
         ):

@@ -221,6 +221,10 @@ def _coerce_proposal(
     """将 dataclass 或严格字段映射转换为提案对象。"""
 
     if isinstance(proposal, DerivedMetadataProposal):
+        # dataclass 不做运行时类型检查，两条入口必须一致 fail-closed，
+        # 否则下游会拿到没有 canonical 来源证据的注解。
+        if not isinstance(proposal.source, DerivedMetadataSourceRef):
+            raise ValueError("proposal_source_invalid")
         return proposal
     if not isinstance(proposal, Mapping):
         raise TypeError("proposal_type_invalid")

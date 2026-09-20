@@ -75,6 +75,12 @@ class KnowledgeRetriever:
 
     结合 KnowledgeStore 的 LIKE 关键词检索与可选的向量语义检索。
     当外部向量检索不可用时，会自动回退到纯关键词路径。
+
+    召回范围限制：候选集合只来自关键词命中；向量分数仅对已命中的条目
+    做权重归一化后的重排，不会把关键词漏掉、但语义相近的知识条目补进
+    候选（`KnowledgeStore` 当前没有按 ID 批量回读的端口，逐条读取会在
+    未消费该检索器的路径上引入无界查询）。如需语义召回，需要先给
+    KnowledgeStore 增加有界的按 ID 回读接口，再在 `_merge` 前回捞候选。
     """
 
     def __init__(
@@ -115,11 +121,18 @@ class KnowledgeRetriever:
             vector_future = asyncio.ensure_future(
                 self._vector_search(query, max(k * 2, 20))
             )
+            vector_future.add_done_callback(_consume_task_result)
 
-        keyword_entries, _ = await keyword_future
-        vector_map: dict[int, float] = {}
-        if vector_future is not None:
-            vector_map = await vector_future
+        try:
+            keyword_entries, _ = await keyword_future
+            vector_map: dict[int, float] = {}
+            if vector_future is not None:
+                vector_map = await vector_future
+        finally:
+            # 关键词失败或父协程取消时不得遗留无人 await 的向量任务。
+            for future in (keyword_future, vector_future):
+                if future is not None and not future.done():
+                    future.cancel()
 
         return self._merge(keyword_entries, vector_map, k)
 
@@ -128,21 +141,25 @@ class KnowledgeRetriever:
         query: str,
         limit: int,
         category: str,
-    ) -> tuple[list[KnowledgeEntry], int]:
-        """通过 KnowledgeStore 执行关键词检索，并附加轻量 TF 打分。"""
+    ) -> tuple[list[tuple[KnowledgeEntry, float]], int]:
+        """通过 KnowledgeStore 执行关键词检索，并附加轻量 TF 打分。
+
+        分数与条目一起返回：KnowledgeEntry 是 `slots=True` 的领域对象，既没有
+        可写临时字段，也不应被检索期的私有属性污染。
+        """
         entries, total = await self._store.search(query, limit, category)
-        scored: list[KnowledgeEntry] = []
         query_terms = _tokenize(query)
+        scored: list[tuple[float, KnowledgeEntry]] = []
 
         for entry in entries:
             if entry.confidence < self._min_confidence:
                 continue
-            kw_score = _keyword_score(query_terms, entry.title, entry.content)
-            object.__setattr__(entry, "_kw_score", kw_score)
-            scored.append(entry)
+            scored.append(
+                (_keyword_score(query_terms, entry.title, entry.content), entry)
+            )
 
-        scored.sort(key=lambda e: getattr(e, "_kw_score", 0.0), reverse=True)
-        return scored[:limit], total
+        scored.sort(key=lambda pair: pair[0], reverse=True)
+        return [(entry, score) for score, entry in scored[:limit]], total
 
     async def _vector_search(
         self,
@@ -166,15 +183,14 @@ class KnowledgeRetriever:
 
     def _merge(
         self,
-        keyword_entries: list[KnowledgeEntry],
+        keyword_entries: list[tuple[KnowledgeEntry, float]],
         vector_scores: dict[int, float],
         k: int,
     ) -> list[KnowledgeResult]:
         """按权重融合关键词结果与向量结果。"""
         results: dict[int, KnowledgeResult] = {}
 
-        for entry in keyword_entries:
-            kw_score = getattr(entry, "_kw_score", 0.0)
+        for entry, kw_score in keyword_entries:
             results[entry.entry_id] = KnowledgeResult(
                 entry_id=entry.entry_id,
                 title=entry.title,
@@ -191,19 +207,26 @@ class KnowledgeRetriever:
             if eid in results:
                 results[eid].vector_score = round(vec_score, 4)
 
-        # 计算最终分数
+        # 计算最终分数：按实际命中的权重之和归一化，避免带向量证据的条目
+        # 因为权重稀释反而排在纯关键词条目之后。
         kw_w, vec_w = self._keyword_weight, self._vector_weight
+        total_w = kw_w + vec_w
         for r in results.values():
-            has_vec = r.vector_score > 0
-            if has_vec:
+            if r.entry_id in vector_scores and total_w > 0:
                 r.final_score = round(
-                    kw_w * r.keyword_score + vec_w * r.vector_score, 4
+                    (kw_w * r.keyword_score + vec_w * r.vector_score) / total_w, 4
                 )
             else:
                 r.final_score = r.keyword_score
 
         ranked = sorted(results.values(), key=lambda r: r.final_score, reverse=True)
         return ranked[:k]
+
+
+def _consume_task_result(task: asyncio.Future[Any]) -> None:
+    """取回未被 await 的任务结果，避免异常在回收时被静默丢弃。"""
+    if not task.cancelled():
+        task.exception()
 
 
 def _tokenize(text: str) -> set[str]:

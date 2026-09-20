@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import inspect
 import json
+import math
 import os
 import re
 import secrets
@@ -393,6 +394,7 @@ def _read_document(path: Path, max_bytes: int) -> object | None:
             raw.decode("utf-8"),
             object_pairs_hook=_reject_duplicate_pairs,
             parse_constant=_reject_nonfinite_constant,
+            parse_float=_reject_nonfinite_number,
         )
     except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
         return None
@@ -535,6 +537,15 @@ def _reject_nonfinite_constant(_value: str) -> None:
     """拒绝 JSON 中的 NaN 和 Infinity 扩展常量。"""
 
     raise ValueError("learning_evidence_nonfinite_number")
+
+
+def _reject_nonfinite_number(value: str) -> float:
+    """拒绝解析后溢出为非有限值的 JSON 数字字面量（例如 1e400）。"""
+
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise ValueError("learning_evidence_nonfinite_number")
+    return parsed
 
 
 def _is_sha256(value: object) -> bool:

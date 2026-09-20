@@ -100,6 +100,23 @@ def test_explicit_focus_terms_contribute_without_query_tokens() -> None:
     assert ranked[0].score_breakdown["focus"] == 1.0
 
 
+def test_rescoring_keeps_cross_query_support_bounded() -> None:
+    """二次评分必须沿用已归一化的多查询支持度，不得再次放大。"""
+
+    candidate = _result(1, "参与者甲在 2025 年 5 月设计了物品", "2025-05-10T00:00:00Z")
+    candidate.score_breakdown = {"cross_query_support": 0.04}
+
+    once = RetrievalEvidenceScorer().score([candidate], _plan())[0]
+    assert once.score_breakdown["cross_query_support"] == 0.5
+
+    twice = RetrievalEvidenceScorer().score([once], _plan())[0]
+    assert twice.score_breakdown["cross_query_support"] == 0.5
+    assert (
+        twice.score_breakdown["evidence_bonus"]
+        == once.score_breakdown["evidence_bonus"]
+    )
+
+
 def test_event_time_is_valid_temporal_evidence() -> None:
     """event_time 应同时参与时间匹配并避免无时间证据惩罚。"""
 

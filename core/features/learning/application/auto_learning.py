@@ -106,6 +106,7 @@ class AutoLearningManager(
         self._reload_operation: dict[str, Any] | None = None
         self._active_publication_revision: str | None = None
         self._state_revision: str | None = None
+        self._own_state_revision: str | None = None
         self._state_corrupt = False
         self._state_recovery_required = False
         self._state_reason_code = "learning_state_missing"

@@ -156,6 +156,42 @@ class TestScoreWeighting:
         assert len(output) == 1
         assert output[0].final_score >= 0
 
+    def test_metadata_json_non_dict_downgraded(self, weighting: Any) -> None:
+        """合法 JSON 但非字典的 metadata 必须降级为空字典而不是中断加权。"""
+        now = time.time()
+        results = [_make_fused(1, 0.7, "content", "[]")]  # type: ignore[arg-type]
+        output = weighting.apply_weighting(results, now)
+        assert len(output) == 1
+        assert output[0].score_breakdown["importance"] == 0.5
+
+    def test_importance_weight_scales_importance_dimension(self) -> None:
+        """importance_weight 必须改变重要性维度对最终分数的贡献。"""
+        from core.features.retrieval.score_weighting import ScoreWeighting
+
+        now = time.time()
+        high = _make_fused(
+            1,
+            0.5,
+            "high",
+            {"importance": 1.0, "create_time": now, "last_access_time": now},
+        )
+        low = _make_fused(
+            2,
+            0.5,
+            "low",
+            {"importance": 0.0, "create_time": now, "last_access_time": now},
+        )
+
+        neutral = ScoreWeighting(
+            decay_rate=0.01, importance_weight=0.0, recency_bump_enabled=False
+        ).apply_weighting([high, low], now)
+        assert neutral[0].final_score == neutral[1].final_score
+
+        weighted = ScoreWeighting(
+            decay_rate=0.01, importance_weight=2.0, recency_bump_enabled=False
+        ).apply_weighting([high, low], now)
+        assert weighted[0].final_score > weighted[1].final_score
+
     def test_recency_bump_score(self) -> None:
         """静态 _recency_bump_score returns correct ranges."""
         from core.features.retrieval.score_weighting import ScoreWeighting

@@ -7,6 +7,8 @@ import inspect
 from dataclasses import dataclass
 from typing import Any
 
+from astrbot.api import logger
+
 from ...shared.mmr import apply_mmr
 from .rrf_fusion import HybridResult
 
@@ -90,9 +92,8 @@ async def rerank_with_provider_boundary(
     strict_mode: bool,
     mmr_lambda: float,
 ) -> list[HybridResult]:
-    """在必要时预过滤后重排，并对边界故障执行纯本地降级。"""
+    """在必要时预过滤后重排，并对边界故障执行 fail-closed 的本地降级。"""
 
-    baseline = _score_sorted(candidates)
     rerank_candidates = candidates
     if _requires_provider_prefilter(strategy):
         try:
@@ -100,10 +101,16 @@ async def rerank_with_provider_boundary(
             rerank_candidates = outcome.candidates
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "[ProviderPrivacyPrefilter] 预过滤失败，降级为逐候选重校验：异常类型=%s",
+                exc.__class__.__name__,
+            )
+            # 边界故障时绝不返回未校验候选：只保留逐候选重校验通过者。
+            safe_candidates = _score_sorted(_revalidate_candidates(candidates, context))
             if strict_mode:
-                return baseline
-            return _local_mmr_with_backfill(baseline, k, mmr_lambda)
+                return safe_candidates
+            return _local_mmr_with_backfill(safe_candidates, k, mmr_lambda)
 
     fallback = _score_sorted(rerank_candidates)
     try:
@@ -118,6 +125,22 @@ async def rerank_with_provider_boundary(
         raise
     except Exception:
         return fallback
+
+
+def _revalidate_candidates(
+    candidates: list[HybridResult],
+    context: ProviderPrivacyContext,
+) -> list[HybridResult]:
+    """预过滤故障后逐候选重校验；单个候选校验异常即拒绝，绝不返回未校验候选。"""
+
+    safe: list[HybridResult] = []
+    for candidate in candidates:
+        try:
+            if _candidate_is_allowed(candidate, context):
+                safe.append(candidate)
+        except Exception:
+            continue
+    return safe
 
 
 def _candidate_is_allowed(

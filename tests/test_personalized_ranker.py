@@ -101,6 +101,23 @@ class TestPersonalizedRanker:
         output = ranker.apply(results, tag_weights={"dummy": 0.0}, profile=profile)
         assert output[0].final_score > 0.5
 
+    def test_apply_with_profile_avoided_topics_lowers_score(self, ranker: Any) -> None:
+        """未命中任何标签时，回避话题仍应降低最终分数。"""
+        from core.features.profiles.domain.models import UserPreferences, UserProfile
+
+        profile = UserProfile(
+            user_id="u1",
+            preferences=UserPreferences(
+                preferred_topics=[],
+                avoided_topics=["politics"],
+            ),
+        )
+        results = [_make_result(1, 0.5, "Discussion about politics today")]
+
+        output = ranker.apply(results, tag_weights={"dummy": 0.0}, profile=profile)
+
+        assert output[0].final_score < 0.5
+
     def test_preference_boost_avoided_topics(self) -> None:
         """静态偏好计算对回避话题返回负提升。"""
         from core.features.profiles.domain.models import UserPreferences, UserProfile

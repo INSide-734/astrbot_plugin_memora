@@ -104,7 +104,7 @@ class ScoreWeighting:
                         f"metadata类型={type(metadata)}, 使用空字典"
                     )
                     metadata = {}
-            elif metadata is None:
+            if metadata is None:
                 logger.debug(
                     f"[hybrid_retriever] metadata为None, doc_id={result.doc_id}, 使用空字典"
                 )
@@ -133,10 +133,10 @@ class ScoreWeighting:
             # 归一化 RRF 分数
             rrf_normalized = result.rrf_score / max_rrf
 
-            # 加权求和：各维度互补而非互斥
+            # 加权求和：各维度互补而非互斥；importance_weight 缩放重要性维度
             final_score = (
                 self.score_alpha * rrf_normalized
-                + self.score_beta * importance
+                + self.score_beta * self.importance_weight * importance
                 + self.score_gamma * recency_weight
             )
 

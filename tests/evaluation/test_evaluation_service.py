@@ -518,6 +518,41 @@ async def test_evaluation_service_does_not_invalidate_live_retrieval_cache(
 
 
 @pytest.mark.asyncio
+async def test_evaluation_service_cache_clear_visits_each_object_once(tmp_path):
+    """引擎缓存对象互相引用时，缓存清理只遍历每个对象一次并清一次缓存。"""
+
+    reads = 0
+
+    class CyclicCache:
+        def __init__(self) -> None:
+            self.clear_count = 0
+            self._retrieval: object | None = None
+
+        def clear(self) -> None:
+            self.clear_count += 1
+
+    cache = CyclicCache()
+
+    class CyclicEngine:
+        @property
+        def search_cache(self) -> CyclicCache | None:
+            """首次读取返回缓存对象，之后断开引用以限制遍历规模。"""
+
+            nonlocal reads
+            reads += 1
+            return cache if reads == 1 else None
+
+    engine = CyclicEngine()
+    cache._retrieval = engine
+    service = EvaluationService(engine=engine, fixture_dir=tmp_path / "fixtures")
+
+    await service._clear_evaluation_caches(engine)
+
+    assert reads == 1
+    assert cache.clear_count == 1
+
+
+@pytest.mark.asyncio
 async def test_evaluation_service_propagates_cancellation(tmp_path):
     """检索取消必须穿透评测服务，不能降级为 completed 或 skipped。"""
 

@@ -223,7 +223,13 @@ async def run_session_first(
     effective_metrics = _branch_metrics(effective_rows, safe_k)
     reason_counts = Counter(item.reason_code for item in decisions)
     short_circuits = reason_counts.get("session_evidence_sufficient", 0)
-    wrong_short_circuits = _count_wrong_short_circuits(cases, session_rows, decisions)
+    wrong_short_circuits = _count_wrong_short_circuits(
+        cases,
+        session_rows,
+        baseline_rows,
+        decisions,
+        safe_k,
+    )
     status = "completed"
     reason_code = "available"
     if decisions and all(
@@ -472,18 +478,45 @@ def _critical_ids(case: EvaluationCase) -> set[str]:
     return {str(item).strip() for item in values if str(item).strip()}
 
 
+def _ranked_top_k(row: _BranchRow, k: int) -> list[str]:
+    """按分数降序返回前 K 个候选标识，与分支 Recall@K 的排序和深度一致。"""
+
+    ordered = sorted(row.candidates, key=lambda item: item.score, reverse=True)
+    return [item.doc_id for item in ordered[:k]]
+
+
 def _count_wrong_short_circuits(
     cases: Sequence[EvaluationCase],
     session_rows: Sequence[_BranchRow],
+    baseline_rows: Sequence[_BranchRow],
     decisions: Sequence[SessionFirstDecision],
+    k: int,
 ) -> int:
-    """统计会话结果遗漏标注关键长期事实的错误短路。"""
+    """统计会话短路相对完整基线丢失的已召回证据。
+
+    证据门已经保证关键长期文档出现在会话候选中，因此这里改用两个真实执行
+    分支的 Recall@K 语义：正例比较完整基线前 K 召回的相关文档是否被会话
+    分支丢弃；负例比较基线正确空命中而会话分支出现命中。两者都只看前 K
+    候选，不使用可能超出评测深度的候选全集。
+    """
 
     wrong = 0
-    for case, row, decision in zip(cases, session_rows, decisions, strict=True):
+    for case, session_row, baseline_row, decision in zip(
+        cases,
+        session_rows,
+        baseline_rows,
+        decisions,
+        strict=True,
+    ):
         if decision.decision != "would_short_circuit":
             continue
-        if not _critical_ids(case).issubset({item.doc_id for item in row.candidates}):
+        baseline_ranked = _ranked_top_k(baseline_row, k)
+        session_ranked = _ranked_top_k(session_row, k)
+        if case.metadata.get("expected_no_hit") is True:
+            if not baseline_ranked and session_ranked:
+                wrong += 1
+            continue
+        if (set(baseline_ranked) & case.relevant_doc_ids) - set(session_ranked):
             wrong += 1
     return wrong
 

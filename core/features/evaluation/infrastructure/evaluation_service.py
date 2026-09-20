@@ -289,11 +289,17 @@ class EvaluationService:
     async def _clear_evaluation_caches(self, engine: Any | None = None) -> None:
         """尽力隔离消融变体之间的缓存。"""
         seen: set[int] = set()
+        visited: set[int] = set()
         targets: list[Any] = [engine if engine is not None else self.engine]
         index = 0
         while index < len(targets):
             root = targets[index]
             index += 1
+            # 引擎对象之间可能互相引用（例如 cache 持有 retriever），
+            # 已访问对象必须跳过，否则遍历永不收敛。
+            if id(root) in visited:
+                continue
+            visited.add(id(root))
             for attr in _CACHE_ATTRS:
                 try:
                     value = getattr(root, attr)

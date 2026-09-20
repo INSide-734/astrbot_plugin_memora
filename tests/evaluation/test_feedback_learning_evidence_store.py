@@ -226,6 +226,34 @@ async def test_valid_checksum_with_invalid_metric_type_fails_closed(tmp_path) ->
 
 
 @pytest.mark.asyncio
+async def test_out_of_range_number_in_pointer_fails_closed(tmp_path) -> None:
+    """溢出为非有限值的 JSON 数字字面量必须 fail-closed 而不是抛异常。"""
+
+    inbox = FeedbackLearningEvidenceInbox(tmp_path)
+    await inbox.publish(_artifact())
+    inbox.current_path.write_text(
+        "{"
+        '"schema_version":1,'
+        '"evidence_revision":1e400,'
+        f'"aggregation_revision":"{_AGGREGATION_REVISION}",'
+        f'"source_config_revision":"{_SOURCE_CONFIG_REVISION}",'
+        '"quality_gate_version":"quality-gate-v1",'
+        f'"checksum":"{"0" * 64}"'
+        "}",
+        encoding="utf-8",
+    )
+
+    assert (
+        await inbox.load_current(
+            aggregation_revision=_AGGREGATION_REVISION,
+            source_config_revision=_SOURCE_CONFIG_REVISION,
+            quality_gate_version="quality-gate-v1",
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
 async def test_unsafe_evaluator_or_regression_text_is_never_persisted(tmp_path) -> None:
     """evaluator 与回归原因只允许固定低敏代码，禁止原文进入文件。"""
 

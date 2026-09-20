@@ -33,18 +33,33 @@ class AutoLearningPersistenceMixin:
             result = await self._state_store.load()
             self._state_reason_code = result.reason_code
             self._state_revision = result.state_revision
+            # 刚读取的 revision 不是本实例写入的，reload CAS 仍按其他写入者处理。
+            self._own_state_revision = None
             self._state_corrupt = result.state_corrupt
             self._state_recovery_required = result.recovery_required
             if result.payload is None:
                 return
             if result.migration_required:
-                payload = self._migrate_legacy_payload(result.payload)
                 assert result.migration_revision is not None
-                self._restore_payload(payload)
-                self._state_revision = await self._state_store.migrate_legacy(
-                    payload,
-                    expected_legacy_revision=result.migration_revision,
-                )
+                try:
+                    payload = self._migrate_legacy_payload(result.payload)
+                    self._restore_payload(payload)
+                except (TypeError, ValueError):
+                    self._state_corrupt = True
+                    self._state_recovery_required = True
+                    self._state_reason_code = "learning_state_payload_invalid"
+                    return
+                try:
+                    self._state_revision = await self._state_store.migrate_legacy(
+                        payload,
+                        expected_legacy_revision=result.migration_revision,
+                    )
+                except AutoLearningStatePersistenceError as exc:
+                    # 旧文件已被其他实例改写或迁移写入失败：保持 fail-closed，
+                    # 只标记恢复态，不能阻断记忆主链启动。
+                    self._state_recovery_required = True
+                    self._state_reason_code = exc.reason_code
+                    return
                 self._state_corrupt = False
                 self._state_recovery_required = False
                 self._state_reason_code = "learning_state_migrated"
@@ -82,6 +97,9 @@ class AutoLearningPersistenceMixin:
         if self._writes_blocked_unlocked():
             raise AutoLearningStatePersistenceError("learning_state_recovery_required")
         self._state_revision = await self._state_store.save(self._state_payload())
+        # 记录本实例自己写入的 revision：reload 回调携带的是调度时的 revision，
+        # 不能把自己随后写入的 revision 误判为其他写入者造成的过期。
+        self._own_state_revision = self._state_revision
 
     def _writes_blocked_unlocked(self) -> bool:
         """判断状态文件损坏或恢复要求是否阻止所有新写动作。"""

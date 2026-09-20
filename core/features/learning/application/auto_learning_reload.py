@@ -139,6 +139,12 @@ class AutoLearningReloadMixin:
             if (
                 expected_state_revision is not None
                 and self._state_revision != expected_state_revision
+                # 调度后本实例自己写入过新 revision（例如 running），这不算
+                # 过期写入者；只要当前 revision 仍属于本实例的写入链即可继续。
+                and not (
+                    self._state_revision is not None
+                    and self._state_revision == self._own_state_revision
+                )
             ):
                 return (
                     copy.deepcopy(dict(current))
@@ -234,6 +240,8 @@ class AutoLearningReloadMixin:
             return True
         self._state_reason_code = result.reason_code
         self._state_revision = result.state_revision
+        # 磁盘上的新 revision 来自其他写入者，本实例的写入链就此结束。
+        self._own_state_revision = None
         self._state_corrupt = result.state_corrupt
         self._state_recovery_required = result.recovery_required
         if result.payload is None or result.migration_required:

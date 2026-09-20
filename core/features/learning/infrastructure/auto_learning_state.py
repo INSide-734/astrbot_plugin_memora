@@ -263,7 +263,14 @@ class AutoLearningStateStore:
             backup_bytes = envelope_bytes
             if expected_state_revision is _EXPECTED_REVISION_UNSET:
                 if self._path.exists():
-                    _, _, backup_bytes = _read_verified_envelope(self._path)
+                    try:
+                        _, _, backup_bytes = _read_verified_envelope(self._path)
+                    except (AutoLearningStateError, OSError) as exc:
+                        # 与下方 CAS 分支保持一致：已有主文件不可信时统一进入
+                        # 恢复态，上层只回滚 AutoLearningStatePersistenceError。
+                        raise AutoLearningStatePersistenceError(
+                            "learning_state_recovery_required"
+                        ) from exc
             elif expected_state_revision is None:
                 if self._path.exists() or self._backup_path.exists():
                     raise AutoLearningStatePersistenceError(

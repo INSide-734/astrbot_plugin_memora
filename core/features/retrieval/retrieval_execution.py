@@ -14,12 +14,11 @@ from ..memory.graph.domain.models import GraphQueryScope
 
 @dataclass(frozen=True, slots=True)
 class RouteOutcome:
-    """单条查询的三路结果、Atom 证据和请求局部计时。"""
+    """单条查询的三路结果和请求局部计时。"""
 
     document_results: list[Any]
     graph_results: list[Any]
     atom_results: list[Any]
-    atom_scores: dict[str, float]
     timing: dict[str, float | bool]
     degraded_routes: tuple[str, ...]
 
@@ -208,18 +207,10 @@ class RouteExecutionCoordinator:
             graph_results = []
             atom_results = []
 
-        # 解析 Atom 评分
-        atom_scores: dict[str, float] = {}
-        for result in atom_results:
-            doc_id = getattr(result, "parent_doc_id", None)
-            if doc_id is not None:
-                atom_scores[str(doc_id)] = getattr(result, "score", 0.0)
-
         return RouteOutcome(
             document_results=list(doc_results),
             graph_results=list(graph_results),
             atom_results=list(atom_results),
-            atom_scores=atom_scores,
             timing=timing,
             degraded_routes=ordered_degraded,
         )

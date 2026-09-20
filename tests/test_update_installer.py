@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
+import threading
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -99,11 +101,13 @@ def _installer(
     tmp_path: Path,
     *,
     reload_result: tuple[bool, str | None] = (True, None),
+    version: str = "1.0.0",
+    marker: str = "old",
 ) -> tuple[RuntimeUpdateInstaller, SimpleNamespace, Path]:
     """构造绑定伪 AstrBot 插件管理器的安装器。"""
     plugin_store = tmp_path / "plugins"
     plugin_root = plugin_store / "astrbot_plugin_memora"
-    _write_plugin_tree(plugin_root, "1.0.0", "old")
+    _write_plugin_tree(plugin_root, version, marker)
     star = SimpleNamespace(
         name="astrbot_plugin_memora",
         root_dir_name="astrbot_plugin_memora",
@@ -184,6 +188,92 @@ async def test_reload_failure_restores_previous_plugin_and_reports_rollback(
     assert (plugin_root / "main.py").read_text(encoding="utf-8") == "old"
     assert (plugin_root / "source-only.txt").read_text(encoding="utf-8") == "旧源码文件"
     star_manager.reload_failed_plugin.assert_awaited_once_with("astrbot_plugin_memora")
+
+
+@pytest.mark.asyncio
+async def test_cancel_during_runtime_switch_propagates_cancellation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """切换阶段被取消时取消必须传播，同时仍记录真实的失败状态。"""
+
+    installer, _star_manager, plugin_root = _installer(tmp_path)
+    archive = tmp_path / "astrbot_plugin_memora-1.1.0-runtime.zip"
+    _write_runtime_zip(archive, "1.1.0")
+    installer.update_manager.download.return_value = _downloaded_update(archive)
+
+    started = threading.Event()
+    release = threading.Event()
+
+    def failing_switch(*_args: object, **_kwargs: object) -> None:
+        """阻塞到测试放行后按普通失败结束目录切换。"""
+
+        started.set()
+        release.wait(timeout=5)
+        raise RuntimeUpdateError("switch-broken")
+
+    monkeypatch.setattr(installer, "_switch_runtime", failing_switch)
+
+    task = asyncio.create_task(installer.apply_latest())
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    await asyncio.sleep(0)
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    state = json.loads(
+        (tmp_path / "plugin-data" / "updates" / "install-state.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert state["status"] == "failed"
+    assert state["error_code"] == "switch_failed"
+    assert (plugin_root / "main.py").read_text(encoding="utf-8") == "old"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_keeps_rollback_backup_until_reload_is_confirmed(
+    tmp_path: Path,
+) -> None:
+    """新实例收敛 succeeded 时必须保留重载失败仍需要的旧代码备份。"""
+
+    operation_id = "0" * 32
+    backup_name = f".astrbot_plugin_memora.rollback-{operation_id}"
+    updates_dir = tmp_path / "plugin-data" / "updates"
+    updates_dir.mkdir(parents=True)
+    (updates_dir / "install-state.json").write_text(
+        json.dumps(
+            {
+                "operation_id": operation_id,
+                "version": "1.1.0",
+                "previous_version": "1.0.0",
+                "status": "reload_scheduled",
+                "started_at": 0.0,
+                "finished_at": None,
+                "rollback_performed": False,
+                "requires_manual_restart": False,
+                "error_code": None,
+                "backup_name": backup_name,
+                "candidate_name": f".astrbot_plugin_memora.update-{operation_id}",
+                "failed_name": f".astrbot_plugin_memora.failed-{operation_id}",
+            }
+        ),
+        encoding="utf-8",
+    )
+    backup = tmp_path / "plugins" / backup_name
+    backup.mkdir(parents=True)
+    (backup / "main.py").write_text("old", encoding="utf-8")
+
+    installer, _star_manager, _plugin_root = _installer(
+        tmp_path,
+        version="1.1.0",
+        marker="new",
+    )
+
+    assert installer.get_status(operation_id)["status"] == "succeeded"
+    assert backup.is_dir()
+    assert (backup / "main.py").read_text(encoding="utf-8") == "old"
 
 
 @pytest.mark.asyncio

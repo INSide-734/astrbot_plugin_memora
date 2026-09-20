@@ -112,16 +112,55 @@ class TestVectorRetriever:
         assert "last_access_time" in metadata
 
     @pytest.mark.asyncio
-    async def test_add_document_long_content_truncated(
-        self, retriever: Any, faiss_db: MagicMock
-    ) -> None:
-        """Content longer than 4000 chars is truncated for embedding."""
-        faiss_db.insert.return_value = 1
-        long_content = "A" * 5000
-        await retriever.add_document(long_content)
-        call_args = faiss_db.insert.call_args
-        inserted_content = call_args.kwargs.get("content", "")
-        assert len(inserted_content) <= 4001  # with marker
+    async def test_add_document_long_content_keeps_full_canonical_text(self) -> None:
+        """超长正文完整落 canonical，仅 embedding 输入受字符预算压缩。"""
+
+        from types import SimpleNamespace
+
+        from core.features.retrieval.vector_retriever import VectorRetriever
+
+        canonical: list[tuple[str, str]] = []
+        embedded: list[str] = []
+
+        class _DocumentStorage:
+            async def insert_document(
+                self, doc_id: str, text: str, metadata: dict
+            ) -> int:
+                assert metadata["importance"] == 0.5
+                canonical.append((doc_id, text))
+                return 7
+
+        class _EmbeddingProvider:
+            async def get_embedding(self, text: str) -> list[float]:
+                embedded.append(text)
+                return [0.1, 0.2, 0.3]
+
+        class _EmbeddingStorage:
+            dimension = 3
+
+            async def insert(self, vector: Any, doc_id: int) -> None:
+                assert doc_id == 7
+                assert len(vector) == 3
+
+        faiss_db: Any = SimpleNamespace(
+            document_storage=_DocumentStorage(),
+            embedding_provider=_EmbeddingProvider(),
+            embedding_storage=_EmbeddingStorage(),
+            insert=AsyncMock(),
+        )
+        retriever = VectorRetriever(faiss_db)
+        content = "开头" + "M" * 2490 + "中段标记" + "M" * 2500 + "结尾"
+
+        doc_id = await retriever.add_document(content)
+
+        assert doc_id == 7
+        assert faiss_db.insert.await_count == 0
+        assert canonical == [(canonical[0][0], content)]
+        assert len(embedded) == 1
+        assert len(embedded[0]) <= 4000
+        assert embedded[0].startswith("开头")
+        assert embedded[0].endswith("结尾")
+        assert "中段标记" not in embedded[0]
 
     @pytest.mark.asyncio
     async def test_search_long_query_truncated(

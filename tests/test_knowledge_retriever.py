@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -75,7 +76,7 @@ class TestKnowledgeRetriever:
                 retriever,
                 "_keyword_search",
                 new=AsyncMock(
-                    return_value=([entry], 1),
+                    return_value=([(entry, 0.5)], 1),
                 ),
             ),
             patch.object(retriever, "_merge", return_value=[mock_result]),
@@ -100,30 +101,85 @@ class TestKnowledgeRetriever:
             results = await retriever.search("low confidence", k=5)
             assert results == []
 
-    def test_merge_with_vector_scores(self, retriever: Any) -> None:
-        """向量分数应与关键词分数按配置权重融合。"""
-        from core.features.retrieval.knowledge_retriever import KnowledgeResult
+    def test_merge_normalizes_weights_across_hit_sets(self) -> None:
+        """带向量证据的条目按命中权重归一化，不会因权重稀释被纯关键词条目反超。"""
 
-        # 直接构造结果，避免测试依赖 __slots__ 的动态属性限制。
-        kw_result = KnowledgeResult(
-            entry_id=1,
-            title="Vector Test",
-            content="Testing vector blending",
-            category="concept",
-            confidence=0.7,
-            keyword_score=0.4,
-            final_score=0.4,
-            tags=["vector"],
-            source_ids=[1],
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
+        from core.features.retrieval.knowledge_retriever import KnowledgeRetriever
+
+        retriever = KnowledgeRetriever(
+            knowledge_store=AsyncMock(),
+            config={
+                "knowledge_base.keyword_weight": 0.35,
+                "knowledge_base.vector_weight": 0.35,
+            },
         )
+        keyword_only = KnowledgeEntry(
+            title="Keyword Only",
+            content="keyword only",
+            category=KnowledgeType.FACT,
+            confidence=0.9,
+            entry_id=1,
+        )
+        hybrid = KnowledgeEntry(
+            title="Hybrid",
+            content="hybrid",
+            category=KnowledgeType.FACT,
+            confidence=0.9,
+            entry_id=2,
+        )
+        results = retriever._merge([(keyword_only, 0.6), (hybrid, 0.8)], {2: 0.9}, k=5)
 
-        # 使用结果结构直接验证融合公式，避免为内部临时分数增加动态属性。
-        result_map = {1: kw_result}
-        kw_w, vec_w = retriever._keyword_weight, retriever._vector_weight
-        r = result_map[1]
-        r.vector_score = 0.95
-        r.final_score = round(kw_w * r.keyword_score + vec_w * r.vector_score, 4)
-        assert r.final_score > r.keyword_score
+        assert [result.entry_id for result in results] == [2, 1]
+        assert results[0].final_score == 0.85
+
+    def test_merge_treats_zero_vector_score_as_evidence(self) -> None:
+        """向量分数为 0 与“没有向量结果”必须区分，不能被当成无向量命中。"""
+
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
+        from core.features.retrieval.knowledge_retriever import KnowledgeRetriever
+
+        retriever = KnowledgeRetriever(
+            knowledge_store=AsyncMock(),
+            config={
+                "knowledge_base.keyword_weight": 0.5,
+                "knowledge_base.vector_weight": 0.5,
+            },
+        )
+        entry = KnowledgeEntry(
+            title="Zero Similarity",
+            content="zero similarity",
+            category=KnowledgeType.FACT,
+            confidence=0.9,
+            entry_id=3,
+        )
+        results = retriever._merge([(entry, 0.8)], {3: 0.0}, k=5)
+
+        assert results[0].final_score == 0.4
+
+    def test_merge_without_weights_keeps_keyword_score(self) -> None:
+        """权重和为零时回退关键词分数，不触发除零。"""
+
+        from core.features.knowledge import KnowledgeEntry, KnowledgeType
+        from core.features.retrieval.knowledge_retriever import KnowledgeRetriever
+
+        retriever = KnowledgeRetriever(
+            knowledge_store=AsyncMock(),
+            config={
+                "knowledge_base.keyword_weight": 0.0,
+                "knowledge_base.vector_weight": 0.0,
+            },
+        )
+        entry = KnowledgeEntry(
+            title="No Weights",
+            content="no weights",
+            category=KnowledgeType.FACT,
+            confidence=0.9,
+            entry_id=4,
+        )
+        results = retriever._merge([(entry, 0.7)], {4: 0.9}, k=5)
+
+        assert results[0].final_score == 0.7
 
     @pytest.mark.asyncio
     async def test_search_vector_fn_exception_handled(self, retriever: Any) -> None:
@@ -143,13 +199,42 @@ class TestKnowledgeRetriever:
             retriever,
             "_keyword_search",
             new=AsyncMock(
-                return_value=([entry], 1),
+                return_value=([(entry, 0.5)], 1),
             ),
         ):
             # 向量检索异常由检索器内部降级处理。
             results = await retriever.search("fallback", k=5)
             assert len(results) == 1
             assert results[0].entry_id == 1
+
+    @pytest.mark.asyncio
+    async def test_search_cancels_vector_task_when_keyword_fails(
+        self, retriever: Any
+    ) -> None:
+        """关键词检索失败时不得遗留无人 await 的向量任务。"""
+
+        cancelled = asyncio.Event()
+
+        async def _vector_fn(_query: str, _limit: int) -> dict[int, float]:
+            """挂起直到被取消，用于观察未完成任务的收束。"""
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return {}
+
+        retriever._vector_search_fn = _vector_fn
+
+        with patch.object(
+            retriever,
+            "_keyword_search",
+            new=AsyncMock(side_effect=RuntimeError("store down")),
+        ):
+            with pytest.raises(RuntimeError, match="store down"):
+                await retriever.search("query", k=5)
+
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
 
     def test_tokenize_function(self) -> None:
         """_tokenize 应切分文本并过滤停用词。"""

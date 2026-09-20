@@ -6,11 +6,16 @@ import asyncio
 import json
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from core.features.evaluation.application import EvaluationCase
+from core.features.evaluation.application import (
+    EvaluationCase,
+    load_fixture_dir,
+    load_jsonl_cases,
+)
 from core.features.evaluation.application.feedback_learning_pipeline import (
     run_feedback_ranking_evaluation_and_publish_evidence,
 )
@@ -159,6 +164,160 @@ async def _improving_baseline(
         {"doc_id": f"noise-{case.case_id}", "score": 0.8, "route": "graph"},
         {"doc_id": relevant_id, "score": 0.75, "route": "document"},
     ]
+
+
+FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures" / "retrieval"
+FEEDBACK_FIXTURE = FIXTURE_ROOT / "feedback_ranking.jsonl"
+_FIXTURE_SCOPE = "scope-feedback-fixture"
+
+
+def _fixture_cases() -> list[EvaluationCase]:
+    """加载专用反馈排序 fixture，并绑定匿名 scope 以驱动 shadow 分支。"""
+
+    return [
+        EvaluationCase(
+            case_id=case.case_id,
+            query=case.query,
+            relevant_doc_ids=set(case.relevant_doc_ids),
+            metadata={
+                **case.metadata,
+                "scope_domain": _FIXTURE_SCOPE,
+                "persona_domain": None,
+            },
+        )
+        for case in load_jsonl_cases(FEEDBACK_FIXTURE)
+    ]
+
+
+def _fixture_aggregate() -> FeedbackSignalAggregate:
+    """构造与该 fixture scope 精确匹配、影子权重更强的聚合。"""
+
+    return FeedbackSignalAggregate(
+        scope_domain=_FIXTURE_SCOPE,
+        persona_domain=None,
+        window_start=datetime(2026, 7, 21, 10, tzinfo=timezone.utc),
+        window_end=datetime(2026, 7, 21, 11, tzinfo=timezone.utc),
+        accepted_count=8,
+        independent_window_count=2,
+        decayed_support=0.9,
+        proposed_document_weight=0.8,
+        proposed_graph_weight=0.2,
+        delta_from_baseline=0.1,
+        status="candidate",
+        policy_version=1,
+    )
+
+
+async def _fixture_baseline(
+    case: EvaluationCase,
+    _k: int,
+) -> list[dict[str, Any]]:
+    """返回图路噪声高于文档路相关项的 baseline 候选，负例不返回候选。"""
+
+    if case.metadata.get("expected_no_hit") is True:
+        return []
+    relevant_id = next(iter(case.relevant_doc_ids))
+    return [
+        {"doc_id": f"noise-{case.case_id}", "score": 0.8, "route": "graph"},
+        {"doc_id": relevant_id, "score": 0.75, "route": "document"},
+    ]
+
+
+def test_feedback_ranking_fixture_declares_group_latency_and_negative_binding() -> None:
+    """专用 fixture 必须由专用测试加载并覆盖声明的字段契约。"""
+
+    cases = load_jsonl_cases(FEEDBACK_FIXTURE)
+
+    assert [case.case_id for case in cases] == [
+        "feedback-document-synthetic",
+        "feedback-graph-synthetic",
+        "feedback-negative-synthetic",
+    ]
+    assert all(case.metadata["dataset"] == "feedback_ranking" for case in cases)
+    assert {case.metadata["group_label"] for case in cases} == {"group-a", "group-b"}
+    assert all(case.metadata["annotated_shadow_latency_ms"] == 4.1 for case in cases)
+    negative = cases[-1]
+    assert negative.metadata["expected_no_hit"] is True
+    assert negative.relevant_doc_ids == {"__no_relevant__"}
+    assert "feedback_ranking" not in load_fixture_dir(FIXTURE_ROOT)
+    assert "feedback_ranking" in load_fixture_dir(
+        FIXTURE_ROOT,
+        include_experimental=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_feedback_ranking_fixture_drives_shadow_ablation() -> None:
+    """fixture 必须直接驱动反馈排序消融，并消费 shadow 标注延迟与负例。"""
+
+    report = await run_feedback_ranking_ablation(
+        _fixture_cases(),
+        _fixture_baseline,
+        _fixture_aggregate(),
+        k=1,
+    )
+
+    assert report.status == "completed"
+    assert report.reason_code == "accepted"
+    assert report.total_cases == 3
+    assert report.baseline.recall_at_k == 0.3333
+    # 负例必须按 expected_no_hit 记为正确无命中，而不是用 __no_relevant__ 打分。
+    assert report.shadow.recall_at_k == 1.0
+    assert report.baseline.annotated_p50_latency_ms == 4.0
+    assert report.shadow.annotated_p50_latency_ms == 4.1
+    # 分组分数复用逐问题口径：group-a 的正例与正确空命中负例都记成功，
+    # group-b 的正例同样成功，因此全对时分组差距必须为 0。
+    assert report.max_group_recall_gap == 0.0
+
+
+@pytest.mark.asyncio
+async def test_group_recall_gap_surfaces_real_regression() -> None:
+    """真实的一组召回退化必须产生非零分组差距，而不是被负例口径掩盖。"""
+
+    improving = EvaluationCase(
+        case_id="gap-improving",
+        query="匿名合成查询",
+        relevant_doc_ids={"mem-document"},
+        metadata={
+            "group_label": "group-improving",
+            "scope_domain": "scope-synthetic",
+            "persona_domain": None,
+        },
+    )
+    regressing = EvaluationCase(
+        case_id="gap-regressing",
+        query="匿名合成查询",
+        relevant_doc_ids={"mem-graph"},
+        metadata={
+            "group_label": "group-regressing",
+            "scope_domain": "scope-synthetic",
+            "persona_domain": None,
+        },
+    )
+
+    async def baseline(case: EvaluationCase, _k: int) -> list[dict[str, Any]]:
+        """让文档相关项与图相关项分别被调权后的排序反向。"""
+
+        if case.case_id == "gap-improving":
+            return [
+                {"doc_id": "noise-graph", "score": 0.8, "route": "graph"},
+                {"doc_id": "mem-document", "score": 0.75, "route": "document"},
+            ]
+        return [
+            {"doc_id": "mem-graph", "score": 0.8, "route": "graph"},
+            {"doc_id": "noise-document", "score": 0.6, "route": "document"},
+        ]
+
+    report = await run_feedback_ranking_ablation(
+        [improving, regressing],
+        baseline,
+        _aggregate(),
+        k=1,
+    )
+
+    assert report.status == "completed"
+    assert report.shadow.recall_at_k == 0.5
+    assert report.max_group_recall_gap == 1.0
 
 
 @pytest.mark.asyncio

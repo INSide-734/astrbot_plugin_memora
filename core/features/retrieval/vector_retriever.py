@@ -23,6 +23,28 @@ from ...shared.adapter_capabilities import (
 
 _TRUNCATED_CONTENT_MARKER = "\n...[中间内容已截断]...\n"
 
+# embedding 输入的字符预算；canonical 正文不受该预算限制。add、正文 CAS 与
+# 向量重建/补写必须复用同一规则，避免同一文档在不同路径得到不同的向量文本。
+_EMBEDDING_CONTENT_MAX_CHARS = 4000
+
+
+def fit_embedding_text(
+    content: str,
+    max_chars: int = _EMBEDDING_CONTENT_MAX_CHARS,
+) -> str:
+    """把送入 embedding 的文本压缩到字符预算内，保留开头上下文与结尾结论。"""
+
+    if len(content) <= max_chars:
+        return content
+
+    if max_chars <= len(_TRUNCATED_CONTENT_MARKER):
+        return content[:max_chars]
+
+    available = max_chars - len(_TRUNCATED_CONTENT_MARKER)
+    head_chars = available // 2
+    tail_chars = available - head_chars
+    return content[:head_chars] + _TRUNCATED_CONTENT_MARKER + content[-tail_chars:]
+
 
 @dataclass
 class VectorResult:
@@ -86,20 +108,14 @@ class VectorRetriever:
         self._cache_max_size = self.config.get("recall_engine.id_cache_size", 1000)
         # 最近一次 metadata 更新的稳定失败原因；供上层区分 CAS 冲突与存储失败。
         self._last_update_reason: str | None = None
+        # canonical CAS 提交与同 ID 的派生向量刷新/删除必须串行化：FAISS 只按
+        # doc_id 存储，没有 revision 维度，提交后的旧向量一旦倒写就会留下与
+        # canonical revision 永久失配的索引（健康检查按 ID/数量，不会发现）。
+        # 进程内锁即可：单实例单 DB 是既定并发模型，embedding 网络调用在锁外。
+        self._vector_write_lock = asyncio.Lock()
 
-    @staticmethod
-    def _fit_content_for_embedding(content: str, max_chars: int) -> str:
-        """在字符预算内同时保留开头上下文与结尾结论。"""
-        if len(content) <= max_chars:
-            return content
-
-        if max_chars <= len(_TRUNCATED_CONTENT_MARKER):
-            return content[:max_chars]
-
-        available = max_chars - len(_TRUNCATED_CONTENT_MARKER)
-        head_chars = available // 2
-        tail_chars = available - head_chars
-        return content[:head_chars] + _TRUNCATED_CONTENT_MARKER + content[-tail_chars:]
+    # 兼容既有类内调用与测试；规则本身由模块级 `fit_embedding_text` 唯一持有。
+    _fit_content_for_embedding = staticmethod(fit_embedding_text)
 
     async def add_document(
         self, content: str, metadata: dict[str, Any] | None = None
@@ -138,22 +154,57 @@ class VectorRetriever:
                 else:  # session_id、persona_id
                     metadata[field] = None
 
-        # 插入到 Faiss 向量库，同时截断过长内容以防 embedding token 超限
-        _MAX_CONTENT_CHARS = 4000  # noqa: N806
-        insert_content = content
-        if len(insert_content) > _MAX_CONTENT_CHARS:
+        # 插入到 Faiss 向量库；只有送入 embedding 的文本受字符预算限制，
+        # canonical 正文必须保持完整，避免中段内容被永久截断。
+        embedding_content = fit_embedding_text(content)
+        if embedding_content != content:
             from astrbot.api import logger as _logger
 
             _logger.warning(
-                f"[向量检索器] 记忆内容过长（{len(insert_content)} 字符），"
-                f"保留开头和结尾并压缩至 {_MAX_CONTENT_CHARS} 字符"
+                f"[向量检索器] 记忆内容过长（{len(content)} 字符），"
+                f"正文完整入库，仅 embedding 输入保留开头和结尾并压缩至 "
+                f"{_EMBEDDING_CONTENT_MAX_CHARS} 字符"
             )
-            insert_content = self._fit_content_for_embedding(
-                insert_content,
-                _MAX_CONTENT_CHARS,
+            return await self._insert_with_compressed_embedding(
+                content,
+                embedding_content,
+                metadata,
             )
-        doc_id = await self.faiss_db.insert(content=insert_content, metadata=metadata)
+        return await self.faiss_db.insert(content=content, metadata=metadata)
 
+    async def _insert_with_compressed_embedding(
+        self,
+        content: str,
+        embedding_content: str,
+        metadata: dict[str, Any],
+    ) -> int:
+        """canonical 保存完整正文，向量只由压缩后的文本生成。
+
+        等价于 `FaissVecDB.insert` 的写入顺序（先算向量，再写文档，最后写
+        向量），只是两者使用不同的文本输入。
+        """
+
+        import uuid
+
+        import numpy as np
+
+        embedding_provider = getattr(self.faiss_db, "embedding_provider", None)
+        embedding_storage = getattr(self.faiss_db, "embedding_storage", None)
+        doc_storage = self.faiss_db.document_storage
+        if embedding_provider is None or embedding_storage is None:
+            # 无法拆分时保留完整正文，宁可让 Provider 报错也不能丢 canonical。
+            return await self.faiss_db.insert(content=content, metadata=metadata)
+
+        vector = np.asarray(
+            await embedding_provider.get_embedding(embedding_content),
+            dtype=np.float32,
+        )
+        doc_id = await doc_storage.insert_document(
+            str(uuid.uuid4()),
+            content,
+            metadata,
+        )
+        await embedding_storage.insert(vector, doc_id)
         return doc_id
 
     async def search(
@@ -460,12 +511,14 @@ class VectorRetriever:
                     statement = text(
                         "UPDATE documents SET metadata = :metadata, "
                         "updated_at = :updated_at "
-                        "WHERE id = :id AND CAST(updated_at AS TEXT) = :revision"
+                        "WHERE id = :id "
+                        "AND CAST(COALESCE(updated_at, created_at) AS TEXT) = :revision"
                     )
                 else:
                     statement = text(
                         "UPDATE documents SET metadata = :metadata "
-                        "WHERE id = :id AND CAST(updated_at AS TEXT) = :revision"
+                        "WHERE id = :id "
+                        "AND CAST(COALESCE(updated_at, created_at) AS TEXT) = :revision"
                     )
                 parameters = {
                     "metadata": json.dumps(current_metadata, ensure_ascii=False),
@@ -504,7 +557,12 @@ class VectorRetriever:
         metadata: dict[str, Any],
         expected_revision: str,
     ) -> bool:
-        """在 canonical 写锁内原子替换正文、metadata 与向量。"""
+        """在 canonical 写锁内原子替换正文、metadata，并刷新派生向量。
+
+        canonical 正文/metadata/FTS 在同一 SQLite 事务内提交；FAISS 向量
+        刷新在提交后单独执行，失败只记录日志，不回滚 canonical。CAS、
+        commit 与刷新共用进程内写锁，避免并发更新时旧向量倒写。
+        """
 
         if not self.backend_capabilities.supports(AdapterCapability.UPDATE):
             return False
@@ -526,7 +584,7 @@ class VectorRetriever:
         except ModuleNotFoundError:
             return False
 
-        embedding_content = self._fit_content_for_embedding(content, 4000)
+        embedding_content = fit_embedding_text(content)
         vector = np.asarray(
             await embedding_provider.get_embedding(embedding_content),
             dtype=np.float32,
@@ -534,80 +592,100 @@ class VectorRetriever:
         if vector.shape != (embedding_storage.dimension,):
             return False
 
-        session = None
-        try:
-            async with doc_storage.get_session() as session:
-                await session.execute(text("BEGIN IMMEDIATE"))
-                result = await session.execute(
-                    text(
-                        "SELECT text, metadata, updated_at, created_at "
-                        "FROM documents WHERE id = :id"
-                    ),
-                    {"id": doc_id},
-                )
-                row = result.mappings().first()
-                if row is None:
-                    await session.rollback()
-                    return False
-                current_revision = row.get("updated_at") or row.get("created_at")
-                if hasattr(current_revision, "isoformat"):
-                    current_revision = current_revision.isoformat()
-                if str(current_revision or "").strip() != str(expected_revision):
-                    await session.rollback()
-                    return False
+        # 锁覆盖 CAS → commit → 向量刷新：若在提交与刷新之间放行同 ID 的下一次
+        # 更新，旧向量会在新向量之后倒写，留下与 canonical revision 失配的索引。
+        async with self._vector_write_lock:
+            session = None
+            try:
+                async with doc_storage.get_session() as session:
+                    await session.execute(text("BEGIN IMMEDIATE"))
+                    result = await session.execute(
+                        text(
+                            "SELECT text, metadata, updated_at, created_at "
+                            "FROM documents WHERE id = :id"
+                        ),
+                        {"id": doc_id},
+                    )
+                    row = result.mappings().first()
+                    if row is None:
+                        await session.rollback()
+                        return False
+                    current_revision = row.get("updated_at") or row.get("created_at")
+                    if hasattr(current_revision, "isoformat"):
+                        current_revision = current_revision.isoformat()
+                    if str(current_revision or "").strip() != str(expected_revision):
+                        await session.rollback()
+                        return False
 
-                current_metadata = row.get("metadata")
-                if isinstance(current_metadata, str):
-                    try:
-                        current_metadata = json.loads(current_metadata)
-                    except (TypeError, json.JSONDecodeError):
+                    current_metadata = row.get("metadata")
+                    if isinstance(current_metadata, str):
+                        try:
+                            current_metadata = json.loads(current_metadata)
+                        except (TypeError, json.JSONDecodeError):
+                            current_metadata = {}
+                    if not isinstance(current_metadata, dict):
                         current_metadata = {}
-                if not isinstance(current_metadata, dict):
-                    current_metadata = {}
-                current_metadata.update(metadata)
-                updated_at = datetime.now(timezone.utc).isoformat()
+                    current_metadata.update(metadata)
+                    updated_at = datetime.now(timezone.utc).isoformat()
 
-                delete_fts = getattr(doc_storage, "_delete_fts_row", None)
-                insert_fts = getattr(doc_storage, "_insert_fts_row", None)
-                if callable(delete_fts) and callable(insert_fts):
-                    await delete_fts(session, doc_id, str(row.get("text") or ""))
-                update_result = await session.execute(
-                    text(
-                        "UPDATE documents SET text = :content, metadata = :metadata, "
-                        "updated_at = :updated_at "
-                        "WHERE id = :id AND CAST(updated_at AS TEXT) = :revision"
-                    ),
-                    {
-                        "content": content,
-                        "metadata": json.dumps(current_metadata, ensure_ascii=False),
-                        "updated_at": updated_at,
-                        "id": doc_id,
-                        "revision": str(expected_revision),
-                    },
+                    delete_fts = getattr(doc_storage, "_delete_fts_row", None)
+                    insert_fts = getattr(doc_storage, "_insert_fts_row", None)
+                    if callable(delete_fts) and callable(insert_fts):
+                        await delete_fts(session, doc_id, str(row.get("text") or ""))
+                    update_result = await session.execute(
+                        text(
+                            "UPDATE documents SET text = :content, "
+                            "metadata = :metadata, "
+                            "updated_at = :updated_at "
+                            "WHERE id = :id "
+                            "AND CAST(COALESCE(updated_at, created_at) AS TEXT) "
+                            "= :revision"
+                        ),
+                        {
+                            "content": content,
+                            "metadata": json.dumps(
+                                current_metadata, ensure_ascii=False
+                            ),
+                            "updated_at": updated_at,
+                            "id": doc_id,
+                            "revision": str(expected_revision),
+                        },
+                    )
+                    if update_result.rowcount != 1:
+                        await session.rollback()
+                        return False
+                    if callable(delete_fts) and callable(insert_fts):
+                        await insert_fts(session, doc_id, content)
+                    await session.commit()
+                    logger.debug("[正文更新] revision 校验通过并完成 canonical 提交")
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                if session is not None:
+                    try:
+                        await session.rollback()
+                    except Exception:
+                        pass
+                logger.error(
+                    "[正文更新] revision 原子更新失败，异常类型=%s",
+                    exc.__class__.__name__,
                 )
-                if update_result.rowcount != 1:
-                    await session.rollback()
-                    return False
-                if callable(delete_fts) and callable(insert_fts):
-                    await insert_fts(session, doc_id, content)
+                return False
+
+            # FAISS 是独立于 SQLite 的派生索引：canonical 已提交后刷新失败
+            # 只能降级报告，不能把已提交的正文/metadata/FTS 一起回滚。
+            try:
                 await embedding_storage.delete([doc_id])
                 await embedding_storage.insert(vector, doc_id)
-                await session.commit()
-                logger.debug("[正文更新] revision 校验通过并完成原子更新")
-                return True
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            if session is not None:
-                try:
-                    await session.rollback()
-                except Exception:
-                    pass
-            logger.error(
-                "[正文更新] revision 原子更新失败，异常类型=%s",
-                exc.__class__.__name__,
-            )
-            return False
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error(
+                    "[正文更新] 向量刷新失败，canonical 正文已提交，异常类型=%s",
+                    exc.__class__.__name__,
+                )
+        logger.debug("[正文更新] canonical 与向量刷新完成")
+        return True
 
     async def delete_document(self, doc_id: int) -> bool:
         """
@@ -625,19 +703,22 @@ class VectorRetriever:
         from astrbot.api import logger
 
         try:
-            # 优化 3：使用带缓存的 UUID 查询方法
-            uuid_doc_id = await self._get_uuid_from_id(doc_id)
+            # 与 canonical CAS + 派生刷新共用写锁：并发的正文更新不得在删除
+            # 之后重新写入同一 ID 的向量。
+            async with self._vector_write_lock:
+                # 优化 3：使用带缓存的 UUID 查询方法
+                uuid_doc_id = await self._get_uuid_from_id(doc_id)
 
-            if not uuid_doc_id:
-                logger.warning("[向量删除] 文档不存在或缺少 UUID")
-                return False
+                if not uuid_doc_id:
+                    logger.warning("[向量删除] 文档不存在或缺少 UUID")
+                    return False
 
-            # 使用 UUID 调用 FaissVecDB.delete()
-            # 这会同时删除 document_storage 和 embedding_storage
-            await self.faiss_db.delete(uuid_doc_id)
+                # 使用 UUID 调用 FaissVecDB.delete()
+                # 这会同时删除 document_storage 和 embedding_storage
+                await self.faiss_db.delete(uuid_doc_id)
 
-            # 从缓存中移除
-            self._id_cache.pop(doc_id, None)
+                # 从缓存中移除
+                self._id_cache.pop(doc_id, None)
 
             logger.debug("[向量删除] 成功")
             return True

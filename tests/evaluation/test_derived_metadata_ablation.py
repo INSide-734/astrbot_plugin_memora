@@ -111,6 +111,22 @@ def test_index_accepts_only_valid_annotations_and_rebuilds_idempotently() -> Non
     assert rebuilt.rejected_count == 0
 
 
+def test_index_rejects_dataclass_proposal_without_source_reference() -> None:
+    """dataclass 入口缺少 canonical 来源时也必须 fail-closed 拒绝。"""
+
+    index = RunLocalDerivedMetadataIndex(lambda _memory_id: None)
+    result = index.add_proposal(
+        DerivedMetadataProposal(source=None, keywords=("咖啡",))  # type: ignore[arg-type]
+    )
+    summary = index.summary()
+
+    assert result.accepted is False
+    assert result.reason_code == "annotation_schema_rejected"
+    assert result.annotation is None
+    assert summary.accepted_count == 0
+    assert summary.rejected_count == 1
+
+
 def test_match_revalidates_revision_visibility_and_validity() -> None:
     """stale、删除、跨作用域和失效 source 只能丢弃 annotation。"""
 
