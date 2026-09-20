@@ -20,7 +20,7 @@
 
 ## 报告与处理
 
-请通过 [@INSide-734 的 GitHub 个人资料](https://github.com/INSide-734)中公开的私密联系方式报告滥用、骚扰或其他不可接受行为，不要创建公开 Issue。无法安全联系维护者时，请使用 GitHub 的内容举报渠道。
+请勿创建公开 Issue 披露事件细节。滥用、骚扰或其他不可接受行为的报告，请使用 [GitHub 滥用举报渠道](https://github.com/contact/report-abuse)；需要维护者直接受理时，可在 [@INSide-734 的 GitHub 个人资料](https://github.com/INSide-734) 中查看维护者公开的联系方式后私下联系。
 
 维护者会尊重报告者的安全与隐私。维护者同样受本准则约束。
 

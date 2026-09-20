@@ -1,20 +1,20 @@
 {
   "include": [
-      "**/*.py",
-      "**/*.ts",
-      "**/*.tsx",
-      "tests/**",
-      "**/*.test.*",
-      "**/*.spec.*",
-      "**/*.md",
-      "core/prompts/**/*.txt",
-      "_conf_schema.json",
-      ".astrbot-plugin/i18n/*.json",
-      "requirements.txt",
-      "pyproject.toml",
-      "pages/dashboard/package.json",
-      ".python-version",
-      "uv.lock"
+    "**/*.py",
+    "**/*.ts",
+    "**/*.tsx",
+    "tests/**",
+    "**/*.test.*",
+    "**/*.spec.*",
+    "**/*.md",
+    "core/prompts/**/*.txt",
+    "_conf_schema.json",
+    ".astrbot-plugin/i18n/*.json",
+    "requirements.txt",
+    "pyproject.toml",
+    "pages/dashboard/package.json",
+    ".python-version",
+    "uv.lock"
   ],
   "rules": [
     {

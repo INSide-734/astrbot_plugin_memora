@@ -38,7 +38,7 @@ flowchart LR
 - `create_manual_relation`：校验标识、支持的类型、有限且有界强度、标签类型/长度/数量；人工记录的互动次数和时间保持为零。
 - `update_manual_relation`、`delete_manual_relation`：以四元组 identity 定位并强制 `expected_revision`。
 - `get_relations_by_group`、`get_user_network`、`get_user_relations_in_group`、`list_all`、`list_group_ids`：只读查询。
-- `update_tags`、`delete_relation`：已有自动/内部接口；管理 API 应优先使用 revision 保护的严格接口。
+- `update_tags`、`delete_relation`：已有自动/内部接口；管理 API 应优先使用 revision 保护的严格接口。`update_tags` 只原子写 `tags_json`（Store 内单条 UPDATE），并复用管理员路径的标签归一化/校验，不得回写 `strength`/`frequency`/`last_interaction`。
 
 `RelationStore` 持久化 `social_relations`，四元组唯一；标签存为 JSON。严格 CRUD 抛出 `EntityAlreadyExistsError`、`EntityNotFoundError` 或 `EditConflictError`。连接池复用前必须结束失败事务，取消也不得留下锁或半提交状态。
 

@@ -58,7 +58,6 @@ recall application → `ReconsolidationManager` → 注入的 canonical get/upda
 ## 最窄验证入口
 
 ```bash
-python -m pytest -q tests/test_reconsolidation_feature_contracts.py
 python -m pytest -q tests/test_reconsolidation_closed_loop.py
 python -m pytest -q tests/test_reconsolidation_revision_safety.py tests/test_reconsolidation_store_atomicity.py
 python -m pytest -q tests/test_api_reconsolidation_review.py

@@ -27,7 +27,10 @@ Page API 是 AstrBot 插件页面与 Memora 后端之间的管理边界，主要
 
 ## Revision 与分页
 
-- 写回请求保留 revision，并通过比较后应用避免覆盖并发修改。
+- 配置类写回（`/config/apply` 与 topic segmentation 配置更新）发送 `base_revision` 与最小 `changes`，服务端比较 revision 后应用，冲突返回 `config_conflict` 与当前 revision；topic segmentation 的 `base_revision` 缺省时取当前 revision。
+- 实体写回（affection、profile、jargon、social 等）发送 `expected_revision`，冲突返回 `edit_conflict`，并附当前实体与 revision 供草稿恢复。
+- 隔离与派生复核使用各自的 `expected_revision` 协议：quarantine 缺失或非法 revision 返回 `quarantine_revision_required`、过期返回 `quarantine_revision_conflict`；memory evolution review 过期返回 `derived_review_conflict`；learning 发布/回滚过期返回 `config_revision_conflict`。这三类冲突附带专有错误码而不返回当前实体，客户端必须重新拉取详情或列表后再重试。
+- memory、knowledge 与 notes 的更新尚未携带 `expected_revision`，属于读改写（后写覆盖），集成方不得依赖这些端点提供并发冲突提示。
 - 冲突发生时，客户端保留本地草稿并明确处理远端新状态。
 - 列表分页由服务器契约决定，客户端不得先取全集再伪造分页。
 - 过期响应必须被抑制，不能覆盖较新的用户请求结果。

@@ -17,7 +17,7 @@
 - `validation.py`：根模型的延迟加载、默认值生成、递归合并和完整候选验证。
 - `migrations.py`：只迁移明确支持的旧键；迁移在隔离副本上执行，返回稳定 migration id，不改写源映射。
 - `ownership.py`：顶层配置分支到责任模块的不可变登记表；未登记点路径必须拒绝解析。
-- `runtime_effects.py`：把变更分类为重启/派生重建影响；当前任一变更要求重启，图 temporal/causal 叶还要求重建。
+- `runtime_effects.py`：把变更分类为重启/派生重建影响；除 `quality.gate` 热重载路径（`GATE_HOT_RELOAD_PATHS`）外的变更要求重启，图 temporal/causal 叶还要求重建。
 - `runtime_feature_config.py`、`feature_config.py`、`feature_contributions.py`：聚合正式运行时功能模型和轻量开关。
 - `provider_config.py`、`transport_config.py`、`security_config.py`、`rebuild_config.py`：Provider、Agent/Dashboard、Prompt 安全、索引重建模型。
 - `cost_control.py`：只接受 `CostControlConfig` 或叶映射，构造 shared 的不可变成本门。

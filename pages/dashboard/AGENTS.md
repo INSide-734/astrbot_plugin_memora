@@ -4,10 +4,10 @@
 
 ## 职责与边界
 
-`pages/dashboard` 是 Memora 的 React 管理面板。它在 AstrBot 插件页面桥接环境中运行，负责查看、检索、编辑和观测记忆系统；后端契约由 `core/page_api.py` 聚合并由 `core/api/*_api.py` mixin 实现。
+`pages/dashboard` 是 Memora 的 React 管理面板。它在 AstrBot 插件页面桥接环境中运行，负责查看、检索、编辑和观测记忆系统；后端契约由 `core/platform/transport/page_api/page_api.py` 聚合并由同目录的 `*_api.py` mixin 实现。
 
 - 本文件是 Dashboard 的模块级权威上下文；同时继承根级 `../../AGENTS.md`。
-- Dashboard 代码只应写入 `pages/dashboard/src/`、`pages/dashboard/scripts/` 和本目录构建配置。跨模块 API 变更必须同步核对 `core/page_api.py`、对应 `core/api/*_api.py` 与 `tests/test_page_api*.py`，不能只改前端请求形状。
+- Dashboard 代码只应写入 `pages/dashboard/src/`、`pages/dashboard/scripts/` 和本目录构建配置。跨模块 API 变更必须同步核对 `core/platform/transport/page_api/page_api.py`、对应 `core/platform/transport/page_api/*_api.py` 与 `tests/test_page_api*.py`，不能只改前端请求形状。
 - 不要手改或提交生成物：`node_modules/`、`dist/`、截图输出、缓存、coverage、`index.html` 和 `tsconfig.tsbuildinfo`。生产产物由构建与 artifact gate 生成。
 - 保持 AstrBot bridge、Hash URL、API envelope、三语言 key、SSE 事件和 classic-script 单 bundle 为兼容契约；布局重构不得顺带改变这些契约。
 
@@ -74,8 +74,8 @@ flowchart LR
     P --> H[src/hooks\n查询 编辑 配置 SSE]
     H --> B[src/lib/bridge.ts]
     B --> X[AstrBot page bridge]
-    X --> E[core/page_api.py\n/astrbot_plugin_memora/page/*]
-    E --> M[core/api/*_api.py mixins]
+    X --> E[core/platform/transport/page_api/page_api.py\n/astrbot_plugin_memora/page/*]
+    E --> M[core/platform/transport/page_api/*_api.py mixins]
     M --> S[(SQLite / stores / services)]
     S --> M --> E --> X --> B --> H --> P
 ```

@@ -22,9 +22,9 @@ SQLite 中的 canonical memory 是唯一权威记录。成功提交后，系统�
 ## 衰减、归档与遗忘
 
 - 普通记忆可以根据重要度、访问状态和配置参与衰减。
-- 高重要度闪光灯记忆具有额外保护。
+- 高情绪强度（`emotional_intensity` 达到 `flashbulb.intensity_threshold`）的闪光灯记忆具有额外保护。
 - 归档和清理通过显式生命周期服务执行。
-- `/memora forget <doc_id>` 删除指定 canonical 记忆，并使相关派生数据失效。
+- `/memora forget <doc_id>` 删除指定 canonical 记忆，并清理图记忆、MemoryAtom 与向量/文档派生条目。该命令要求 AstrBot 管理员权限，维护写保护期间会被拒绝，操作不可逆；`doc_id` 必须是存在且可访问的非负整数。canonical 与向量/文档删除成功即回复成功；图记忆或 Atom 清理失败只独立记为 `needs_repair` 待修复，因此成功回复不代表所有派生数据都已清理。详见[管理命令](/reference/commands)。
 
 ## 派生重建
 

@@ -28,12 +28,12 @@ flowchart LR
 
 ## 关键组件与接口
 
-- `JargonStatisticalFilter.update(text, group_id, sender_id)`：在内存中累计群词频、全局词频、用户集中度、首次出现时间和最多 10 条上下文。
+- `JargonStatisticalFilter.update(text, group_id, sender_id)`：在内存中累计群词频、全局词频、用户集中度、首次出现时间和最多 10 条上下文；jieba 不可用时降级为不累计（不得让 `ImportError` 逃逸到每条消息）。
 - `get_candidates(group_id, limit=20, exclude_terms=None)`：以跨群 IDF `0.4`、爆发度 `0.3`、用户集中度 `0.3` 组合评分；频次至少 3、综合分至少 `0.35`。
 - `get_stats` / `reset_group`：统计摘要与群内存状态清理。
 - `JargonMiner.run_once(group_id, limit=5)`：仅在候选频次跨过持久化 `last_inference_count` 之后的下一渐进阈值时触发；同群同词的并发调用在进程内去重，并发运行其他候选的短生命周期推断任务；取消时取消并消费所有子任务，单候选默认 120 秒超时。
 - `infer_meaning(candidate)`：上下文推断、仅词面推断、两者对比三步流程；步骤 2 失败时以低置信度保守降级，信息不足时不建记录。
-- `JargonQueryService.query`、`get_group_jargon`、`check_and_explain`：查询、列出已确认术语、生成可注入解释；ASCII 词使用单词边界，非 ASCII 使用子串匹配。
+- `JargonQueryService.query`、`get_group_jargon`、`check_and_explain`：查询、列出已确认术语、生成可注入解释；ASCII 词要求两侧不是 ASCII 字母数字（汉字、标点、空格、行首行尾都算边界），非 ASCII 使用子串匹配。
 - `invalidate_cache` / `invalidate_group`：写后必须清理对应群缓存。
 - `JargonAdminService`：限定创建/编辑字段，校验文本和有限浮点数，执行 revision 条件的严格新增、更新、删除与批处理。
 

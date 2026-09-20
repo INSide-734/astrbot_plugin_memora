@@ -55,8 +55,8 @@ hook 改写文件后审阅差异并重复运行。不要使用 `--no-verify`、`
 
 ## 文件长度
 
-- 新增或修改源码、测试文件不超过 800 个物理行。
-- Markdown 设计和计划文件不超过 400 行。
+- 文件行数上限以根级 [AGENTS.md](https://github.com/INSide-734/astrbot_plugin_memora/blob/main/AGENTS.md) 的「可审查的代码规模」分级表为准：生产源码硬上限 700 个物理行，测试、fixture 与开发脚本 800 个物理行。
+- Markdown 设计与计划文件的上限同以根级 AGENTS.md 的「文档规模与信息架构」表为准（设计文档 600 行，计划与决策记录 500 行）；`website/AGENTS.md` 等模块级上限更严格时从其规定。
 - 不通过超长单行规避限制。
 
 详细脚本职责见 [scripts/AGENTS.md](https://github.com/INSide-734/astrbot_plugin_memora/blob/main/scripts/AGENTS.md)。

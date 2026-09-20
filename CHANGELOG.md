@@ -32,6 +32,11 @@ Memora 的所有重要变更都记录在此文件中。
 - 召回、主动记忆工具、自发/链式扩展、前瞻上下文与注入统一要求完整的用户来源证据，并在重排、去重、预算、top-K、缓存和模型传输前执行；混合候选只保留可归属用户的事实，无法归属的候选不再以原聚合分数占用名额。
 - 图路查询先按可信请求作用域执行有界补取，再逐条与当前 canonical 的作用域、隐私和 revision 校验；缺少可信作用域或来源校验器时安全跳过图路，不把派生行当作授权依据，并以 `graph_candidates_rejected`、`graph_route_skipped`、`graph_route_exhausted` 记录边界结果。
 - 图索引重建与 `/memora rebuild-graph` 结果区分 `rebuilt`、`skipped`、`failed` 及原因计数；确定不适用的旧格式、归档、`mark_write`、来源暂存/拒绝、证据不足或边界不完整来源会跳过，真实存储或向量错误不会伪装成跳过或成功。
+- 会话缓存记录条目加载时的 `limit`：只有缓存能证明覆盖本次请求才命中，小窗口缓存不再静默截断更大的上下文请求。
+- 总结窗口上下文新增 canonical 主体绑定 `scope_subject_id`，与仅供会话归属使用的 legacy `scope_id` 分离；私聊启动扫描按主体复核持久化快照，缺少主体字段的旧快照保持不可用，不由会话标识反推。
+- `/reset`、`/new` 触发的会话清理遇到 `summary_source_protected` 归类为设计内 fail-closed：记录脱敏 WARN 与结构化 `write_blocked` 事件而非错误，消息继续保留到隔离候选处置完成。
+- 图重建与更新在未显式传入原子时经 `atom_loader` 复用 canonical 原子表示，重启触发的统一重建不再把图条目退回 legacy 提取表示；无原子可用时保持原有回落，读取失败保持可见而不静默降级。
+- 派生与调度行为收紧：`faiss_checker` 不再把 Provider 维度获取失败当作索引损坏去隔离有效索引；`decay` 每日链改为互斥执行，同一 UTC 日只运行一次；`personalized_ranker` 不再丢弃 avoided topics 的负向偏好。
 
 ### 修复
 
@@ -48,6 +53,24 @@ Memora 的所有重要变更都记录在此文件中。
 - 为 Grounding Judge unavailable 增加闭集原因归因；显式关闭 Judge 时不再因成本模式允许而调用 Provider，质量门 profile 缺失继续 fail-closed。
 - 修复好感度分类使用现有 `LLMClient.complete()`，并改用宿主 v3 人格 API 读取 `prompt`；不改变配置、版本或生产数据。
 - 修复事实去重仅按普通子串判断的问题：非 FACTS 内容级别下，只有完整独立事实边界（CJK 完整 clause 相等，拉丁/数字带 ASCII 词边界且同一 clause 无否定词）才省略独立 `Key facts` 行；否定、长词子串、部分匹配与截断事实一律保留显式事实行。
+- 修复会话仓库写事务边界：`BEGIN IMMEDIATE` 与异常回滚都位于写锁内，取消或失败不再回滚其他协程刚开启的事务；消息 metadata 更新与 `sync_message_counts` 的失败不再表现为成功写入。
+- 修复连接池 `close()` 不关闭借出连接、关闭后 `acquire()` 永久挂起，以及归还连接前不回滚未提交事务、导致下一个借用者读到脏数据的问题。
+- 修复派生修复把 canonical 读取失败当作来源已删除并清理派生数据的问题：读取失败转为 `needs_repair` 且不删除派生，截断预览不再参与收敛。
+- 修复提交后向量刷新可能覆盖更新 revision 的问题：同一记忆 ID 的写路径与 FAISS 刷新串行化，刷新失败保留已提交 canonical 与派生状态。
+- 修复再巩固历史去重在同一重复组内存在多条未收口 intent 时按 rowid 淘汰并连带删除恢复依据的问题：整组延迟迁移，交由启动恢复逐条收口。
+- 修复 `extract_json_content` 在顶层数组包含对象时只返回对象片段的问题：由最先出现的容器决定切片方式，未闭合时回退另一容器。
+- 修复不可信协议身份事件仍被写入助手会话与总结队列的问题：`CONFLICT`/`INVALID` 身份在持久化前短路，仅保留可见回复。
+- 修复召回增强与叙事在非法时间戳下整链路中断的问题：季节性增强与叙事时间对齐把非法值按不可信输入跳过，不再向调用方冒泡异常。
+- 修复检索合并与打分语义：零向量分仍计为证据、跨命中集权重归一、关键词失败取消在途向量任务、长正文完整保存、二次评分不再放大跨查询奖励、Provider 隐私预过滤失败不返回未校验候选。
+- 修复召回解析与质量校验对非法输入的抛错：事件时间、情感强度、摘要结构、话题重要性、非字符串标签等按不可信输入收口，非法字段不再中断记忆构建。
+- 修复认知模块缺陷：同质化分析分母与兜底正则失效、表达模式并发 upsert 与遗留重复身份行、黑话 ASCII 词边界匹配与统计过滤降级、社交标签更新丢失并发增量。
+- 修复 Page API 校验与并发边界：`finite_float` 接受溢出整数、dry-run 的 `null` 重要性、隔离/知识/笔记/画像写回字段校验，以及诊断事件 Store 的双重检查锁与失败不发布半成品。
+- 修复跨模块快照与隐私边界：持久化 scope 快照交叉校验以已知 `scope_id` 为后缀锚点解码 namespace，metadata 解析日志不再记录原始内容，诊断事件只记录标量白名单字段。
+
+### 文档
+
+- 修正 README（中/英/俄）、`DESIGN.md`、模块 `AGENTS.md` 与 `website/` 文档中的过期事实：Dashboard 功能页数、目录结构、已不存在的 `CLAUDE.md`/`docs/superpowers` 路径、无效验证入口与 Page API 冲突码语义。
+- `.github/SECURITY.md` 改为要求脱敏证据或类别说明，并明确报告本身同样禁止粘贴真实凭据、身份、记忆正文与运行时数据库内容。
 
 ### 测试
 
@@ -55,6 +78,8 @@ Memora 的所有重要变更都记录在此文件中。
 - `memory_grounding.py` 按职责拆分为 `grounding_evidence.py`（证据解析与定位）与 `grounding_checks.py`（词面/主体/数字/否定检查），消除原文件超出行数硬上限的问题。
 - 补充逐事实证据准入、用户来源召回/注入门、图请求作用域与管理员总览、来源可重放、revision CAS、图源清理、宿主响应边界和闭集回复原因码的 Python 与 Dashboard 回归用例。
 - 新增 `merged` 多槽位共享 owner、merged-key 恢复、scope 锁回收、semantic off/observe/enforce 三模式、事实边界判定、历史迁移 dry-run/apply plan 与质量漏斗 stage 状态/HMAC 轮换的定向回归；本轮受影响 Python 与 Dashboard 定向测试、Dashboard 构建、迁移 dry-run 隐私 canary、Ruff、pre-commit 与 LSP 诊断均通过。
+- 新增会话写事务与缓存 `limit`、连接池生命周期、派生修复读取失败、提交后向量刷新串行化、再巩固未收口 intent 延迟迁移、检索合并分数语义、认知并发写入、Page API 校验边界、私聊 scope 绑定与文档契约的回归用例，并同步更新受影响断言。
+- 评审修复轮次以 `scripts/check_all.py` 全量门禁收口（后端 7662 项测试、smoke、Dashboard 构建与 1029 项前端测试、browser smoke 全部通过）；生产复测补充的修复以 21 个定向文件 345 项测试及 LSP、Ruff、pre-commit 复核。
 
 ### 升级说明
 
@@ -64,6 +89,9 @@ Memora 的所有重要变更都记录在此文件中。
 - 跨窗口近重复合并默认 `memory_dedup.mode=off`，行为与升级前一致；建议先切 `observe` 观测命中率与误伤样本，再切 `enforce`。检测或合并失败一律 fail-open 回落普通写入，不阻断候选落库；该功能只作用于自动反思产线，人工批准、导入与工具直写路径不受影响。
 - 总结库 schema 自动扩展 `merged_count`/`facts_rejected_count`，保留既有行，无需手工迁移。
 - 语义近重复检测默认 `off`、历史表示迁移默认只读：未显式配置时不产生额外 Provider 调用、不写任何 canonical；真实 apply 与 enforce 灰度需要显式计划、独立授权和隔离实例。
+- 本轮修复无需迁移配置或 canonical memory；行为收紧集中在失败路径、校验边界与并发语义。图重建改用 canonical 原子表示后，图条目内容可能与旧 legacy 提取结果不同，可由 canonical 重建或 `/memora rebuild-graph` 复现。
+- 私聊总结快照新增主体绑定字段，缺少该字段的历史快照保持不可用（fail-closed），不会用会话标识反推主体；后续总结窗口会写入新字段。
+- 派生修复读取 canonical 失败的记录会保留派生数据并停留在 `needs_repair`，待 canonical 恢复后按既有修复流程重试。
 
 
 ## [1.3.0] — 2026-09-10

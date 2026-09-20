@@ -4,9 +4,9 @@
 >
 > 基线分支：codex/adaptive-memory-injection（基于 codex/dashboard-unified-editing-crud 统一页面基线）
 >
-> 最后核对：2026-07-18
+> 最后核对：2026-09-20
 >
-> 适用范围：pages/dashboard 内的应用壳、16 个功能页面、共享 UI、统一编辑流程与后续新增页面
+> 适用范围：pages/dashboard 内的应用壳、17 个功能页面、共享 UI、统一编辑流程与后续新增页面
 
 ## 1. 文档目的
 
@@ -128,7 +128,7 @@ flowchart TB
 | Memory | Graph、Memory、Timeline、Recall、Injection、Knowledge、Notes |
 | Insights | Intelligence、Learning、Jargon |
 | Relationships | Profiles、Affection、Social |
-| System | System、Config |
+| System | System、Config、Gate |
 
 导航项必须从 src/lib/navigation.ts 的单一模型生成。页面不得在 Sidebar 中手写第二份标签、图标或顺序。
 
@@ -277,6 +277,7 @@ PageFrame workspace
 | SocialPage | social | dense | 固定分类 Tab、全宽关系列表和 CRUD |
 | SystemPage | system | standard | 系统 Tab、备份、维护和确认 |
 | ConfigPage | config | dense | 分组导航、长表单、revision 和应用状态 |
+| GatePage | gate | dense | 门禁 profile 与绑定、检查/阈值/词表/处置/Judge/规则与 dry-run |
 
 页面模板是滚动与密度契约，不等于视觉主题。相同组件在三种模板中必须使用同一 token 和状态行为。
 
@@ -742,10 +743,11 @@ Toast 用于短暂结果，不承担必须阅读的校验或冲突信息。长�
 - Config loading/conflict。
 - Injection Overview、Strategy Configuration、Decision History 和决策详情 Sheet；现有四张截图为 `injection-overview.png`、`injection-config-conflict.png`、`injection-decisions.png` 和 `mobile-injection-detail.png`。
 - DataTable 与实体编辑器：`knowledge-table-default.png`、`knowledge-table-columns.png`、`knowledge-editor-view.png`、`knowledge-editor-edit.png`、`mobile-knowledge-table.png`、`mobile-knowledge-editor.png`、`wide-profiles-table.png`、`dark-social-table.png` 和 `injection-decisions-compact.png`。
+- 门禁：`gate.png`、`mobile-gate.png`、`gate-conflict.png`、`gate-profiles.png` 和 `dark-gate.png`。
 - 全局搜索滚动与精确导航。
 - 编辑 Sheet、冲突、错误摘要、批量 Toolbar、移动 Affection/Mood。
 
-Injection 页面对齐完成后，必须在现有四张截图之外增加 2048 × 1152 独立宽屏基线。
+Injection 的 2048 × 1152 独立宽屏基线 `wide-injection-overview.png` 已随上述配置/注入分组生成，不再等待 Injection 页面对齐后补拍。
 
 截图验收必须人工检查：
 
@@ -894,12 +896,12 @@ python scripts/check_all.py
 - pages/dashboard/src/components/ui：共享 UI recipe。
 - pages/dashboard/src/components/editing/DESIGN.md：统一编辑组件的详细状态契约。
 - pages/dashboard/scripts/browser_smoke.mjs：视口、主题、语言和编辑流程视觉基线。
-- docs/superpowers/specs/2026-07-14-dashboard-unified-editing-crud-design.md：统一 CRUD 的产品与技术决策来源。
 
 ## 24. 变更历史
 
 | 日期 | 变更 |
 |---|---|
+| 2026-09-20 | 补齐 GatePage 到导航表、页面模板清单和 browser smoke 截图分组，功能页面基线由 16 修正为 17，并移除指向已不存在路径的决策来源条目。 |
 | 2026-07-18 | 完成全站 DataTable 与 EntityEditorSheet 设计契约，补充选择性持久化、服务端排序、固定列、42rem Sheet 三段结构和视觉验收截图。 |
 | 2026-07-18 | SocialPage 改用 dense 模板与全宽活动内容区，移除关系列表的装饰性 Card。 |
 | 2026-07-17 | 将 InjectionStrategyPage 纳入 16 页统一基线，补充 dense 三 Tab、唯一滚动、配置与决策 Sheet、三档视口和 browser smoke 契约。 |

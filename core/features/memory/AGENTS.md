@@ -2,7 +2,7 @@
 
 # Memory 模块上下文
 
-**最后更新：** 2026-07-21
+**最后更新：** 2026-09-20
 **源码范围：** `core/features/memory/`（MemoryEngine 门面、canonical/graph 基础设施与验证器）
 
 ## 职责与边界
@@ -113,9 +113,9 @@ sequenceDiagram
 - `add_memory()` 在 canonical 成功后重新读取 source revision，并为 Atom 绑定 parent revision/scope/privacy；来源读取失败时只进入可修复派生失败，不把未绑定 Atom 写入生产 canonical 库。
 - 总结来源 fence 写入是两阶段的：`add_memory(source_fence=...)` 先落不可召回的暂存行（`summary_source_orphan/pending`、账本 step=`source_staged`，不建图、不强化既有 Atom、不触发干扰/触发词/演化/SSE），来源 owner 校验通过后在单个 canonical 事务内激活并同事务登记账本 `derived_pending`，再由 `finalize_add_derivation` 复用修复路径补图并收口同一 add 操作；接受与拒绝都按 `source_fence` token + 暂存状态做 CAS，拒绝仅在本轮 CAS 成功时收口账本，未接受来源既不派生也不推进 summary cursor。
 - canonical metadata 更新默认携带入口读到的 revision 做 CAS（失败原因码 `source_revision_mismatch`），无语义变化时不重建图；测试效应与自动干扰属于运行态维护，只经 `reinforce_recall_state`/`apply_interference_decay` 白名单入口写入，不推进 revision。
-- `memory_write_ops` 的 failed atom payload 保留父来源快照；repair 只接受仍匹配当前 revision 的现代载荷，旧载荷最多恢复为不可主动召回的兼容行。
+- `memory_write_ops` 的 failed atom payload 保留父来源快照；repair 只接受仍匹配当前 revision 的现代载荷，旧载荷最多恢复为不可主动召回的兼容行。add 修复仅在正文可证明未变时才允许按当前 revision 收敛：add 账本载荷同时记录 `content_preview`（正文前 500 字符）与 `content_digest`（`CanonicalMemoryCommitted.digest_content(content)[:32]`）；有摘要时按摘要比对，没有摘要时只有「预览短于 500 字符且等于当前全文」才能收敛（预览达到 500 字符说明它是被截断的前缀，无法证明第 500 字符之后未变），摘要不匹配或前缀被截断一律保持 `needs_repair`/`source_stale` 且不建图。
 - 原子批量失败后逐条补写，仅仍失败的原子进入修复载荷。图失败不撤销已建文档，而是标记修复。
-- 删除先调用 `HybridRetriever.delete_memory()`；随后图或原子清理失败不会把主删除改成失败，但日志保留 `needs_repair`。
+- 删除先调用 `HybridRetriever.delete_memory()`；随后图或原子清理失败不会把主删除改成失败，但日志保留 `needs_repair`。delete 修复在清理图/原子前必须在写账本自身的 canonical 连接上按 `documents.id` 严格确认文档已不存在（明确查无行才清理；仍存在或无法确认时写 `needs_repair`/`source_alive` 并原样保留派生数据）。展示型 `get_memory` 会把读取异常吞成 `None`，不得当作“已删除”的证明。
 - `WriteOpJournal.start_op()` 失败时可能返回 `None`；业务路径仍继续，因此不能把日志存在等同于事务已保证。
 - `MemoryEngineProfileHooksMixin` 只在 canonical add 成功后创建受跟踪画像任务；
   `ProfileProposalPipeline` 重新读取 source 并校验稳定身份、revision、scope 和 privacy。
@@ -151,6 +151,7 @@ sequenceDiagram
 
 - `write_coordinator.py` 的模块级 `asyncio.Lock` 串行化协调写入；锁冲突可指数退避并加随机抖动，连接坏死由 `ConnectionRegistry` 重连。
 - `coordinated_transaction()` 使用 `BEGIN IMMEDIATE`，异常必须 rollback，取消也必须继续上抛。
+- `infrastructure/base.py` 的 `ConnectionPool.acquire()` 在归还连接前回滚借用方未收束的事务（借用方不得依赖事务跨 `_connect()` 块存续）；`close()` 覆盖队列中与已借出的全部连接并置为已关闭，同时唤醒已在 `acquire()` 排队等待的调用方（它们收到 `RuntimeError` 而不是永久挂起），关闭后的新 `acquire()` 也直接报错。`base_store.BaseStore.initialize()` 幂等：重复调用先关闭旧连接，建表失败时关闭新连接并清空 `connection` 后原样抛出。
 - `SchemaManager` 只对白名单 `doc_id`、`created_at`、`updated_at` 做动态列迁移，并安全引用标识符；动态 SQL 不得接收未白名单化的外部表/列名。
 - `SchemaManager` 分离 `inspect_schema()`、`create_fresh_schema()`、`build_migration_plan()`、`migrate_existing_schema()` 与 `validate_schema()`；生产启动只由 `SchemaMigrationCoordinator` 编排。`auto_migrate=false` 遇到旧结构必须以 `schema_migration_required` 停止引擎启动，不能调用兼容 `create_tables()` 偷偷升级。
 - 迁移计划使用稳定 `migration_id`，只记录 from/to version、阶段、reason code 和变更计数。启用迁移备份时，`pre_migration` 快照必须先于 `BEGIN`/DDL/DML；失败时关闭启动连接并从已校验快照原子恢复 canonical，恢复失败持久化为 `blocked`，不得继续发布运行时。

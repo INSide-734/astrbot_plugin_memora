@@ -42,7 +42,7 @@ flowchart LR
 4. 只有 `TRUSTED` 且 namespace/stable/canonical/scope 完整的观察写目录；anonymous/conflict/invalid/unsupported 零写入。
 5. Store 不扫描或回填历史业务表；三张表按 `(namespace, stable_user_id)` 和精确 scope 参数化查询，写入由 `_write_lock` 与事务保护。
 6. event 上发布的 resolved snapshot 是不可变对象；Page/Agent 未拿到可信 snapshot 时必须拒绝敏感身份操作，不能重新猜测事件字段。
-7. canonical participant metadata 来自可信消息 sender 证据，包含 schema version、canonical IDs、稳定 label、名称快照和协议来源。模型输出不能覆盖这些字段。
+7. canonical participant metadata 来自可信消息 sender 证据，包含 schema version、canonical IDs、稳定 label、名称快照和协议来源。名称快照进入 Prompt 与 canonical 前按 NFKC 归一化并剔除控制字符。模型输出不能覆盖这些字段。
 8. 召回别名增强深复制候选，只在当前可信 scope 和原 session 内解析；同名多 owner 时拒绝，最多 8 条有限说明，不改 canonical、分数、排序或 ID。
 9. 身份表内部 ID、候选列表、查找过程、时间戳和歧义细节不得进入 prompt、日志、指标或 trace。
 

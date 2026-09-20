@@ -1,6 +1,6 @@
 # Integration Smoke Tests
 
-`scripts/run_smoke.py` runs these targets one by one and reports per-target status plus total duration. The suite is the L1 release gate for Memora's real backend pipeline.
+`scripts/run_smoke.py` runs these targets one by one and reports per-target status plus total duration. It is a smoke check over the mocked local pipeline, not the repository release gate; that gate is `python scripts/check_all.py`, run from the repository root.
 
 | Target | Coverage commitment | External dependency strategy |
 |--------|---------------------|------------------------------|

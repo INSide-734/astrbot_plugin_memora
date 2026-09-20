@@ -82,5 +82,5 @@ python -m pytest -q tests/test_memory_dedup_evidence.py
 python -m pytest -q tests/test_quality_funnel.py tests/test_api_quality_funnel.py
 python -m pytest -q tests/test_gate_config.py tests/test_gate_rule_engine.py
 python -m pytest -q tests/test_gate_runtime.py tests/test_gate_disposition_filter.py
-python -m pytest -q tests/test_memory_quality_gate.py tests/test_memory_evolution_hooks.py
+python -m pytest -q tests/test_memory_evolution_hooks.py
 ```

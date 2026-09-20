@@ -64,7 +64,7 @@ With **MemoryAtom** as the core data unit, Memora enables fine-grained memory st
 
 ### Engineering Features
 - **Multi-Language Support** — 中文 / English / Русский interface
-- **Web Dashboard** — React + shadcn/ui admin panel with 10 feature pages
+- **Web Dashboard** — React + shadcn/ui admin panel with 17 feature pages
 - **REST API** — Complete RESTful API with 14+ endpoints
 - **Auto Backup** — Automatic data backup on version upgrades
 - **Index Validation** — Index consistency verification and automatic rebuild
@@ -263,6 +263,13 @@ npm run test      # Vitest: bridge + hooks
 | **Learning** | Auto-learning status monitoring |
 | **System** | System status and maintenance tools |
 | **Preview** | Data preview |
+| **Injection Strategy** | Injection routing configuration and sanitized decision review |
+| **Intelligence** | Cognitive signal and intelligence control |
+| **Jargon** | Jargon discovery and review |
+| **Affection** | Affection state review |
+| **Social** | Social relationship review |
+| **Config** | Plugin configuration editing |
+| **Gate** | Memory write gate rule configuration |
 
 The Evaluation page never reads repository test fixtures. After installation it automatically selects **Current memories** and builds an in-memory self-retrieval sample from up to 20 recent active memories, so **Run** works without an upload and no sample text is persisted. This mode measures whether stored memories can retrieve themselves. To measure relevance for real business questions, choose **Import dataset** and provide a labeled `.jsonl`; every line must contain `case_id`, `query`, and `relevant_doc_ids`, whose values are canonical integer IDs in the current memory database:
 
@@ -312,7 +319,7 @@ The plugin automatically registers 14+ REST API endpoints:
 
 ## Testing
 
-Memora uses the pytest framework with 19 test files covering core functionality.
+Memora uses the pytest framework with behavioral, contract and integration suites covering core functionality.
 
 ```bash
 # Run all tests
@@ -355,34 +362,28 @@ astrbot_plugin_memora/
 ├── logo.png                   # Plugin logo
 ├── AGENTS.md                  # Root collaboration entry and project overview
 ├── DESIGN.md                  # Project-level design conventions and version policy
-├── CLAUDE.md                  # Root architecture supplement
+├── CHANGELOG.md               # Release history
 │
 ├── core/                      # Core source code
-│   ├── base/                  # Config, constants, exceptions
-│   ├── platform/composition/  # Plugin initialization and runtime lifecycle
-│   ├── managers/              # Core business logic (40+ files)
-│   ├── processors/            # LLM memory extraction (20 files)
-│   ├── retrieval/             # Multi-path retrieval (22 files)
-│   ├── storage/               # SQLite persistence (16 files)
-│   ├── api/                   # REST API (15 files)
-│   ├── validators/            # Index validation & rebuild (5 files)
-│   ├── schedulers/            # Decay & backup scheduling
-│   ├── models/                # Data model definitions (8 files)
-│   ├── tools/                 # LLM Agent tools (5 files)
-│   ├── commands/              # User commands
-│   ├── handlers/              # Event handlers
-│   ├── cleaners/              # Injection cleaning
-│   ├── dedup/                 # Message deduplication
-│   ├── extractors/            # Content extraction
-│   └── i18n/                  # Internationalization (zh / en / ru)
+│   ├── platform/              # Config, composition, transport, provider, security
+│   ├── shared/                # Shared ports, DTOs, SQL constants, pure utilities
+│   ├── features/              # Feature modules (memory, recall, retrieval, injection, ...)
+│   ├── prompts/               # Prompt templates
+│   ├── i18n/                  # Internationalization (zh / en / ru)
+│   ├── event_handler.py       # Message event entry points
+│   └── event_cognitive.py     # Cognitive event capture
 │
 ├── pages/dashboard/           # Web admin panel
-│   └── src/pages/             # 10 feature pages
+│   └── src/pages/             # 17 feature pages
 │
-├── tests/                     # pytest test suite (19 files)
-├── scripts/                   # Utility scripts
-├── docs/                      # Documentation
-└── .ccg/                      # CCG task tracking
+├── tests/                     # pytest behavioral, contract and integration suites
+├── scripts/                   # Quality gates, benchmarks, migrations and packaging
+├── docs/                      # Repository documentation (AGENTS.md, DEV_SETUP.md)
+├── website/                   # VitePress documentation site
+├── assets/                    # Dashboard screenshots used by documentation
+├── static/                    # Bundled static data (stopwords)
+├── skills/                    # Bundled agent skills
+└── .github/                   # CI workflows, issue forms and repository policies
 ```
 
 ## License

@@ -26,7 +26,7 @@ flowchart LR
 ## 关键入口与模型
 
 - `process_messages(messages, group_id, persona_id="default", user_id=None)`：抽取、upsert、衰减、容量治理的完整批处理入口。
-- `buffer_message(...)` / `maybe_learn(..., min_messages=5)`：按群内存缓冲；达到阈值后复制并清空缓冲，再进入批处理。
+- `buffer_message(...)` / `maybe_learn(..., min_messages=5)`：按群内存缓冲；达到阈值后复制缓冲进入批处理，仅在处理成功后才移除已消费的消息（处理失败保留缓冲与阈值计数，不丢消息）。每群消费锁（`_group_locks`）串行化同一批的消费，并发调用不会重复处理，也不会误删 `await` 期间新入队的消息。
 - `get_patterns_for_injection(..., limit=10)`：按权重降序读取作用域内模式。
 - `format_patterns_for_prompt(..., limit=5)`：输出 `[学习到的表达习惯]` 文本；没有模式时返回空字符串。
 - `ExpressionPattern`：截断后的 `situation`（50 字符）、`expression`（100 字符）、三维作用域、权重、使用次数和时间戳。
@@ -37,7 +37,7 @@ flowchart LR
 
 抽取只接受相邻记录中 `sender_id != bot_id` 且下一条 `sender_id == bot_id` 的组合；空内容、短于 `min_message_length`、以 `[`、`http` 或 `@` 开头的内容被过滤。过滤是格式启发式，不是内容安全净化。
 
-`ExpressionPatternStore` 独立管理 `aiosqlite` 连接并应用共享性能 PRAGMA。`expression_patterns` 以 `(situation, expression, group_id, persona_id, user_id)` 去重；重复模式令 `weight += 1.0`。读取按权重降序。每次处理后按
+`ExpressionPatternStore` 独立管理 `aiosqlite` 连接并应用共享性能 PRAGMA。`expression_patterns` 以 `(situation, expression, group_id, persona_id, user_id)` 去重；`uq_expr_patterns_identity` 唯一索引（`COALESCE(user_id, '')`）在库层约束该身份唯一性，重复模式由单条 `INSERT ... ON CONFLICT DO UPDATE` 令 `weight += 1.0`（并发/重入下不产生重复行，也不丢失增权）。`initialize` 在建立该索引前会合并历史重复身份行：`weight`/`usage_count` 求和、`created_at` 取最早、`last_used_at`/`decayed_at` 取最新后删除其余行（不丢弃已学习权重）。读取按权重降序。每次处理后按
 
 `decay_factor = min((days_elapsed / decay_days)^2, 1.0)`
 

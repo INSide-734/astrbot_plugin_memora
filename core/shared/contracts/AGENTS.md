@@ -38,7 +38,7 @@
 - `memory_id` 必须是正整数且不能是 `bool`；`revision_token`、`scope_key` 必须非空。
 - privacy 只允许 `public/shared/confidential`，source role 只允许 `primary/supporting`。
 - `occurred_at` 必须存在并规范化为 UTC；validity 区间不能倒置，时间来源与精度必须使用 shared 的固定枚举。
-- 授权后的本地 `content` 上限为 4000 字符；持久化 provenance 和派生 metadata 默认不得保存正文。
+- 授权后的本地 `content` 上限为 `_MAX_READ_CHARS`（16000 字符），与读取请求预算上限一致，默认预算仍为 4000；持久化 provenance 和派生 metadata 默认不得保存正文。
 - topic 去重并限制数量/长度；`stable_user_id` 可为空仅为兼容缺少旧证据的来源，读取授权请求本身仍要求稳定身份。
 
 ### `SourceReadRequest` / `SourceReadResult`

@@ -192,9 +192,9 @@ text, memory bodies or memory-ID lists, raw user/session/group/persona identitie
 credentials/headers/endpoints, and stack traces. Retention applies time expiry first and a
 stable newest-row cap second.
 
-The detailed design and execution record remain in the existing adaptive-memory-injection
-specification and implementation plan under `docs/superpowers/`; this repository document
-only states the stable ownership and safety boundaries.
+The detailed design and execution record remain in `core/features/injection/AGENTS.md` and
+`website/docs/concepts/retrieval-injection.md`; this repository document only states the
+stable ownership and safety boundaries.
 
 ## Configuration contract
 
@@ -313,10 +313,10 @@ unrelated local artifacts.
 
 ## Authoritative references
 
-- Root and module `CLAUDE.md` files: current ownership and implementation notes.
+- Root and module `AGENTS.md` files: current ownership and implementation notes.
 - `website/docs/development/`: environment and gate commands.
-- `docs/superpowers/specs/`: approved feature designs.
-- `docs/superpowers/plans/`: executable implementation plans.
+- `website/docs/concepts/` and `website/docs/features/`: feature designs and behavior contracts.
+- `docs/AGENTS.md`: repository documentation maintenance boundary.
 - `tests/` and `scripts/check_all.py`: executable repository contract.
 
 ## 变更历史

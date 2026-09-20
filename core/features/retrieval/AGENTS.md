@@ -1,4 +1,4 @@
-[根级 AGENTS.md](../../../../../../AGENTS.md) / core / features / retrieval
+[根级 AGENTS.md](../../../AGENTS.md) / core / features / retrieval
 
 # Retrieval 模块上下文
 
@@ -84,7 +84,7 @@ sequenceDiagram
 
 - `BM25Retriever` 只允许 `memora_memories_fts` 和 `documents` 两个内部表名；标识符先走白名单，再进入 SQL。查询值参数化。
 - 中文等文本先由 `TextProcessor` 处理；FTS 命中后分数归一化。scope 过滤可能扩大 fetch 数再后过滤。
-- `VectorRetriever` 把过长正文压缩到 embedding 字符预算，保留头尾并插入截断标记；底层 FAISS 与 DocumentStorage 的内部 UUID/整数 ID 映射通过有界缓存解析。
+- `VectorRetriever` 把过长正文的 **embedding 输入**压缩到字符预算（保留头尾并插入截断标记），canonical 正文始终完整落 `documents`；规则由模块级 `fit_embedding_text` 唯一持有，add、正文 CAS 与 `validators.vector_rebuilder` 的补写/全量重建必须复用同一函数，否则同一条正文在不同路径会得到不同向量。底层 FAISS 与 DocumentStorage 的内部 UUID/整数 ID 映射通过有界缓存解析。
 - `RRFFusion` 按排名而非原始量纲融合；默认 $k=60$。`ScoreWeighting` 使用加权和，结合 RRF、importance 和基于 `max(create_time,last_access_time)` 的 recency。
 - `apply_mmr()` 使用词袋 Jaccard 代理，不做额外 embedding；`mmr_lambda` 越高越偏相关性。
 
@@ -124,7 +124,7 @@ sequenceDiagram
 ## 隐私与不可泄露数据边界
 
 1. **任何非 MMR 重排都先经过 `ProviderPrivacyPrefilter`。** 预过滤按当前 chat type、scope、稳定用户和候选 role/privacy 约束正文；群聊 `confidential`、跨 scope、私聊稳定身份不匹配和非法 role 候选不得进入 Provider。
-2. 预过滤普通故障时，`security.strict_mode=true` 跳过外部重排并保持基础顺序；兼容模式只执行本地 MMR。`asyncio.CancelledError` 必须传播，两种模式都不得把未过滤候选交给 Provider。
+2. 预过滤普通故障时，`security.strict_mode=true` 跳过外部重排并保持基础顺序；兼容模式只执行本地 MMR。两种模式都只返回逐候选重校验通过的候选，未校验候选绝不回交调用方。`asyncio.CancelledError` 必须传播，两种模式都不得把未过滤候选交给 Provider。
 3. **最终群聊过滤继续保留在重排之后。** `chat_type == "group"` 时丢弃 `metadata.privacy_level == "confidential"`；缺字段按 `shared`，用于防止中间组件错误恢复候选。任何绕过 `DualRouteRetriever` 的直接检索调用都不具备完整双层保护。
 4. `QueryRewriter` 会向 LLM 发送 query/recent context；`LLMReranker` 只发送 query、匿名局部索引和每项前 200 字符。不得把凭据、系统提示或未授权私密会话传入外部 provider。
 5. `HybridResult.content`、metadata、graph provenance、query、session/user/persona ID 都是敏感数据。禁止进入普通指标标签或未授权 API。
@@ -146,7 +146,8 @@ sequenceDiagram
 
 - 添加：先向量/DocumentStorage 取得 `doc_id`，再写 BM25；BM25 失败时尝试删除向量回滚。
 - metadata 更新：向量层负责同步 DocumentStorage，并推进 `documents.updated_at` 作为 source revision，随后 BM25 更新；失败返回 `False`。
-- 上层提供 `expected_revision` 时，metadata 更新在 DocumentStorage 的 `BEGIN IMMEDIATE` 写锁内比较当前 revision；比较失败不得写入。缺省参数保持既有二参数调用形状。
+- 上层提供 `expected_revision` 时，metadata 更新在 DocumentStorage 的 `BEGIN IMMEDIATE` 写锁内比较当前 revision；比较失败不得写入。缺省参数保持既有二参数调用形状。revision 口径与读取一致：`COALESCE(updated_at, created_at)`，因此只有 `created_at` 的历史行也能通过 CAS。
+- 正文更新（`update_content_if_revision`）在同一 canonical 事务内提交正文/metadata/FTS；FAISS 向量刷新在提交后单独执行，失败只记录日志并保留 canonical 提交，`CancelledError` 仍传播。同 ID 的 `CAS → commit → FAISS 刷新` 与 `delete_document` 共用 `VectorRetriever._vector_write_lock`：FAISS 只有 doc_id、没有 revision，若在提交与刷新之间放行下一次更新，旧向量会倒写并与 canonical 永久失配（健康检查按 ID/数量，不会发现）。跨进程并发不在支持范围（单实例单 DB）。
 - 删除：按 BM25 → 向量/DocumentStorage 删除；后续失败时尝试恢复 BM25。
 
 这仍不是跨文件 ACID 事务；上层 `WriteOpJournal` 才负责更完整的跨存储恢复。
