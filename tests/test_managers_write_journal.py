@@ -318,6 +318,125 @@ class TestWriteOpRepairMixinBasics:
             assert row is not None
             assert row["status"] == "completed"
 
+    async def test_repair_delete_keeps_derived_data_when_source_alive(
+        self, tmp_db_path: str
+    ) -> None:
+        """canonical 行仍存在时不得清理图/原子，账本保持 needs_repair。"""
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            mock_graph = MagicMock()
+            mock_graph.delete_memory = AsyncMock()
+            mock_atom = MagicMock()
+            mock_atom.delete_by_parent = AsyncMock()
+
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=mock_graph,
+                atom_store=mock_atom,
+            )
+            await _create_test_schema(db, journal)
+            await db.execute(
+                "INSERT INTO documents (id, doc_id, text, metadata) VALUES (42, 'doc-42', '仍然存活', '{}')"
+            )
+            op_id = await journal.start_op("delete", {"memory_id": 42}, memory_id=42)
+
+            await db.execute(
+                "UPDATE memory_write_ops SET status='pending', step='started' WHERE id = ?",
+                (op_id,),
+            )
+            await db.commit()
+
+            assert await journal.repair_incomplete() == 0
+
+            mock_graph.delete_memory.assert_not_called()
+            mock_atom.delete_by_parent.assert_not_called()
+            cursor = await db.execute(
+                "SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+            assert (row["status"], row["step"]) == ("needs_repair", "source_alive")
+
+    async def test_repair_delete_ignores_get_memory_failure_for_liveness(
+        self, tmp_db_path: str
+    ) -> None:
+        """展示型 get_memory 端口吞异常返回 None 时，不得据此判定 canonical 已删除。"""
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            mock_graph = MagicMock()
+            mock_graph.delete_memory = AsyncMock()
+            mock_atom = MagicMock()
+            mock_atom.delete_by_parent = AsyncMock()
+            # 生产装配的 get_memory 在读取异常时返回 None。
+            mock_get = AsyncMock(return_value=None)
+
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=mock_graph,
+                atom_store=mock_atom,
+                get_memory_cb=mock_get,
+            )
+            await _create_test_schema(db, journal)
+            await db.execute(
+                "INSERT INTO documents (id, doc_id, text, metadata) VALUES (42, 'doc-42', '仍然存活', '{}')"
+            )
+            op_id = await journal.start_op("delete", {"memory_id": 42}, memory_id=42)
+
+            await db.execute(
+                "UPDATE memory_write_ops SET status='pending', step='started' WHERE id = ?",
+                (op_id,),
+            )
+            await db.commit()
+
+            assert await journal.repair_incomplete() == 0
+
+            mock_graph.delete_memory.assert_not_called()
+            mock_atom.delete_by_parent.assert_not_called()
+            cursor = await db.execute(
+                "SELECT status, step FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+            assert (row["status"], row["step"]) == ("needs_repair", "source_alive")
+
+    async def test_repair_delete_completes_when_source_is_gone(
+        self, tmp_db_path: str
+    ) -> None:
+        """canonical 行已删除时修复仍必须完成派生清理并收口。"""
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            mock_graph = MagicMock()
+            mock_graph.delete_memory = AsyncMock()
+            mock_atom = MagicMock()
+            mock_atom.delete_by_parent = AsyncMock()
+            mock_get = AsyncMock(return_value=None)
+
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=mock_graph,
+                atom_store=mock_atom,
+                get_memory_cb=mock_get,
+            )
+            await _create_test_schema(db, journal)
+            op_id = await journal.start_op("delete", {"memory_id": 42}, memory_id=42)
+
+            await db.execute(
+                "UPDATE memory_write_ops SET status='needs_repair', step='document_deleted' WHERE id = ?",
+                (op_id,),
+            )
+            await db.commit()
+
+            assert await journal.repair_incomplete() == 1
+
+            mock_graph.delete_memory.assert_called_once_with(42)
+            mock_atom.delete_by_parent.assert_called_once_with(42)
+            cursor = await db.execute(
+                "SELECT status FROM memory_write_ops WHERE id = ?", (op_id,)
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+            assert row["status"] == "completed"
+
     async def test_repair_batch_delete_happy_path(self, tmp_db_path: str) -> None:
         async with aiosqlite.connect(tmp_db_path) as db:
             db.row_factory = aiosqlite.Row

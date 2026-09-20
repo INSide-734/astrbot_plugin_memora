@@ -64,6 +64,63 @@ class TestConnectionPool:
         await pool.close()
         assert pool.available == 0
 
+    @pytest.mark.asyncio
+    async def test_close_covers_borrowed_connection_and_rejects_acquire(
+        self, tmp_db_path
+    ):
+        """close() 必须关闭借出中的连接，且关闭后 acquire 直接报错而不是挂起。"""
+        pool = ConnectionPool(tmp_db_path, pool_size=1)
+        await pool.initialize()
+
+        async with pool.acquire() as borrowed:
+            await pool.close()
+            with pytest.raises(RuntimeError):
+                async with pool.acquire():
+                    pass
+            with pytest.raises(ValueError):
+                await borrowed.execute("SELECT 1")
+
+    @pytest.mark.asyncio
+    async def test_close_wakes_already_waiting_acquire(self, tmp_db_path):
+        """close() 必须唤醒已在排队等待的 acquire，而不是让它永久挂起。"""
+        pool = ConnectionPool(tmp_db_path, pool_size=1)
+        await pool.initialize()
+
+        async def _second_borrow():
+            async with pool.acquire():
+                return "borrowed"
+
+        async with pool.acquire():
+            waiter = asyncio.create_task(_second_borrow())
+            for _ in range(5):
+                await asyncio.sleep(0)
+            assert not waiter.done(), "waiting borrower must still be queued"
+
+            await pool.close()
+            with pytest.raises(RuntimeError):
+                await asyncio.wait_for(waiter, timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_returned_connection_rolls_back_open_transaction(self, tmp_db_path):
+        """借用方未提交的事务不得随连接回到池中。"""
+        pool = ConnectionPool(tmp_db_path, pool_size=1)
+        await pool.initialize()
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute("CREATE TABLE marker (id INTEGER)")
+                await conn.commit()
+
+            async with pool.acquire() as conn:
+                await conn.execute("BEGIN IMMEDIATE")
+                await conn.execute("INSERT INTO marker (id) VALUES (1)")
+
+            async with pool.acquire() as conn:
+                cursor = await conn.execute("SELECT COUNT(*) FROM marker")
+                row = await cursor.fetchone()
+                assert row[0] == 0
+        finally:
+            await pool.close()
+
 
 class TestBaseStoreConnection:
     """测试 BaseStore 连接管理。"""
@@ -141,6 +198,45 @@ class TestBaseStoreConnection:
             cursor = await db.execute("PRAGMA foreign_keys")
             row = await cursor.fetchone()
             assert row[0] == 1
+
+    @pytest.mark.asyncio
+    async def test_instance_store_reinitialize_closes_previous_connection(
+        self, tmp_db_path
+    ):
+        """重复 initialize 必须收束旧连接，不能只覆盖引用。"""
+        store = InstanceBaseStore(tmp_db_path)
+        await store.initialize()
+        first = store.connection
+        assert first is not None
+
+        await store.initialize()
+        assert store.connection is not None
+        assert store.connection is not first
+        with pytest.raises(ValueError):
+            await first.execute("SELECT 1")
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_instance_store_failed_initialize_clears_connection(
+        self, tmp_db_path
+    ):
+        """建表失败时必须关闭连接并清空引用，避免半初始化连接继续可用。"""
+
+        class _FailingStore(InstanceBaseStore):
+            captured: object = None
+
+            async def _create_tables(self) -> None:
+                self.captured = self.connection
+                raise RuntimeError("boom")
+
+        store = _FailingStore(tmp_db_path)
+        with pytest.raises(RuntimeError):
+            await store.initialize()
+
+        assert store.connection is None
+        assert store.captured is not None
+        with pytest.raises(ValueError):
+            await store.captured.execute("SELECT 1")  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     async def test_double_init_pool_is_idempotent(self, tmp_db_path):

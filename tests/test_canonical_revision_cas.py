@@ -98,6 +98,7 @@ class _EmbeddingStorage:
 
         self.deleted: list[list[int]] = []
         self.inserted: list[int] = []
+        self.vectors: list[list[float]] = []
 
     async def delete(self, ids: list[int]) -> None:
         """记录删除旧向量。"""
@@ -108,6 +109,7 @@ class _EmbeddingStorage:
         """记录插入新向量。"""
 
         self.inserted.append(doc_id)
+        self.vectors.append([float(value) for value in vector])
 
 
 async def _create_document(storage: _DocumentStorage) -> None:
@@ -278,6 +280,237 @@ async def test_same_revision_content_update_keeps_canonical_id(tmp_path) -> None
     assert row["id"] == 17
     assert row["text"] == "更新后的正文"
     assert json.loads(row["metadata"])["importance"] == 0.9
+    await storage.close()
+
+
+async def _clear_updated_at(storage: _DocumentStorage) -> None:
+    """把 canonical 行的 updated_at 置空，模拟只有 created_at 的历史数据。"""
+
+    async with storage.engine.begin() as connection:
+        await connection.execute(
+            text("UPDATE documents SET updated_at = NULL WHERE id = 17")
+        )
+
+
+@pytest.mark.asyncio
+async def test_metadata_cas_falls_back_to_created_at_revision(tmp_path) -> None:
+    """updated_at 为 NULL 时 metadata CAS 必须以 created_at 作为比较口径。"""
+
+    storage = _DocumentStorage(str(tmp_path / "canonical-null-updated-cas.db"))
+    await _create_document(storage)
+    await _clear_updated_at(storage)
+    retriever = VectorRetriever(SimpleNamespace(document_storage=storage))
+
+    assert (
+        await retriever.update_metadata(
+            17,
+            {"importance": 0.8},
+            expected_revision="rev-created",
+        )
+        is True
+    )
+
+    async with storage.get_session() as session:
+        row = (
+            (
+                await session.execute(
+                    text("SELECT metadata, updated_at FROM documents WHERE id = 17")
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert json.loads(row["metadata"])["importance"] == 0.8
+    assert row["updated_at"] is not None
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_content_cas_falls_back_to_created_at_revision(tmp_path) -> None:
+    """正文 CAS 在 updated_at 为 NULL 时同样回退到 created_at。"""
+
+    storage = _DocumentStorage(str(tmp_path / "canonical-null-content-cas.db"))
+    await _create_document(storage)
+    await _clear_updated_at(storage)
+    vectors = _EmbeddingStorage()
+    provider = SimpleNamespace(get_embedding=AsyncMock(return_value=[0.1, 0.2, 0.3]))
+    retriever = VectorRetriever(
+        SimpleNamespace(
+            document_storage=storage,
+            embedding_provider=provider,
+            embedding_storage=vectors,
+        )
+    )
+
+    assert (
+        await retriever.update_content_if_revision(
+            17,
+            "回退正文",
+            {"importance": 0.9},
+            "rev-created",
+        )
+        is True
+    )
+    assert vectors.inserted == [17]
+
+    async with storage.get_session() as session:
+        row = (
+            (
+                await session.execute(
+                    text("SELECT text, updated_at FROM documents WHERE id = 17")
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert row["text"] == "回退正文"
+    assert row["updated_at"] is not None
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_vector_refresh_failure_keeps_committed_canonical(tmp_path) -> None:
+    """派生向量刷新失败只能降级报告，不得回滚已提交的 canonical 正文。"""
+
+    class _FailingEmbeddingStorage(_EmbeddingStorage):
+        """在插入阶段模拟 FAISS 故障的派生存储。"""
+
+        async def insert(self, vector, doc_id: int) -> None:
+            raise RuntimeError("faiss down")
+
+    storage = _DocumentStorage(str(tmp_path / "canonical-derived-failure.db"))
+    await _create_document(storage)
+    vectors = _FailingEmbeddingStorage()
+    provider = SimpleNamespace(get_embedding=AsyncMock(return_value=[0.1, 0.2, 0.3]))
+    retriever = VectorRetriever(
+        SimpleNamespace(
+            document_storage=storage,
+            embedding_provider=provider,
+            embedding_storage=vectors,
+        )
+    )
+
+    assert (
+        await retriever.update_content_if_revision(
+            17,
+            "派生失败后的正文",
+            {"importance": 0.9},
+            "rev-current",
+        )
+        is True
+    )
+    assert vectors.deleted == [[17]]
+
+    async with storage.get_session() as session:
+        row = (
+            (
+                await session.execute(
+                    text("SELECT text, metadata FROM documents WHERE id = 17")
+                )
+            )
+            .mappings()
+            .one()
+        )
+    assert row["text"] == "派生失败后的正文"
+    assert json.loads(row["metadata"])["importance"] == 0.9
+    await storage.close()
+
+
+@pytest.mark.asyncio
+async def test_post_commit_vector_refresh_is_serialized(tmp_path) -> None:
+    """提交后的向量刷新必须与同 ID 的 CAS 串行化，旧向量不得倒写。"""
+
+    class _GatedEmbeddingStorage(_EmbeddingStorage):
+        """首次删除后暂停，模拟 canonical 提交与派生刷新之间的调度。"""
+
+        def __init__(self) -> None:
+            """初始化门控事件与删除计数。"""
+
+            super().__init__()
+            self.first_delete_entered = asyncio.Event()
+            self.release_first_delete = asyncio.Event()
+            self.delete_calls = 0
+
+        async def delete(self, ids: list[int]) -> None:
+            """记录删除，并让第一次调用等待放行。"""
+
+            self.deleted.append(ids)
+            self.delete_calls += 1
+            if self.delete_calls == 1:
+                self.first_delete_entered.set()
+                await self.release_first_delete.wait()
+
+    storage = _DocumentStorage(str(tmp_path / "canonical-vector-race.db"))
+    await _create_document(storage)
+    vectors = _GatedEmbeddingStorage()
+
+    async def _embed(text: str) -> list[float]:
+        """让向量首分量携带文本长度，便于识别倒写的旧向量。"""
+
+        return [float(len(text)), 0.0, 0.0]
+
+    retriever = VectorRetriever(
+        SimpleNamespace(
+            document_storage=storage,
+            embedding_provider=SimpleNamespace(get_embedding=_embed),
+            embedding_storage=vectors,
+        )
+    )
+
+    first = asyncio.create_task(
+        retriever.update_content_if_revision(17, "AAAA", {}, "rev-current")
+    )
+    second: asyncio.Task[bool] | None = None
+    try:
+        await asyncio.wait_for(vectors.first_delete_entered.wait(), timeout=1)
+        async with storage.get_session() as session:
+            committed_revision = (
+                (
+                    await session.execute(
+                        text("SELECT updated_at FROM documents WHERE id = 17")
+                    )
+                )
+                .mappings()
+                .one()["updated_at"]
+            )
+        second = asyncio.create_task(
+            retriever.update_content_if_revision(
+                17, "BBBBBB", {}, str(committed_revision)
+            )
+        )
+        await asyncio.sleep(0.05)
+        # 第一次的派生刷新未完成前，第二次更新不得提交。
+        assert second.done() is False
+        async with storage.get_session() as session:
+            committed_text = (
+                (
+                    await session.execute(
+                        text("SELECT text FROM documents WHERE id = 17")
+                    )
+                )
+                .mappings()
+                .one()["text"]
+            )
+        assert committed_text == "AAAA"
+    finally:
+        vectors.release_first_delete.set()
+        if second is not None and not second.done():
+            await asyncio.wait_for(
+                asyncio.gather(first, second, return_exceptions=True), timeout=1
+            )
+
+    assert await first is True
+    assert second is not None and await second is True
+
+    async with storage.get_session() as session:
+        final_text = (
+            (await session.execute(text("SELECT text FROM documents WHERE id = 17")))
+            .mappings()
+            .one()["text"]
+        )
+    assert final_text == "BBBBBB"
+    # 最后一次写入 FAISS 的向量必须属于最新正文，而不是被旧向量倒写覆盖。
+    assert [int(vector[0]) for vector in vectors.vectors] == [4, 6]
     await storage.close()
 
 

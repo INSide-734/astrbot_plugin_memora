@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any
 
 
@@ -44,17 +45,21 @@ async def _load_raw_timestamps(
 
     if db_connection is None:
         return {}
+    cursor = None
     try:
         cursor = await db_connection.execute(
             "SELECT created_at, updated_at FROM documents WHERE id = ?",
             (memory_id,),
         )
         row = await cursor.fetchone()
-        await cursor.close()
     except asyncio.CancelledError:
         raise
     except Exception:
         return {}
+    finally:
+        if cursor is not None:
+            with suppress(Exception):
+                await cursor.close()
     if row is None:
         return {}
     return {"created_at": row[0], "updated_at": row[1]}

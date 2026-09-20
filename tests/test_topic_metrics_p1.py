@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import stat
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -22,6 +22,9 @@ from core.features.memory.infrastructure.topic_metrics import (
 )
 from core.features.recall.processors import (
     reflection_generation_observability as topic_obs,
+)
+from core.features.reflection.application.summary_scheduler_metrics import (
+    SummarySchedulerMetricsMixin,
 )
 from core.platform.transport.page_api import topic_segmentation_api
 from core.platform.transport.page_api.topic_segmentation_api import (
@@ -295,3 +298,75 @@ async def test_rotation_during_metric_read_discards_previous_version(
             return {"p95_latency_ms": 10.0}
 
     assert await read_topic_metrics_summary(RotatingStore(), tmp_path) is None
+
+
+class _CleanupHost(SummarySchedulerMetricsMixin):
+    """只提供时钟与配置读取的最小调度器宿主。"""
+
+    def __init__(self, recorder: object, retention_days: object, now: datetime) -> None:
+        self._metrics_recorder = recorder
+        self._config_reader = SimpleNamespace(get=lambda *_: retention_days)
+        self._now = lambda: now
+
+
+@pytest.mark.asyncio
+async def test_scheduler_retention_cleanup_reaches_recorder_store(
+    tmp_path: Path,
+) -> None:
+    """保留期清理必须经 `metrics_recorder` 落到 catalog store，而不是静默空转。"""
+
+    from core.features.memory.infrastructure.topic_metrics import (
+        TopicCandidateMetricsRecorder,
+    )
+
+    db, store = await _catalog(tmp_path)
+    fixed_now = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    expired_at = fixed_now - timedelta(days=90)
+    try:
+        for index, window_key in enumerate(("a", "b")):
+            assert await store.record_metric_window(
+                window_key_hash=window_key * 64,
+                hash_key_version=1,
+                terminal_state="success",
+                token_source_available=False,
+                scope_key_hash="c" * 64,
+                bucket_date=expired_at.date().isoformat(),
+                mode="observe",
+                topic_count_bucket="unknown",
+                values={"selector_duration_ms": float(index)},
+                now=expired_at.timestamp(),
+            )
+        recorder = TopicCandidateMetricsRecorder(store, b"k" * 32)
+        # recorder 自身没有清理端口；能力在其绑定的 catalog store 上
+        assert not hasattr(recorder, "cleanup_metric_windows")
+
+        await _CleanupHost(recorder, 30, fixed_now)._cleanup_metric_retention()
+        remaining_windows = await (
+            await db.execute("SELECT COUNT(*) FROM topic_candidate_metric_windows")
+        ).fetchone()
+        remaining_aggregates = await (
+            await db.execute("SELECT COUNT(*) FROM topic_candidate_scope_metrics")
+        ).fetchone()
+
+        assert remaining_windows == (0,)
+        assert remaining_aggregates == (0,)
+
+        # bool 是 int 子类：非法保留期必须回落到 30 天而不是静默不清理
+        assert await store.record_metric_window(
+            window_key_hash="d" * 64,
+            hash_key_version=1,
+            terminal_state="success",
+            token_source_available=False,
+            scope_key_hash="c" * 64,
+            bucket_date=expired_at.date().isoformat(),
+            mode="observe",
+            topic_count_bucket="unknown",
+            values={"selector_duration_ms": 1.0},
+            now=expired_at.timestamp(),
+        )
+        await _CleanupHost(recorder, True, fixed_now)._cleanup_metric_retention()
+        assert await (
+            await db.execute("SELECT COUNT(*) FROM topic_candidate_metric_windows")
+        ).fetchone() == (0,)
+    finally:
+        await db.close()

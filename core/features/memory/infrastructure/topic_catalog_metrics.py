@@ -240,10 +240,11 @@ class TopicCatalogMetricsMixin:
         retention_days: int,
         now: float | None = None,
     ) -> int:
-        """按保留期删除过期窗口指标样本与无样本的空聚合行。
+        """按保留期删除过期窗口指标样本与过期聚合行。
 
         返回删除的窗口行数；retention_days 非正或数据库不可用时返回 0。
-        聚合行在窗口全部过期后一并删除（聚合无独立时间戳，跟随窗口生命周期）。
+        窗口样本按自身时间戳清理，聚合行按 ``bucket_date``（UTC 日）独立清理：
+        窗口表不保存 scope，无法回连到某个聚合行。
         """
 
         current_time = time.time() if now is None else now
@@ -262,24 +263,13 @@ class TopicCatalogMetricsMixin:
                 (cutoff,),
             )
             deleted = int(cursor.rowcount or 0)
-            if deleted:
-                # 空聚合不再有样本，随窗口清理删除，防止表无限增长
-                await db.execute(
-                    """
-                    DELETE FROM topic_candidate_scope_metrics
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM topic_candidate_metric_windows windows
-                        WHERE windows.scope_key_hash =
-                              topic_candidate_scope_metrics.scope_key_hash
-                          AND windows.hash_key_version =
-                              topic_candidate_scope_metrics.hash_key_version
-                          AND windows.mode =
-                              topic_candidate_scope_metrics.mode
-                          AND windows.topic_count_bucket =
-                              topic_candidate_scope_metrics.topic_count_bucket
-                    )
-                    """,
-                )
+            # 聚合行无独立时间戳，但按 UTC 日分桶（与 record_metric_window 的
+            # bucket_date 同源）；按天保留期清理，防止表无限增长。
+            await db.execute(
+                "DELETE FROM topic_candidate_scope_metrics "
+                "WHERE bucket_date < date(?, 'unixepoch')",
+                (cutoff,),
+            )
             return deleted
 
     async def read_metric_day_totals(

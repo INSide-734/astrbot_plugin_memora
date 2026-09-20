@@ -107,8 +107,11 @@ class TopicCatalogQueryMixin:
                 seen_topics.add(topic_key)
                 candidates.append(candidate)
             return candidates
-        except Exception:
-            logger.exception("select_full_candidates 查询失败")
+        except Exception as exc:
+            # sqlite 的异常 message 会回显查询片段，因此只记异常类型。
+            logger.warning(
+                "select_full_candidates 查询失败，异常类型=%s", exc.__class__.__name__
+            )
             return []
 
     async def count_scope_topics(
@@ -242,8 +245,12 @@ class TopicCatalogQueryMixin:
                     break
                 candidates.append(candidate)
             return candidates
-        except Exception:
-            logger.exception("select_bm25_candidates 查询失败")
+        except Exception as exc:
+            # FTS5 的报错会回显查询片段（fts5: syntax error near "…"），
+            # 而 fts_query 由会话文本构造，因此只记异常类型，不记原始 message。
+            logger.warning(
+                "select_bm25_candidates 查询失败，异常类型=%s", exc.__class__.__name__
+            )
             return []
 
     async def select_recent_frequent_candidates(
@@ -373,8 +380,12 @@ class TopicCatalogQueryMixin:
                         candidates.append(candidate)
                     recent_idx += 1
             return candidates
-        except Exception:
-            logger.exception("select_recent_frequent_candidates 查询失败")
+        except Exception as exc:
+            # sqlite 的异常 message 会回显查询片段，因此只记异常类型。
+            logger.warning(
+                "select_recent_frequent_candidates 查询失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
             return []
 
     @staticmethod

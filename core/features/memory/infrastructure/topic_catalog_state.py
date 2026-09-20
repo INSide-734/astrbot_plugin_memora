@@ -388,7 +388,7 @@ class TopicCatalogStateMixin:
             )
             if any(int(row[0]) not in covered for row in await dirty_cursor.fetchall()):
                 return False
-            result = await db.execute(
+            await db.execute(
                 """
                 UPDATE topic_catalog_dirty
                 SET state = 'completed', lease_owner_token = NULL,
@@ -400,7 +400,9 @@ class TopicCatalogStateMixin:
                 """,
                 (current_time, up_to_sequence, current_time),
             )
-            return result.rowcount >= 0
+            # 上面的 foreign-lease 与覆盖证明已枚举出该 WHERE 能命中的全部行，
+            # 因此「无待收敛行」也是收敛成功，不能用恒真的 rowcount 比较表达。
+            return True
 
     async def abandon_generation(
         self,

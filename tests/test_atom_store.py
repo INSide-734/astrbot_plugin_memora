@@ -80,6 +80,32 @@ class TestAtomStoreCRUD:
         assert await store.insert_many([]) == []
 
     @pytest.mark.asyncio
+    async def test_insert_many_cancellation_rolls_back_batch(self, tmp_db_path):
+        """取消发生在批量插入中途时不得留下未提交行或已分配 ID。"""
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+
+        atoms = [
+            _make_atom(content=f"取消_{i}", parent_memory_id=20 + i) for i in range(3)
+        ]
+        original_insert = store._insert_atom
+        calls = 0
+
+        async def cancelling_insert(db, atom):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise asyncio.CancelledError()
+            return await original_insert(db, atom)
+
+        store._insert_atom = cancelling_insert  # type: ignore[method-assign]
+        with pytest.raises(asyncio.CancelledError):
+            await store.insert_many(atoms)
+
+        assert await store.count_atoms() == 0
+        assert [atom.atom_id for atom in atoms] == [0, 0, 0]
+
+    @pytest.mark.asyncio
     async def test_get_by_parent(self, tmp_db_path):
         """Retrieve all atoms belonging to one parent memory."""
         store = AtomStore(tmp_db_path)

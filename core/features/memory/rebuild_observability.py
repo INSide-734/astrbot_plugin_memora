@@ -249,11 +249,14 @@ def finalize_rebuild_observability(
     output = dict(result) if isinstance(result, Mapping) else {}
     index_stage = measurement.stages.get("indexes")
     canonical_stage = measurement.stages.get("canonical")
-    primary = index_stage if isinstance(index_stage, Mapping) else canonical_stage
-    if isinstance(primary, Mapping):
-        measurement.processed = primary.get("processed")
-        measurement.failed = primary.get("failed")
-        measurement.total = primary.get("total")
+    # 只有确实给出计数的阶段才能覆盖测量：skipped/failed 的 indexes 阶段
+    # 会带入全 None，直接采用会把 canonical 已记录的文档数冲掉。
+    for stage in (index_stage, canonical_stage):
+        if isinstance(stage, Mapping) and stage.get("processed") is not None:
+            measurement.processed = stage.get("processed")
+            measurement.failed = stage.get("failed")
+            measurement.total = stage.get("total")
+            break
     snapshot = measurement.snapshot(duration_seconds=duration_seconds)
     output["observability"] = snapshot
     output.setdefault("trigger_reason", snapshot["trigger_reason"])

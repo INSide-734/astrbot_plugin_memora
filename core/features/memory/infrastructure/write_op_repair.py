@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from typing import Any
 
 from astrbot.api import logger
 
+from ....shared.contracts.events import CanonicalMemoryCommitted
 from ..application.atom_source_binding import (
     bind_atoms_to_canonical_source,
     validate_bound_atoms_match_canonical_source,
@@ -31,6 +33,17 @@ def source_acceptance_allows_derivation(metadata: Any) -> bool:
     return not metadata.get("summary_source_orphan") and not metadata.get(
         "summary_source_pending"
     )
+
+
+def ledger_content_digest(content: str) -> str:
+    """生成写账本暂存与修复共用的正文摘要（只落摘要，不落正文）。"""
+
+    return CanonicalMemoryCommitted.digest_content(content)[:32]
+
+
+# add 账本载荷以 ``content[:500]`` 暂存 ``content_preview``（见
+# application/memory_engine_crud.py 的写端）；预览达到该长度即无法再用前缀证明全文。
+CONTENT_PREVIEW_LIMIT = 500
 
 
 class WriteOpRepairMixin:
@@ -147,15 +160,23 @@ class WriteOpRepairMixin:
     ) -> bool:
         """判断过期 Atom 绑定能否按当前 canonical 安全收敛。
 
-        仅当暂存载荷记录的正文前缀仍与当前 canonical 一致、且 scope/privacy
-        未变化时，revision 推进才可归因于元数据维护；语义修改必须继续
-        保持 ``needs_repair``，不得以旧边界收口。
+        收敛前提是正文可证明未变：账本载荷带 ``content_digest`` 时按摘要比对；
+        没有摘要时只能用历史写端的截断规则反推——``content_preview`` 是
+        ``content[:500]``，只有长度未达 500 才说明它本身就是全文，此时
+        ``content == preview`` 才能证明正文未变（恰好 500 字符的前缀可能来自
+        被截断的长正文，等价也不足以证明第 500 字符之后仍未被改写）。
+        正文可证明未变、且 scope/privacy 未变化时，revision 推进才可归因于
+        元数据维护；语义修改必须继续保持 ``needs_repair``，不得以旧边界收口。
         """
 
         preview = payload.get("content_preview")
         if not isinstance(preview, str) or not preview:
             return False
-        if not content.startswith(preview):
+        digest = payload.get("content_digest")
+        if isinstance(digest, str) and digest:
+            if ledger_content_digest(content) != digest:
+                return False
+        elif len(preview) >= CONTENT_PREVIEW_LIMIT or content != preview:
             return False
         staged_metadata = payload.get("metadata")
         if isinstance(staged_metadata, dict):
@@ -564,6 +585,19 @@ class WriteOpRepairMixin:
             )
             return False
 
+        if not await self._canonical_document_deleted(int(memory_id)):
+            # canonical 仍存在（或存在性无法确认）说明崩溃点在删除提交之前：
+            # 派生数据不得清理，账本也不能收口，否则会留下“正文还在、图与原子已丢”
+            # 的不可重放状态。
+            await self.advance_op(
+                op_id,
+                "source_alive",
+                status="needs_repair",
+                memory_id=int(memory_id),
+                error="canonical document still present",
+            )
+            return False
+
         if self._graph_memory_manager is not None:
             await self._graph_memory_manager.delete_memory(int(memory_id))
         if self._atom_store is not None:
@@ -576,6 +610,27 @@ class WriteOpRepairMixin:
             memory_id=int(memory_id),
         )
         return True
+
+    async def _canonical_document_deleted(self, memory_id: int) -> bool:
+        """严格判定 canonical 文档是否已删除，只在明确查无行时返回真。
+
+        写账本的 ``_db`` 就是 canonical SQLite 连接，因此这里直接按 ID 查
+        ``documents``；展示型 ``get_memory`` 端口会把读取异常吞成 None，不能
+        作为“文档不存在”的证明。连接缺失时返回假（保持账本开放），查询报错
+        继续上抛，由 ``repair_incomplete`` 记为 ``needs_repair``，取消照常传播。
+        """
+
+        if self._db is None:
+            return False
+        cursor = await self._db.execute(
+            "SELECT 1 FROM documents WHERE id = ? LIMIT 1",
+            (int(memory_id),),
+        )
+        try:
+            return await cursor.fetchone() is None
+        finally:
+            with suppress(Exception):
+                await cursor.close()
 
     async def _repair_batch_delete(
         self,

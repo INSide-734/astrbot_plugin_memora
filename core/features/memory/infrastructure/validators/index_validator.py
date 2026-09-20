@@ -82,6 +82,10 @@ class IndexValidator(IndexRebuilderMixin):
                     try:
                         await db.execute(MEMORY_FTS_CLEAR_SQL)
                     except Exception as e:
+                        # 锁冲突必须交给外层重试；只有其它错误才降级告警，
+                        # 否则调用方会以为 FTS 已清空而留下旧行。
+                        if "database is locked" in str(e).lower():
+                            raise
                         logger.warning(f"清空BM25索引失败: {e}")
                     await db.commit()
                 return

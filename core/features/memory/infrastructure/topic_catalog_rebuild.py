@@ -414,18 +414,19 @@ class TopicCatalogRebuildMixin(TopicCatalogStateMixin):
 
             state = await self.get_state()
             start_watermark = int(state.get("staging_start_watermark") or 0)
-            final_now = max(0.0, time.time() if now is None else now)
             covered_memory_ids = await self._cover_staging_dirty_sources(
                 generation,
                 owner_token,
                 up_to_sequence=start_watermark,
-                now=final_now,
+                lease_seconds=lease_seconds,
+                chunk_size=batch_size,
+                now=now,
             )
             if covered_memory_ids is None or not await self.mark_dirty_reconciled(
                 owner_token,
                 up_to_sequence=start_watermark,
                 covered_memory_ids=covered_memory_ids,
-                now=final_now,
+                now=max(0.0, time.time() if now is None else now),
             ):
                 await self.abandon_generation(
                     generation, owner_token, reason_code="catalog_dirty_unresolved"
@@ -471,9 +472,16 @@ class TopicCatalogRebuildMixin(TopicCatalogStateMixin):
         owner_token: str,
         *,
         up_to_sequence: int,
-        now: float,
+        lease_seconds: float,
+        chunk_size: int,
+        now: float | None,
     ) -> set[int] | None:
-        """逐项重读历史 dirty source，作为 staging 覆盖证明。"""
+        """按小批次重读历史 dirty source，作为 staging 覆盖证明并按批续租。
+
+        覆盖阶段与主回填循环同为长任务：每批用当前时间重读 lease 并续租，
+        避免真实耗时越过 rebuild_lease_until 后，dirty 被置为 completed 却
+        因 publish fence 放弃 generation（旧 active 永远拿不到这些变更）。
+        """
 
         if self._db is None:
             return None
@@ -485,15 +493,27 @@ class TopicCatalogRebuildMixin(TopicCatalogStateMixin):
             """,
             (up_to_sequence,),
         )
+        memory_ids = [int(row[0]) for row in await cursor.fetchall()]
         covered_memory_ids: set[int] = set()
-        for row in await cursor.fetchall():
-            memory_id = int(row[0])
-            if not await self.replace_memory_mappings(
-                memory_id,
+        for offset in range(0, len(memory_ids), chunk_size):
+            chunk_now = max(0.0, time.time() if now is None else now)
+            for memory_id in memory_ids[offset : offset + chunk_size]:
+                if not await self.replace_memory_mappings(
+                    memory_id,
+                    generation,
+                    owner_token=owner_token,
+                    now=chunk_now,
+                ):
+                    return None
+                covered_memory_ids.add(memory_id)
+            # 续租必须用当前时间：若单批耗时已越过租约，这里返回 False，
+            # 调用方走「放弃 generation 但保留 dirty」的路径而不是消费 dirty。
+            renew_now = max(0.0, time.time() if now is None else now)
+            if not await self.renew_generation_lease(
                 generation,
-                owner_token=owner_token,
-                now=now,
+                owner_token,
+                renew_now + lease_seconds,
+                now=renew_now,
             ):
                 return None
-            covered_memory_ids.add(memory_id)
         return covered_memory_ids

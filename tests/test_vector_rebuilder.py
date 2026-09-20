@@ -1,6 +1,7 @@
 """测试 VectorRebuilderMixin — FAISS vector index repair and rebuild edge cases."""
 
 import os
+import sqlite3
 import tempfile
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,6 +10,9 @@ import faiss
 import numpy as np
 import pytest
 
+from core.features.memory.infrastructure.validators.index_validator import (
+    IndexValidator,
+)
 from core.features.memory.infrastructure.validators.vector_rebuilder import (
     VectorRebuilderMixin,
 )
@@ -623,3 +627,103 @@ class TestRebuildOrRepairVectorIndex:
             assert result["mode"] == "full"
         finally:
             os.unlink(db_path)
+
+
+# ---------------------------------------------------------------------------
+# Tests: canonical 超长正文的 embedding 字符预算联动
+# ---------------------------------------------------------------------------
+
+
+class _BudgetLimitedProvider:
+    """输入超出字符预算即报错的 Provider，模拟真实 embedding token 上限。"""
+
+    def __init__(self, dimension: int = 4, max_chars: int = 4000) -> None:
+        self.dimension = dimension
+        self.max_chars = max_chars
+        self.input_lengths: list[int] = []
+
+    async def get_embedding(self, text: str) -> list[float]:
+        """记录输入长度，超预算时按 Provider 失败语义抛错。"""
+
+        self.input_lengths.append(len(text))
+        if len(text) > self.max_chars:
+            raise ValueError("embedding input exceeds budget")
+        return [0.1] * self.dimension
+
+
+LONG_CANONICAL_TEXT = "开头" + "M" * 2490 + "中段标记" + "M" * 2500 + "结尾"
+
+_BUDGET_REBUILD_OPTIONS = {
+    "batch_size": 50,
+    "batch_delay": 0.0,
+    "max_failure_ratio": 0.5,
+    "max_retries": 1,
+    "retry_base_delay": 0.0,
+    "embedding_batch_size": 2,
+    "request_delay": 0.0,
+}
+
+
+class TestLongContentEmbeddingBudget:
+    """补写与全量重建必须复用 add/正文 CAS 的 embedding 字符预算。"""
+
+    def _make_validator(self, tmp_path):
+        db_path = str(tmp_path / "canonical-long.db")
+        connection = sqlite3.connect(db_path)
+        try:
+            connection.execute(
+                "CREATE TABLE documents ("
+                "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT)"
+            )
+            connection.execute(
+                "INSERT INTO documents (id, doc_id, text, metadata) "
+                "VALUES (1, 'uuid-1', ?, '{}')",
+                (LONG_CANONICAL_TEXT,),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+        storage = FakeEmbeddingStorage(dimension=4, path=str(tmp_path / "index.faiss"))
+        provider = _BudgetLimitedProvider(dimension=4)
+        faiss_db = MagicMock()
+        faiss_db.embedding_storage = storage
+        faiss_db.embedding_provider = provider
+        memory_engine = MagicMock()
+        memory_engine.faiss_db = faiss_db
+        return (
+            IndexValidator(db_path, faiss_db),
+            memory_engine,
+            storage,
+            provider,
+        )
+
+    @pytest.mark.asyncio
+    async def test_repair_uses_embedding_budget(self, tmp_path):
+        """向量补写只把有界文本送给 Provider，长正文仍能修复成功。"""
+
+        validator, memory_engine, storage, provider = self._make_validator(tmp_path)
+
+        result = await validator._repair_missing_vectors(
+            memory_engine, {1}, _BUDGET_REBUILD_OPTIONS
+        )
+
+        assert result["processed"] == 1
+        assert result["errors"] == 0
+        assert provider.input_lengths == [4000]
+        assert storage.index.ntotal == 1
+
+    @pytest.mark.asyncio
+    async def test_full_rebuild_uses_embedding_budget(self, tmp_path):
+        """全量重建同样不得把完整 canonical 正文送给 Provider。"""
+
+        validator, memory_engine, storage, provider = self._make_validator(tmp_path)
+
+        result = await validator._rebuild_vector_index_full(
+            memory_engine, 1, _BUDGET_REBUILD_OPTIONS
+        )
+
+        assert result["switched"] is True
+        assert result["processed"] == 1
+        assert provider.input_lengths == [4000]
+        assert storage.index.ntotal == 1

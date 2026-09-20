@@ -154,7 +154,7 @@ class AtomStore(BaseStore, AtomFTSMixin):
                     for atom in prepared_batch:
                         batch_atom_ids.append(await self._insert_atom(db, atom))
                     await db.commit()
-                except Exception:
+                except BaseException:
                     await db.rollback()
                     for atom in prepared_batch:
                         atom.atom_id = 0

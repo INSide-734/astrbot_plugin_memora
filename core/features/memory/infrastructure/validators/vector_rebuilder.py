@@ -9,6 +9,8 @@ import faiss
 import numpy as np
 from astrbot.api import logger
 
+from ....retrieval.vector_retriever import fit_embedding_text
+
 
 class VectorRebuilderMixin:
     """向量（FAISS）索引重建与增量修复逻辑。"""
@@ -38,11 +40,12 @@ class VectorRebuilderMixin:
         ):
             batch_index += 1
             ids = [int(row[0]) for row in batch]
-            contents = [row[2] or "" for row in batch]
+            # canonical 正文保持完整；只有 embedding 输入受统一字符预算限制。
+            contents = [fit_embedding_text(str(row[2] or "")) for row in batch]
             logger.info(
                 "向量补写批次开始: "
                 f"batch={batch_index}, size={len(ids)}, "
-                f"id_range={ids[0]}-{ids[-1]}, processed={processed}/{total}, "
+                f"processed={processed}/{total}, "
                 f"failed={len(failed_ids)}"
             )
             try:
@@ -58,7 +61,10 @@ class VectorRebuilderMixin:
                 processed += len(ids)
             except Exception as e:
                 failed_ids.update(ids)
-                logger.error(f"向量补写批次失败 ids={ids[:3]}...: {e}", exc_info=True)
+                logger.error(
+                    f"向量补写批次失败 batch={batch_index}, size={len(ids)}: {e}",
+                    exc_info=True,
+                )
 
             if progress_callback:
                 await progress_callback(
@@ -114,11 +120,12 @@ class VectorRebuilderMixin:
         async for batch in self._iter_document_batches(int(options["batch_size"])):
             batch_index += 1
             ids = [int(row[0]) for row in batch]
-            contents = [row[2] or "" for row in batch]
+            # 与补写、add、正文 CAS 复用同一 embedding 字符预算。
+            contents = [fit_embedding_text(str(row[2] or "")) for row in batch]
             logger.info(
                 "向量重建批次开始: "
                 f"batch={batch_index}, size={len(ids)}, "
-                f"id_range={ids[0]}-{ids[-1]}, processed={processed}/{total}, "
+                f"processed={processed}/{total}, "
                 f"failed={len(failed_ids)}"
             )
             try:
@@ -138,7 +145,10 @@ class VectorRebuilderMixin:
                 processed += len(ids)
             except Exception as e:
                 failed_ids.update(ids)
-                logger.error(f"向量重建批次失败 ids={ids[:3]}...: {e}", exc_info=True)
+                logger.error(
+                    f"向量重建批次失败 batch={batch_index}, size={len(ids)}: {e}",
+                    exc_info=True,
+                )
 
             if progress_callback:
                 await progress_callback(

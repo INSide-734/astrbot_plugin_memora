@@ -17,6 +17,7 @@ from core.features.memory.infrastructure.validators.embedding_retry import (
 from core.features.memory.rebuild_observability import (
     RebuildMeasurement,
     classify_rebuild_trigger,
+    finalize_rebuild_observability,
     normalize_rebuild_trigger,
     rebuild_measurement_scope,
 )
@@ -108,6 +109,39 @@ def test_rebuild_measurement_keeps_unknown_and_does_not_infer_total() -> None:
     assert snapshot["trigger_reason"] == "unknown"
     assert snapshot["stages"]["graph"]["processed"] == 4
     assert snapshot["stages"]["graph"]["total"] is None
+
+
+def test_finalize_observability_falls_back_when_indexes_stage_has_no_counts() -> None:
+    """indexes 阶段无计数时不得用它覆盖 canonical 已记录的文档数。"""
+    measurement = RebuildMeasurement("indexes_consistent")
+    measurement.record_stage("canonical", 0.1, {"success": True, "documents": 7})
+    measurement.record_stage(
+        "indexes",
+        0.0,
+        {"status": "skipped", "success": True, "reason_code": "indexes_consistent"},
+        status="skipped",
+    )
+
+    output = finalize_rebuild_observability({}, measurement, duration_seconds=0.1)
+
+    snapshot = output["observability"]
+    assert snapshot["processed"] == 7
+    assert snapshot["total"] == 7
+    assert snapshot["stages"]["indexes"]["processed"] is None
+
+
+def test_finalize_observability_prefers_indexes_counts_when_present() -> None:
+    """indexes 阶段给出计数时仍以它为准。"""
+    measurement = RebuildMeasurement("indexes_inconsistent")
+    measurement.record_stage("canonical", 0.1, {"success": True, "documents": 7})
+    measurement.record_stage("indexes", 0.4, {"processed": 3, "errors": 1, "total": 4})
+
+    output = finalize_rebuild_observability({}, measurement, duration_seconds=0.5)
+
+    snapshot = output["observability"]
+    assert snapshot["processed"] == 3
+    assert snapshot["failed"] == 1
+    assert snapshot["total"] == 4
 
 
 class _BatchRetriever(GraphVectorRetriever):

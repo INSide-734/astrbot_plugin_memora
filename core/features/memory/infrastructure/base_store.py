@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Any
 
 import aiosqlite
@@ -24,11 +24,22 @@ class BaseStore:
         self.connection: aiosqlite.Connection | None = None
 
     async def initialize(self) -> None:
-        """打开持久连接，配置 row factory 并创建表。"""
-        self.connection = await aiosqlite.connect(self.db_path)
-        self.connection.row_factory = aiosqlite.Row
-        await apply_perf_pragmas(self.connection)
-        await self._create_tables()
+        """打开持久连接，配置 row factory 并创建表（可安全重复调用）。"""
+        if self.connection is not None:
+            # 重复初始化必须收束旧连接，否则句柄与事务被静默丢弃。
+            await self.close()
+        connection = await aiosqlite.connect(self.db_path)
+        connection.row_factory = aiosqlite.Row
+        self.connection = connection
+        try:
+            await apply_perf_pragmas(connection)
+            await self._create_tables()
+        except BaseException:
+            # 失败时不得留下“已赋值但未完成初始化”的连接。
+            self.connection = None
+            with suppress(Exception):
+                await connection.close()
+            raise
         logger.info(f"[{self.__class__.__name__}] 数据库初始化完成: {self.db_path}")
 
     async def _create_tables(self) -> None:

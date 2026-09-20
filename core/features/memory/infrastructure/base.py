@@ -31,6 +31,10 @@ class ConnectionPool:
             maxsize=pool_size
         )
         self._size = pool_size
+        # 追踪全部连接（含借出中的），保证 close() 不会漏掉任何句柄。
+        self._connections: set[aiosqlite.Connection] = set()
+        self._closed = False
+        self._close_event = asyncio.Event()
 
     # ---- 生命周期 --------------------------------------------------
 
@@ -39,26 +43,74 @@ class ConnectionPool:
         for _ in range(self._size):
             conn = await aiosqlite.connect(self._db_path)
             await apply_perf_pragmas(conn)
+            self._connections.add(conn)
             await self._pool.put(conn)
 
     @asynccontextmanager
     async def acquire(self):
-        """从连接池借出一个连接，并在退出时归还。"""
-        conn = await self._pool.get()
+        """从连接池借出一个连接，回滚残留事务后归还。"""
+        if self._closed:
+            raise RuntimeError("连接池已关闭")
+        try:
+            conn = self._pool.get_nowait()
+        except asyncio.QueueEmpty:
+            conn = await self._wait_for_connection()
         try:
             yield conn
         finally:
-            await self._pool.put(conn)
+            with suppress(Exception):
+                if conn.in_transaction:
+                    # 借用方未收束的事务若随连接回到池中，下一个借用者会读到未提交数据。
+                    await conn.rollback()
+            await self._release(conn)
+
+    async def _wait_for_connection(self) -> aiosqlite.Connection:
+        """等待可用连接；池关闭时唤醒并抛错，而不是永久挂起。"""
+
+        getter = asyncio.ensure_future(self._pool.get())
+        closer = asyncio.ensure_future(self._close_event.wait())
+        try:
+            await asyncio.wait((getter, closer), return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            closer.cancel()
+            if not getter.done():
+                getter.cancel()
+        if self._closed:
+            with suppress(BaseException):
+                await getter
+            raise RuntimeError("连接池已关闭")
+        return getter.result()
+
+    async def _release(self, conn: aiosqlite.Connection) -> None:
+        """归还连接；池已关闭时直接关闭，避免句柄泄漏。"""
+
+        if self._closed:
+            await self._close_connection(conn)
+            return
+        await self._pool.put(conn)
+
+    async def _close_connection(self, conn: aiosqlite.Connection) -> None:
+        """关闭单个连接并从追踪集合移除（重复调用安全）。"""
+
+        self._connections.discard(conn)
+        with suppress(Exception):
+            await conn.close()
 
     async def close(self) -> None:
-        """关闭连接池中的所有连接。"""
+        """关闭池中全部连接（含已借出者），并唤醒等待者、拒绝后续借出。"""
+
+        self._closed = True
+        # 先唤醒已在等待的借用者，再收束连接：等待者随后按 _closed 抛错。
+        self._close_event.set()
         while True:
             try:
                 conn = self._pool.get_nowait()
             except asyncio.QueueEmpty:
                 break
-            with suppress(Exception):
-                await conn.close()
+            await self._close_connection(conn)
+        for conn in list(self._connections):
+            await self._close_connection(conn)
+        self._connections.clear()
 
     @property
     def size(self) -> int:

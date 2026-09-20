@@ -11,6 +11,7 @@ through the full IndexValidator or monkey-patch the missing methods onto the mix
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
@@ -1462,6 +1463,41 @@ class TestClearBm25WithRetry:
         validator = _make_validator(tmp_db_path)
         with pytest.raises(ValueError, match="unsupported FTS table"):
             await validator._clear_bm25_with_retry("documents; DROP TABLE documents")
+
+    @pytest.mark.asyncio
+    async def test_locked_clear_retries_instead_of_reporting_success(self, monkeypatch):
+        """清空 FTS 抛锁错误时必须上抛给外层重试，不能按已清空返回。"""
+
+        import core.features.memory.infrastructure.validators.index_validator as module
+
+        attempts: list[str] = []
+
+        class _FakeConnection:
+            async def execute(self, sql):
+                attempts.append(sql)
+                if len(attempts) == 1:
+                    raise Exception("database is locked")
+
+            async def commit(self):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc_info):
+                return False
+
+        monkeypatch.setattr(
+            module,
+            "aiosqlite",
+            SimpleNamespace(connect=lambda _path: _FakeConnection()),
+        )
+        monkeypatch.setattr(module, "apply_perf_pragmas", AsyncMock())
+
+        validator = _make_validator("/nonexistent/db.sqlite")
+        await validator._clear_bm25_with_retry("memora_memories_fts", max_attempts=2)
+
+        assert len(attempts) == 2
 
 
 # ---------------------------------------------------------------------------
