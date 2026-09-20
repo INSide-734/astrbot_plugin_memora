@@ -7,6 +7,10 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-09-20
+
+Memora 1.4.0 把每条 canonical 记忆绑定到带稳定身份的来源证据，并把图派生平面纳入 canonical 来源边界：只有可归属用户角色的引用才能支撑事实，节点、边与条目按作用域、隐私与 revision 隔离。跨窗口近重复合并（含可选语义检测）、质量漏斗与注入选择器收益观测同步落地，Dashboard 新增对应的只读面板。
+
 ### 新增
 
 - 每条 canonical 记忆绑定带稳定身份的来源证据：证据条目新增 `message_id`、`message_seq`（总结窗口序号）、`role` 与正文字符范围，canonical metadata 同步写入 `source_start_seq`/`source_end_seq`，使单条证据脱离总结任务后也能定位回来源消息。
