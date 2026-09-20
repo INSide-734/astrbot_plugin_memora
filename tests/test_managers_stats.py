@@ -6,6 +6,7 @@ import asyncio
 import json
 from datetime import date, datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
@@ -15,6 +16,7 @@ import core.features.memory.application.stats_operations as stats_operations
 from core.features.memory.application.maintenance_operations import (
     MaintenanceOperations,
 )
+from core.features.memory.graph.infrastructure.graph_store import GraphStore
 from core.features.memory.infrastructure.validators.index_validator import (
     IndexValidator,
 )
@@ -635,27 +637,180 @@ class TestRebuildGraphIndex:
 
 
 class _ResidualGraphStore:
-    """按 canonical 快照返回已删除来源的图存储替身。"""
+    """按 canonical 快照返回已删除来源的图存储替身，复刻真实水位线判定。"""
 
     def __init__(self, residual_ids: list[int], *, fail: bool = False) -> None:
         self.residual_ids = residual_ids
         self.fail = fail
-        self.canonical_snapshots: list[set[int]] = []
+        self.snapshots: list[tuple[frozenset[int], int]] = []
 
-    async def list_residual_source_memory_ids(self, canonical_memory_ids) -> list[int]:
-        """记录 canonical 快照并返回已删除来源。"""
+    async def list_residual_source_memory_ids(
+        self, canonical_memory_ids, *, max_source_memory_id: int
+    ) -> list[int]:
+        """记录 canonical 快照与水位线，只返回水位线内的已删除来源。"""
 
         if self.fail:
             raise RuntimeError("graph_residue_scan_failed")
-        self.canonical_snapshots.append({int(item) for item in canonical_memory_ids})
-        return list(self.residual_ids)
+        alive_ids = {int(item) for item in canonical_memory_ids}
+        self.snapshots.append((frozenset(alive_ids), int(max_source_memory_id)))
+        return sorted(
+            memory_id
+            for memory_id in self.residual_ids
+            if memory_id not in alive_ids and memory_id <= int(max_source_memory_id)
+        )
+
+
+async def _open_canonical_documents(
+    db_path: Path,
+    *,
+    alive: tuple[int, ...] = (1,),
+    deleted: tuple[int, ...] = (),
+    facts: bool = True,
+) -> aiosqlite.Connection:
+    """创建真实 canonical ``documents`` 表并返回连接。
+
+    ``deleted`` 先写入再删除，用于推进 ``AUTOINCREMENT`` 的 ID 序列水位线，
+    复刻「来源已物理删除但派生行仍在」的生产状态。
+    """
+
+    connection = await aiosqlite.connect(db_path)
+    await connection.execute(
+        "CREATE TABLE IF NOT EXISTS documents ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "text TEXT NOT NULL DEFAULT '', metadata TEXT NOT NULL DEFAULT '{}', "
+        "created_at TEXT, updated_at TEXT)"
+    )
+    for memory_id in (*alive, *deleted):
+        metadata = (
+            TestRebuildGraphIndex._derivable_doc(memory_id, f"topic{memory_id}")[
+                "metadata"
+            ]
+            if facts
+            else {}
+        )
+        await connection.execute(
+            "INSERT INTO documents(id, text, metadata, created_at, updated_at) "
+            "VALUES(?, ?, ?, ?, ?)",
+            (
+                int(memory_id),
+                f"content {memory_id}",
+                json.dumps(metadata, ensure_ascii=False),
+                "2026-09-18T00:00:00+00:00",
+                "2026-09-18T00:00:00+00:00",
+            ),
+        )
+    for memory_id in deleted:
+        await connection.execute(
+            "DELETE FROM documents WHERE id = ?", (int(memory_id),)
+        )
+    await connection.commit()
+    return connection
+
+
+async def _seed_graph_entries(db_path: Path, source_ids: tuple[int, ...]) -> None:
+    """在真实图库中为每个来源写入一条图条目行。"""
+
+    db = await aiosqlite.connect(db_path)
+    try:
+        for source_memory_id in source_ids:
+            await db.execute(
+                "INSERT INTO graph_entries(entry_key, source_memory_id, entry_type, "
+                "content, created_at, updated_at, scope_key, privacy_level, "
+                "revision_token) VALUES(?, ?, 'fact', ?, ?, ?, 'scope-a', 'public', "
+                "'rev-1')",
+                (
+                    f"entry-{source_memory_id}",
+                    int(source_memory_id),
+                    f"graph-{source_memory_id}",
+                    "2026-09-18T00:00:00+00:00",
+                    "2026-09-18T00:00:00+00:00",
+                ),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _graph_entry_sources(db_path: Path, source_ids: tuple[int, ...]) -> set[int]:
+    """返回真实图库中仍有条目行的来源 ID。"""
+
+    db = await aiosqlite.connect(db_path)
+    try:
+        cursor = await db.execute(
+            "SELECT DISTINCT source_memory_id FROM graph_entries "
+            "WHERE source_memory_id IN (SELECT value FROM json_each(?))",
+            (json.dumps(list(source_ids)),),
+        )
+        return {int(row[0]) for row in await cursor.fetchall()}
+    finally:
+        await db.close()
+
+
+class _CanonicalDocumentStorage:
+    """直接读取真实 ``documents`` 表的 document_storage 替身。"""
+
+    def __init__(self, connection: aiosqlite.Connection, *, after_first_page=None):
+        self._connection = connection
+        self._after_first_page = after_first_page
+        self._pages = 0
+
+    async def count_documents(self, metadata_filters=None) -> int:
+        """统计真实 canonical 行数。"""
+
+        cursor = await self._connection.execute("SELECT COUNT(*) FROM documents")
+        row = await cursor.fetchone()
+        await cursor.close()
+        return int(row[0] or 0)
+
+    async def get_documents(self, metadata_filters, limit=None, offset=0, ids=None):
+        """按 ID 顺序返回一页 canonical 行，并在首屏之后触发并发写入。"""
+
+        cursor = await self._connection.execute(
+            "SELECT id, text, metadata, created_at, updated_at FROM documents "
+            "ORDER BY id LIMIT ? OFFSET ?",
+            (-1 if limit is None else int(limit), int(offset or 0)),
+        )
+        rows = await cursor.fetchall()
+        await cursor.close()
+        self._pages += 1
+        if self._pages == 1 and self._after_first_page is not None:
+            await self._after_first_page()
+        return [
+            {
+                "id": int(row[0]),
+                "text": str(row[1] or ""),
+                "metadata": row[2],
+                "created_at": row[3],
+                "updated_at": row[4],
+            }
+            for row in rows
+        ]
+
+
+class _SourceReapingGraphManager:
+    """把源级残留回收落到真实 GraphStore 上的图记忆管理器替身。"""
+
+    def __init__(self, store: GraphStore) -> None:
+        self._store = store
+        self.index_memory = AsyncMock()
+        self.deleted_ids: list[list[int]] = []
+
+    async def batch_delete_memories(self, memory_ids: list[int]) -> None:
+        """记录并执行真实源级删除。"""
+
+        self.deleted_ids.append([int(item) for item in memory_ids])
+        await self._store.reap_source_graphs([int(item) for item in memory_ids])
 
 
 class TestRebuildGraphResidueCleanup:
-    """重建必须对 skipped 与已删来源做源级残留回收并计数。"""
+    """重建必须对 skipped 与可证明已删除来源做源级残留回收并计数。"""
 
     def _make_ops(
-        self, *, store=None, cleanup_failure: BaseException | None = None
+        self,
+        *,
+        store=None,
+        cleanup_failure: BaseException | None = None,
+        db_connection=None,
     ) -> MaintenanceOperations:
         """构造带可观察清理端口的维护操作。"""
 
@@ -674,6 +829,7 @@ class TestRebuildGraphResidueCleanup:
         graph_mgr.batch_delete_memories = AsyncMock(side_effect=_cleanup)
         return MaintenanceOperations(
             config={},
+            db_connection=db_connection,
             faiss_db=faiss_db,
             graph_memory_manager=graph_mgr,
             graph_store=store,
@@ -704,21 +860,47 @@ class TestRebuildGraphResidueCleanup:
         ops._graph_memory_manager.batch_delete_memories.assert_awaited_once_with([2, 3])
 
     @pytest.mark.asyncio
-    async def test_deleted_sources_are_reaped_with_canonical_snapshot(self) -> None:
-        """已从 canonical 删除的来源也进入源级回收，快照覆盖全部当前来源。"""
+    async def test_deleted_sources_are_reaped_with_canonical_snapshot(
+        self, tmp_path: Path
+    ) -> None:
+        """已删除来源进入源级回收：完整存活集合与 ID 序列水位线一起传给图存储。"""
+
+        connection = await _open_canonical_documents(
+            tmp_path / "memora.db", alive=(1,), deleted=(9,)
+        )
+        store = _ResidualGraphStore([9])
+        ops = self._make_ops(store=store, db_connection=connection)
+        docs = [TestRebuildGraphIndex._derivable_doc(1, "kept")]
+        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+        try:
+            result = await ops.rebuild_graph_index()
+        finally:
+            await connection.close()
+
+        assert store.snapshots == [(frozenset({1}), 9)]
+        assert result["residue_candidates"] == 1
+        assert result["residue_cleaned"] == 1
+        ops._graph_memory_manager.batch_delete_memories.assert_awaited_once_with([9])
+
+    @pytest.mark.asyncio
+    async def test_missing_canonical_snapshot_only_reaps_ineligible_sources(
+        self,
+    ) -> None:
+        """canonical 快照不可用时 fail-closed：不按不完整集合回收已删除来源。"""
 
         store = _ResidualGraphStore([9])
-        ops = self._make_ops(store=store)
-        docs = [TestRebuildGraphIndex._derivable_doc(1, "kept")]
+        ops = self._make_ops(store=store, db_connection=None)
+        docs = [{"id": 1, "text": "", "metadata": {}}]
         ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
         ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
 
         result = await ops.rebuild_graph_index()
 
-        assert store.canonical_snapshots == [{1}]
+        assert store.snapshots == []
         assert result["residue_candidates"] == 1
         assert result["residue_cleaned"] == 1
-        ops._graph_memory_manager.batch_delete_memories.assert_awaited_once_with([9])
+        ops._graph_memory_manager.batch_delete_memories.assert_awaited_once_with([1])
 
     @pytest.mark.asyncio
     async def test_residue_cleanup_failure_is_counted_and_does_not_fail_rebuild(
@@ -741,16 +923,21 @@ class TestRebuildGraphResidueCleanup:
         assert result["failed_reasons"]["graph_residue_cleanup_failed"] == 1
 
     @pytest.mark.asyncio
-    async def test_residue_scan_failure_keeps_skipped_cleanup(self) -> None:
+    async def test_residue_scan_failure_keeps_skipped_cleanup(
+        self, tmp_path: Path
+    ) -> None:
         """已删来源枚举失败时仍回收 skipped 来源，不抛出异常。"""
 
+        connection = await _open_canonical_documents(tmp_path / "memora.db", alive=(1,))
         store = _ResidualGraphStore([9], fail=True)
-        ops = self._make_ops(store=store)
+        ops = self._make_ops(store=store, db_connection=connection)
         docs = [{"id": 1, "text": "", "metadata": {}}]
         ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
         ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
-
-        result = await ops.rebuild_graph_index()
+        try:
+            result = await ops.rebuild_graph_index()
+        finally:
+            await connection.close()
 
         assert result["residue_cleaned"] == 1
         assert result["residue_failed"] == 0
@@ -767,3 +954,99 @@ class TestRebuildGraphResidueCleanup:
 
         with pytest.raises(asyncio.CancelledError):
             await ops.rebuild_graph_index()
+
+
+class TestRebuildGraphResidueWithRealStore:
+    """真实 GraphStore/SQLite：并发新增来源的图行不得被当成残留回收。"""
+
+    @pytest.mark.asyncio
+    async def test_scan_window_insert_keeps_concurrently_added_graph_rows(
+        self, tmp_path: Path
+    ) -> None:
+        """扫描期间新增来源的图行必须保留；已删除来源的图行仍被回收。"""
+
+        db_path = tmp_path / "memora.db"
+        connection = await _open_canonical_documents(
+            db_path, alive=(1, 2), deleted=(9,)
+        )
+        store = GraphStore(str(db_path))
+        await store.initialize()
+        await _seed_graph_entries(db_path, (1, 2, 9))
+
+        async def add_concurrent_source() -> None:
+            """扫描首屏之后写入新来源的 canonical 行与图行。"""
+
+            await connection.execute(
+                "INSERT INTO documents(id, text, metadata, created_at, updated_at) "
+                "VALUES(3, 'content 3', ?, '2026-09-18T00:00:00+00:00', "
+                "'2026-09-18T00:00:00+00:00')",
+                (
+                    json.dumps(
+                        TestRebuildGraphIndex._derivable_doc(3, "topic3")["metadata"],
+                        ensure_ascii=False,
+                    ),
+                ),
+            )
+            await connection.commit()
+            await _seed_graph_entries(db_path, (3,))
+
+        manager = _SourceReapingGraphManager(store)
+        ops = MaintenanceOperations(
+            config={},
+            db_connection=connection,
+            faiss_db=SimpleNamespace(
+                document_storage=_CanonicalDocumentStorage(
+                    connection, after_first_page=add_concurrent_source
+                )
+            ),
+            graph_memory_manager=manager,
+            graph_store=store,
+            invalidate_cache_cb=MagicMock(),
+        )
+        try:
+            result = await ops.rebuild_graph_index()
+            remaining_sources = await _graph_entry_sources(db_path, (1, 2, 3, 9))
+        finally:
+            await connection.close()
+
+        assert result["rebuilt"] == 2
+        assert result["residue_candidates"] == 1
+        assert result["residue_cleaned"] == 1
+        assert manager.deleted_ids == [[9]]
+        assert remaining_sources == {1, 2, 3}
+
+    @pytest.mark.asyncio
+    async def test_deleted_highest_id_source_is_still_reaped(
+        self, tmp_path: Path
+    ) -> None:
+        """已删除来源即使曾是最大 canonical ID，仍在水位线内被回收。"""
+
+        db_path = tmp_path / "memora.db"
+        connection = await _open_canonical_documents(
+            db_path, alive=(1, 2), deleted=(9,)
+        )
+        store = GraphStore(str(db_path))
+        await store.initialize()
+        await _seed_graph_entries(db_path, (1, 2, 9))
+
+        manager = _SourceReapingGraphManager(store)
+        ops = MaintenanceOperations(
+            config={},
+            db_connection=connection,
+            faiss_db=SimpleNamespace(
+                document_storage=_CanonicalDocumentStorage(connection)
+            ),
+            graph_memory_manager=manager,
+            graph_store=store,
+            invalidate_cache_cb=MagicMock(),
+        )
+        try:
+            result = await ops.rebuild_graph_index()
+            remaining_sources = await _graph_entry_sources(db_path, (1, 2, 9))
+        finally:
+            await connection.close()
+
+        assert result["residue_candidates"] == 1
+        assert result["residue_cleaned"] == 1
+        assert manager.deleted_ids == [[9]]
+        assert remaining_sources == {1, 2}

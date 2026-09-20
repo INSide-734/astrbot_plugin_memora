@@ -244,15 +244,24 @@ class GraphDeleteMixin(BaseStore):
     async def list_residual_source_memory_ids(
         self,
         canonical_memory_ids: set[int] | list[int] | tuple[int, ...],
+        *,
+        max_source_memory_id: int | None = None,
     ) -> list[int]:
-        """列出图行仍引用、但 canonical 已不存在的源记忆 ID（升序、去重）。
+        """列出图行仍引用、但可证明已从 canonical 删除的源记忆 ID（升序、去重）。
 
-        重建只枚举当前 ``documents``，已物理删除的来源不会被枚举；本方法用
-        canonical 当前 ID 集合做差集，供 ``reap_source_graphs`` 定位遗留图行。
+        ``canonical_memory_ids`` 必须是扫描结束后一次性读出的**完整**存活 ID 集合，
+        ``max_source_memory_id`` 是同一次快照读到的 canonical ID 序列水位线
+        （已分配的最大 ID）。``documents.id`` 由 ``AUTOINCREMENT`` 单调分配且不复用，
+        因此扫描开始后新增来源的 ID 必然大于水位线，不会进入回收集合；而刚被删除的
+        最新来源仍在水位线内，可正常回收。判定口径与 Atom 残留回收完全一致。
+
+        省略水位线时退化为纯差集语义（只用于直接核对图行，不覆盖并发新增来源）；
+        重建路径必须传入水位线，否则重建期间新增来源的图行会被误当残留回收。
         函数只读派生表，不触碰 canonical。
         """
 
         canonical_ids = {int(item) for item in canonical_memory_ids}
+        watermark = None if max_source_memory_id is None else int(max_source_memory_id)
         async with self._connect() as db:
             cursor = await db.execute(
                 """
@@ -264,7 +273,11 @@ class GraphDeleteMixin(BaseStore):
                 """
             )
             graph_ids = {int(row[0]) for row in await cursor.fetchall()}
-        return sorted(graph_ids - canonical_ids)
+        return sorted(
+            memory_id
+            for memory_id in graph_ids - canonical_ids
+            if watermark is None or memory_id <= watermark
+        )
 
     async def list_unreferenced_vector_doc_ids(
         self, candidate_vector_doc_ids: list[int]

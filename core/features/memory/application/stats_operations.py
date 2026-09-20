@@ -74,6 +74,66 @@ def _recent_utc_date(value: Any, *, today: date) -> str | None:
     return memory_date.isoformat()
 
 
+async def _read_allocated_id_watermark(connection: Any) -> int:
+    """读取 canonical ID 序列的已分配高水位；序列不可用时返回 0。
+
+    ``documents.id`` 由 ``AUTOINCREMENT`` 分配，``sqlite_sequence.seq`` 记录
+    曾经分配过的最大 ID（删除行不会回退）。表不是 AUTOINCREMENT 时该行缺失，
+    返回 0 表示水位线未知，调用方回退到存活最大 ID。
+    """
+
+    try:
+        cursor = await connection.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'documents'"
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return 0
+    if row is None or row[0] is None:
+        return 0
+    try:
+        return max(0, int(row[0]))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def read_canonical_id_snapshot(connection: Any) -> tuple[int, set[int]] | None:
+    """一次性读取 canonical 的存活 ID 集合与 ID 序列水位线。
+
+    返回 ``(水位线, 存活 ID 集合)``，供派生平面判定「来源是否已被物理删除」：
+    只有 ``source_id <= 水位线`` 且不在存活集合中的来源才可证明已删除。水位线取
+    已分配高水位而非存活最大 ID，因此刚刚删除的最新来源（ID 大于存活最大值）
+    仍然落在水位线内、可被回收；而扫描开始后新增的来源必然分配更大的 ID，
+    不会被误判成残留。
+
+    先读水位线再读存活集合：水位线早于集合快照，新增来源的 ID 只会大于水位线，
+    不会出现「ID 在集合里但不在水位线内」的组合。读取失败返回 ``None``，
+    调用方必须 fail-closed，不得据此回收任何派生行。
+    """
+
+    if connection is None:
+        return None
+    watermark = await _read_allocated_id_watermark(connection)
+    try:
+        cursor = await connection.execute("SELECT id FROM documents")
+        rows = await cursor.fetchall()
+        await cursor.close()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return None
+    alive_ids: set[int] = set()
+    for row in rows:
+        try:
+            alive_ids.add(int(row[0]))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return max(watermark, max(alive_ids, default=0)), alive_ids
+
+
 def _build_daily_memory_counts(
     timestamps: Iterable[Any],
     *,
@@ -95,6 +155,18 @@ def _build_daily_memory_counts(
 class StatsOperationsMixin:
     """统计信息、存储维护和图索引重建。"""
 
+    def _canonical_connection(self) -> Any:
+        """返回 canonical SQLite 连接；宿主未注入时返回 ``None``。
+
+        生产装配的 ``MaintenanceOperations`` 只注入私有 ``_db``；``MemoryEngine``
+        一类宿主暴露 ``db_connection``，两种宿主都必须兼容。
+        """
+
+        connection = getattr(self, "db_connection", None)
+        if connection is None:
+            connection = getattr(self, "_db", None)
+        return connection
+
     async def count_canonical_created_on(self, day_ts: int) -> int:
         """统计指定 UTC 日（00:00 时间戳）写入的 canonical 记忆数量。
 
@@ -105,11 +177,7 @@ class StatsOperationsMixin:
             该日创建的 canonical 记忆条数；数据库未初始化时返回 0。
         """
 
-        connection = getattr(self, "db_connection", None)
-        if connection is None:
-            # 生产装配的 MaintenanceOperations 只注入私有 `_db`；
-            # 这里必须同时兼容两种宿主，否则日聚合会以 AttributeError 失败。
-            connection = getattr(self, "_db", None)
+        connection = self._canonical_connection()
         if connection is None:
             return 0
         day_str = datetime.fromtimestamp(day_ts, tz=UTC).strftime("%Y-%m-%d")
@@ -432,9 +500,11 @@ class StatsOperationsMixin:
         的来源计为 ``skipped`` 并继续处理同批后续合法来源；真实的存储/向量失败计为
         ``failed`` 且不伪装成跳过；``asyncio.CancelledError`` 继续传播。
 
-        重建只枚举当前 ``documents``，因此结束时还要对 skipped/不适用来源与已删除
-        来源执行源级残留回收（复用 ``graph_delete`` 的源级删除），清理计数并入本
-        阶段结果；清理失败只降级计入 ``residue_failed``，不掩盖重建本身的结果。
+        重建只枚举当前 ``documents``，因此结束时还要对 skipped/不适用来源与可证明
+        已删除的来源执行源级残留回收（复用 ``graph_delete`` 的源级删除），清理计数
+        并入本阶段结果；已删除来源按扫描结束后的 canonical 快照（ID 序列水位线 +
+        存活 ID 集合）判定，扫描期间并发新增的来源不会被回收。清理失败只降级计入
+        ``residue_failed``，不掩盖重建本身的结果。
         """
 
         if self._graph_memory_manager is None:
@@ -450,7 +520,6 @@ class StatsOperationsMixin:
         failed = 0
         skipped_reasons: dict[str, int] = {}
         failed_reasons: dict[str, int] = {}
-        canonical_ids: set[int] = set()
         ineligible_ids: set[int] = set()
 
         while offset < total_count:
@@ -464,7 +533,6 @@ class StatsOperationsMixin:
 
             for doc in docs:
                 memory_id = int(doc["id"])
-                canonical_ids.add(memory_id)
                 metadata = doc.get("metadata") or {}
                 if isinstance(metadata, str):
                     try:
@@ -507,9 +575,7 @@ class StatsOperationsMixin:
 
             offset += len(docs)
 
-        residue_candidates = await self._collect_graph_residue_ids(
-            canonical_ids, ineligible_ids
-        )
+        residue_candidates = await self._collect_graph_residue_ids(ineligible_ids)
         residue_cleaned, residue_failed = await self._cleanup_graph_residue(
             residue_candidates, skipped_reasons, failed_reasons
         )
@@ -528,18 +594,31 @@ class StatsOperationsMixin:
             "total": rebuilt + skipped + failed,
         }
 
-    async def _collect_graph_residue_ids(
-        self, canonical_ids: set[int], ineligible_ids: set[int]
-    ) -> list[int]:
-        """汇总需要回收的图源级残留：不适用来源与已从 canonical 删除的来源。"""
+    async def _collect_graph_residue_ids(self, ineligible_ids: set[int]) -> list[int]:
+        """汇总需要回收的图源级残留：不适用来源与可证明已删除的来源。
+
+        已删除来源的判定只使用**扫描结束后**一次性读出的 canonical 快照
+        （``read_canonical_id_snapshot``）：只有 ID 不超过快照水位线、且不在存活
+        ID 集合中的来源才可证明在快照之前就已删除。重建扫描期间并发新增的来源
+        不在快照水位线内，绝不会被当成残留回收。快照不可用时 fail-closed，
+        只回收本轮扫描已确定不适用的来源。
+        """
 
         residue = set(ineligible_ids)
         lister = getattr(self._graph_store, "list_residual_source_memory_ids", None)
         if not callable(lister):
             return sorted(residue)
-        list_residual = cast(Callable[[set[int]], Awaitable[list[int]]], lister)
+        snapshot = await read_canonical_id_snapshot(self._canonical_connection())
+        if snapshot is None:
+            logger.warning(
+                "[GraphRebuild] canonical 快照不可用，跳过已删除来源回收，"
+                "reason_code=graph_residue_scan_failed"
+            )
+            return sorted(residue)
+        watermark, alive_ids = snapshot
+        list_residual = cast(Callable[..., Awaitable[list[int]]], lister)
         try:
-            residual = await list_residual(canonical_ids)
+            residual = await list_residual(alive_ids, max_source_memory_id=watermark)
         except asyncio.CancelledError:
             raise
         except Exception:

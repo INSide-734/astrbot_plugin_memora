@@ -8,6 +8,7 @@ from typing import Any, cast
 
 from astrbot.api import logger
 
+from ...features.memory.application.stats_operations import read_canonical_id_snapshot
 from ...features.memory.rebuild_metrics import record_rebuild_metrics
 from ...features.memory.rebuild_observability import (
     current_rebuild_measurement,
@@ -606,9 +607,10 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
 
         每个 200 条来源批次交给 ``AtomLifecycleManager.rederive_for_sources``
         按当前 canonical 重新分类并替换 Atom 行；不可召回来源的 Atom 行一并
-        清除。批次或单来源失败只降级计数（``atoms_rebuild_partial_failed``），
-        不阻断 canonical；原子组件未装配时按跳过报告；
-        ``asyncio.CancelledError`` 继续传播。
+        清除。残留父来源按扫描结束后的 canonical 快照（ID 序列水位线 + 存活
+        ID 集合）判定，扫描期间并发新增的来源不会被回收。批次或单来源失败只
+        降级计数（``atoms_rebuild_partial_failed``），不阻断 canonical；原子
+        组件未装配时按跳过报告；``asyncio.CancelledError`` 继续传播。
         """
 
         store = getattr(self.memory_engine, "atom_store", None)
@@ -635,7 +637,6 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
         purged = 0
         skipped = 0
         failed = 0
-        canonical_ids: set[int] = set()
         offset = 0
         while offset < total:
             docs = await get_documents(
@@ -651,7 +652,6 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
                     memory_id = int(doc["id"])
                 except (KeyError, TypeError, ValueError):
                     continue
-                canonical_ids.add(memory_id)
                 batch.append(memory_id)
             for index in range(0, len(batch), _ATOMS_REBUILD_BATCH_SIZE):
                 report = await self._rederive_atoms_batch(
@@ -664,11 +664,14 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
                 failed += report["failed"]
             offset += len(docs)
 
+        snapshot = await read_canonical_id_snapshot(
+            getattr(self.memory_engine, "db_connection", None)
+        )
         (
             residue_cleaned,
             residue_failed,
             residue_reason,
-        ) = await self._cleanup_atom_residue(store, canonical_ids)
+        ) = await self._cleanup_atom_residue(store, snapshot)
         result = {
             "rebuilt": rebuilt,
             "purged": purged,
@@ -723,13 +726,19 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
     async def _cleanup_atom_residue(
         self,
         store: Any,
-        canonical_ids: set[int],
+        canonical_snapshot: tuple[int, set[int]] | None,
     ) -> tuple[int, int, str | None]:
         """删除父 canonical 已不存在的 Atom 行；枚举或删除失败只降级计数。
 
+        ``canonical_snapshot`` 是扫描结束后一次性读出的
+        ``(ID 序列水位线, 存活 ID 集合)``，判定口径与图残留回收一致：只有 ID 不超过
+        水位线、且不在存活集合中的父来源才可证明已被物理删除。重建扫描期间并发新增
+        的来源 ID 大于水位线，不会被回收；刚删除的最新来源仍在水位线内，可正常回收。
+
         返回 ``(已清理数, 失败计数, 稳定原因码)``，成功时原因码为 ``None``。
-        残留父来源枚举失败时残留规模未知，按「至少一项残留处理失败」计 1 并给出
-        ``atom_residue_scan_failed``；枚举不到父来源不等于清理成功，阶段必须据此降级。
+        快照缺失（canonical 连接不可用或读取失败）时 fail-closed，按「至少一项残留
+        处理失败」计 1 并给出 ``atom_residue_scan_failed``；枚举不到父来源不等于
+        清理成功，阶段必须据此降级。
         """
 
         lister = getattr(store, "list_parent_ids", None)
@@ -738,6 +747,11 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
             return 0, 0, None
         list_parents = cast(Callable[[], Awaitable[Any]], lister)
         delete_parents = cast(Callable[[list[int]], Awaitable[Any]], deleter)
+        if canonical_snapshot is None:
+            logger.warning(
+                "Atom 残留判定缺少 canonical 快照，reason_code=atom_residue_scan_failed"
+            )
+            return 0, 1, "atom_residue_scan_failed"
         try:
             parent_ids = await list_parents()
         except asyncio.CancelledError:
@@ -747,8 +761,17 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
                 "Atom 残留父来源枚举失败，reason_code=atom_residue_scan_failed"
             )
             return 0, 1, "atom_residue_scan_failed"
+        watermark, alive_ids = canonical_snapshot
+        parents: set[int] = set()
+        for parent_id in parent_ids or ():
+            try:
+                parents.add(int(parent_id))
+            except (TypeError, ValueError):
+                continue
         orphan_ids = sorted(
-            {int(parent_id) for parent_id in parent_ids or ()} - canonical_ids
+            parent_id
+            for parent_id in parents
+            if parent_id <= watermark and parent_id not in alive_ids
         )
         if not orphan_ids:
             return 0, 0, None
