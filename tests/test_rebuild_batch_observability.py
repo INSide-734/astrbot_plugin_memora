@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
+from core.features.memory import rebuild_metrics
 from core.features.memory.application.graph_memory_manager import GraphMemoryManager
 from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.memory.graph.infrastructure.graph_store import GraphReplaceResult
@@ -15,6 +17,7 @@ from core.features.memory.infrastructure.validators.embedding_retry import (
     EmbeddingRetryMixin,
 )
 from core.features.memory.rebuild_observability import (
+    REBUILD_STAGE_NAMES,
     RebuildMeasurement,
     classify_rebuild_trigger,
     finalize_rebuild_observability,
@@ -142,6 +145,88 @@ def test_finalize_observability_prefers_indexes_counts_when_present() -> None:
     assert snapshot["processed"] == 3
     assert snapshot["failed"] == 1
     assert snapshot["total"] == 4
+
+
+class _MetricLabelRecorder:
+    """指标写入替身，记录每次投影的标签与数值。"""
+
+    def __init__(self) -> None:
+        self.samples: list[tuple[dict[str, str], float]] = []
+        self._pending: dict[str, str] = {}
+
+    def labels(self, **labels: str) -> _MetricLabelRecorder:
+        self._pending = labels
+        return self
+
+    def observe(self, value: float) -> None:
+        self.samples.append((dict(self._pending), value))
+
+    def inc(self, value: float = 1) -> None:
+        self.samples.append((dict(self._pending), value))
+
+    def stage_labels(self) -> set[str]:
+        """返回投影实际使用的 stage 标签集合。"""
+
+        return {labels["stage"] for labels, _value in self.samples}
+
+
+def _record_stage_metrics(
+    monkeypatch: pytest.MonkeyPatch, snapshot: dict[str, Any]
+) -> tuple[_MetricLabelRecorder, _MetricLabelRecorder]:
+    """把阶段指标换成记录替身，返回 (耗时, 计数) 两个记录器。"""
+
+    seconds = _MetricLabelRecorder()
+    items = _MetricLabelRecorder()
+    monkeypatch.setattr(rebuild_metrics, "REBUILD_STAGE_SECONDS", seconds)
+    monkeypatch.setattr(rebuild_metrics, "REBUILD_ITEMS_TOTAL", items)
+    rebuild_metrics.record_rebuild_metrics(snapshot)
+    return seconds, items
+
+
+def test_rebuild_metrics_projects_atoms_stage_without_unknown_label(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """atoms 阶段的耗时与计数必须落在真实标签上，不得投影成 unknown。"""
+    measurement = RebuildMeasurement("indexes_inconsistent")
+    measurement.record_stage("atoms", 0.5, {"processed": 3, "failed": 2, "total": 5})
+    measurement.record_stage("graph", 0.25, {"processed": 1, "failed": 0, "total": 1})
+
+    seconds, items = _record_stage_metrics(
+        monkeypatch, measurement.snapshot(duration_seconds=0.75)
+    )
+
+    assert seconds.stage_labels() == {"atoms", "graph"}
+    assert dict((labels["stage"], value) for labels, value in seconds.samples) == {
+        "atoms": 0.5,
+        "graph": 0.25,
+    }
+    assert {
+        (labels["stage"], labels["outcome"]): value for labels, value in items.samples
+    } == {
+        ("atoms", "processed"): 3.0,
+        ("atoms", "failed"): 2.0,
+        ("atoms", "total"): 5.0,
+        ("graph", "processed"): 1.0,
+        ("graph", "failed"): 0.0,
+        ("graph", "total"): 1.0,
+    }
+
+
+def test_rebuild_metrics_keeps_every_known_stage_label_distinct(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """阶段闭集内每个真实阶段名都必须投影为自身标签，防止闭集再次漂移。"""
+    seconds = _MetricLabelRecorder()
+    monkeypatch.setattr(rebuild_metrics, "REBUILD_STAGE_SECONDS", seconds)
+
+    for name in sorted(REBUILD_STAGE_NAMES - {"unknown"}):
+        measurement = RebuildMeasurement("indexes_consistent")
+        measurement.record_stage(name, 0.1)
+        rebuild_metrics.record_rebuild_metrics(
+            measurement.snapshot(duration_seconds=0.1)
+        )
+
+    assert seconds.stage_labels() == REBUILD_STAGE_NAMES - {"unknown"}
 
 
 class _BatchRetriever(GraphVectorRetriever):

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..observability.infrastructure.metrics import REGISTRY, Counter, Histogram
-from .rebuild_observability import normalize_rebuild_trigger
+from .rebuild_observability import REBUILD_STAGE_NAMES, normalize_rebuild_trigger
 
 REBUILD_TRIGGERS_TOTAL = Counter(
     "memora_rebuild_triggers_total",
@@ -38,22 +38,6 @@ REBUILD_EMBEDDING_BATCHES_TOTAL = Counter(
     registry=REGISTRY,
 )
 
-_STAGE_LABELS = frozenset(
-    {
-        "canonical",
-        "indexes",
-        "bm25",
-        "vector",
-        "catalog",
-        "graph",
-        "evolution",
-        "semantic_compression",
-        "notes",
-        "rebuild",
-        "unknown",
-    }
-)
-
 
 def record_rebuild_metrics(snapshot: Mapping[str, Any]) -> None:
     """将已清洗的重建快照投影到独立指标注册表。"""
@@ -67,7 +51,7 @@ def record_rebuild_metrics(snapshot: Mapping[str, Any]) -> None:
             for raw_name, stage in stages.items():
                 if not isinstance(stage, Mapping):
                     continue
-                stage_name = raw_name if raw_name in _STAGE_LABELS else "unknown"
+                stage_name = raw_name if raw_name in REBUILD_STAGE_NAMES else "unknown"
                 duration = _safe_float(stage.get("duration_seconds"))
                 if duration is not None:
                     REBUILD_STAGE_SECONDS.labels(stage=stage_name).observe(duration)
