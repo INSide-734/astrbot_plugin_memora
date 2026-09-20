@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -16,6 +17,7 @@ from core.features.reconsolidation.application.reconsolidation import (
 from core.features.reconsolidation.infrastructure.reconsolidation_store import (
     ReconsolidationStore,
 )
+from tests.fact_evidence_helpers import fact_evidence
 
 
 def _memory(
@@ -188,6 +190,217 @@ async def test_real_engine_apply_atomically_writes_payload_metadata_and_revision
     persisted = await store.get_candidate(proposed["candidate_id"])
     assert persisted is not None
     assert persisted["applied_revision"] == "r-8"
+
+
+_OLD_CONTENT = "原始记忆正文"
+_OLD_FACT = "用户偏好手冲咖啡"
+
+
+class _EngineHarness:
+    """维护 canonical 快照的真实引擎夹具，捕获引擎交给 canonical 层的写入。"""
+
+    def __init__(
+        self,
+        *,
+        content: str,
+        revision: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        """按给定时点装配真实引擎，其余写入副作用以最小替身隔离。"""
+
+        self.engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
+        self.memory = _memory(content, revision=revision, metadata=metadata)
+        self.stored_metadata: dict[str, Any] = {}
+        self.cleared_keys: tuple[str, ...] = ()
+        self.write_count = 0
+        self.engine.get_memory = self.get_memory  # type: ignore[method-assign]
+        self.engine.hybrid_retriever = MagicMock()
+        self.engine.hybrid_retriever.update_content_if_revision = self.update_content
+        self.engine.graph_memory_manager = None
+        self.engine._invalidate_evolution_after_revision = AsyncMock()
+        self.engine._schedule_evolution_after_write = AsyncMock()
+        self.engine._retrieval.invalidate_cache = MagicMock()
+
+    async def get_memory(self, memory_id: int) -> dict[str, Any] | None:
+        """返回当前 canonical 快照；未知 ID 返回 None。"""
+
+        return deepcopy(self.memory) if memory_id == 7 else None
+
+    async def update_content(
+        self,
+        memory_id: int,
+        content: str,
+        metadata: dict[str, Any],
+        expected_revision: str,
+        *,
+        drop_metadata_keys: Sequence[str] = (),
+    ) -> bool:
+        """按 canonical 键级合并与 drop 契约落库，并捕获同事务清理键。"""
+
+        assert (memory_id, expected_revision) == (7, self.memory["updated_at"])
+        self.cleared_keys = tuple(drop_metadata_keys)
+        merged = deepcopy(self.memory["metadata"])
+        merged.update(deepcopy(metadata))
+        for key in self.cleared_keys:
+            merged.pop(key, None)
+        self.write_count += 1
+        self.stored_metadata = merged
+        self.memory = _memory(
+            content,
+            revision=f"r-{7 + self.write_count}",
+            metadata=merged,
+        )
+        return True
+
+    def manager(
+        self, store: ReconsolidationStore, llm_output: str
+    ) -> ReconsolidationManager:
+        """按注入回调装配 Manager，复用同一份 canonical 快照。"""
+
+        return ReconsolidationManager(
+            store=store,
+            get_memory_cb=self.engine.get_memory,
+            update_memory_cb=self.engine.update_memory,
+            llm_caller=AsyncMock(return_value=llm_output),
+            enabled=True,
+        )
+
+
+async def _apply_with_real_engine(
+    store: ReconsolidationStore,
+    *,
+    old_metadata: dict[str, Any],
+    proposed_content: str,
+) -> tuple[dict[str, Any], dict[str, Any], tuple[str, ...]]:
+    """用真实引擎执行一次 apply，返回结果、落库 metadata 与同事务清理键。"""
+
+    harness = _EngineHarness(
+        content=_OLD_CONTENT,
+        revision="r-7",
+        metadata=old_metadata,
+    )
+    manager = harness.manager(store, proposed_content)
+    proposed = await manager.maybe_propose(7, context="近期上下文")
+    assert proposed is not None
+
+    result = await manager.apply_candidate(
+        proposed["candidate_id"],
+        harness.engine.update_memory,
+    )
+    return result, harness.stored_metadata, harness.cleared_keys
+
+
+@pytest.mark.asyncio
+async def test_apply_clears_old_facts_missing_from_rewritten_content(
+    tmp_path: Path,
+) -> None:
+    """改写后正文不再包含旧事实时，apply 必须落地并在同一事务清掉旧事实表示。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    old_metadata = {
+        "access_count": 8,
+        "scope_key": "private:user-a",
+        "key_facts": [_OLD_FACT],
+        "fact_source_evidence": fact_evidence([_OLD_FACT]),
+    }
+
+    result, stored_metadata, cleared_keys = await _apply_with_real_engine(
+        store,
+        old_metadata=old_metadata,
+        proposed_content="修正后的记忆正文内容",
+    )
+
+    assert result["applied"] is True
+    assert "key_facts" not in stored_metadata
+    assert "fact_source_evidence" not in stored_metadata
+    assert set(cleared_keys) == {"key_facts", "fact_source_evidence"}
+    assert stored_metadata["scope_key"] == "private:user-a"
+    assert stored_metadata["reconsolidation_count"] == 1
+    approved = await store.list_candidates(status="approved")
+    assert [item["applied_revision"] for item in approved] == ["r-8"]
+
+
+@pytest.mark.asyncio
+async def test_apply_keeps_facts_still_present_in_rewritten_content(
+    tmp_path: Path,
+) -> None:
+    """改写后正文仍逐字包含旧事实时，apply 成功后不得清掉仍对齐的事实表示。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    old_metadata = {
+        "access_count": 8,
+        "key_facts": [_OLD_FACT],
+        "fact_source_evidence": fact_evidence([_OLD_FACT]),
+    }
+
+    result, stored_metadata, cleared_keys = await _apply_with_real_engine(
+        store,
+        old_metadata=old_metadata,
+        proposed_content=f"{_OLD_FACT}，每天两杯",
+    )
+
+    assert result["applied"] is True
+    assert cleared_keys == ()
+    assert stored_metadata["key_facts"] == [_OLD_FACT]
+    assert stored_metadata["fact_source_evidence"] == fact_evidence([_OLD_FACT])
+
+
+@pytest.mark.asyncio
+async def test_recovery_replay_strips_facts_recorded_in_legacy_intent(
+    tmp_path: Path,
+) -> None:
+    """重启重放 apply intent 时同样不得携带其记录的旧事实，否则重试仍会被拒绝。"""
+
+    store = ReconsolidationStore(tmp_path / "reconsolidation.db")
+    await store.initialize()
+    old_metadata = {
+        "access_count": 8,
+        "key_facts": [_OLD_FACT],
+        "fact_source_evidence": fact_evidence([_OLD_FACT]),
+    }
+    candidate = await store.stage_candidate(
+        memory_id=7,
+        source_revision="r-7",
+        old_content=_OLD_CONTENT,
+        old_metadata=old_metadata,
+        proposed_content="修正后的记忆正文内容",
+        change_summary="LLM 修订候选",
+        evidence_type="llm_revision",
+    )
+    await store.begin_apply(
+        candidate["candidate_id"],
+        expected_revision="r-7",
+        target_metadata={
+            "access_count": 8,
+            "key_facts": [_OLD_FACT],
+            "fact_source_evidence": fact_evidence([_OLD_FACT]),
+            "reconsolidation_count": 1,
+            "last_reconsolidated_at": 1.0,
+        },
+    )
+    harness = _EngineHarness(
+        content=_OLD_CONTENT,
+        revision="r-7",
+        metadata=old_metadata,
+    )
+    manager = harness.manager(store, "修正后的记忆正文内容")
+
+    result = await manager.recover_incomplete_applies()
+
+    assert result == {"recovered": 1, "blocked": 0}
+    assert harness.write_count == 1
+    assert "key_facts" not in harness.stored_metadata
+    assert "fact_source_evidence" not in harness.stored_metadata
+    assert harness.stored_metadata["reconsolidation_count"] == 1
+    persisted = await store.get_candidate(candidate["candidate_id"])
+    assert persisted is not None
+    assert (persisted["status"], persisted["reason_code"]) == (
+        "approved",
+        "recovered_applied",
+    )
+    assert await store.list_incomplete_applies() == []
 
 
 @pytest.mark.asyncio
