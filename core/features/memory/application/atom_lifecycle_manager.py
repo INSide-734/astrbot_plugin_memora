@@ -20,6 +20,7 @@ from astrbot.api import logger
 
 from ....shared.memory_status import is_memory_recallable
 from ....shared.number_utils import clamp_float
+from ..infrastructure.atom_source_integrity import current_canonical_facts
 from ..infrastructure.atom_store import AtomStore
 from .atom_source_binding import bind_atoms_to_canonical_source
 
@@ -192,7 +193,9 @@ class AtomLifecycleManager:
         固定签名调用）：
 
         - 父 canonical 仍可召回 → 用当前 ``key_facts``/``fact_source_evidence``
-          重新分类，并在单个事务内替换该父的全部 Atom 行；
+          重新分类，并在单个事务内替换该父的全部 Atom 行；事实表示未与当前
+          正文对齐（正文已改写、残留旧事实或表示不可用）时按「无事实元数据」
+          产出 0 个 Atom，仍计入 ``rederived``；
         - 父 canonical 存在但已不可召回（归档/休眠/orphan）→ 清除其 Atom 行，
           恢复可召回时由同一入口重新生成；
         - 父 canonical 不存在 → 跳过，缺失父行由重建阶段按残留清理。
@@ -265,10 +268,26 @@ class AtomLifecycleManager:
         document: dict[str, Any],
         classifier: Any,
     ) -> None:
-        """按一条 canonical 的当前事实重新分类并替换其 Atom 行。"""
+        """按一条 canonical 的当前事实重新分类并替换其 Atom 行。
+
+        事实文本单 owner：分类前先把事实表示收窄到仍属当前正文的集合
+        （``current_canonical_facts``，与图 fact 抽取、前瞻注入、Atom 事实集合
+        同一三态口径）。正文改写后残留的旧 ``key_facts`` 不属于当前正文，集合
+        为空时该父来源按「无事实元数据」产出 0 个 Atom，残留行与 FTS 行整体清空。
+        """
 
         metadata = document.get("metadata")
         metadata_dict = metadata if isinstance(metadata, dict) else {}
+        if not current_canonical_facts(document.get("text"), metadata_dict):
+            recorded_facts = metadata_dict.get("key_facts")
+            if isinstance(recorded_facts, list) and recorded_facts:
+                logger.debug(
+                    "[AtomLifecycle] 事实元数据与当前正文不一致，按无事实回落："
+                    "记录事实=%d",
+                    len(recorded_facts),
+                )
+            await self.atom_store.replace_by_parent(memory_id, [])
+            return
         atoms = classifier(
             metadata=metadata_dict,
             parent_importance=clamp_float(metadata_dict.get("importance"), default=0.5),

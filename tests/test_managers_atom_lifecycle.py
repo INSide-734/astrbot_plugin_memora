@@ -337,8 +337,13 @@ async def _write_canonical_document(
     facts: list[str],
     revision: str = "rev-1",
     status: str = "active",
+    text: str | None = None,
 ) -> None:
-    """写入带逐事实证据的 canonical 文档行。"""
+    """写入带逐事实证据的 canonical 文档行。
+
+    ``text`` 用于模拟「正文已改写但 metadata 仍是旧事实」的残留事实场景；
+    缺省正文由 ``facts`` 拼接，与 metadata 对齐。
+    """
 
     metadata = {
         "scope_key": "scope-a",
@@ -362,7 +367,7 @@ async def _write_canonical_document(
                (id,text,metadata,created_at,updated_at) VALUES(?,?,?,?,?)""",
             (
                 memory_id,
-                "；".join(facts),
+                "；".join(facts) if text is None else text,
                 json.dumps(metadata, ensure_ascii=False),
                 "2026-07-21T00:00:00+00:00",
                 revision,
@@ -457,6 +462,61 @@ class TestRederriveForSources:
         assert [atom.content for atom in atoms] == ["事实A", "事实B"]
         assert {atom.parent_revision for atom in atoms} == {"rev-1"}
         assert classifier.calls[0]["parent_importance"] == 0.6
+
+    @pytest.mark.asyncio
+    async def test_rederive_drops_residual_facts_after_body_rewrite(
+        self, tmp_db_path: str
+    ) -> None:
+        """正文已改写时，metadata 残留的旧事实不再重派生为 Atom 行与 FTS 行。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(
+            tmp_db_path,
+            17,
+            facts=["用户习惯手冲咖啡"],
+            text="用户已经改喝气泡水",
+        )
+        await store.insert(_bound_atom("用户习惯手冲咖啡"))
+        manager = AtomLifecycleManager(store, classifier=_FakeClassifier())
+
+        report = await manager.rederive_for_sources([17], "canonical_update")
+
+        assert report["rederived"] == 1
+        assert report["failed"] == 0
+        assert report["needs_repair"] == 0
+        assert await store.get_by_parent_raw(17) == []
+        assert await store.search_fts("用户习惯手冲咖啡") == []
+        documents = await store.load_canonical_documents([17])
+        assert documents[17]["text"] == "用户已经改喝气泡水"
+
+    @pytest.mark.asyncio
+    async def test_rederive_rebuilds_atoms_from_rewritten_aligned_facts(
+        self, tmp_db_path: str
+    ) -> None:
+        """改写后新事实与正文对齐时，按新事实重建 Atom 行与 FTS 行。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["用户习惯手冲咖啡"])
+        await store.insert(_bound_atom("用户习惯手冲咖啡"))
+        await _write_canonical_document(
+            tmp_db_path,
+            17,
+            facts=["用户已经改喝气泡水"],
+            revision="rev-2",
+        )
+        manager = AtomLifecycleManager(store, classifier=_FakeClassifier())
+
+        report = await manager.rederive_for_sources([17], "canonical_update")
+
+        assert report["rederived"] == 1
+        atoms = await store.get_by_parent(17)
+        assert [atom.content for atom in atoms] == ["用户已经改喝气泡水"]
+        assert {atom.parent_revision for atom in atoms} == {"rev-2"}
+        assert await store.search_fts("用户习惯手冲咖啡") == []
+        recalled = await store.search_fts("用户已经改喝气泡水")
+        assert [atom.content for atom in recalled] == ["用户已经改喝气泡水"]
 
     @pytest.mark.asyncio
     async def test_rederive_purges_rows_for_non_recallable_source(
