@@ -1,6 +1,11 @@
 """记忆原子周期性生命周期管理器。
 
 v2.6: 新增同批次原子去重 (_dedup_atoms_batch) 和冷存储迁移 (migrate_to_cold)。
+
+Atom 是 canonical 的派生信号：事实文本与生命周期权威都在 ``documents``，
+``memory_atoms`` 行只承载排序/前瞻/图信号。``rederive_for_sources`` 按当前
+canonical 重派生时整体替换行，运行态历史（访问/强化/冷）随之重置且不可从
+canonical 恢复；Atom 自身状态只影响信号参与度，不影响 canonical 事实。
 """
 
 from __future__ import annotations
@@ -8,11 +13,15 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import inspect
+from collections.abc import Iterable
 from typing import Any
 
 from astrbot.api import logger
 
+from ....shared.memory_status import is_memory_recallable
+from ....shared.number_utils import clamp_float
 from ..infrastructure.atom_store import AtomStore
+from .atom_source_binding import bind_atoms_to_canonical_source
 
 
 def dedup_atoms_batch(
@@ -79,15 +88,23 @@ def dedup_atoms_batch(
 
 
 class AtomLifecycleManager:
-    """调度并执行原子生命周期维护任务。"""
+    """调度并执行原子生命周期维护任务。
+
+    维护（过期/遗忘/清除/冷迁移）只改变 Atom 信号状态；canonical 事实的可见性
+    不由本管理器决定。canonical 变更后的收敛入口是 ``rederive_for_sources``。
+    """
 
     def __init__(
         self,
         atom_store: AtomStore,
         config: dict[str, Any] | None = None,
+        classifier: Any | None = None,
     ):
         self.atom_store = atom_store
         self.config = config or {}
+        # 重派生分类端口：提供 ``classify_atoms_from_metadata`` 的规则分类器
+        # （组合根挂载 MemoryProcessor）。缺失时重派生只降级，不影响 canonical。
+        self.classifier = classifier
         self._maintenance_interval_hours = float(
             self.config.get("atom_maintenance_interval_hours", 24.0)
         )
@@ -163,6 +180,105 @@ class AtomLifecycleManager:
             result["cold_migrated"] = cold_migrated
 
         return result
+
+    async def rederive_for_sources(
+        self,
+        memory_ids: Iterable[int],
+        reason: str,
+    ) -> dict[str, int]:
+        """按当前 canonical 重新分类并替换这些父来源的 Atom 行与 FTS 行。
+
+        canonical 变更后的收敛入口（decay 状态批更新与重建 atoms 阶段都按本
+        固定签名调用）：
+
+        - 父 canonical 仍可召回 → 用当前 ``key_facts``/``fact_source_evidence``
+          重新分类，并在单个事务内替换该父的全部 Atom 行；
+        - 父 canonical 存在但已不可召回（归档/休眠/orphan）→ 清除其 Atom 行，
+          恢复可召回时由同一入口重新生成；
+        - 父 canonical 不存在 → 跳过，缺失父行由重建阶段按残留清理。
+
+        运行态历史（访问时间、强化次数、冷/遗忘状态）随行替换重置为新建行；
+        这些状态不能从 canonical 恢复，属于已声明的取舍。单个来源失败只记
+        ``atom_rederive_failed`` 并计入 ``failed``（``needs_repair`` 为真），
+        不阻断其它来源，也不回滚 canonical；读取 canonical 失败属于批次级前置
+        失败，直接抛 ``RuntimeError`` 由调用方降级；
+        ``asyncio.CancelledError`` 继续传播。
+        """
+
+        normalized = sorted(
+            {int(memory_id) for memory_id in memory_ids if int(memory_id) > 0}
+        )
+        report = {
+            "sources": len(normalized),
+            "rederived": 0,
+            "purged": 0,
+            "skipped": 0,
+            "failed": 0,
+            "needs_repair": 0,
+        }
+        if not normalized:
+            return report
+        reason_text = str(reason)
+        classifier = getattr(self.classifier, "classify_atoms_from_metadata", None)
+        if not callable(classifier):
+            logger.warning(
+                "[AtomLifecycle] Atom 重派生缺少分类端口，reason=%s，"
+                "reason_code=atom_rederive_unavailable",
+                reason_text,
+            )
+            report["failed"] = len(normalized)
+            report["needs_repair"] = 1
+            return report
+
+        documents = await self.atom_store.load_canonical_documents(normalized)
+
+        for memory_id in normalized:
+            document = documents.get(memory_id)
+            if document is None:
+                report["skipped"] += 1
+                continue
+            try:
+                if is_memory_recallable(document.get("metadata")):
+                    await self._replace_atoms_from_document(
+                        memory_id, document, classifier
+                    )
+                    report["rederived"] += 1
+                else:
+                    await self.atom_store.delete_by_parent(memory_id)
+                    report["purged"] += 1
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.warning(
+                    "[AtomLifecycle] Atom 重派生失败，reason=%s，"
+                    "reason_code=atom_rederive_failed，异常类型=%s",
+                    reason_text,
+                    error.__class__.__name__,
+                )
+                report["failed"] += 1
+        report["needs_repair"] = 1 if report["failed"] else 0
+        return report
+
+    async def _replace_atoms_from_document(
+        self,
+        memory_id: int,
+        document: dict[str, Any],
+        classifier: Any,
+    ) -> None:
+        """按一条 canonical 的当前事实重新分类并替换其 Atom 行。"""
+
+        metadata = document.get("metadata")
+        metadata_dict = metadata if isinstance(metadata, dict) else {}
+        atoms = classifier(
+            metadata=metadata_dict,
+            parent_importance=clamp_float(metadata_dict.get("importance"), default=0.5),
+        )
+        bound = bind_atoms_to_canonical_source(
+            atoms or [],
+            document,
+            fallback_metadata=metadata_dict,
+        )
+        await self.atom_store.replace_by_parent(memory_id, bound)
 
     async def run_manual_reinforcement(
         self,

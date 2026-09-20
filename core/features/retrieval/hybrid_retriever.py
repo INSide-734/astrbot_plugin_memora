@@ -5,6 +5,7 @@
 
 import asyncio
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from astrbot.api import logger
@@ -430,6 +431,8 @@ class HybridRetriever:
         content: str,
         metadata: dict[str, Any],
         expected_revision: str,
+        *,
+        drop_metadata_keys: Sequence[str] = (),
     ) -> bool:
         """同步执行带 revision CAS 的 canonical 正文更新。"""
 
@@ -438,6 +441,7 @@ class HybridRetriever:
             content,
             metadata,
             expected_revision,
+            drop_metadata_keys=drop_metadata_keys,
         )
 
     async def delete_memory(self, doc_id: int) -> bool:

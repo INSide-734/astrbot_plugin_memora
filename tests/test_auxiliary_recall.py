@@ -11,6 +11,7 @@ import pytest
 
 from core.features.memory.application.retrieval_timing import RetrievalTimingSink
 from core.features.recall.application.auxiliary_recall import AuxiliaryRecall
+from tests.fact_evidence_helpers import fact_evidence
 
 
 def _config(values: dict[str, object]) -> MagicMock:
@@ -207,6 +208,16 @@ async def test_prospective_atom_is_converted_to_complete_hybrid_result() -> None
     )
     engine = MagicMock()
     engine.atom_store.query_upcoming_planned = AsyncMock(return_value=[atom])
+    engine.get_memory = AsyncMock(
+        return_value={
+            "id": 42,
+            "text": "计划在周一提交复盘记录并同步给团队。",
+            "metadata": {
+                "key_facts": ["提交复盘记录"],
+                "fact_source_evidence": fact_evidence(["提交复盘记录"]),
+            },
+        }
+    )
     auxiliary = AuxiliaryRecall(
         _config({"recall_engine.prospective_recall_enabled": True}),
         engine,
@@ -225,3 +236,127 @@ async def test_prospective_atom_is_converted_to_complete_hybrid_result() -> None
     assert results[0].bm25_score is None
     assert results[0].vector_score is None
     assert results[0].metadata["recall_source"] == "prospective"
+    assert results[0].content == "[待办] 提交复盘记录"
+    engine.get_memory.assert_awaited_once_with(42)
+
+
+@pytest.mark.asyncio
+async def test_prospective_atom_is_dropped_when_fact_left_current_canonical() -> None:
+    """canonical 改写后，不再属于当前事实集合的计划原子不得进入注入候选。"""
+
+    stale_atom = SimpleNamespace(
+        parent_memory_id=42,
+        content="提交复盘记录",
+        event_time="2026-08-01T09:00:00Z",
+        metadata={},
+    )
+    current_atom = SimpleNamespace(
+        parent_memory_id=42,
+        content="提交周报",
+        event_time="2026-08-02T09:00:00Z",
+        metadata={},
+    )
+    engine = MagicMock()
+    engine.atom_store.query_upcoming_planned = AsyncMock(
+        return_value=[stale_atom, current_atom]
+    )
+    engine.get_memory = AsyncMock(
+        return_value={
+            "id": 42,
+            "text": "计划在周一提交周报。",
+            "metadata": {
+                "key_facts": ["提交周报"],
+                "fact_source_evidence": fact_evidence(["提交周报"]),
+            },
+        }
+    )
+    auxiliary = AuxiliaryRecall(
+        _config({"recall_engine.prospective_recall_enabled": True}),
+        engine,
+    )
+
+    results = await auxiliary.maybe_prospective_recall(
+        session_id="session",
+        persona_id=None,
+        chat_type="private",
+        deadline_monotonic=None,
+    )
+
+    assert [result.content for result in results] == ["[待办] 提交周报"]
+
+
+def _prospective_engine(metadata: dict) -> MagicMock:
+    """构造返回一条计划原子与指定父 canonical 行的引擎替身。"""
+
+    atom = SimpleNamespace(
+        parent_memory_id=42,
+        content="提交复盘记录",
+        event_time="2026-08-01T09:00:00Z",
+        metadata={},
+    )
+    engine = MagicMock()
+    engine.atom_store.query_upcoming_planned = AsyncMock(return_value=[atom])
+    engine.get_memory = AsyncMock(
+        return_value={
+            "id": 42,
+            "text": "计划在周一提交复盘记录并同步给团队。",
+            "metadata": {
+                **metadata,
+                "key_facts": ["提交复盘记录"],
+                "fact_source_evidence": fact_evidence(["提交复盘记录"]),
+            },
+        }
+    )
+    return engine
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("metadata", "chat_type"),
+    [
+        ({"memory_status": "archived"}, "private"),
+        ({"status": "deleted", "replacement_pending": True}, "private"),
+        ({"gate_disposition": "mark_write"}, "private"),
+        ({"privacy_level": "confidential"}, "group"),
+        ({"session_id": "other-session"}, "private"),
+    ],
+)
+async def test_prospective_parent_unreadable_now_is_not_injected(
+    metadata: dict, chat_type: str
+) -> None:
+    """加载时父已不可读（归档/删除/mark_write/越界/换作用域）不得注入计划正文。"""
+
+    engine = _prospective_engine(metadata)
+    auxiliary = AuxiliaryRecall(
+        _config({"recall_engine.prospective_recall_enabled": True}),
+        engine,
+    )
+
+    results = await auxiliary.maybe_prospective_recall(
+        session_id="session",
+        persona_id=None,
+        chat_type=chat_type,
+        deadline_monotonic=None,
+    )
+
+    assert results == []
+
+
+@pytest.mark.asyncio
+async def test_prospective_parent_matching_request_scope_is_injected() -> None:
+    """父行声明与本次请求一致的 session/privacy 时保持既有注入行为。"""
+
+    engine = _prospective_engine({"session_id": "session", "privacy_level": "shared"})
+    auxiliary = AuxiliaryRecall(
+        _config({"recall_engine.prospective_recall_enabled": True}),
+        engine,
+    )
+
+    results = await auxiliary.maybe_prospective_recall(
+        session_id="session",
+        persona_id=None,
+        chat_type="private",
+        deadline_monotonic=None,
+    )
+
+    assert [result.content for result in results] == ["[待办] 提交复盘记录"]

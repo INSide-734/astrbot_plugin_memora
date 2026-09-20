@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock
 
+import aiosqlite
 import pytest
 
 from core.features.memory.application.atom_lifecycle_manager import (
     AtomLifecycleManager,
     dedup_atoms_batch,
 )
+from core.features.memory.domain.memory_atom import MemoryAtom
+from core.features.memory.infrastructure.atom_store import AtomStore
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
 
 # ---------------------------------------------------------------------------
 # dedup_atoms_batch — pure function
@@ -317,3 +323,266 @@ class TestManualReinforcement:
             [new_atom], similarity_threshold=0.6
         )
         assert result >= 0  # may or may not match depending on tokens
+
+
+# ---------------------------------------------------------------------------
+# AtomLifecycleManager — rederive_for_sources（canonical 变更后的重派生）
+# ---------------------------------------------------------------------------
+
+
+async def _write_canonical_document(
+    db_path: str,
+    memory_id: int,
+    *,
+    facts: list[str],
+    revision: str = "rev-1",
+    status: str = "active",
+) -> None:
+    """写入带逐事实证据的 canonical 文档行。"""
+
+    metadata = {
+        "scope_key": "scope-a",
+        "privacy_level": "shared",
+        "session_id": "scope-a",
+        "persona_id": "persona-a",
+        "memory_status": status,
+        "importance": 0.6,
+        "key_facts": list(facts),
+        "fact_source_evidence": fact_evidence(list(facts)),
+    }
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS documents (
+                   id INTEGER PRIMARY KEY, text TEXT NOT NULL, metadata TEXT,
+                   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+               )"""
+        )
+        await db.execute(
+            """INSERT OR REPLACE INTO documents
+               (id,text,metadata,created_at,updated_at) VALUES(?,?,?,?,?)""",
+            (
+                memory_id,
+                "；".join(facts),
+                json.dumps(metadata, ensure_ascii=False),
+                "2026-07-21T00:00:00+00:00",
+                revision,
+            ),
+        )
+        await db.commit()
+
+
+class _FakeClassifier:
+    """按 ``metadata.key_facts`` 生成 Atom 的规则分类端口替身。"""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def classify_atoms_from_metadata(
+        self,
+        metadata: dict,
+        parent_importance: float = 0.5,
+        session_id: str | None = None,
+        persona_id: str | None = None,
+    ) -> list[MemoryAtom]:
+        """返回与 key_facts 一一对应的 Atom。"""
+
+        self.calls.append(
+            {
+                "parent_importance": parent_importance,
+                "session_id": session_id,
+                "persona_id": persona_id,
+            }
+        )
+        facts = list(metadata.get("key_facts") or [])
+        evidence = list(metadata.get("fact_source_evidence") or [])
+        return [
+            MemoryAtom(
+                parent_memory_id=0,
+                content=fact,
+                importance=parent_importance,
+                source_evidence=list(refs),
+            )
+            for fact, refs in zip(facts, evidence, strict=True)
+        ]
+
+
+def _bound_atom(
+    content: str,
+    *,
+    memory_id: int = 17,
+    revision: str = "rev-1",
+) -> MemoryAtom:
+    """构造已绑定当前父来源的 Atom。"""
+
+    return MemoryAtom(
+        parent_memory_id=memory_id,
+        parent_revision=revision,
+        parent_scope_key="scope-a",
+        parent_privacy_level="shared",
+        session_id="scope-a",
+        persona_id="persona-a",
+        content=content,
+        source_evidence=source_evidence(content),
+    )
+
+
+class TestRederriveForSources:
+    """canonical 变更后按当前事实重派生 Atom 行。"""
+
+    @pytest.mark.asyncio
+    async def test_rederive_replaces_rows_with_current_canonical_facts(
+        self, tmp_db_path: str
+    ) -> None:
+        """陈旧行被当前 canonical 事实整体替换，FTS 同步。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A", "事实B"])
+        await store.insert(_bound_atom("残留旧事实"))
+        classifier = _FakeClassifier()
+        manager = AtomLifecycleManager(store, classifier=classifier)
+
+        report = await manager.rederive_for_sources([17], "canonical_update")
+
+        assert report == {
+            "sources": 1,
+            "rederived": 1,
+            "purged": 0,
+            "skipped": 0,
+            "failed": 0,
+            "needs_repair": 0,
+        }
+        assert await store.search_fts("残留旧事实") == []
+        atoms = await store.get_by_parent(17)
+        assert [atom.content for atom in atoms] == ["事实A", "事实B"]
+        assert {atom.parent_revision for atom in atoms} == {"rev-1"}
+        assert classifier.calls[0]["parent_importance"] == 0.6
+
+    @pytest.mark.asyncio
+    async def test_rederive_purges_rows_for_non_recallable_source(
+        self, tmp_db_path: str
+    ) -> None:
+        """父 canonical 归档后清除其 Atom 行，恢复可召回时再由同一入口重建。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A"])
+        await store.insert(_bound_atom("事实A"))
+        manager = AtomLifecycleManager(store, classifier=_FakeClassifier())
+
+        await _write_canonical_document(
+            tmp_db_path, 17, facts=["事实A"], status="archived"
+        )
+        report = await manager.rederive_for_sources([17], "decay_archived")
+        assert report["purged"] == 1
+        assert await store.get_by_parent_raw(17) == []
+
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A"])
+        report = await manager.rederive_for_sources([17], "decay_active")
+        assert report["rederived"] == 1
+        assert [atom.content for atom in await store.get_by_parent(17)] == ["事实A"]
+
+    @pytest.mark.asyncio
+    async def test_rederive_skips_missing_canonical_source(
+        self, tmp_db_path: str
+    ) -> None:
+        """父 canonical 不存在时只跳过，残留行交由重建阶段清理。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A"])
+        await store.insert(_bound_atom("孤儿事实", memory_id=99, revision=""))
+        manager = AtomLifecycleManager(store, classifier=_FakeClassifier())
+
+        report = await manager.rederive_for_sources([99], "decay_deleted")
+
+        assert report["skipped"] == 1
+        assert report["failed"] == 0
+        assert len(await store.get_by_parent_raw(99)) == 1
+
+    @pytest.mark.asyncio
+    async def test_rederive_failure_isolated_and_counted(
+        self, tmp_db_path: str
+    ) -> None:
+        """单来源失败只计 failed/needs_repair，其它来源照常重派生。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A"])
+        await _write_canonical_document(tmp_db_path, 18, facts=["事实B"])
+        await store.insert(_bound_atom("事实A"))
+        await store.insert(_bound_atom("事实B", memory_id=18))
+        original_replace = store.replace_by_parent
+
+        async def failing_replace(parent_memory_id, atoms):
+            if parent_memory_id == 17:
+                raise RuntimeError("replace_failed")
+            return await original_replace(parent_memory_id, atoms)
+
+        store.replace_by_parent = failing_replace  # type: ignore[method-assign]
+        manager = AtomLifecycleManager(store, classifier=_FakeClassifier())
+
+        report = await manager.rederive_for_sources([17, 18], "rebuild_atoms")
+
+        assert report["failed"] == 1
+        assert report["needs_repair"] == 1
+        assert report["rederived"] == 1
+        assert [atom.content for atom in await store.get_by_parent(17)] == ["事实A"]
+        assert [atom.content for atom in await store.get_by_parent(18)] == ["事实B"]
+
+    @pytest.mark.asyncio
+    async def test_rederive_without_classifier_marks_needs_repair(
+        self, tmp_db_path: str
+    ) -> None:
+        """缺少分类端口时不猜测事实，整批标记 needs_repair。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A"])
+        await store.insert(_bound_atom("事实A"))
+        manager = AtomLifecycleManager(store)
+
+        report = await manager.rederive_for_sources([17], "rebuild_atoms")
+
+        assert report["failed"] == 1
+        assert report["needs_repair"] == 1
+        assert report["rederived"] == 0
+
+    @pytest.mark.asyncio
+    async def test_rederive_propagates_cancellation(self, tmp_db_path: str) -> None:
+        """替换过程中的取消继续传播，不降级成失败计数。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A"])
+        await store.insert(_bound_atom("事实A"))
+
+        async def cancelling_replace(parent_memory_id, atoms):
+            raise asyncio.CancelledError()
+
+        store.replace_by_parent = cancelling_replace  # type: ignore[method-assign]
+        manager = AtomLifecycleManager(store, classifier=_FakeClassifier())
+
+        with pytest.raises(asyncio.CancelledError):
+            await manager.rederive_for_sources([17], "rebuild_atoms")
+
+    @pytest.mark.asyncio
+    async def test_rederive_raises_when_canonical_unreadable(
+        self, tmp_db_path: str
+    ) -> None:
+        """无法读取 canonical 时整批上报批次级失败，不伪装成逐来源降级。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A"])
+        await store.insert(_bound_atom("事实A"))
+
+        async def failing_load(parent_ids):
+            raise RuntimeError("canonical_source_unavailable")
+
+        store.load_canonical_documents = failing_load  # type: ignore[method-assign]
+        manager = AtomLifecycleManager(store, classifier=_FakeClassifier())
+
+        with pytest.raises(RuntimeError, match="canonical_source_unavailable"):
+            await manager.rederive_for_sources([17], "rebuild_atoms")
+        assert [atom.content for atom in await store.get_by_parent(17)] == ["事实A"]

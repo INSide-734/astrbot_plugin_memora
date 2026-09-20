@@ -11,6 +11,11 @@ from ....platform.security.guardrails import (
     GraphExtractionResult,
     validate_llm_response,
 )
+from ...memory.application.fact_text_alignment import (
+    FactTextAlignment,
+    fact_in_content,
+    facts_aligned,
+)
 from ...memory.graph.domain.models import (
     ExtractedGraph,
     GraphBoundary,
@@ -38,8 +43,90 @@ from .atom_graph_extractor import (
 )
 from .atom_graph_extractor import (
     extract_graph_from_atoms,
+    filter_atoms_by_current_facts,
+    validate_atom_graph_sources,
 )
 from .entity_resolver import EntityResolver
+
+_FACT_TEXT_METADATA_KEYS = frozenset(
+    {"key_facts", "fact_source_evidence", "canonical_summary"}
+)
+
+
+def _fact_representation_recorded(facts: Any, evidence: Any) -> bool:
+    """判断 metadata 是否记录了需要准入判定的事实表示。
+
+    两条回落口径都只针对「已记录的事实表示」：完全没有 ``key_facts`` 与
+    ``fact_source_evidence`` 时没有可消费的事实文本，``canonical_summary``
+    只由自身规则判定，不按事实回落处理。
+    """
+
+    if isinstance(facts, list) and any(
+        isinstance(fact, str) and fact.strip() for fact in facts
+    ):
+        return True
+    return isinstance(evidence, list) and bool(evidence)
+
+
+def _fact_entries_admitted(content: str, facts: Any, evidence: Any) -> bool:
+    """判断记录的事实条目是否可进入事实消费（正文成员性 + 三态双口径）。
+
+    逐事实配对证据完整且条目仍属当前正文（``ALIGNED``）时可直接消费；配对证据
+    证明条目已失效（``MISALIGNED``）时禁止消费；缺 ``fact_source_evidence`` 的
+    历史行（``UNDETERMINABLE``）退回逐条正文成员性判定，每条 ``key_facts`` 文本
+    都出现在当前正文中才允许消费。
+    """
+
+    alignment = facts_aligned(content, facts, evidence)
+    if alignment is FactTextAlignment.ALIGNED:
+        return True
+    if alignment is FactTextAlignment.MISALIGNED:
+        return False
+    return (
+        isinstance(facts, list)
+        and bool(facts)
+        and all(fact_in_content(content, fact) for fact in facts)
+    )
+
+
+def _aligned_fact_metadata(
+    content: str, metadata: dict[str, Any] | None
+) -> dict[str, Any]:
+    """按「事实文本单 owner」回落与当前正文不一致的事实元数据。
+
+    事实元数据只有在条目仍出现在当前正文中时才参与图派生：
+
+    1. 记录过事实表示时按三态与正文成员性双重准入，任一条已不在正文中即整体
+       剥离（配对证据判定已失效同样剥离）；
+    2. ``canonical_summary`` 已不在正文中 → 只丢弃该摘要，改用 canonical 正文。
+
+    两条回落都不丢弃整条记忆：图仍按 canonical 正文派生，只在日志里留下计数
+    （不回显正文、事实或身份）。
+    """
+
+    if not isinstance(metadata, dict):
+        return {}
+    facts = metadata.get("key_facts")
+    evidence = metadata.get("fact_source_evidence")
+    if _fact_representation_recorded(facts, evidence) and not _fact_entries_admitted(
+        content, facts, evidence
+    ):
+        logger.warning(
+            "[图提取器] 事实元数据与当前正文不一致，按无事实元数据回落正文：facts=%d",
+            len(facts) if isinstance(facts, list) else 0,
+        )
+        return {
+            key: value
+            for key, value in metadata.items()
+            if key not in _FACT_TEXT_METADATA_KEYS
+        }
+    summary = metadata.get("canonical_summary")
+    if isinstance(summary, str) and summary and not fact_in_content(content, summary):
+        logger.debug("[图提取器] 事实摘要与当前正文不一致，改用 canonical 正文作摘要")
+        return {
+            key: value for key, value in metadata.items() if key != "canonical_summary"
+        }
+    return metadata
 
 
 class GraphExtractor:
@@ -65,12 +152,24 @@ class GraphExtractor:
         metadata: dict[str, Any] | None,
         atoms: list | None = None,
     ) -> ExtractedGraph:
-        """根据一条记忆文档构建图快照。"""
+        """根据一条记忆文档构建图快照。
+
+        消费事实元数据前先校验条目仍出现在当前正文中；不一致时按「无事实
+        元数据」回落 canonical 正文，不拒绝整条记忆。基于 Atom 构图时还要
+        逐条确认 Atom 内容仍属于当前 canonical 事实集合：残留 Atom 不产生
+        fact 节点/entry/边，全部残留时同样回落 canonical 正文派生。结构化图
+        载荷里的 fact 实体同样要求文本属于当前正文，残留事实不作为节点、entry
+        或关系端点。
+        """
+        metadata = _aligned_fact_metadata(content, metadata)
         GraphBoundary.from_metadata(metadata)
         if atoms:
+            validate_atom_graph_sources(source_memory_id, atoms, metadata)
+        kept_atoms = filter_atoms_by_current_facts(atoms, content, metadata)
+        if kept_atoms:
             return extract_graph_from_atoms(
                 source_memory_id,
-                atoms,
+                kept_atoms,
                 metadata,
                 temporal_edges_enabled=self.temporal_edges_enabled,
                 causal_edges_enabled=self.causal_edges_enabled,
@@ -207,10 +306,17 @@ class GraphExtractor:
                 )
             )
 
+        dropped_fact_names: set[str] = set()
         for entity in guarded.entities:
             name = str(entity.get("name", "")).strip()
             node_type = str(entity.get("type", "entity")).strip() or "entity"
             if not name:
+                continue
+            if node_type == "fact" and not fact_in_content(content, name):
+                # R4.3/D5：事实类型实体必须属于当前 canonical 正文——对齐事实的
+                # 准入条件就是条目出现在正文中。残留事实（结构化载荷里的旧事实）
+                # 不派生节点/entry，也不允许作为关系端点把旧事实带回图。
+                dropped_fact_names.add(name)
                 continue
             extra = {
                 key: value
@@ -230,11 +336,20 @@ class GraphExtractor:
                 confidence=_confidence(entity.get("confidence"), 0.7),
             )
 
+        if dropped_fact_names:
+            logger.debug(
+                "[图提取器] 结构化事实实体与当前正文不一致，按无事实回落：entities=%d",
+                len(dropped_fact_names),
+            )
+
         for relation in guarded.relations:
             source_name = str(relation.get("source", "")).strip()
             target_name = str(relation.get("target", "")).strip()
             relation_type = str(relation.get("relation", "")).strip()
             if not source_name or not target_name or not relation_type:
+                continue
+            if source_name in dropped_fact_names or target_name in dropped_fact_names:
+                # 端点是被剔除的残留事实：该关系同样由旧事实派生，不生成边与 entry。
                 continue
             source_key = name_to_key.get(source_name)
             if not source_key:

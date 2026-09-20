@@ -1,8 +1,10 @@
 """AtomStore 测试 — 插入、获取、生命周期、统计、FTS和清理。"""
 
 import asyncio
+import json
 import time
 
+import aiosqlite
 import pytest
 
 from core.features.memory.domain.memory_atom import AtomStatus, AtomType, MemoryAtom
@@ -11,7 +13,7 @@ from core.features.memory.infrastructure.write_op_serialization import (
     _deserialize_atom_from_repair,
     serialize_atom_for_repair,
 )
-from tests.fact_evidence_helpers import source_evidence
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
 
 
 def _make_atom(**overrides) -> MemoryAtom:
@@ -469,3 +471,195 @@ class TestAtomStoreEdgeCases:
         assert before <= fetched.last_accessed_at <= after
         assert fetched.expires_at > fetched.created_at
         assert fetched.ttl_days > 0
+
+
+async def _write_canonical_document(
+    db_path: str,
+    memory_id: int,
+    *,
+    revision: str = "rev-17",
+    status: str = "active",
+    facts: list[str] | None = None,
+    privacy_level: str = "shared",
+) -> None:
+    """写入 canonical 文档行，供父来源校验与事实集合使用。"""
+
+    metadata: dict[str, object] = {
+        "scope_key": "scope-a",
+        "privacy_level": privacy_level,
+        "session_id": "scope-a",
+        "persona_id": "persona-a",
+        "memory_status": status,
+    }
+    if facts:
+        metadata["key_facts"] = list(facts)
+        metadata["fact_source_evidence"] = fact_evidence(list(facts))
+    async with aiosqlite.connect(db_path) as db:
+        await db.execute(
+            """CREATE TABLE IF NOT EXISTS documents (
+                   id INTEGER PRIMARY KEY, text TEXT NOT NULL, metadata TEXT,
+                   created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+               )"""
+        )
+        await db.execute(
+            """INSERT OR REPLACE INTO documents
+               (id,text,metadata,created_at,updated_at) VALUES(?,?,?,?,?)""",
+            (
+                memory_id,
+                "；".join(facts) if facts else f"匿名正文-{memory_id}",
+                json.dumps(metadata, ensure_ascii=False),
+                "2026-07-21T00:00:00+00:00",
+                revision,
+            ),
+        )
+        await db.commit()
+
+
+def _bound_atom(content: str, *, memory_id: int = 17, revision: str = "rev-17"):
+    """构造已绑定当前父来源的 Atom。"""
+
+    return _make_atom(
+        content=content,
+        parent_memory_id=memory_id,
+        parent_revision=revision,
+        parent_scope_key="scope-a",
+        parent_privacy_level="shared",
+        session_id="scope-a",
+        persona_id="persona-a",
+    )
+
+
+class TestAtomStoreCurrentScopeCount:
+    """父 canonical 当前有效口径的 Atom 计数。"""
+
+    @pytest.mark.asyncio
+    async def test_count_current_atoms_ignores_stale_and_orphan_rows(
+        self, tmp_db_path
+    ) -> None:
+        """陈旧 revision 与无父来源的 Atom 不计入当前口径，原始计数保留。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, revision="rev-16")
+        await store.insert(_bound_atom("旧事实", revision="rev-16"))
+        await _write_canonical_document(tmp_db_path, 17, revision="rev-17")
+        await store.insert(_bound_atom("当前事实"))
+        # legacy 行允许写入无父来源的 Atom，公开读取与当前口径都不认它。
+        await store.insert(_make_atom(content="孤儿事实", parent_memory_id=99))
+
+        assert await store.count_atoms() == 3
+        assert await store.count_current_atoms() == 1
+
+    @pytest.mark.asyncio
+    async def test_count_current_atoms_ignores_non_recallable_parent(
+        self, tmp_db_path
+    ) -> None:
+        """父 canonical 归档后，其 Atom 不再计入当前口径。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17)
+        await store.insert(_bound_atom("当前事实"))
+        assert await store.count_current_atoms() == 1
+
+        await _write_canonical_document(tmp_db_path, 17, status="archived")
+
+        assert await store.count_current_atoms() == 0
+        assert await store.count_atoms() == 1
+
+    @pytest.mark.asyncio
+    async def test_current_scope_count_reads_canonical_documents(
+        self, tmp_db_path
+    ) -> None:
+        """canonical 读取端口返回正文与 metadata，供事实校验与重派生使用。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17, facts=["事实A", "事实B"])
+
+        documents = await store.load_canonical_documents([17, 18])
+
+        assert set(documents) == {17}
+        assert documents[17]["text"] == "事实A；事实B"
+        assert documents[17]["metadata"]["key_facts"] == ["事实A", "事实B"]
+        assert documents[17]["updated_at"] == "rev-17"
+
+
+class TestAtomStoreReplaceByParent:
+    """重派生使用的按父替换语义。"""
+
+    @pytest.mark.asyncio
+    async def test_replace_by_parent_swaps_rows_and_fts(self, tmp_db_path) -> None:
+        """替换后旧行与旧 FTS 都不再可见，新行获得新 ID。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17)
+        old_ids = await store.insert_many(
+            [_bound_atom("旧事实一"), _bound_atom("旧事实二")]
+        )
+
+        replacement = _bound_atom("新事实")
+        new_ids = await store.replace_by_parent(17, [replacement])
+
+        assert len(new_ids) == 1
+        assert replacement.atom_id == new_ids[0]
+        assert set(old_ids).isdisjoint(new_ids)
+        contents = [atom.content for atom in await store.get_by_parent(17)]
+        assert contents == ["新事实"]
+        assert await store.search_fts("旧事实一") == []
+
+    @pytest.mark.asyncio
+    async def test_replace_by_parent_cancellation_keeps_previous_rows(
+        self, tmp_db_path
+    ) -> None:
+        """替换中途取消必须回滚，保留原有行且不留下已分配 ID。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17)
+        await store.insert(_bound_atom("原有事实"))
+
+        replacement = _bound_atom("新事实")
+        original_insert = store._insert_atom
+
+        async def cancelling_insert(db, atom):
+            raise asyncio.CancelledError()
+
+        store._insert_atom = cancelling_insert  # type: ignore[method-assign]
+        with pytest.raises(asyncio.CancelledError):
+            await store.replace_by_parent(17, [replacement])
+        store._insert_atom = original_insert  # type: ignore[method-assign]
+
+        assert replacement.atom_id == 0
+        contents = [atom.content for atom in await store.get_by_parent(17)]
+        assert contents == ["原有事实"]
+
+    @pytest.mark.asyncio
+    async def test_replace_by_parent_rejects_foreign_atom(self, tmp_db_path) -> None:
+        """父 ID 不一致的 Atom 不允许借替换写入其它父来源。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17)
+        await store.insert(_bound_atom("原有事实"))
+
+        with pytest.raises(ValueError, match="atom_parent_mismatch"):
+            await store.replace_by_parent(17, [_bound_atom("越权事实", memory_id=18)])
+
+        contents = [atom.content for atom in await store.get_by_parent(17)]
+        assert contents == ["原有事实"]
+
+    @pytest.mark.asyncio
+    async def test_list_parent_ids_returns_distinct_sources(self, tmp_db_path) -> None:
+        """残留枚举只返回持有 Atom 行的不同父来源。"""
+
+        store = AtomStore(tmp_db_path)
+        await store.initialize()
+        await _write_canonical_document(tmp_db_path, 17)
+        await store.insert_many(
+            [_bound_atom("事实一"), _bound_atom("事实二"), _bound_atom("事实三")]
+        )
+        await store.insert(_make_atom(content="孤儿事实", parent_memory_id=99))
+
+        assert await store.list_parent_ids() == [17, 99]

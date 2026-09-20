@@ -5,6 +5,7 @@
 
 import asyncio
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -556,12 +557,19 @@ class VectorRetriever:
         content: str,
         metadata: dict[str, Any],
         expected_revision: str,
+        *,
+        drop_metadata_keys: Sequence[str] = (),
     ) -> bool:
         """在 canonical 写锁内原子替换正文、metadata，并刷新派生向量。
 
         canonical 正文/metadata/FTS 在同一 SQLite 事务内提交；FAISS 向量
         刷新在提交后单独执行，失败只记录日志，不回滚 canonical。CAS、
         commit 与刷新共用进程内写锁，避免并发更新时旧向量倒写。
+
+        metadata 写入是键级合并，无法用缺省表达删除：``drop_metadata_keys``
+        在同一个事务内移除这些键，供上层清理与新正文矛盾的字段（如事实文本
+        单 owner 的旧 ``key_facts``/``fact_source_evidence``）。缺省参数保持
+        既有调用形状。
         """
 
         if not self.backend_capabilities.supports(AdapterCapability.UPDATE):
@@ -626,6 +634,8 @@ class VectorRetriever:
                     if not isinstance(current_metadata, dict):
                         current_metadata = {}
                     current_metadata.update(metadata)
+                    for key in drop_metadata_keys:
+                        current_metadata.pop(key, None)
                     updated_at = datetime.now(timezone.utc).isoformat()
 
                     delete_fts = getattr(doc_storage, "_delete_fts_row", None)

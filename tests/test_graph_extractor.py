@@ -8,6 +8,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from core.features.memory.graph.domain.models import GraphBoundary
+from core.features.recall.processors.atom_graph_extractor import (
+    filter_atoms_by_current_facts,
+)
 from core.features.recall.processors.graph_extractor import (
     CAUSAL_CAUSED_BY,
     CAUSAL_PREVENTS,
@@ -17,7 +20,7 @@ from core.features.recall.processors.graph_extractor import (
     TEMPORAL_DURING,
     GraphExtractor,
 )
-from tests.fact_evidence_helpers import source_evidence
+from tests.fact_evidence_helpers import fact_evidence, source_evidence
 
 BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
@@ -32,6 +35,27 @@ def _atom() -> MagicMock:
     )
 
 
+def _canonical_atom_source(atoms: list, **extra: object) -> tuple[str, dict]:
+    """用 Atom 内容构造当前 canonical 的正文与事实元数据。
+
+    Atom 路径只消费事实仍属于当前 canonical 的 Atom，因此测试必须提供与正文
+    对齐的 ``key_facts``/``fact_source_evidence``；空内容 Atom 不进入事实集合。
+    """
+
+    facts = [
+        atom.content
+        for atom in atoms
+        if isinstance(getattr(atom, "content", None), str) and atom.content
+    ]
+    metadata = {
+        **BOUNDARY.as_params(),
+        "key_facts": facts,
+        "fact_source_evidence": fact_evidence(facts),
+        **extra,
+    }
+    return "；".join(facts), metadata
+
+
 class TestGraphExtractorLegacy:
     """Graph extraction from metadata (backward-compatible path)."""
 
@@ -42,7 +66,7 @@ class TestGraphExtractorLegacy:
     def test_fact_nodes_created(self, extractor: GraphExtractor) -> None:
         graph = extractor.extract(
             source_memory_id=1,
-            content="fallback",
+            content="正文记录了事实A与事实B",
             metadata={**BOUNDARY.as_params(), "key_facts": ["事实A", "事实B"]},
         )
         fact_nodes = [n for n in graph.nodes if n.node_type == "fact"]
@@ -193,7 +217,7 @@ class TestGraphExtractorLegacy:
     ) -> None:
         graph = extractor.extract(
             source_memory_id=1,
-            content="fallback content",
+            content="fallback content fallback fact",
             metadata={
                 **BOUNDARY.as_params(),
                 "graph_extraction": {
@@ -252,10 +276,11 @@ class TestGraphExtractorAtoms:
     def test_extract_from_atoms(
         self, extractor: GraphExtractor, sample_atoms: list
     ) -> None:
+        content, metadata = _canonical_atom_source(sample_atoms)
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=sample_atoms,
         )
         assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
@@ -277,8 +302,9 @@ class TestGraphExtractorAtoms:
         atom.created_at = 1700000000.0
         atom.event_time = 1699900000.0
 
+        content, metadata = _canonical_atom_source([atom])
         graph = extractor.extract(
-            source_memory_id=1, content="", metadata=BOUNDARY.as_params(), atoms=[atom]
+            source_memory_id=1, content=content, metadata=metadata, atoms=[atom]
         )
 
         timed_entries = [
@@ -293,21 +319,38 @@ class TestGraphExtractorAtoms:
         )
 
     def test_atom_without_content_skipped(self, extractor: GraphExtractor) -> None:
-        atom = _atom()
-        atom.content = ""
-        atom.confidence = 0.5
-        atom.session_id = None
-        atom.persona_id = None
-        atom.entities = []
-        atom.atom_type = MagicMock()
-        atom.atom_type.value = "unknown"
-        atom.importance = 0.5
-        atom.ttl_days = 1.0
+        empty = _atom()
+        empty.content = ""
+        empty.confidence = 0.5
+        empty.session_id = None
+        empty.persona_id = None
+        empty.entities = []
+        empty.atom_type = MagicMock()
+        empty.atom_type.value = "unknown"
+        empty.importance = 0.5
+        empty.ttl_days = 1.0
 
+        valid = _atom()
+        valid.content = "有效事实"
+        valid.confidence = 0.8
+        valid.session_id = "s1"
+        valid.persona_id = None
+        valid.entities = []
+        valid.atom_type = MagicMock()
+        valid.atom_type.value = "FACTUAL"
+        valid.importance = 0.5
+        valid.ttl_days = 30.0
+
+        content, metadata = _canonical_atom_source([valid])
         graph = extractor.extract(
-            source_memory_id=1, content="", metadata=BOUNDARY.as_params(), atoms=[atom]
+            source_memory_id=1,
+            content=content,
+            metadata=metadata,
+            atoms=[empty, valid],
         )
-        assert len(graph.entries) == 0
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            "有效事实"
+        }
 
     def test_atom_with_entities(self, extractor: GraphExtractor) -> None:
         atom = _atom()
@@ -321,8 +364,9 @@ class TestGraphExtractorAtoms:
         atom.importance = 0.5
         atom.ttl_days = 30.0
 
+        content, metadata = _canonical_atom_source([atom])
         graph = extractor.extract(
-            source_memory_id=1, content="", metadata=BOUNDARY.as_params(), atoms=[atom]
+            source_memory_id=1, content=content, metadata=metadata, atoms=[atom]
         )
         topic_nodes = [n for n in graph.nodes if n.node_type == "topic"]
         assert len(topic_nodes) >= 2
@@ -345,10 +389,11 @@ class TestGraphExtractorAtoms:
         atom.created_at = None
         atom.event_time = None
 
+        content, metadata = _canonical_atom_source([atom], participants=["QQ:10001"])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata={**BOUNDARY.as_params(), "participants": ["QQ:10001"]},
+            content=content,
+            metadata=metadata,
             atoms=[atom],
         )
 
@@ -372,10 +417,11 @@ class TestTemporalEdges:
         atom_b.event_time = now - 3600  # 1 hour later
 
         extractor = GraphExtractor(config={"graph_memory.temporal_edges_enabled": True})
+        content, metadata = _canonical_atom_source([atom_a, atom_b])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom_a, atom_b],
         )
         temporal_edges = [
@@ -395,10 +441,11 @@ class TestTemporalEdges:
         atom_b.event_time = now + 1800  # 30 min later = DURING
 
         extractor = GraphExtractor(config={"graph_memory.temporal_edges_enabled": True})
+        content, metadata = _canonical_atom_source([atom_a, atom_b])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom_a, atom_b],
         )
         during_edges = [e for e in graph.edges if e.relation_type == TEMPORAL_DURING]
@@ -410,10 +457,11 @@ class TestTemporalEdges:
         atom.event_time = time.time()
 
         extractor = GraphExtractor(config={"graph_memory.temporal_edges_enabled": True})
+        content, metadata = _canonical_atom_source([atom])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom],
         )
         temporal_edges = [
@@ -435,10 +483,11 @@ class TestTemporalEdges:
         extractor = GraphExtractor(
             config={"graph_memory.temporal_edges_enabled": False}
         )
+        content, metadata = _canonical_atom_source([atom_a, atom_b])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom_a, atom_b],
         )
         temporal_edges = [
@@ -462,10 +511,11 @@ class TestCausalEdges:
         atom_b = _atom()
         atom_b.content = "因此我们迟到了"
 
+        content, metadata = _canonical_atom_source([atom_a, atom_b])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
@@ -481,10 +531,11 @@ class TestCausalEdges:
         atom_b = _atom()
         atom_b.content = "导致我们取消计划"
 
+        content, metadata = _canonical_atom_source([atom_a, atom_b])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
@@ -500,10 +551,11 @@ class TestCausalEdges:
         atom_b = _atom()
         atom_b.content = "避免错误发生"
 
+        content, metadata = _canonical_atom_source([atom_a, atom_b])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
@@ -517,10 +569,11 @@ class TestCausalEdges:
         atom = _atom()
         atom.content = "因为下雨所以没去"
 
+        content, metadata = _canonical_atom_source([atom])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom],
         )
         causal_edges = [
@@ -537,10 +590,11 @@ class TestCausalEdges:
         atom_b = _atom()
         atom_b.content = "因此需要解决"
 
+        content, metadata = _canonical_atom_source([atom_a, atom_b])
         graph = extractor.extract(
             source_memory_id=1,
-            content="",
-            metadata=BOUNDARY.as_params(),
+            content=content,
+            metadata=metadata,
             atoms=[atom_a, atom_b],
         )
         causal_edges = [
@@ -549,6 +603,293 @@ class TestCausalEdges:
             if e.relation_type in (CAUSAL_CAUSED_BY, CAUSAL_RESULTS_IN, CAUSAL_PREVENTS)
         ]
         assert len(causal_edges) == 0
+
+
+class TestGraphExtractorAtomFactBoundary:
+    """canonical 事实集合边界：残留 Atom 不得进入图 fact 派生。"""
+
+    @pytest.fixture
+    def extractor(self) -> GraphExtractor:
+        return GraphExtractor(
+            config={
+                "graph_memory.temporal_edges_enabled": True,
+                "graph_memory.causal_edges_enabled": True,
+            }
+        )
+
+    def test_stale_atom_is_excluded_from_fact_derivation(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """事实已不在当前 canonical 的 Atom 不产生节点、entry 或边。"""
+
+        stale = _atom()
+        stale.content = "已删除的旧事实"
+        stale.entities = ["旧主题"]
+        stale.confidence = 0.8
+        stale.atom_type = "FACTUAL"
+        current = _atom()
+        current.content = "保留的当前事实"
+        current.entities = []
+        current.confidence = 0.8
+        current.atom_type = "FACTUAL"
+
+        content, metadata = _canonical_atom_source([current])
+        graph = extractor.extract(
+            source_memory_id=1,
+            content=content,
+            metadata=metadata,
+            atoms=[stale, current],
+        )
+
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            "保留的当前事实"
+        }
+        assert not any(node.value == "旧主题" for node in graph.nodes)
+        assert all("已删除的旧事实" not in entry.content for entry in graph.entries)
+        assert all("已删除的旧事实" not in str(edge.metadata) for edge in graph.edges)
+
+    def test_all_stale_atoms_fall_back_to_current_canonical(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """全部 Atom 都失效时回落 canonical 正文派生，不写入残留内容。"""
+
+        stale = _atom()
+        stale.content = "已删除的旧事实"
+        stale.atom_type = "FACTUAL"
+        current = _atom()
+        current.content = "保留的当前事实"
+        current.atom_type = "FACTUAL"
+
+        content, metadata = _canonical_atom_source([current])
+        graph = extractor.extract(
+            source_memory_id=1,
+            content=content,
+            metadata=metadata,
+            atoms=[stale],
+        )
+
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            "保留的当前事实"
+        }
+        assert all("已删除的旧事实" not in entry.content for entry in graph.entries)
+
+    def test_atoms_are_not_consumed_without_aligned_fact_metadata(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """事实表示不可判定时不消费 Atom，按无事实元数据回落正文。"""
+
+        atom = _atom()
+        atom.content = "Atom 独有事实"
+        atom.atom_type = "FACTUAL"
+
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="当前 canonical 正文",
+            metadata=BOUNDARY.as_params(),
+            atoms=[atom],
+        )
+
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            "当前 canonical 正文"
+        }
+        assert all("Atom 独有事实" not in entry.content for entry in graph.entries)
+
+    def test_unpaired_fact_metadata_is_stripped_when_fact_left_body(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """缺逐事实配对证据的历史行仍按正文成员性准入：旧事实不在正文即剥离。"""
+
+        atom = _atom()
+        atom.content = "旧事实"
+        atom.atom_type = "FACTUAL"
+
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="新正文",
+            metadata={**BOUNDARY.as_params(), "key_facts": ["旧事实"]},
+            atoms=[atom],
+        )
+
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            "新正文"
+        }
+        assert all("旧事实" not in entry.content for entry in graph.entries)
+        assert all("旧事实" not in str(edge.metadata) for edge in graph.edges)
+
+    def test_unpaired_fact_metadata_is_stripped_on_partial_membership(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """历史行的事实只要有一条已不在正文中，整个事实表示都不参与消费。"""
+
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="新正文仍保留有效事实",
+            metadata={**BOUNDARY.as_params(), "key_facts": ["旧事实", "有效事实"]},
+        )
+
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            "新正文仍保留有效事实"
+        }
+        assert all("旧事实" not in entry.content for entry in graph.entries)
+
+    def test_unpaired_fact_metadata_still_derives_when_facts_in_body(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """历史行的事实仍在当前正文中时保持既有 fact 派生，不误伤合法来源。"""
+
+        atom = _atom()
+        atom.content = "旧事实"
+        atom.atom_type = "FACTUAL"
+
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="新正文里的旧事实仍然有效",
+            metadata={**BOUNDARY.as_params(), "key_facts": ["旧事实"]},
+            atoms=[atom],
+        )
+
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            "旧事实"
+        }
+        assert any("旧事实" in entry.content for entry in graph.entries)
+
+    def test_filter_keeps_only_entries_in_current_fact_set(self) -> None:
+        """过滤函数按规范化条目保留对齐 Atom，缺事实表示时全部丢弃。"""
+
+        stale = _atom()
+        stale.content = "旧事实"
+        current = _atom()
+        current.content = "当前事实"
+        content, metadata = _canonical_atom_source([current])
+
+        assert filter_atoms_by_current_facts([stale, current], content, metadata) == [
+            current
+        ]
+        assert filter_atoms_by_current_facts([stale, current], content, {}) == []
+        assert filter_atoms_by_current_facts([], content, metadata) == []
+
+
+class TestGraphExtractorStructuredFactBoundary:
+    """结构化图载荷的事实准入：残留 fact 实体不得进入图派生。"""
+
+    @pytest.fixture
+    def extractor(self) -> GraphExtractor:
+        return GraphExtractor()
+
+    def test_stale_fact_entities_fall_back_to_current_body(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """结构化载荷里的旧事实实体不产生节点/entry/边，回落当前正文派生。"""
+
+        stale = "用户已经搬到上海"
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="用户现在住在杭州",
+            metadata={
+                **BOUNDARY.as_params(),
+                "key_facts": [stale],
+                "fact_source_evidence": fact_evidence([stale]),
+                "canonical_summary": stale,
+                "graph_extraction": {
+                    "entities": [{"name": stale, "type": "fact"}],
+                    "relations": [
+                        {
+                            "source": stale,
+                            "target": "杭州",
+                            "relation": "located_in",
+                        }
+                    ],
+                },
+            },
+        )
+
+        assert not any(node.value == stale for node in graph.nodes)
+        assert all(stale not in entry.content for entry in graph.entries)
+        # 全部结构化实体都被剔除时回落当前 canonical 正文派生：回落路径可观察。
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            "用户现在住在杭州"
+        }
+
+    def test_aligned_fact_entities_still_derive(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """与正文对齐的 fact 实体照常派生节点与 entry。"""
+
+        fact = "用户现在住在杭州"
+        graph = extractor.extract(
+            source_memory_id=1,
+            content=fact,
+            metadata={
+                **BOUNDARY.as_params(),
+                "key_facts": [fact],
+                "fact_source_evidence": fact_evidence([fact]),
+                "graph_extraction": {
+                    "entities": [{"name": fact, "type": "fact"}],
+                    "relations": [],
+                },
+            },
+        )
+
+        assert any(
+            node.value == fact and node.node_type == "fact" for node in graph.nodes
+        )
+        assert any(fact in entry.content for entry in graph.entries)
+
+    def test_relations_to_dropped_facts_are_not_rebuilt(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """被剔除的残留事实不得经关系端点重新变成节点或边。"""
+
+        stale = "用户已经搬到上海"
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="用户现在住在杭州",
+            metadata={
+                **BOUNDARY.as_params(),
+                "graph_extraction": {
+                    "entities": [
+                        {"name": stale, "type": "fact"},
+                        {"name": "杭州", "type": "location"},
+                    ],
+                    "relations": [
+                        {
+                            "source": stale,
+                            "target": "杭州",
+                            "relation": "located_in",
+                        },
+                        {
+                            "source": "杭州",
+                            "target": "用户现在住在杭州",
+                            "relation": "describes",
+                        },
+                    ],
+                },
+            },
+        )
+
+        assert not any(node.value == stale for node in graph.nodes)
+        assert all(stale not in entry.content for entry in graph.entries)
+        assert [edge.relation_type for edge in graph.edges] == ["describes"]
+
+    def test_non_fact_entities_are_not_filtered_by_content(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """person/topic 等非事实实体行为不变，仍按结构化载荷派生。"""
+
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="正文不含该名字",
+            metadata={
+                **BOUNDARY.as_params(),
+                "graph_extraction": {
+                    "entities": [{"name": "Alice", "type": "person"}],
+                    "relations": [],
+                },
+            },
+        )
+
+        assert any(node.value == "Alice" for node in graph.nodes)
+        assert any("Alice" in entry.content for entry in graph.entries)
 
 
 @pytest.mark.parametrize(

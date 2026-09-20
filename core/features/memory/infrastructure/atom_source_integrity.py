@@ -7,11 +7,70 @@ from typing import Any
 
 import aiosqlite
 
+from ..application.fact_text_alignment import (
+    FactTextAlignment,
+    facts_aligned,
+    normalize_fact,
+)
 from ..domain.memory_atom import MemoryAtom, has_user_source_evidence
 from .canonical_source_validation import (
     load_canonical_source_states,
     source_matches_state,
 )
+
+
+def current_canonical_facts(content: Any, metadata: Any) -> dict[str, str]:
+    """返回当前 canonical 仍对齐的事实集合：规范化条目 → 条目原文。
+
+    事实表示（``key_facts`` + ``fact_source_evidence``）必须与当前正文一致才
+    可用；缺失、结构不完整或条目已不在正文中时返回空映射，调用方按「无事实
+    元数据」处理，不得消费残留事实。``metadata`` 接受字典或 JSON 字符串。
+    """
+
+    parsed = _metadata_dict(metadata)
+    facts = parsed.get("key_facts")
+    if not isinstance(facts, list) or (
+        facts_aligned(content, facts, parsed.get("fact_source_evidence"))
+        is not FactTextAlignment.ALIGNED
+    ):
+        return {}
+    lookup: dict[str, str] = {}
+    for fact in facts:
+        normalized = normalize_fact(fact)
+        if normalized:
+            lookup.setdefault(normalized, fact)
+    return lookup
+
+
+async def load_canonical_documents(
+    db: aiosqlite.Connection,
+    source_ids: tuple[int, ...],
+) -> dict[int, dict[str, Any]]:
+    """读取父 canonical 行（正文、metadata 与时间字段），供事实校验与重派生使用。"""
+
+    if not source_ids:
+        return {}
+    placeholders = ",".join("?" for _ in source_ids)
+    try:
+        cursor = await db.execute(
+            "SELECT id, text, metadata, created_at, updated_at FROM documents "
+            f"WHERE id IN ({placeholders})",
+            source_ids,
+        )
+        rows = await cursor.fetchall()
+    except aiosqlite.OperationalError as exc:
+        raise RuntimeError("canonical_source_unavailable") from exc
+
+    documents: dict[int, dict[str, Any]] = {}
+    for row in rows:
+        documents[int(row[0])] = {
+            "id": int(row[0]),
+            "text": row[1],
+            "metadata": _metadata_dict(row[2]),
+            "created_at": row[3],
+            "updated_at": row[4],
+        }
+    return documents
 
 
 async def validate_atom_parent_sources(
@@ -138,4 +197,9 @@ async def _documents_table_exists(db: aiosqlite.Connection) -> bool:
     return await cursor.fetchone() is not None
 
 
-__all__ = ["filter_atoms_by_current_sources", "validate_atom_parent_sources"]
+__all__ = [
+    "current_canonical_facts",
+    "filter_atoms_by_current_sources",
+    "load_canonical_documents",
+    "validate_atom_parent_sources",
+]

@@ -10,8 +10,15 @@ from typing import Any, TypeVar
 
 from astrbot.api import logger
 
+from ....shared.memory_status import is_memory_recallable
+from ...memory.application.fact_text_alignment import normalize_fact
 from ...memory.application.retrieval_timing import RetrievalTimingSink
 from ...memory.graph.domain.models import GraphQueryScope
+from ...memory.infrastructure.atom_source_integrity import (
+    _metadata_dict,
+    current_canonical_facts,
+)
+from ...quality.application.gate_disposition_filter import is_mark_write
 from ...retrieval.rrf_fusion import HybridResult
 
 T = TypeVar("T")
@@ -152,8 +159,24 @@ class AuxiliaryRecall:
             )
             if not planned_atoms:
                 return []
+            facts_by_parent = await _await_with_deadline(
+                lambda: self._load_parent_facts(
+                    planned_atoms,
+                    session_id=session_id,
+                    persona_id=persona_id,
+                    chat_type=chat_type,
+                ),
+                deadline_monotonic,
+            )
+            if facts_by_parent is None:
+                return []
             results: list[HybridResult] = []
             for atom in planned_atoms:
+                fact_text = self._current_fact_text(atom, facts_by_parent)
+                if not fact_text:
+                    # 父 canonical 已改写或事实表示不可判定：丢弃该信号，
+                    # 模型可见正文只允许来自 canonical 事实。
+                    continue
                 metadata = atom.metadata or {}
                 metadata["recall_source"] = "prospective"
                 metadata["atom_type"] = "planned"
@@ -165,7 +188,7 @@ class AuxiliaryRecall:
                         rrf_score=0.9,
                         bm25_score=None,
                         vector_score=None,
-                        content=f"[待办] {atom.content}",
+                        content=f"[待办] {fact_text}",
                         metadata=metadata,
                     )
                 )
@@ -175,6 +198,104 @@ class AuxiliaryRecall:
         except Exception:
             logger.debug("前瞻记忆扫描失败", exc_info=True)
             return []
+
+    async def _load_parent_facts(
+        self,
+        atoms: list[Any],
+        *,
+        session_id: str | None = None,
+        persona_id: str | None = None,
+        chat_type: str | None = None,
+    ) -> dict[int, dict[str, str]]:
+        """批量读取这些 Atom 的父 canonical 事实集合，并复核当前可读边界。
+
+        每个父记忆读取一次 canonical 详情；**读取时**还要按当前 canonical 状态
+        复核一次可读性，闭合「查询与加载之间父被归档/删除/改写/换作用域」的
+        TOCTOU 窗口（``get_memory`` 是裸 ID 读取，本身没有状态门）：
+
+        1. 父行缺失或 metadata 不可解析 → 丢弃；
+        2. ``is_memory_recallable`` 为假（归档、休眠、删除、总结来源 orphan 与
+           未知状态；``replacement_pending`` 暂态行按 ``deleted`` 状态写入，
+           同属不可召回）→ 丢弃；
+        3. ``is_mark_write`` 暂态行 → 丢弃；
+        4. 行声明了 session/persona 且与本次请求冲突 → 丢弃；群聊丢弃
+           ``confidential`` 父行（缺字段按既有口径视为 ``shared``）；
+        5. 事实表示仍须与当前正文对齐（``current_canonical_facts``，沿用事实
+           文本单 owner 判定）。
+
+        任一不满足只丢弃该父来源并留 debug 计数（不回显正文/事实/身份），
+        由 ``_current_fact_text`` 判为不可注入。
+        """
+
+        facts_by_parent: dict[int, dict[str, str]] = {}
+        dropped = 0
+        for memory_id in sorted(
+            {int(getattr(atom, "parent_memory_id", 0) or 0) for atom in atoms}
+        ):
+            if memory_id <= 0:
+                continue
+            document = await self._memory_engine.get_memory(memory_id)
+            metadata = _metadata_dict((document or {}).get("metadata"))
+            if not document or not self._parent_readable_now(
+                metadata,
+                session_id=session_id,
+                persona_id=persona_id,
+                chat_type=chat_type,
+            ):
+                dropped += 1
+                continue
+            facts_by_parent[memory_id] = current_canonical_facts(
+                document.get("text"),
+                metadata,
+            )
+        if dropped:
+            logger.debug("[前瞻召回] 丢弃不可读父来源：count=%d", dropped)
+        return facts_by_parent
+
+    @staticmethod
+    def _parent_readable_now(
+        metadata: dict[str, Any],
+        *,
+        session_id: str | None,
+        persona_id: str | None,
+        chat_type: str | None,
+    ) -> bool:
+        """按当前 canonical 状态与本次请求边界判断父来源是否可读。
+
+        复用既有判定口径：``is_memory_recallable`` 与 ``is_mark_write``；再按请求
+        的 session/persona 与群聊隐私口径过滤。行未声明 session/persona 时按
+        「无冲突」处理：既不放行明确冲突的行，也不误杀未声明作用域的旧行。
+        """
+
+        if not is_memory_recallable(metadata) or is_mark_write(metadata):
+            return False
+        row_session = metadata.get("session_id")
+        if session_id is not None and row_session is not None:
+            if str(row_session) != session_id:
+                return False
+        row_persona = metadata.get("persona_id")
+        if persona_id is not None and row_persona is not None:
+            if str(row_persona) != persona_id:
+                return False
+        if chat_type == "group" and metadata.get("privacy_level", "shared") == (
+            "confidential"
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _current_fact_text(
+        atom: Any, facts_by_parent: dict[int, dict[str, str]]
+    ) -> str:
+        """返回 Atom 内容对应的当前 canonical 事实原文；不满足校验时返回空串。"""
+
+        lookup = facts_by_parent.get(int(getattr(atom, "parent_memory_id", 0) or 0))
+        if not lookup:
+            return ""
+        content = getattr(atom, "content", "")
+        if not isinstance(content, str):
+            return ""
+        return lookup.get(normalize_fact(content), "")
 
 
 def _deadline_exhausted(deadline_monotonic: float | None) -> bool:

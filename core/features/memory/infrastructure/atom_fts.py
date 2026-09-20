@@ -40,7 +40,13 @@ class AtomFTSMixin:
         persona_id: str | None = None,
         include_expired: bool = False,
     ) -> list[MemoryAtom]:
-        """检索原子内容，并返回结合时间分数排序的结果。"""
+        """检索原子内容，并返回结合时间分数排序的结果。
+
+        维护用途：本接口不校验父 canonical 来源，生产读取路径（AtomRetriever、
+        前瞻查询）必须走 Store 的父来源校验入口；直接消费本接口的调用方需自行
+        完成 ``filter_current_sources`` 等来源门。``include_expired=True`` 取消
+        全部 Atom 状态条件（不只是放行 ``expired``），仅供维护与强化使用。
+        """
         # 用户文本一律作为双引号短语进入 FTS5，避免污染 MATCH 语法位置
         fts_query = _build_match_expression(query)
         if fts_query is None:
@@ -150,6 +156,12 @@ class AtomFTSMixin:
         atom_types: list[str] | None = None,
         include_expired: bool = False,
     ) -> list[MemoryAtom]:
+        """按 Atom 类型检索原子，供维护与诊断使用。
+
+        与 ``search_fts`` 同一维护边界：不校验父 canonical 来源，当前没有生产
+        召回消费者；新增生产消费者前必须补来源门并通过评审。``include_expired``
+        为真时取消全部 Atom 状态条件。
+        """
         # 用户文本一律作为双引号短语进入 FTS5，避免污染 MATCH 语法位置；
         # 无可用片段时退化为「无查询」分支，按类型返回。
         fts_query = _build_match_expression(query) or ""
