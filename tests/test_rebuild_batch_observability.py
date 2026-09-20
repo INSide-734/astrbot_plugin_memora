@@ -311,3 +311,146 @@ async def test_coordinator_publishes_cancelled_stage_before_propagating() -> Non
     assert snapshot["stages"]["indexes"]["status"] == "cancelled"
     assert snapshot["stages"]["rebuild"]["status"] == "cancelled"
     engine.rebuild_graph_index.assert_not_awaited()
+
+
+def _subset_coordinator() -> tuple[
+    DerivedRebuildCoordinator, SimpleNamespace, list[str]
+]:
+    """构造记录阶段调用顺序的协调器替身，canonical 计数始终可读。"""
+
+    order: list[str] = []
+
+    async def _rebuild_indexes(_engine) -> dict:
+        order.append("indexes")
+        return {"success": True}
+
+    async def _rebuild_graph() -> dict:
+        order.append("graph")
+        return {"success": True}
+
+    async def _rebuild_notes() -> dict:
+        order.append("notes")
+        return {"success": True}
+
+    validator = SimpleNamespace(
+        _get_document_count=AsyncMock(return_value=3),
+        rebuild_indexes=AsyncMock(side_effect=_rebuild_indexes),
+    )
+    engine = SimpleNamespace(
+        rebuild_graph_index=AsyncMock(side_effect=_rebuild_graph),
+        note_proposal_pipeline=SimpleNamespace(
+            rebuild_from_canonical=AsyncMock(side_effect=_rebuild_notes)
+        ),
+    )
+    return DerivedRebuildCoordinator(validator, engine), validator, order
+
+
+@pytest.mark.asyncio
+async def test_rebuild_stages_runs_only_requested_subset_in_fixed_order() -> None:
+    """阶段子集只执行被请求的阶段，并保持固定相对顺序。"""
+
+    coordinator, validator, order = _subset_coordinator()
+
+    result = await coordinator.rebuild_stages(["graph", "indexes"])
+
+    assert order == ["indexes", "graph"]
+    assert result["success"] is True
+    assert list(result["stages"]) == ["indexes", "graph"]
+    assert result["stages"]["indexes"]["status"] == "completed"
+    assert result["canonical"]["documents"] == 3
+    validator._get_document_count.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_rebuild_stages_skips_unrequested_derived_work() -> None:
+    """单阶段请求不得触发未请求的重建入口。"""
+
+    coordinator, validator, order = _subset_coordinator()
+
+    result = await coordinator.rebuild_stages(["graph"])
+
+    assert order == ["graph"]
+    assert result["success"] is True
+    validator.rebuild_indexes.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rebuild_stages_reports_atoms_unavailable_between_catalog_and_graph() -> (
+    None
+):
+    """未装配 Atom 组件的 atoms 阶段按跳过标注，位置保持在 catalog 与 graph 之间。"""
+
+    coordinator, _validator, order = _subset_coordinator()
+
+    result = await coordinator.rebuild_stages(["indexes", "atoms", "graph"])
+
+    assert order == ["indexes", "graph"]
+    assert list(result["stages"]) == ["indexes", "atoms", "graph"]
+    assert result["stages"]["atoms"] == {
+        "status": "skipped",
+        "success": True,
+        "reason_code": "atoms_rebuild_unavailable",
+        "duration_seconds": 0.0,
+    }
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_rebuild_stages_rejects_unknown_stage_without_running_work() -> None:
+    """未知阶段名返回稳定降级结果，不读取 canonical，也不执行任何阶段。"""
+
+    coordinator, validator, order = _subset_coordinator()
+
+    result = await coordinator.rebuild_stages(["indexes", "no_such_stage"])
+
+    assert order == []
+    assert result["success"] is False
+    assert result["degraded"] is True
+    assert result["reason_code"] == "rebuild_stage_unknown"
+    assert result["stages"] == {}
+    validator._get_document_count.assert_not_awaited()
+    validator.rebuild_indexes.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_rebuild_stages_keeps_indexes_consistent_skip_semantics() -> None:
+    """rebuild_indexes=False 时 indexes 阶段保持既有 skipped 语义。"""
+
+    coordinator, validator, order = _subset_coordinator()
+
+    result = await coordinator.rebuild_stages(
+        ["indexes", "graph"], rebuild_indexes=False
+    )
+
+    assert order == ["graph"]
+    assert result["stages"]["indexes"] == {
+        "status": "skipped",
+        "success": True,
+        "reason_code": "indexes_consistent",
+        "duration_seconds": 0.0,
+    }
+    validator.rebuild_indexes.assert_not_awaited()
+
+
+def test_stage_result_projects_existing_single_stage_fields() -> None:
+    """stage_result 保持命令/API 依赖的既有单阶段字段。"""
+
+    validator = SimpleNamespace(_get_document_count=AsyncMock(return_value=0))
+    coordinator = DerivedRebuildCoordinator(validator, SimpleNamespace())
+    report = {"success": True, "stages": {"graph": {"rebuilt": 2, "skipped": 1}}}
+
+    assert coordinator.stage_result(report, "graph") == {"rebuilt": 2, "skipped": 1}
+    assert coordinator.stage_result(report, "indexes") is report
+
+
+def test_validator_exposes_rebuild_entry_for_transport_resolution() -> None:
+    """协调器把统一入口登记在验证器上，transport 按端口名解析。"""
+
+    import inspect as _inspect
+
+    validator = SimpleNamespace()
+    coordinator = DerivedRebuildCoordinator(validator, SimpleNamespace())
+
+    entry = getattr(validator, "derived_rebuild_coordinator", None)
+    assert entry is coordinator
+    assert _inspect.iscoroutinefunction(entry.rebuild_stages)

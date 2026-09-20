@@ -75,6 +75,18 @@ async def test_successful_rebuild_retires_previous_generation(tmp_path) -> None:
         engine = MagicMock()
         engine.rebuild_graph_index = AsyncMock(return_value={"success": True})
         engine.note_proposal_pipeline = None
+        engine.atom_store = MagicMock()
+        engine.atom_store.list_parent_ids = AsyncMock(return_value=[])
+        engine.atom_lifecycle_manager = MagicMock()
+        engine.atom_lifecycle_manager.rederive_for_sources = AsyncMock(
+            return_value={"rederived": 0, "purged": 0, "skipped": 0, "failed": 0}
+        )
+        engine.faiss_db = MagicMock()
+        engine.faiss_db.document_storage = MagicMock()
+        engine.faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
+        engine.faiss_db.document_storage.get_documents = AsyncMock(
+            return_value=[{"id": 1}]
+        )
         coordinator = DerivedRebuildCoordinator(
             validator,
             engine,

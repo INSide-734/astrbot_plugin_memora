@@ -429,6 +429,111 @@ class TestMaintenanceHandleRebuildIndex:
 
         assert len(results) == 1
 
+    @staticmethod
+    def _inconsistent_status():
+        """构造需要重建的索引一致性快照。"""
+
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            is_consistent=False,
+            needs_rebuild=True,
+            reason="索引缺失",
+            documents_count=3,
+            bm25_count=1,
+            vector_count=1,
+        )
+
+    @pytest.mark.asyncio
+    async def test_rebuild_index_routes_through_stage_entry(self) -> None:
+        """验证器登记统一入口后，命令必须经 rebuild_stages 单阶段执行。"""
+
+        from types import SimpleNamespace
+
+        from core.platform.composition import DerivedRebuildCoordinator
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
+
+        validator = MagicMock()
+        validator.check_consistency = AsyncMock(
+            return_value=self._inconsistent_status()
+        )
+        validator.rebuild_indexes = AsyncMock()
+        coordinator = MagicMock()
+        coordinator.rebuild_stages = AsyncMock(
+            return_value={
+                "success": True,
+                "stages": {
+                    "indexes": {
+                        "success": True,
+                        "processed": 3,
+                        "errors": 0,
+                        "total": 3,
+                        "vector_mode": "repair",
+                        "switched": False,
+                    }
+                },
+            }
+        )
+        coordinator.stage_result = staticmethod(DerivedRebuildCoordinator.stage_result)
+        validator.derived_rebuild_coordinator = coordinator
+
+        class TestMixin(MaintenanceCommandMixin, QueryCommandMixin):
+            memory_engine = SimpleNamespace()
+            index_validator = validator
+
+        event = MagicMock()
+        event.plain_result = MagicMock(return_value="rendered")
+
+        results = []
+        async for result in TestMixin().handle_rebuild_index(event):
+            results.append(result)
+
+        coordinator.rebuild_stages.assert_awaited_once_with(
+            ["indexes"], trigger_reason="indexes_inconsistent"
+        )
+        validator.rebuild_indexes.assert_not_awaited()
+        assert results
+
+    @pytest.mark.asyncio
+    async def test_rebuild_index_falls_back_without_entry(self) -> None:
+        """入口缺失时保留既有直连路径，不伪装成统一入口执行。"""
+
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
+
+        validator = MagicMock()
+        validator.check_consistency = AsyncMock(
+            return_value=self._inconsistent_status()
+        )
+        validator.rebuild_indexes = AsyncMock(
+            return_value={
+                "success": True,
+                "processed": 3,
+                "errors": 0,
+                "total": 3,
+                "switched": False,
+            }
+        )
+
+        class TestMixin(MaintenanceCommandMixin, QueryCommandMixin):
+            memory_engine = MagicMock()
+            index_validator = validator
+
+        event = MagicMock()
+        event.plain_result = MagicMock(return_value="rendered")
+
+        results = []
+        async for result in TestMixin().handle_rebuild_index(event):
+            results.append(result)
+
+        validator.rebuild_indexes.assert_awaited_once()
+        assert results
+
 
 class TestMaintenanceHandleRebuildGraph:
     """Tests for handle_rebuild_graph."""
@@ -452,6 +557,46 @@ class TestMaintenanceHandleRebuildGraph:
             results.append(result)
 
         assert len(results) == 1
+
+    @pytest.mark.asyncio
+    async def test_rebuild_graph_routes_through_stage_entry(self) -> None:
+        """图重建命令必须经 rebuild_stages 的 graph 阶段执行。"""
+
+        from types import SimpleNamespace
+
+        from core.platform.composition import DerivedRebuildCoordinator
+        from core.platform.transport.commands.maintenance_commands import (
+            MaintenanceCommandMixin,
+        )
+        from core.platform.transport.commands.query_commands import QueryCommandMixin
+
+        engine = MagicMock()
+        engine.rebuild_graph_index = AsyncMock()
+        coordinator = MagicMock()
+        coordinator.rebuild_stages = AsyncMock(
+            return_value={
+                "success": True,
+                "stages": {
+                    "graph": {"rebuilt": 2, "skipped": 1, "failed": 0, "total": 3}
+                },
+            }
+        )
+        coordinator.stage_result = staticmethod(DerivedRebuildCoordinator.stage_result)
+
+        class TestMixin(MaintenanceCommandMixin, QueryCommandMixin):
+            memory_engine = engine
+            index_validator = SimpleNamespace(derived_rebuild_coordinator=coordinator)
+
+        event = MagicMock()
+        event.plain_result = MagicMock(return_value="rendered")
+
+        results = []
+        async for result in TestMixin().handle_rebuild_graph(event):
+            results.append(result)
+
+        coordinator.rebuild_stages.assert_awaited_once_with(["graph"])
+        engine.rebuild_graph_index.assert_not_awaited()
+        assert results
 
 
 class TestMaintenanceHandleReset:

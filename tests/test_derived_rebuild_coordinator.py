@@ -25,6 +25,19 @@ def _build_components(*, evolution_mode: str = "active"):
     engine = MagicMock()
     engine.rebuild_graph_index = AsyncMock(return_value={"rebuilt": 3, "skipped": 0})
     engine.note_proposal_pipeline = None
+    engine.atom_store = MagicMock()
+    engine.atom_store.list_parent_ids = AsyncMock(return_value=[])
+    engine.atom_store.batch_delete_by_parent = AsyncMock(return_value=0)
+    engine.atom_lifecycle_manager = MagicMock()
+    engine.atom_lifecycle_manager.rederive_for_sources = AsyncMock(
+        return_value={"rederived": 3, "purged": 0, "skipped": 0, "failed": 0}
+    )
+    engine.faiss_db = MagicMock()
+    engine.faiss_db.document_storage = MagicMock()
+    engine.faiss_db.document_storage.count_documents = AsyncMock(return_value=3)
+    engine.faiss_db.document_storage.get_documents = AsyncMock(
+        return_value=[{"id": index} for index in range(1, 4)]
+    )
     manager = MagicMock()
     manager.mode = evolution_mode
     manager.rebuild_from_canonical = AsyncMock(
@@ -185,6 +198,205 @@ async def test_disabled_evolution_is_reported_as_skipped() -> None:
     manager.rebuild_from_canonical.assert_not_awaited()
 
 
+def _atoms_engine(*, rederive_result: dict | None = None):
+    """构造带 canonical 分页与 Atom 端口的重建引擎替身。"""
+
+    storage = SimpleNamespace(
+        count_documents=AsyncMock(return_value=2),
+        get_documents=AsyncMock(return_value=[{"id": 1}, {"id": 2}]),
+    )
+    store = MagicMock()
+    store.list_parent_ids = AsyncMock(return_value=[1, 2, 99])
+    store.batch_delete_by_parent = AsyncMock(return_value=1)
+    manager = MagicMock()
+    manager.rederive_for_sources = AsyncMock(
+        return_value=rederive_result
+        or {"rederived": 2, "purged": 0, "skipped": 0, "failed": 0}
+    )
+    engine = SimpleNamespace(
+        faiss_db=SimpleNamespace(document_storage=storage),
+        atom_store=store,
+        atom_lifecycle_manager=manager,
+    )
+    return engine, store, manager
+
+
+@pytest.mark.asyncio
+async def test_atoms_stage_rederives_sources_and_cleans_residue() -> None:
+    """atoms 阶段按 canonical 分页重派生，并清除父已不存在的残留行。"""
+
+    validator = MagicMock()
+    validator._get_document_count = AsyncMock(return_value=2)
+    engine, store, manager = _atoms_engine()
+    coordinator = DerivedRebuildCoordinator(validator, engine)
+
+    result = await coordinator.rebuild_stages(["atoms"])
+
+    assert result["success"] is True
+    stage = result["stages"]["atoms"]
+    assert stage["status"] == "completed"
+    assert stage["rebuilt"] == 2
+    assert stage["residue_cleaned"] == 1
+    assert stage["total"] == 2
+    manager.rederive_for_sources.assert_awaited_once_with([1, 2], "rebuild_atoms")
+    store.batch_delete_by_parent.assert_awaited_once_with([99])
+
+
+@pytest.mark.asyncio
+async def test_atoms_stage_runs_between_indexes_and_graph() -> None:
+    """atoms 阶段在固定顺序中位于 indexes 之后、graph 之前，与请求顺序无关。"""
+
+    validator = MagicMock()
+    validator._get_document_count = AsyncMock(return_value=2)
+    order: list[str] = []
+
+    async def rebuild_indexes(*_args):
+        """记录索引阶段。"""
+
+        return await _record_async(order, "indexes", {"success": True})
+
+    async def rederive(memory_ids, reason):
+        """记录 atoms 阶段。"""
+
+        return await _record_async(
+            order,
+            "atoms",
+            {"rederived": len(memory_ids), "purged": 0, "skipped": 0, "failed": 0},
+        )
+
+    async def rebuild_graph():
+        """记录图阶段。"""
+
+        return await _record_async(order, "graph", {"rebuilt": 2})
+
+    engine, _store, manager = _atoms_engine()
+    manager.rederive_for_sources.side_effect = rederive
+    engine.rebuild_graph_index = AsyncMock(side_effect=rebuild_graph)
+    validator.rebuild_indexes = AsyncMock(side_effect=rebuild_indexes)
+    coordinator = DerivedRebuildCoordinator(validator, engine)
+
+    result = await coordinator.rebuild_stages(["graph", "atoms", "indexes"])
+
+    assert order == ["indexes", "atoms", "graph"]
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_atoms_stage_partial_failure_degrades_with_reason() -> None:
+    """单来源重派生失败时阶段降级计数，不伪装成完整成功。"""
+
+    validator = MagicMock()
+    validator._get_document_count = AsyncMock(return_value=2)
+    engine, store, _manager = _atoms_engine(
+        rederive_result={"rederived": 1, "purged": 0, "skipped": 0, "failed": 1}
+    )
+    coordinator = DerivedRebuildCoordinator(validator, engine)
+
+    result = await coordinator.rebuild_stages(["atoms"])
+
+    assert result["success"] is False
+    assert result["degraded"] is True
+    assert result["reason_code"] == "atoms_rebuild_partial_failed"
+    assert result["stages"]["atoms"]["reason_code"] == "atoms_rebuild_partial_failed"
+    assert result["stages"]["atoms"]["failed"] == 1
+    store.batch_delete_by_parent.assert_awaited_once_with([99])
+
+
+@pytest.mark.asyncio
+async def test_atoms_stage_residue_failure_degrades_with_reason() -> None:
+    """残留清理失败只降级计数，不影响已重派生的来源。"""
+
+    validator = MagicMock()
+    validator._get_document_count = AsyncMock(return_value=2)
+    engine, store, _manager = _atoms_engine()
+    store.batch_delete_by_parent = AsyncMock(side_effect=RuntimeError("cleanup_failed"))
+    engine.atom_store.batch_delete_by_parent = store.batch_delete_by_parent
+    coordinator = DerivedRebuildCoordinator(validator, engine)
+
+    result = await coordinator.rebuild_stages(["atoms"])
+
+    assert result["success"] is False
+    assert result["reason_code"] == "atoms_rebuild_partial_failed"
+    assert result["stages"]["atoms"]["rebuilt"] == 2
+    assert result["stages"]["atoms"]["residue_failed"] == 1
+
+
+@pytest.mark.asyncio
+async def test_atoms_stage_batch_failure_degrades_with_reason() -> None:
+    """批次级重派生失败只降级计数，不中断后续阶段。"""
+
+    validator = MagicMock()
+    validator._get_document_count = AsyncMock(return_value=2)
+    engine, store, manager = _atoms_engine()
+    manager.rederive_for_sources.side_effect = RuntimeError(
+        "canonical_source_unavailable"
+    )
+    coordinator = DerivedRebuildCoordinator(validator, engine)
+
+    result = await coordinator.rebuild_stages(["atoms"])
+
+    assert result["success"] is False
+    assert result["reason_code"] == "atoms_rebuild_partial_failed"
+    assert result["stages"]["atoms"]["failed"] == 2
+    # 批次失败不阻止残留清理：父已不存在的行仍被回收。
+    store.batch_delete_by_parent.assert_awaited_once_with([99])
+
+
+@pytest.mark.asyncio
+async def test_atoms_stage_cancellation_propagates() -> None:
+    """atoms 阶段取消继续传播，不降级成失败计数。"""
+
+    validator = MagicMock()
+    validator._get_document_count = AsyncMock(return_value=2)
+    engine, _store, manager = _atoms_engine()
+    manager.rederive_for_sources.side_effect = asyncio.CancelledError()
+    coordinator = DerivedRebuildCoordinator(validator, engine)
+
+    with pytest.raises(asyncio.CancelledError):
+        await coordinator.rebuild_stages(["atoms"])
+
+
+@pytest.mark.asyncio
+async def test_atoms_stage_residue_scan_failure_is_not_reported_as_success() -> None:
+    """残留父来源枚举失败必须降级为失败计数并暴露稳定原因码，不得报阶段成功。"""
+
+    validator = MagicMock()
+    validator._get_document_count = AsyncMock(return_value=2)
+    engine, store, _manager = _atoms_engine()
+    store.list_parent_ids = AsyncMock(
+        side_effect=RuntimeError("atom_store_unavailable")
+    )
+    coordinator = DerivedRebuildCoordinator(validator, engine)
+
+    result = await coordinator.rebuild_stages(["atoms"])
+
+    assert result["success"] is False
+    assert result["reason_code"] == "atoms_rebuild_partial_failed"
+    stage = result["stages"]["atoms"]
+    assert stage["status"] == "failed"
+    assert stage["residue_failed"] >= 1
+    assert stage["residue_reason_code"] == "atom_residue_scan_failed"
+    # 枚举失败不阻断已完成的来源重派生。
+    assert stage["rebuilt"] == 2
+    store.batch_delete_by_parent.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_atoms_stage_skips_without_atom_components() -> None:
+    """未装配 Atom 组件时 atoms 阶段按跳过报告，不读取 canonical 文档。"""
+
+    validator = MagicMock()
+    validator._get_document_count = AsyncMock(return_value=2)
+    engine = SimpleNamespace(faiss_db=SimpleNamespace(document_storage=MagicMock()))
+    coordinator = DerivedRebuildCoordinator(validator, engine)
+
+    result = await coordinator.rebuild_stages(["atoms"])
+
+    assert result["success"] is True
+    assert result["stages"]["atoms"]["reason_code"] == "atoms_rebuild_unavailable"
+    engine.faiss_db.document_storage.get_documents.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_database_setup_uses_coordinator_for_inconsistent_indexes() -> None:
     """启动维护路径应委托协调器，而不是绕过 graph/evolution 阶段。"""
@@ -215,3 +427,104 @@ async def test_database_setup_uses_coordinator_for_inconsistent_indexes() -> Non
     assert result["success"] is True
     coordinator.rebuild_all.assert_awaited_once_with()
     validator.rebuild_indexes.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_full_stage_request_keeps_documented_chronology() -> None:
+    """请求全部阶段（含乱序与显式 canonical）时，执行与报告顺序都服从固定阶段闭包。"""
+
+    order: list[str] = []
+
+    async def indexes_rebuild(_engine) -> dict:
+        """记录 indexes 阶段。"""
+
+        order.append("indexes")
+        return {"success": True}
+
+    async def catalog_rebuild() -> dict:
+        """记录 catalog 阶段并声明已发布 generation。"""
+
+        order.append("catalog")
+        return {"success": True, "generation": 1}
+
+    async def graph_rebuild() -> dict:
+        """记录 graph 阶段。"""
+
+        order.append("graph")
+        return {"rebuilt": 2}
+
+    async def evolution_rebuild() -> dict:
+        """记录 evolution 阶段。"""
+
+        order.append("evolution")
+        return {"success": True, "scheduled_jobs": 2}
+
+    async def compression_rebuild() -> dict:
+        """记录 semantic_compression 阶段。"""
+
+        order.append("semantic_compression")
+        return {"success": True}
+
+    async def notes_rebuild() -> dict:
+        """记录 notes 阶段。"""
+
+        order.append("notes")
+        return {"success": True}
+
+    validator = SimpleNamespace(
+        _get_document_count=AsyncMock(return_value=2),
+        rebuild_indexes=AsyncMock(side_effect=indexes_rebuild),
+    )
+    catalog = SimpleNamespace(
+        get_state=AsyncMock(return_value={"status": "ready", "active_generation": 1}),
+        rebuild_from_canonical=AsyncMock(side_effect=catalog_rebuild),
+        verify_published_generation=AsyncMock(return_value=True),
+    )
+    manager = SimpleNamespace(
+        mode="active",
+        rebuild_from_canonical=AsyncMock(side_effect=evolution_rebuild),
+    )
+    engine = SimpleNamespace(
+        rebuild_graph_index=AsyncMock(side_effect=graph_rebuild),
+        semantic_compressor=SimpleNamespace(
+            rebuild_from_canonical=AsyncMock(side_effect=compression_rebuild)
+        ),
+        note_proposal_pipeline=SimpleNamespace(
+            rebuild_from_canonical=AsyncMock(side_effect=notes_rebuild)
+        ),
+    )
+    coordinator = DerivedRebuildCoordinator(validator, engine, manager, catalog)
+
+    result = await coordinator.rebuild_stages(
+        [
+            "canonical",
+            "notes",
+            "evolution",
+            "graph",
+            "atoms",
+            "catalog",
+            "indexes",
+            "semantic_compression",
+        ]
+    )
+
+    assert order == [
+        "indexes",
+        "catalog",
+        "graph",
+        "evolution",
+        "semantic_compression",
+        "notes",
+    ]
+    assert list(result["stages"]) == [
+        "indexes",
+        "catalog",
+        "atoms",
+        "graph",
+        "evolution",
+        "semantic_compression",
+        "notes",
+    ]
+    # 未装配 Atom 组件只影响该阶段状态，不改变它在闭包中的位置。
+    assert result["stages"]["atoms"]["reason_code"] == "atoms_rebuild_unavailable"
+    assert result["success"] is True

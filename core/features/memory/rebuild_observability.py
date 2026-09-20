@@ -26,6 +26,7 @@ _REBUILD_STAGE_NAMES = frozenset(
         "bm25",
         "vector",
         "catalog",
+        "atoms",
         "graph",
         "evolution",
         "semantic_compression",
