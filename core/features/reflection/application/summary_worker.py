@@ -31,6 +31,7 @@ from .candidate_writer import store_reflection_candidates
 from .summary_worker_candidates import (
     SummaryWorkerCandidateMixin,
     _claim_fence,
+    count_rejected_facts,
 )
 from .summary_worker_reconcile import SummaryWorkerReconcileMixin
 from .summary_worker_support import (
@@ -228,10 +229,15 @@ class SummaryWorker(
                 reason_code=SummaryReasonCode.LEDGER_UNRESOLVED,
                 candidate_metrics=candidate_metrics,
             )
-        completed_canonical_ids = await self._find_completed_keys(candidates)
-
+        (
+            completed_canonical_ids,
+            completed_merged_ids,
+        ) = await self._find_completed_keys(candidates)
+        # merged 证据优先：合并只改既有 owner，恢复时必须先证明它是本次已完成
+        # 的槽位，再考虑普通 canonical 幂等命中。
+        discovered_owners = {**completed_canonical_ids, **completed_merged_ids}
         owner_reconciled = await self._reconcile_discovered_owners(
-            claim, candidates, intents, completed_canonical_ids
+            claim, candidates, intents, discovered_owners
         )
         if not owner_reconciled:
             return self._unknown_outcome(
@@ -254,7 +260,7 @@ class SummaryWorker(
         ) = await self._route_quality(
             claim,
             candidates,
-            completed_canonical_ids,
+            discovered_owners,
             snapshot_payload,
         )
         if gate_reason is not None:
@@ -269,6 +275,7 @@ class SummaryWorker(
             results = await store_reflection_candidates(
                 candidates,
                 completed_idempotency_keys=completed_canonical_ids,
+                merged_idempotency_keys=completed_merged_ids,
                 session_id=claim.session_id,
                 persona_id=claim.persona_id,
                 start_index=claim.start_seq,
@@ -315,6 +322,7 @@ class SummaryWorker(
             results,
             expected_idempotency_keys=expected_snapshots,
             candidate_metrics=candidate_metrics,
+            facts_rejected_count=count_rejected_facts(candidates),
         )
 
     async def _read_source(self, claim: ClaimedJob) -> SourceWindow:

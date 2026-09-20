@@ -18,25 +18,15 @@ from ...reflection.domain.summary_models import (
 )
 from .summary_source_fence import SummarySourceFenceMixin
 from .summary_store_keys import owned_slot_key, source_epoch_guarded, source_guarded
-from .summary_store_ledger import _row, _terminal_ledger_matches_job
+from .summary_store_ledger import (
+    OWNER_ID_DISPOSITIONS,
+    TERMINAL_DISPOSITIONS,
+    _row,
+    _terminal_ledger_matches_job,
+)
 from .summary_store_observability import (
     log_summary_candidate_reconcile,
     log_summary_commit,
-)
-
-_CANONICAL_DISPOSITIONS = frozenset(
-    {
-        CandidateDisposition.CANONICAL.value,
-        CandidateDisposition.MARK_WRITE.value,
-        CandidateDisposition.SKIPPED_IDEMPOTENT.value,
-    }
-)
-_TERMINAL_DISPOSITIONS = _CANONICAL_DISPOSITIONS | frozenset(
-    {
-        CandidateDisposition.QUARANTINED.value,
-        CandidateDisposition.DISCARD.value,
-        CandidateDisposition.FAILED.value,
-    }
 )
 
 
@@ -250,7 +240,6 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
         by_slot = {int(_row(row, "slot", 0)): row for row in rows}
         by_key = {str(_row(row, "slot_key", 1)): row for row in rows}
         normalized: dict[int, int] = {}
-        used_ids: set[int] = set()
         for raw_slot, raw_id in mapping.items():
             if isinstance(raw_slot, bool):
                 return None
@@ -265,17 +254,13 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                 return None
             slot = int(_row(row, "slot", 0))
             canonical_id = int(raw_id)
-            if (
-                slot in normalized
-                or canonical_id <= 0
-                or canonical_id > 2**63 - 1
-                or canonical_id in used_ids
-            ):
+            # 同一 owner 的重复只允许由槽位自身的 disposition 决定；此处不排除
+            # 重复，避免把合法的多 merged 槽位误判为不一致。
+            if slot in normalized or canonical_id <= 0 or canonical_id > 2**63 - 1:
                 return None
             normalized[slot] = canonical_id
-            used_ids.add(canonical_id)
 
-        resolved_ids: set[int] = set()
+        resolved_owner_dispositions: dict[int, str] = {}
         for row in rows:
             slot = int(_row(row, "slot", 0))
             slot_key = str(_row(row, "slot_key", 1) or "")
@@ -302,10 +287,17 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                     return None
             resolved_id = int(existing_id) if existing_id is not None else supplied_id
             if resolved_id is not None:
-                if resolved_id in resolved_ids:
+                # 同一 owner 只允许全部为 merged 的槽位共享；其余重复组、以及
+                # merged 与普通 canonical 混用的重复组一律保持失败关闭。
+                previous = resolved_owner_dispositions.get(resolved_id)
+                current = disposition or ""
+                if previous is not None and (
+                    previous != CandidateDisposition.MERGED.value
+                    or current != CandidateDisposition.MERGED.value
+                ):
                     return None
-                resolved_ids.add(resolved_id)
-            if disposition in _CANONICAL_DISPOSITIONS:
+                resolved_owner_dispositions[resolved_id] = current
+            if disposition in OWNER_ID_DISPOSITIONS:
                 if resolved_id is None:
                     return None
             elif disposition in {
@@ -360,7 +352,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                            job.quarantine_count,job.discard_count,job.mark_write_count,
                            job.failed_count,job.skipped_count,
                            job.start_seq,job.end_seq,job.expected_count,job.source_digest,
-                           job.reason_code
+                           job.reason_code,job.merged_count
                     FROM summary_jobs AS job
                     INNER JOIN session_epochs AS epoch
                       ON epoch.session_id=job.session_id
@@ -424,6 +416,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                                 ("mark_write_count", 5),
                                 ("failed_count", 6),
                                 ("skipped_count", 7),
+                                ("merged_count", 13),
                             )
                         )
                         reason_code = str(_row(job, "reason_code", 12) or "")
@@ -463,7 +456,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                             SET canonical_id=?, updated_at=?
                             WHERE job_id=? AND slot=? AND slot_key=? AND content_digest=?
                               AND status='committed'
-                              AND disposition IN ('canonical','mark_write','skipped_idempotent')
+                              AND disposition IN ('canonical','mark_write','skipped_idempotent','merged')
                               AND (canonical_id IS NULL OR canonical_id=?)
                               AND EXISTS (
                                 SELECT 1 FROM summary_jobs
@@ -570,7 +563,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                         CandidateLedgerStatus.FAILED.value,
                     }
                     or str(_row(row, "disposition", 0) or "")
-                    not in _TERMINAL_DISPOSITIONS
+                    not in TERMINAL_DISPOSITIONS
                     for row in final_rows
                 ):
                     await self.connection.commit()
@@ -580,7 +573,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                         0,
                         SummaryReasonCode.LEDGER_UNRESOLVED,
                     )
-                counts = {item: 0 for item in _TERMINAL_DISPOSITIONS}
+                counts = {item: 0 for item in TERMINAL_DISPOSITIONS}
                 for row in final_rows:
                     disposition = str(_row(row, "disposition", 0) or "")
                     if disposition not in counts:
@@ -597,6 +590,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                     "quarantine_count": counts[CandidateDisposition.QUARANTINED.value],
                     "discard_count": counts[CandidateDisposition.DISCARD.value],
                     "mark_write_count": counts[CandidateDisposition.MARK_WRITE.value],
+                    "merged_count": counts[CandidateDisposition.MERGED.value],
                     "failed_count": 0,
                     "skipped_count": counts[
                         CandidateDisposition.SKIPPED_IDEMPOTENT.value
@@ -606,7 +600,8 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                     """
                     UPDATE summary_jobs SET status='completed',reason_code=?,failed_stage=NULL,
                       lease_until=NULL,claim_token=NULL,canonical_count=?,quarantine_count=?,
-                      discard_count=?,mark_write_count=?,failed_count=0,skipped_count=?,updated_at=?
+                      discard_count=?,mark_write_count=?,merged_count=?,failed_count=0,
+                      skipped_count=?,updated_at=?
                     WHERE job_id=? AND session_id=? AND session_epoch=? AND status='running'
                       AND claim_token=? AND worker_generation=?
                     """,
@@ -616,6 +611,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                         values["quarantine_count"],
                         values["discard_count"],
                         values["mark_write_count"],
+                        values["merged_count"],
                         values["skipped_count"],
                         now,
                         claim.job_id,
@@ -637,6 +633,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                     "quarantine_count": int(_row(job, "quarantine_count", 3) or 0),
                     "discard_count": int(_row(job, "discard_count", 4) or 0),
                     "mark_write_count": int(_row(job, "mark_write_count", 5) or 0),
+                    "merged_count": int(_row(job, "merged_count", 13) or 0),
                     "failed_count": int(_row(job, "failed_count", 6) or 0),
                     "skipped_count": int(_row(job, "skipped_count", 7) or 0),
                 }
@@ -645,6 +642,7 @@ class SummaryStoreReconcileMixin(SummarySourceFenceMixin):
                     "quarantine_total": "quarantine_count",
                     "discard_total": "discard_count",
                     "mark_write_total": "mark_write_count",
+                    "merged_total": "merged_count",
                     "failed_candidate_total": "failed_count",
                     "skipped_idempotent_total": "skipped_count",
                 }.items():

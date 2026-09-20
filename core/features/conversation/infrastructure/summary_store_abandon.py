@@ -44,7 +44,8 @@ class SummaryStoreAbandonMixin:
                           AND (
                             c.canonical_id IS NOT NULL
                             OR c.disposition IN (
-                              'canonical','mark_write','skipped_idempotent'
+                              'canonical','mark_write','merged',
+                              'skipped_idempotent'
                             )
                             OR (c.status='committed' AND c.disposition IS NULL)
                           )
@@ -62,6 +63,7 @@ class SummaryStoreAbandonMixin:
                     "quarantine_total": 0,
                     "discard_total": 0,
                     "mark_write_total": 0,
+                    "merged_total": 0,
                     "failed_candidate_total": 0,
                     "skipped_idempotent_total": 0,
                 }
@@ -85,6 +87,7 @@ class SummaryStoreAbandonMixin:
                           quarantine_count=(SELECT COUNT(*) FROM summary_job_candidates c WHERE c.job_id=summary_jobs.job_id AND c.disposition='quarantined'),
                           discard_count=(SELECT COUNT(*) FROM summary_job_candidates c WHERE c.job_id=summary_jobs.job_id AND c.disposition='discard'),
                           mark_write_count=0,
+                          merged_count=(SELECT COUNT(*) FROM summary_job_candidates c WHERE c.job_id=summary_jobs.job_id AND c.disposition='merged'),
                           failed_count=(SELECT COUNT(*) FROM summary_job_candidates c WHERE c.job_id=summary_jobs.job_id AND c.disposition='failed'),
                           skipped_count=0,updated_at=?
                         WHERE job_id=? AND session_id=? AND session_epoch=?
@@ -102,6 +105,7 @@ class SummaryStoreAbandonMixin:
                           SUM(CASE WHEN disposition='quarantined' THEN 1 ELSE 0 END),
                           SUM(CASE WHEN disposition='discard' THEN 1 ELSE 0 END),
                           SUM(CASE WHEN disposition='mark_write' THEN 1 ELSE 0 END),
+                          SUM(CASE WHEN disposition='merged' THEN 1 ELSE 0 END),
                           SUM(CASE WHEN disposition='failed' THEN 1 ELSE 0 END),
                           SUM(CASE WHEN disposition='skipped_idempotent' THEN 1 ELSE 0 END)
                         FROM summary_job_candidates WHERE job_id=?

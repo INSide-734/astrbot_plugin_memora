@@ -635,7 +635,9 @@ async def test_worker_merges_near_duplicate_instead_of_inserting(
         committed = await store.commit_window(claim, outcome)
 
         assert engine.write_count == 0
-        assert outcome.canonical_count == 1
+        # Track A 契约：merged 槽位计入 merged_count，不再计入 canonical_count。
+        assert outcome.merged_count == 1
+        assert outcome.canonical_count == 0
         assert outcome.failed_count == 0
         assert outcome.unknown_count == 0
         assert outcome.can_advance is True

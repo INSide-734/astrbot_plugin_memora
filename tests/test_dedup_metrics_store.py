@@ -68,6 +68,12 @@ async def _seed_window(store: DedupMetricsStore) -> None:
     await store.record("observe", "checked", now_ms=_EXPIRED_BUCKET_MS)
 
 
+def _counts(**overrides: int) -> dict[str, int]:
+    """构造覆盖全部 outcome 闭集的计数模板，缺省全零。"""
+
+    return {outcome: 0 for outcome in DEDUP_METRIC_OUTCOMES} | overrides
+
+
 @pytest.mark.asyncio
 async def test_summary_matches_hand_computed_totals_and_rates(store_factory) -> None:
     """24h 合计、分模式计数与四个比率必须等于手算值。"""
@@ -79,60 +85,84 @@ async def test_summary_matches_hand_computed_totals_and_rates(store_factory) -> 
     summary = await store.summary("24h", now_ms=NOW_MS)
 
     assert summary["window"] == "24h"
-    assert {outcome: summary[outcome] for outcome in DEDUP_METRIC_OUTCOMES} == {
-        "checked": 11,
-        "hit": 7,
-        "merged": 3,
-        "fact_mismatch": 1,
-        "fact_overlap": 4,
-        "conflict": 1,
-        "failed": 1,
-    }
+    assert {outcome: summary[outcome] for outcome in DEDUP_METRIC_OUTCOMES} == _counts(
+        checked=11,
+        hit=7,
+        merged=3,
+        fact_mismatch=1,
+        fact_overlap=4,
+        conflict=1,
+        failed=1,
+    )
     assert summary["hit_rate"] == pytest.approx(7 / 11)
     assert summary["guard_rate"] == pytest.approx(1 / 11)
     assert summary["overlap_rate"] == pytest.approx(4 / 11)
     assert summary["failure_rate"] == pytest.approx(2 / 11)
     assert summary["by_mode"] == {
-        "observe": {
-            "checked": 5,
-            "hit": 3,
-            "merged": 0,
-            "fact_mismatch": 1,
-            "fact_overlap": 2,
-            "conflict": 0,
-            "failed": 0,
-        },
-        "enforce": {
-            "checked": 6,
-            "hit": 4,
-            "merged": 3,
-            "fact_mismatch": 0,
-            "fact_overlap": 2,
-            "conflict": 1,
-            "failed": 1,
-        },
+        "observe": _counts(checked=5, hit=3, fact_mismatch=1, fact_overlap=2),
+        "enforce": _counts(
+            checked=6,
+            hit=4,
+            merged=3,
+            fact_overlap=2,
+            conflict=1,
+            failed=1,
+        ),
+        "semantic_observe": _counts(),
+        "semantic_enforce": _counts(),
     }
     assert summary["trend"] == [
-        {
-            "bucket_ms": _OLDER_BUCKET_MS,
-            "checked": 1,
-            "hit": 0,
-            "merged": 0,
-            "fact_mismatch": 0,
-            "fact_overlap": 1,
-            "conflict": 0,
-            "failed": 0,
-        },
-        {
-            "bucket_ms": NOW_MS,
-            "checked": 10,
-            "hit": 7,
-            "merged": 3,
-            "fact_mismatch": 1,
-            "fact_overlap": 3,
-            "conflict": 1,
-            "failed": 1,
-        },
+        _counts(bucket_ms=_OLDER_BUCKET_MS, checked=1, fact_overlap=1),
+        _counts(
+            bucket_ms=NOW_MS,
+            checked=10,
+            hit=7,
+            merged=3,
+            fact_mismatch=1,
+            fact_overlap=3,
+            conflict=1,
+            failed=1,
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_semantic_modes_do_not_change_lexical_rates(store_factory) -> None:
+    """语义 outcome 写入独立模式，四个比率仍按词法模式计算。"""
+
+    store = store_factory()
+    await store.initialize()
+    for _ in range(5):
+        await store.record("observe", "checked", now_ms=NOW_MS)
+    await store.record("observe", "hit", now_ms=NOW_MS)
+    await store.record("semantic_observe", "semantic_checked", now_ms=NOW_MS)
+    await store.record("semantic_observe", "semantic_hit", now_ms=NOW_MS)
+    await store.record("semantic_observe", "semantic_budget_exhausted", now_ms=NOW_MS)
+    await store.record("semantic_enforce", "merged", now_ms=NOW_MS)
+    await store.record("semantic_enforce", "failed", now_ms=NOW_MS)
+
+    summary = await store.summary("24h", now_ms=NOW_MS)
+
+    assert summary["hit_rate"] == pytest.approx(1 / 5)
+    assert summary["failure_rate"] == 0.0
+    assert summary["semantic_checked"] == 1
+    assert summary["semantic_hit"] == 1
+    assert summary["semantic_budget_exhausted"] == 1
+    assert summary["by_mode"]["semantic_observe"] == _counts(
+        semantic_checked=1, semantic_hit=1, semantic_budget_exhausted=1
+    )
+    assert summary["by_mode"]["semantic_enforce"] == _counts(merged=1, failed=1)
+    assert summary["trend"] == [
+        _counts(
+            bucket_ms=NOW_MS,
+            checked=5,
+            hit=1,
+            merged=1,
+            failed=1,
+            semantic_checked=1,
+            semantic_hit=1,
+            semantic_budget_exhausted=1,
+        )
     ]
 
 

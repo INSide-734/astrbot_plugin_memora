@@ -568,3 +568,126 @@ async def test_spawn_processes_atomically_reuse_same_key(tmp_path: Path) -> None
     assert sorted(result[1] for result in results) == [False, True]
     assert canonical_count == 1
     assert mapping_count == 1
+
+
+async def _find_merged_owner(
+    connection: aiosqlite.Connection,
+    key: str,
+) -> int | None:
+    """按需导入 merged 键查询，避免 spawn worker 重载基础设施包。"""
+
+    from core.features.memory.infrastructure.canonical_idempotency import (
+        find_canonical_memory_id_by_merged_idempotency_key,
+    )
+
+    return await find_canonical_memory_id_by_merged_idempotency_key(connection, key)
+
+
+async def _insert_merged_document(
+    connection: aiosqlite.Connection,
+    *,
+    text: str,
+    merged_keys: list[str],
+    **overrides: Any,
+) -> int:
+    """写入一条仅靠 metadata 记录 merged 幂等键的 canonical 行。"""
+
+    payload: dict[str, Any] = {
+        "status": "active",
+        "merged_idempotency_keys": merged_keys,
+    }
+    payload.update(overrides)
+    cursor = await connection.execute(
+        """
+        INSERT INTO documents (doc_id, text, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (
+            f"doc-{text}",
+            text,
+            json.dumps(payload),
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00+00:00",
+        ),
+    )
+    memory_id = int(cursor.lastrowid or 0)
+    await cursor.close()
+    await connection.commit()
+    return memory_id
+
+
+@pytest.mark.asyncio
+async def test_merged_lookup_returns_single_active_owner(tmp_path: Path) -> None:
+    """唯一 active owner 命中并返回 canonical ID，缺失或空键返回 None。"""
+
+    connection = await aiosqlite.connect(tmp_path / "memora.db")
+    try:
+        await _schema_manager(connection).create_fresh_schema()
+        owner = await _insert_merged_document(
+            connection, text="owner-a", merged_keys=["merged-key"]
+        )
+        assert await _find_merged_owner(connection, " merged-key ") == owner
+        assert await _find_merged_owner(connection, "missing-key") is None
+        assert await _find_merged_owner(connection, "") is None
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_merged_lookup_ignores_unaccepted_or_invalid_rows(tmp_path: Path) -> None:
+    """暂存/拒绝/非 active 或坏 JSON 的行不得成为恢复证据，也不得抛错。"""
+
+    connection = await aiosqlite.connect(tmp_path / "memora.db")
+    try:
+        await _schema_manager(connection).create_fresh_schema()
+        await _insert_merged_document(
+            connection,
+            text="pending-owner",
+            merged_keys=["pending-key"],
+            summary_source_pending=True,
+        )
+        await _insert_merged_document(
+            connection,
+            text="orphan-owner",
+            merged_keys=["orphan-key"],
+            summary_source_orphan=True,
+        )
+        await _insert_merged_document(
+            connection,
+            text="archived-owner",
+            merged_keys=["archived-key"],
+            status="archived",
+        )
+        from core.features.memory.infrastructure.canonical_idempotency import (
+            _is_accepted_owner_metadata,
+        )
+
+        assert not _is_accepted_owner_metadata(
+            '{"merged_idempotency_keys": ["broken-key"]'
+        )
+
+        assert await _find_merged_owner(connection, "pending-key") is None
+        assert await _find_merged_owner(connection, "orphan-key") is None
+        assert await _find_merged_owner(connection, "archived-key") is None
+        assert await _find_merged_owner(connection, "broken-key") is None
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
+async def test_merged_lookup_rejects_ambiguous_owners(tmp_path: Path) -> None:
+    """同一 merged 键命中两个不同 owner 时必须 fail-closed 而非猜测。"""
+
+    connection = await aiosqlite.connect(tmp_path / "memora.db")
+    try:
+        await _schema_manager(connection).create_fresh_schema()
+        await _insert_merged_document(
+            connection, text="owner-a", merged_keys=["shared-key"]
+        )
+        await _insert_merged_document(
+            connection, text="owner-b", merged_keys=["shared-key"]
+        )
+        with pytest.raises(RuntimeError):
+            await _find_merged_owner(connection, "shared-key")
+    finally:
+        await connection.close()

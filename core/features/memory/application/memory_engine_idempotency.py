@@ -16,6 +16,7 @@ from ...observability.application.memory_write_timing import (
 )
 from ..infrastructure.canonical_idempotency import (
     find_canonical_memory_id_by_idempotency_key,
+    find_canonical_memory_id_by_merged_idempotency_key,
     normalize_canonical_idempotency_key,
 )
 from .memory_engine_atom_support import reinforce_existing_atoms
@@ -469,6 +470,20 @@ class MemoryEngineIdempotencyMixin:
         if self.db_connection is None:
             return None
         return await find_canonical_memory_id_by_idempotency_key(
+            self.db_connection,
+            key,
+        )
+
+    async def find_memory_id_by_merged_idempotency_key(self, key: str) -> int | None:
+        """从 canonical metadata 的 merged 幂等键查找 owner，不返回正文。
+
+        合并只强化既有 canonical，不写 canonical 幂等映射；该窄入口供总结重试
+        和启动恢复证明「owner 已更新但进程在 fence 后退出」。
+        """
+
+        if self.db_connection is None:
+            return None
+        return await find_canonical_memory_id_by_merged_idempotency_key(
             self.db_connection,
             key,
         )

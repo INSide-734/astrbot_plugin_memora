@@ -18,6 +18,7 @@ def valid_window_outcome(outcome: WindowOutcome) -> bool:
         "quarantined": outcome.quarantine_count,
         "discard": outcome.discard_count,
         "mark_write": outcome.mark_write_count,
+        "merged": outcome.merged_count,
         "failed": outcome.failed_count,
         "skipped_idempotent": outcome.skipped_idempotent_count,
     }

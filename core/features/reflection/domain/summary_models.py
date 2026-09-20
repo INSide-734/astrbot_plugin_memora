@@ -45,12 +45,18 @@ class SummaryJobStatus(str, Enum):
 
 
 class CandidateDisposition(str, Enum):
-    """候选写入的允许终态动作。"""
+    """候选写入的允许终态动作。
+
+    ``MERGED`` 表示候选已并入同 scope 的既有 canonical（未新增行），因此多个
+    ``merged`` 槽位可以共享同一 canonical owner；其余携带 owner 的终态仍保持
+    跨槽位唯一。共享语义集中在 ``summary_store_ledger``。
+    """
 
     QUARANTINED = "quarantined"
     DISCARD = "discard"
     MARK_WRITE = "mark_write"
     CANONICAL = "canonical"
+    MERGED = "merged"
     SKIPPED_IDEMPOTENT = "skipped_idempotent"
     FAILED = "failed"
 
@@ -627,6 +633,8 @@ class WindowOutcome:
     quarantine_count: int = 0
     discard_count: int = 0
     mark_write_count: int = 0
+    merged_count: int = 0
+    facts_rejected_count: int = 0
     failed_count: int = 0
     skipped_idempotent_count: int = 0
     unknown_count: int = 0
@@ -643,6 +651,8 @@ class WindowOutcome:
             "quarantine_count",
             "discard_count",
             "mark_write_count",
+            "merged_count",
+            "facts_rejected_count",
             "failed_count",
             "skipped_idempotent_count",
             "unknown_count",
@@ -828,6 +838,7 @@ class SummaryTaskSnapshot:
     quarantine_total: int = 0
     discard_total: int = 0
     mark_write_total: int = 0
+    merged_total: int = 0
     failed_candidate_total: int = 0
     skipped_idempotent_total: int = 0
     candidate_total: int = 0

@@ -23,6 +23,11 @@ import {
   RECONSOLIDATION_RU_MAP,
   RECONSOLIDATION_ZH_MAP,
 } from "./reconsolidationI18n";
+import {
+  QUALITY_FUNNEL_EN_MAP,
+  QUALITY_FUNNEL_RU_MAP,
+  QUALITY_FUNNEL_ZH_MAP,
+} from "./qualityFunnelI18n";
 
 const INJECTION_COPY = {
   "common.yes": ["是", "Yes", "Да"],
@@ -540,6 +545,7 @@ const I18N_MAP: Record<string, string> = {
   ...RECALL_ZH_MAP,
   ...RECALL_TRACE_ZH_MAP,
   ...RECONSOLIDATION_ZH_MAP,
+  ...QUALITY_FUNNEL_ZH_MAP,
   "nav.preview": "数据预览",
   "nav.graph": "知识图谱",
   "nav.memory": "记忆管理",
@@ -1585,6 +1591,7 @@ const EN_MAP: Record<string, string> = {
   ...RECALL_EN_MAP,
   ...RECALL_TRACE_EN_MAP,
   ...RECONSOLIDATION_EN_MAP,
+  ...QUALITY_FUNNEL_EN_MAP,
   "nav.preview": "Preview", "nav.graph": "Knowledge Graph", "nav.memory": "Memories",
   "nav.timeline": "Timeline", "nav.recall": "Recall Test", "nav.system": "System",
   "nav.config": "Configuration",
@@ -2503,6 +2510,7 @@ const RU_MAP: Record<string, string> = {
   ...RECALL_RU_MAP,
   ...RECALL_TRACE_RU_MAP,
   ...RECONSOLIDATION_RU_MAP,
+  ...QUALITY_FUNNEL_RU_MAP,
   "nav.preview": "Обзор", "nav.graph": "Граф знаний", "nav.memory": "Память",
   "nav.timeline": "Хронология", "nav.recall": "Тест поиска", "nav.system": "Система",
   "nav.config": "Конфигурация",

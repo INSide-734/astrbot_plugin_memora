@@ -46,6 +46,7 @@ from .metrics_api import MetricsApiMixin
 from .note_api import NoteApiMixin
 from .profile_api import ProfileApiMixin
 from .quality_api import QualityApiMixin
+from .quality_funnel_api import QualityFunnelApiMixin
 from .quarantine_api import QuarantineApiMixin
 from .recall_trace_api import RecallTraceApiMixin
 from .reconsolidation_review_api import (
@@ -86,6 +87,7 @@ class PluginPageApi(
     ConfigApiMixin,
     TopicSegmentationApiMixin,
     QualityApiMixin,
+    QualityFunnelApiMixin,
     QuarantineApiMixin,
     RecallTraceApiMixin,
     InjectionStrategyApiMixin,

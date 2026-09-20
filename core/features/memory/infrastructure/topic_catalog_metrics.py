@@ -41,6 +41,24 @@ _AGGREGATE_FIELDS = (
 )
 
 
+def _metric_count(value: object) -> int:
+    """把 SQL 聚合结果规范化为非负整数；布尔、负数与非法值按 0 处理。"""
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _metric_row(row: Any, minimum: int) -> list[Any] | None:
+    """把 ``sqlite3.Row``/元组行规范化为值列表；无法解析时返回 None。"""
+
+    try:
+        cells = list(row)
+    except TypeError:
+        return None
+    return cells if len(cells) >= minimum else None
+
+
 class TopicCatalogMetricsMixin:
     """以 HMAC 摘要键和窗口终态 CAS 更新本地指标。"""
 
@@ -264,6 +282,72 @@ class TopicCatalogMetricsMixin:
                 )
             return deleted
 
+    async def read_metric_day_totals(
+        self,
+        *,
+        hash_key_version: int,
+        since_date: str,
+        until_date: str,
+    ) -> list[dict[str, int | str]] | None:
+        """按 UTC 日读取当前密钥版本的候选窗口计数聚合（只读）。
+
+        ``mode='off'``（未启用候选选择）的样本不计入候选生成分母。只返回固定
+        白名单字段，不含 scope 摘要键或原始行；密钥版本非法、日期非法或 Store
+        不可用时返回 ``None``，调用方必须按 unavailable 处理，不得回落零值。
+        """
+
+        if (
+            self._db is None
+            or isinstance(hash_key_version, bool)
+            or not isinstance(hash_key_version, int)
+            or hash_key_version <= 0
+            or not self._valid_metric_date(since_date)
+            or not self._valid_metric_date(until_date)
+            or since_date > until_date
+        ):
+            return None
+        cursor = await self._db.execute(
+            """
+            SELECT bucket_date,
+                   COALESCE(SUM(window_count), 0) AS windows,
+                   COALESCE(SUM(candidate_count_sum), 0) AS candidates,
+                   COALESCE(SUM(exact_reuse_count), 0) AS exact_reuse,
+                   COALESCE(SUM(duplicate_topic_count), 0) AS duplicate_topics,
+                   COALESCE(SUM(identity_drop_count), 0) AS identity_drops,
+                   COALESCE(SUM(budget_exceeded_count), 0) AS budget_exceeded,
+                   COALESCE(SUM(catalog_degraded_count), 0) AS catalog_degraded
+            FROM topic_candidate_scope_metrics
+            WHERE hash_key_version = ?
+              AND bucket_date >= ? AND bucket_date <= ?
+              AND mode IN ('observe', 'full', 'top_k')
+            GROUP BY bucket_date
+            ORDER BY bucket_date
+            """,
+            (hash_key_version, since_date, until_date),
+        )
+        rows = await cursor.fetchall()
+        totals: list[dict[str, int | str]] = []
+        for row in rows or ():
+            cells = _metric_row(row, 8)
+            if cells is None:
+                continue
+            day = cells[0]
+            if not isinstance(day, str) or len(day) != 10:
+                continue
+            totals.append(
+                {
+                    "day": day,
+                    "windows": _metric_count(cells[1]),
+                    "candidates": _metric_count(cells[2]),
+                    "exact_reuse": _metric_count(cells[3]),
+                    "duplicate_topics": _metric_count(cells[4]),
+                    "identity_drops": _metric_count(cells[5]),
+                    "budget_exceeded": _metric_count(cells[6]),
+                    "catalog_degraded": _metric_count(cells[7]),
+                }
+            )
+        return totals
+
     async def read_metric_summary(
         self,
         *,
@@ -314,6 +398,17 @@ class TopicCatalogMetricsMixin:
                 values[math.ceil(len(values) * 0.95) - 1] if values else None
             )
         return result
+
+    @staticmethod
+    def _valid_metric_date(value: object) -> bool:
+        """只接受严格的 UTC 日 ``YYYY-MM-DD``。"""
+
+        if not isinstance(value, str) or len(value) != 10:
+            return False
+        try:
+            return datetime.fromisoformat(value).date().isoformat() == value
+        except ValueError:
+            return False
 
     @staticmethod
     def _valid_metric_timestamp(value: object) -> bool:

@@ -420,6 +420,12 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
     ),
     _field("memory_dedup.candidate_limit", "memory_dedup.candidate_limit", 5),
     _field("memory_dedup.min_tokens", "memory_dedup.min_tokens", 12),
+    _field("memory_dedup.semantic_mode", "memory_dedup.semantic_mode", "off"),
+    _field(
+        "memory_dedup.semantic_threshold",
+        "memory_dedup.semantic_threshold",
+        0.90,
+    ),
     _field(
         "memory_dedup.metrics_retention_days",
         "memory_dedup.metrics_retention_days",

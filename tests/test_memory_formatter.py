@@ -657,6 +657,165 @@ class TestBudgetedInjectionFormatting:
         assert text.count("用户偏好拿铁") == 1
         assert text.count("用户每天午休后喝咖啡") == 1
 
+    def test_compact_skips_key_facts_for_complete_sentence_clauses(self):
+        """句号分隔的完整 clause 与事实完全相等时仍不重复输出。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "用户喜欢咖啡。用户讨厌牛奶"
+        memory["metadata"]["key_facts"] = ["用户喜欢咖啡", "用户讨厌牛奶"]
+
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts:" not in text
+        assert text.count("用户喜欢咖啡") == 1
+        assert text.count("用户讨厌牛奶") == 1
+
+    def test_compact_keeps_key_facts_for_negated_clause(self):
+        """正文只有否定表述时不得把肯定事实当作已嵌入。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "用户不喜欢咖啡；用户偏好无糖饮料"
+        memory["metadata"]["key_facts"] = ["喜欢咖啡"]
+
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts: 喜欢咖啡" in text
+        assert "用户不喜欢咖啡" in text
+
+    def test_compact_keeps_key_facts_when_fact_is_prefix_of_longer_word(self):
+        """事实只是更长词条的前缀子串时必须保留显式 Key facts 行。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "用户喜欢咖啡因饮品；用户偏好无糖饮料"
+        memory["metadata"]["key_facts"] = ["喜欢咖啡"]
+
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts: 喜欢咖啡" in text
+        assert "用户喜欢咖啡因饮品" in text
+
+    def test_compact_keeps_whole_fact_line_when_one_clause_is_partial(self):
+        """事实只以更长 clause 出现时整行保留，不丢任何一条事实。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "用户偏好拿铁和卡布奇诺；用户每天午休后喝咖啡"
+        memory["metadata"]["key_facts"] = ["用户偏好拿铁", "用户每天午休后喝咖啡"]
+
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts: 用户偏好拿铁; 用户每天午休后喝咖啡" in text
+        assert "用户偏好拿铁和卡布奇诺" in text
+
+    def test_compact_keeps_key_facts_when_truncation_cuts_an_embedded_fact(self):
+        """截断只留下首句时必须保留被切掉的其余事实。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "用户喜欢咖啡。用户讨厌牛奶。"
+        memory["metadata"]["key_facts"] = ["用户喜欢咖啡", "用户讨厌牛奶"]
+
+        text, stats = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200, memory_max_chars=12),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert stats.truncated_count == 1
+        assert "Key facts: 用户喜欢咖啡; 用户讨厌牛奶" in text
+        assert text.count("用户讨厌牛奶") == 1
+
+    def test_compact_latin_fact_requires_ascii_word_boundary(self):
+        """拉丁/数字事实只有在 ASCII 词边界处出现才算已嵌入。"""
+
+        embedded = _rich_memory(0)
+        embedded["content"] = "版本v2.6发布；用户升级了客户端"
+        embedded["metadata"]["key_facts"] = ["v2.6"]
+
+        embedded_text, _ = format_memories_for_injection(
+            [embedded],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        extended = _rich_memory(0)
+        extended["content"] = "用户使用 v2.60 构建"
+        extended["metadata"]["key_facts"] = ["v2.6"]
+
+        extended_text, _ = format_memories_for_injection(
+            [extended],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts:" not in embedded_text
+        assert "Key facts: v2.6" in extended_text
+
+    def test_compact_latin_fact_under_negation_is_not_embedded(self):
+        """拉丁否定式中的事实不得当作已嵌入。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "User does not like coffee"
+        memory["metadata"]["key_facts"] = ["like coffee"]
+
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts: like coffee" in text
+        assert "User does not like coffee" in text
+
+    def test_compact_latin_word_containing_no_is_not_negation(self):
+        """拉丁词内的 no/not 子串不构成否定，独立嵌入的事实仍不重复输出。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "用户使用 Notion 记录 v2.6 版本"
+        memory["metadata"]["key_facts"] = ["v2.6"]
+
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts:" not in text
+        assert text.count("v2.6") == 1
+
+    def test_compact_latin_fact_in_other_clause_of_negated_fact_is_embedded(self):
+        """canonical 正文其它事实含否定词时，本 clause 的独立事实仍不重复输出。"""
+
+        memory = _rich_memory(0)
+        memory["content"] = "用户不会用 Notion 记录；客户端版本 v2.6"
+        memory["metadata"]["key_facts"] = [
+            "用户不会用 Notion 记录",
+            "客户端版本 v2.6",
+        ]
+
+        text, _ = format_memories_for_injection(
+            [memory],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert "Key facts:" not in text
+        assert text.count("客户端版本 v2.6") == 1
+
     def test_key_facts_take_metadata_budget_before_labels(self):
         """metadata 预算不足时优先保留 Key facts，Topics/Participants 让位。"""
 

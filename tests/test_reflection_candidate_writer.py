@@ -442,6 +442,7 @@ async def _store_candidate(
     metadata: dict[str, Any] | None = None,
     quality_gate: Any | None = None,
     run_claim_side_effect: Any | None = None,
+    merged_idempotency_keys: dict[str, int] | None = None,
 ):
     """以固定 scope 调用一次候选写入。"""
 
@@ -463,6 +464,7 @@ async def _store_candidate(
             }
         ],
         completed_idempotency_keys=set(),
+        merged_idempotency_keys=merged_idempotency_keys,
         session_id="session-1",
         persona_id=None,
         start_index=0,
@@ -632,6 +634,52 @@ async def test_broken_merge_port_falls_back_to_canonical_write(
     assert "dedup_merge_conflict" in {
         getattr(record, "reason_code", "") for record in caplog.records
     }
+
+
+@pytest.mark.asyncio
+async def test_merged_key_replay_skips_write_and_merge() -> None:
+    """重放已并入 owner 的幂等键必须直接返回 MERGED，不写回也不插入。"""
+
+    engine = _MergeEngine(_owner_document())
+
+    results = await _store_candidate(
+        engine,
+        canonical_merge=_coordinator(engine, _UnusedSearch(), mode="enforce"),
+        merged_idempotency_keys={"reflection-key-1": 100},
+    )
+
+    assert results[0].outcome is ReflectionStoreOutcome.MERGED
+    assert results[0].canonical_id == 100
+    assert engine.add_calls == []
+    assert engine.merge_updates == []
+
+
+@pytest.mark.asyncio
+async def test_fence_loss_after_merge_never_inserts_second_canonical() -> None:
+    """合并已生效但 post-fence 失效时不得回落插入第二条 canonical。"""
+
+    owner = _owner_document()
+    engine = _MergeEngine(owner)
+    search = _MergeSearch(
+        [DedupDocument(owner["id"], owner["text"], owner["metadata"])]
+    )
+
+    async def _claim_lost_after_side_effect(operation: Any) -> Any:
+        """执行副作用后模拟 claim 在 post-check 失效。"""
+
+        await operation()
+        raise RuntimeError("claim_lost")
+
+    results = await _store_candidate(
+        engine,
+        canonical_merge=_coordinator(engine, search, mode="enforce"),
+        run_claim_side_effect=_claim_lost_after_side_effect,
+    )
+
+    assert results[0].outcome is ReflectionStoreOutcome.FAILED
+    assert engine.add_calls == []
+    assert len(engine.merge_updates) == 1
+    assert owner["metadata"]["merge_count"] == 1
 
 
 class _FailingEngine:

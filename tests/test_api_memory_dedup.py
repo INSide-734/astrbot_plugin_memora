@@ -11,6 +11,8 @@ import pytest
 import pytest_asyncio
 
 from core.features.memory.infrastructure.dedup_metrics_store import (
+    DEDUP_METRIC_MODES,
+    DEDUP_METRIC_OUTCOMES,
     HOUR_MS,
     DedupMetricsStore,
 )
@@ -20,13 +22,7 @@ NOW_MS = 1_699_999_200_000
 
 EXPECTED_KEYS = {
     "window",
-    "checked",
-    "hit",
-    "merged",
-    "fact_mismatch",
-    "fact_overlap",
-    "conflict",
-    "failed",
+    *DEDUP_METRIC_OUTCOMES,
     "hit_rate",
     "guard_rate",
     "overlap_rate",
@@ -34,6 +30,20 @@ EXPECTED_KEYS = {
     "by_mode",
     "trend",
 }
+
+
+def _counts(**overrides: int) -> dict[str, int]:
+    """构造覆盖全部 outcome 闭集的计数模板，缺省全零。"""
+
+    return {outcome: 0 for outcome in DEDUP_METRIC_OUTCOMES} | overrides
+
+
+def _by_mode(**per_mode: dict[str, int]) -> dict[str, dict[str, int]]:
+    """构造覆盖全部模式闭集的分模式计数。"""
+
+    return {mode: per_mode.get(mode, _counts()) for mode in DEDUP_METRIC_MODES}
+
+
 _SENSITIVE_MARKERS = (
     "scope_key",
     "session_id",
@@ -120,37 +130,12 @@ async def test_store_missing_returns_zero_value_contract() -> None:
     assert set(data) == EXPECTED_KEYS
     assert data == {
         "window": "24h",
-        "checked": 0,
-        "hit": 0,
-        "merged": 0,
-        "fact_mismatch": 0,
-        "fact_overlap": 0,
-        "conflict": 0,
-        "failed": 0,
+        **_counts(),
         "hit_rate": 0.0,
         "guard_rate": 0.0,
         "overlap_rate": 0.0,
         "failure_rate": 0.0,
-        "by_mode": {
-            "observe": {
-                "checked": 0,
-                "hit": 0,
-                "merged": 0,
-                "fact_mismatch": 0,
-                "fact_overlap": 0,
-                "conflict": 0,
-                "failed": 0,
-            },
-            "enforce": {
-                "checked": 0,
-                "hit": 0,
-                "merged": 0,
-                "fact_mismatch": 0,
-                "fact_overlap": 0,
-                "conflict": 0,
-                "failed": 0,
-            },
-        },
+        "by_mode": _by_mode(),
         "trend": [],
     }
 
@@ -199,56 +184,48 @@ async def test_summary_is_whitelisted_and_matches_hand_computed_values(
         field: data[field]
         for field in (
             "window",
-            "checked",
-            "hit",
-            "merged",
-            "fact_mismatch",
-            "fact_overlap",
-            "conflict",
-            "failed",
             "by_mode",
             "trend",
+            *DEDUP_METRIC_OUTCOMES,
         )
     } == {
         "window": "24h",
-        "checked": 10,
-        "hit": 7,
-        "merged": 3,
-        "fact_mismatch": 1,
-        "fact_overlap": 3,
-        "conflict": 1,
-        "failed": 1,
-        "by_mode": {
-            "observe": {
-                "checked": 4,
-                "hit": 3,
-                "merged": 0,
-                "fact_mismatch": 1,
-                "fact_overlap": 2,
-                "conflict": 0,
-                "failed": 0,
-            },
-            "enforce": {
-                "checked": 6,
-                "hit": 4,
-                "merged": 3,
-                "fact_mismatch": 0,
-                "fact_overlap": 1,
-                "conflict": 1,
-                "failed": 1,
-            },
-        },
+        **_counts(
+            checked=10,
+            hit=7,
+            merged=3,
+            fact_mismatch=1,
+            fact_overlap=3,
+            conflict=1,
+            failed=1,
+        ),
+        "by_mode": _by_mode(
+            observe=_counts(
+                checked=4,
+                hit=3,
+                fact_mismatch=1,
+                fact_overlap=2,
+            ),
+            enforce=_counts(
+                checked=6,
+                hit=4,
+                merged=3,
+                fact_overlap=1,
+                conflict=1,
+                failed=1,
+            ),
+        ),
         "trend": [
-            {
-                "bucket_ms": NOW_MS // HOUR_MS * HOUR_MS,
-                "checked": 10,
-                "hit": 7,
-                "merged": 3,
-                "fact_mismatch": 1,
-                "fact_overlap": 3,
-                "conflict": 1,
-                "failed": 1,
-            }
+            _counts(
+                bucket_ms=NOW_MS // HOUR_MS * HOUR_MS,
+                checked=10,
+                hit=7,
+                merged=3,
+                fact_mismatch=1,
+                fact_overlap=3,
+                conflict=1,
+                failed=1,
+            )
         ],
     }
     assert data["hit_rate"] == pytest.approx(0.7)

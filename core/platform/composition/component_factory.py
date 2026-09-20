@@ -483,6 +483,9 @@ class ComponentFactory:
         conversation_store.set_summary_canonical_owner_lookup(
             memory_engine.find_memory_id_by_idempotency_key
         )
+        conversation_store.set_summary_merged_owner_lookup(
+            memory_engine.find_memory_id_by_merged_idempotency_key
+        )
         conversation_store.set_summary_quarantine_candidate_lookup(
             memory_quarantine_store.find_quarantine_candidate_by_key
         )

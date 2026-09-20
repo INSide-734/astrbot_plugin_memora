@@ -3,6 +3,7 @@
 import subprocess
 import sys
 from pathlib import Path
+
 import pytest
 
 from core.features.reflection.domain import (
@@ -116,6 +117,7 @@ def test_summary_reason_codes_extend_outcomes_without_new_statuses() -> None:
         "quarantined",
         "discard",
         "mark_write",
+        "merged",
         "canonical",
         "skipped_idempotent",
         "failed",

@@ -5,6 +5,7 @@
 
 import json
 import math
+import re
 import uuid
 from datetime import datetime
 from typing import Any
@@ -26,6 +27,78 @@ _PROJECTION_TYPES = frozenset(
 )
 _MAX_IDENTITY_REFERENCE_LINES = 8
 _MAX_IDENTITY_REFERENCE_LINE_CHARS = 384
+
+# 事实独立性的安全边界：句界、canonical 事实连接符和包装分隔符。
+_FACT_CLAUSE_BOUNDARY_RE = re.compile(r"[；;|｜\n\r。！？!?]+")
+_CJK_CHAR_RE = re.compile(r"[\u3400-\u9fff]")
+_ASCII_WORD_RE = re.compile(r"[A-Za-z0-9_]")
+# 否定词只让「同一 clause 前文里紧邻的匹配」失效；CJK 事实另走完整 clause 等价。
+# 英文否定词必须整词匹配，否则 Notion/node 之类词内 "no"/"not" 会被误判为否定，
+# 让已独立嵌入的事实重复输出。
+_NEGATION_TOKEN_RE = re.compile(
+    r"[不没未别非无]|\b(?:don'?t|doesn'?t|didn'?t|won'?t|can'?t|cannot|never|not|no)\b",
+    re.IGNORECASE,
+)
+_NEGATION_LOOKBACK_CHARS = 32
+
+
+def _split_fact_clauses(text: str) -> set[str]:
+    """按句界和 canonical 连接符切分正文，得到可做等价比较的完整 clause。"""
+
+    return {
+        clause.strip()
+        for clause in _FACT_CLAUSE_BOUNDARY_RE.split(text)
+        if clause.strip()
+    }
+
+
+def _latin_fact_is_embedded(content: str, fact: str) -> bool:
+    """拉丁/数字事实须带 ASCII 词边界出现，且同一 clause 前文不含否定词。"""
+
+    start = content.find(fact)
+    while start != -1:
+        before = content[start - 1 : start]
+        after = content[start + len(fact) : start + len(fact) + 1]
+        if (
+            _ASCII_WORD_RE.fullmatch(before) is None
+            and _ASCII_WORD_RE.fullmatch(after) is None
+        ):
+            # 否定只在当前 clause 内生效：canonical 正文用「；」连接多条事实，
+            # 其它事实里的否定词不得让本条独立事实重复输出。
+            clause_start = 0
+            for boundary in _FACT_CLAUSE_BOUNDARY_RE.finditer(content, 0, start):
+                clause_start = boundary.end()
+            prefix = content[
+                max(clause_start, start - _NEGATION_LOOKBACK_CHARS) : start
+            ]
+            if _NEGATION_TOKEN_RE.search(prefix) is None:
+                return True
+        start = content.find(fact, start + 1)
+    return False
+
+
+def _facts_are_independently_embedded(content: str, facts: list[str]) -> bool:
+    """判断全部 key fact 是否已作为独立事实出现在正文中。
+
+    只承认两种证明：CJK 事实必须与切分后的完整 clause 相等，拉丁/数字事实
+    必须带 ASCII 词边界且同一 clause 前文无否定词。子串、否定、部分匹配和
+    截断一律视为未嵌入，调用方据此保留显式 ``Key facts`` 行，宁可重复也不
+    让事实丢失。
+    """
+
+    if not content or not facts:
+        return False
+    clauses = _split_fact_clauses(content)
+    for fact in facts:
+        fact = fact.strip()
+        if not fact:
+            return False
+        if _CJK_CHAR_RE.search(fact):
+            if fact not in clauses:
+                return False
+        elif not _latin_fact_is_embedded(content, fact):
+            return False
+    return True
 
 
 def _safe_projection_objects(
@@ -270,8 +343,9 @@ def format_memories_for_injection(
                     entry_parts.append(content)
             else:
                 # 事实优先于主题/参与者标签：metadata 预算不足时先保住 key_facts；
-                # content 已包含全部 key_facts 时不再重复输出，避免同一事实二次占用预算。
-                facts_embedded = bool(facts) and all(fact in content for fact in facts)
+                # 仅当 content 已按独立事实边界包含全部 key_facts 时才省略，
+                # 否定、子串、部分匹配和截断都必须保留显式事实。
+                facts_embedded = _facts_are_independently_embedded(content, facts)
                 if (
                     (not use_budget or budget.include_key_facts)
                     and facts

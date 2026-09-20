@@ -9,7 +9,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from ...reflection.domain.summary_models import (
-    CandidateDisposition,
     CandidateIntent,
     CandidateLedgerStatus,
     ClaimedJob,
@@ -25,27 +24,13 @@ from ...reflection.domain.summary_models import (
 )
 from .summary_store_abandon import SummaryStoreAbandonMixin
 from .summary_store_keys import owned_slot_key, source_epoch_guarded, source_guarded
+from .summary_store_ledger import OWNER_ID_DISPOSITIONS, _row, ledger_blocks_trim
 from .summary_store_observability import log_summary_commit
 from .summary_store_outcomes import valid_window_outcome
 from .summary_store_reconcile import SummaryStoreReconcileMixin
 from .summary_store_snapshot import SummaryStoreSnapshotMixin
 
 _REASON_VALUES = {item.value for item in SummaryReasonCode}
-_CANONICAL_ID_DISPOSITIONS = frozenset(
-    {
-        CandidateDisposition.CANONICAL,
-        CandidateDisposition.MARK_WRITE,
-        CandidateDisposition.SKIPPED_IDEMPOTENT,
-    }
-)
-
-
-def _row(row: Any, name: str, index: int) -> Any:
-    """兼容 sqlite Row 和 tuple 测试替身。"""
-    try:
-        return row[name]
-    except (KeyError, IndexError, TypeError):
-        return row[index]
 
 
 def _timestamp(value: datetime | float | None = None) -> float:
@@ -163,8 +148,11 @@ class SummaryStoreTerminalMixin(
                     )
                 for slot, (slot_key, intent) in intents.items():
                     existing = ledger[slot]
+                    # merged 同样必须携带 owner；它只是允许多个槽位共享同一
+                    # canonical_id，因此仍属于「需要 canonical ID」的处置集合。
                     requires_canonical_id = (
-                        intent.disposition in _CANONICAL_ID_DISPOSITIONS
+                        intent.disposition is not None
+                        and intent.disposition.value in OWNER_ID_DISPOSITIONS
                     )
                     mapping_inconsistent = (
                         (requires_canonical_id and intent.canonical_id is None)
@@ -231,7 +219,8 @@ class SummaryStoreTerminalMixin(
                     """
                     UPDATE summary_jobs SET status=?,reason_code=?,next_attempt_at=COALESCE(?,next_attempt_at),
                       failed_stage=?,exception_type=?,lease_until=NULL,claim_token=NULL,canonical_count=?,quarantine_count=?,
-                      discard_count=?,mark_write_count=?,failed_count=?,skipped_count=?,updated_at=?
+                      discard_count=?,mark_write_count=?,merged_count=?,
+                      facts_rejected_count=?,failed_count=?,skipped_count=?,updated_at=?
                     WHERE job_id=? AND session_id=? AND session_epoch=? AND status='running'
                       AND claim_token=? AND worker_generation=?
                     """,
@@ -249,6 +238,8 @@ class SummaryStoreTerminalMixin(
                         outcome.quarantine_count,
                         outcome.discard_count,
                         outcome.mark_write_count,
+                        outcome.merged_count,
+                        outcome.facts_rejected_count,
                         outcome.failed_count,
                         outcome.skipped_idempotent_count,
                         now,
@@ -272,6 +263,7 @@ class SummaryStoreTerminalMixin(
                         "quarantine_total": outcome.quarantine_count,
                         "discard_total": outcome.discard_count,
                         "mark_write_total": outcome.mark_write_count,
+                        "merged_total": outcome.merged_count,
                         "failed_candidate_total": outcome.failed_count,
                         "skipped_idempotent_total": outcome.skipped_idempotent_count,
                     }.items():
@@ -293,6 +285,7 @@ class SummaryStoreTerminalMixin(
                         quarantine_count=outcome.quarantine_count,
                         discard_count=outcome.discard_count,
                         mark_write_count=outcome.mark_write_count,
+                        merged_count=outcome.merged_count,
                         failed_count=outcome.failed_count,
                         skipped_count=outcome.skipped_idempotent_count,
                         unknown_count=outcome.unknown_count,
@@ -721,94 +714,7 @@ class SummaryStoreTerminalMixin(
         )
         if await cursor.fetchone() is not None:
             return True
-        cursor = await self.connection.execute(
-            """
-            SELECT 1
-            FROM summary_jobs j
-            JOIN summary_job_candidates c ON c.job_id=j.job_id
-            WHERE j.session_id=? AND j.session_epoch=?
-              AND j.status NOT IN ('completed','abandoned')
-              AND c.status IN ('planned','writing','failed','unknown')
-            LIMIT 1
-            """,
-            (session_id, epoch),
-        )
-        if await cursor.fetchone() is not None:
-            return True
-        # completed/abandoned 任务也必须保留完整、互相一致的 ledger 证据；
-        # 只检查开放状态会让损坏的终态来源被误删。
-        cursor = await self.connection.execute(
-            """
-            SELECT 1
-            FROM summary_jobs AS j
-            JOIN summary_job_candidates AS c ON c.job_id=j.job_id
-            WHERE j.session_id=? AND j.session_epoch=?
-              AND j.status IN ('completed','abandoned')
-              AND (
-                c.status NOT IN ('committed','failed')
-                OR c.disposition IS NULL
-                OR (c.disposition IN ('canonical','mark_write','skipped_idempotent')
-                    AND (c.status <> 'committed' OR c.canonical_id IS NULL))
-                OR (c.disposition IN ('quarantined','discard')
-                    AND (c.status <> 'committed' OR c.canonical_id IS NOT NULL))
-                OR (c.disposition='failed' AND c.status <> 'failed')
-              )
-            LIMIT 1
-            """,
-            (session_id, epoch),
-        )
-        if await cursor.fetchone() is not None:
-            return True
-        # 有候选结果的终态任务必须保留完整 ledger；空候选窗口无需伪造 slot。
-        cursor = await self.connection.execute(
-            """
-            SELECT 1
-            FROM summary_jobs AS j
-            WHERE j.session_id=? AND j.session_epoch=?
-              AND j.status IN ('completed','abandoned')
-              AND (
-                  j.canonical_count + j.quarantine_count + j.discard_count
-                  + j.mark_write_count + j.failed_count + j.skipped_count
-              ) > 0
-              AND NOT EXISTS (
-                SELECT 1 FROM summary_job_candidates AS c WHERE c.job_id=j.job_id
-              )
-            LIMIT 1
-            """,
-            (session_id, epoch),
-        )
-        if await cursor.fetchone() is not None:
-            return True
-        # 终态任务的计数必须与 ledger 的每种处置逐项相等，避免漏 slot。
-        cursor = await self.connection.execute(
-            """
-            SELECT 1
-            FROM summary_jobs AS j
-            LEFT JOIN summary_job_candidates AS c ON c.job_id=j.job_id
-            WHERE j.session_id=? AND j.session_epoch=?
-              AND j.status IN ('completed','abandoned')
-            GROUP BY j.job_id
-            HAVING COUNT(c.slot) != (
-                       j.canonical_count + j.quarantine_count + j.discard_count
-                       + j.mark_write_count + j.failed_count + j.skipped_count
-                   )
-                OR SUM(CASE WHEN c.disposition='canonical' THEN 1 ELSE 0 END)
-                   != j.canonical_count
-                OR SUM(CASE WHEN c.disposition='quarantined' THEN 1 ELSE 0 END)
-                   != j.quarantine_count
-                OR SUM(CASE WHEN c.disposition='discard' THEN 1 ELSE 0 END)
-                   != j.discard_count
-                OR SUM(CASE WHEN c.disposition='mark_write' THEN 1 ELSE 0 END)
-                   != j.mark_write_count
-                OR SUM(CASE WHEN c.disposition='failed' THEN 1 ELSE 0 END)
-                   != j.failed_count
-                OR SUM(CASE WHEN c.disposition='skipped_idempotent' THEN 1 ELSE 0 END)
-                   != j.skipped_count
-            LIMIT 1
-            """,
-            (session_id, epoch),
-        )
-        return await cursor.fetchone() is not None
+        return await ledger_blocks_trim(self.connection, session_id, epoch)
 
     @source_epoch_guarded
     @source_guarded

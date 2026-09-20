@@ -193,6 +193,7 @@ async def store_reflection_candidates(
     memories: list[dict[str, Any]],
     *,
     completed_idempotency_keys: set[str] | Mapping[str, int],
+    merged_idempotency_keys: Mapping[str, int] | None = None,
     session_id: str,
     persona_id: str | None,
     start_index: int,
@@ -230,6 +231,8 @@ async def store_reflection_candidates(
         memories: 当前窗口抽取出的候选列表。
         completed_idempotency_keys: 先前重试已完成的候选幂等键；Mapping
             还可携带已经发现的 canonical ID。
+        merged_idempotency_keys: 已并入既有 canonical 的候选幂等键及 owner；
+            命中时直接返回 ``MERGED``，不重复写回也不新增 canonical。
         session_id: 当前会话标识，仅用于持久化作用域和运行日志。
         persona_id: 候选关联的人格标识。
         start_index: 当前来源窗口起始下标。
@@ -323,6 +326,24 @@ async def store_reflection_candidates(
                     # 暂存/拒绝 owner 不算幂等成功，避免把未接受来源当已提交。
                     return None
             return owner
+
+        merged_owner = (
+            merged_idempotency_keys.get(idempotency_key)
+            if isinstance(merged_idempotency_keys, Mapping)
+            else None
+        )
+        if merged_owner is not None:
+            if (
+                isinstance(merged_owner, bool)
+                or not isinstance(merged_owner, int)
+                or merged_owner <= 0
+            ):
+                raise ValueError("canonical_owner_invalid")
+            return ReflectionStoreResult(
+                ReflectionStoreOutcome.MERGED,
+                idempotency_key,
+                merged_owner,
+            )
 
         if idempotency_key in completed_idempotency_keys:
             canonical_id = (
@@ -451,22 +472,6 @@ async def store_reflection_candidates(
                     logger.debug("近重复合并异常类型=%s", error.__class__.__name__)
                     return None
 
-            # mark_write 是低置信候选，不得强化既有可信 canonical。
-            if canonical_merge is not None and not is_mark_write:
-                merge_outcome = await _merge_near_duplicate(canonical_merge)
-                if (
-                    merge_outcome is not None
-                    and merge_outcome.merged
-                    and not isinstance(merge_outcome.memory_id, bool)
-                    and isinstance(merge_outcome.memory_id, int)
-                    and merge_outcome.memory_id > 0
-                ):
-                    return ReflectionStoreResult(
-                        ReflectionStoreOutcome.MERGED,
-                        idempotency_key,
-                        merge_outcome.memory_id,
-                    )
-
             async def _write_canonical() -> int:
                 """在来源 fence 内执行 canonical 写入和其后处理。"""
 
@@ -526,8 +531,39 @@ async def store_reflection_candidates(
                     )
                 return value
 
+            async def _merge_or_write() -> int | MergeOutcome:
+                """在同一 claim/source fence 内先尝试合并，未命中的再插入。
+
+                合并与插入必须同属一个受 fence 保护的副作用：post-fence 校验
+                失败时既不能回落插入第二条 canonical，也不能把不确定的合并
+                当成成功。mark_write 是低置信候选，不得强化既有可信 canonical。
+                """
+
+                if canonical_merge is not None and not is_mark_write:
+                    outcome = await _merge_near_duplicate(canonical_merge)
+                    if outcome is not None and outcome.merged:
+                        owner = outcome.memory_id
+                        if (
+                            isinstance(owner, bool)
+                            or not isinstance(owner, int)
+                            or owner <= 0
+                        ):
+                            # 合并已报告命中却没有可信 owner：不得回落插入第二条
+                            # canonical，交由 fence 失败/重试与 merged 键恢复处理。
+                            raise ValueError("canonical_owner_invalid")
+                        return outcome
+                return await _write_canonical()
+
             if run_claim_side_effect is not None:
-                fenced_result = await run_claim_side_effect(_write_canonical)
+                fenced_result = await run_claim_side_effect(_merge_or_write)
+                if isinstance(fenced_result, MergeOutcome):
+                    # ``_merge_or_write`` 只返回已校验 owner 的合并终态。
+                    assert fenced_result.memory_id is not None
+                    return ReflectionStoreResult(
+                        ReflectionStoreOutcome.MERGED,
+                        idempotency_key,
+                        fenced_result.memory_id,
+                    )
                 if (
                     isinstance(fenced_result, bool)
                     or not isinstance(fenced_result, int)
@@ -536,7 +572,15 @@ async def store_reflection_candidates(
                     raise ValueError("canonical_owner_invalid")
                 memory_id = fenced_result
             else:
-                memory_id = await _write_canonical()
+                stored = await _merge_or_write()
+                if isinstance(stored, MergeOutcome):
+                    assert stored.memory_id is not None
+                    return ReflectionStoreResult(
+                        ReflectionStoreOutcome.MERGED,
+                        idempotency_key,
+                        stored.memory_id,
+                    )
+                memory_id = stored
         except asyncio.CancelledError:
             raise
         except Exception as error:

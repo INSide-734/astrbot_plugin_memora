@@ -17,21 +17,24 @@ Store；缺省未注入即全部 no-op，``mode=off`` 在检测前返回，因�
 候选事实已被既有 canonical 覆盖到阈值），``observe``/``enforce`` 都记录，
 且不写回任何 canonical。
 
-模块物理行数已越过 AGENTS.md 生产代码的 600 行拆分评审线（低于 700 行硬上限）；
-``_merge_locked`` 82 行、``_apply_merge`` 104 行也越过 80 行函数评审线（低于
-120 行硬上限）。本次只追加 ``fact_overlap`` 观测分支与本节说明，未顺带做结构
-迁移。后续拆分点：把 9 个纯 metadata 合并助手（``_load_metadata`` /
-``_normalize_metadata`` / ``_importance`` / ``_merge_count`` / ``_items`` /
-``_identity`` / ``_union`` / ``_merged_keys`` / ``_merge_keys``）抽到独立模块；
-再把「检测 + 终态分派」从 ``_merge_locked`` 前半段抽成单独方法降到 80 行内。
+可选语义扩展（`memory_dedup.semantic_mode`，默认 off）：lexical 返回
+MISS/FACT_OVERLAP 后才在有界窗口预算内调用注入的 ``semantic_search``；
+``semantic_observe`` 只记录，``semantic_enforce`` 复用同一 owner CAS 写回。
+端口缺失、预算耗尽、provider 失败与护栏不通过都保留 lexical 结论并回落
+普通写入，语义 outcome 只记入 ``semantic_*`` 指标模式。
+
+纯 metadata 助手已抽到 `canonical_merge_metadata.py`（原拆分点）。本模块
+物理行数仍高于 AGENTS.md 的 600 行拆分评审线（低于 700 行硬上限），
+``_apply_merge`` 仍在 80 行函数评审线之上（低于 120 行硬上限）；后续拆分点：
+把「检测 + 终态分派」从 ``_merge_locked`` 前半段抽成单独方法，并把
+`build_recent_document_search` / `build_semantic_document_search` 的端口装配
+移到独立装配模块。
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import time
-import unicodedata
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -50,9 +53,28 @@ from ...quality.application.near_duplicate_detector import (
     same_dedup_scope,
     stored_scope,
 )
-from ..domain.memory_atom import has_user_source_evidence
+from ...quality.application.semantic_duplicate_detector import (
+    SEMANTIC_OUTCOME_FAILED,
+    SemanticDocumentSearch,
+    SemanticRequestBudget,
+    build_semantic_document_search,
+    detect_semantic_duplicate,
+)
 from ..domain.memory_dedup_config import MemoryDedupConfig
 from ..domain.revision import memory_revision
+from .canonical_merge_metadata import (
+    MAX_MERGED_IDEMPOTENCY_KEYS,
+    MAX_SOURCE_EVIDENCE,
+    importance,
+    load_metadata,
+    merge_count,
+    merge_fact_evidence,
+    merge_keys,
+    merged_keys,
+    normalize_metadata,
+    union,
+)
+from .scope_lock_registry import ScopeLockRegistry
 
 DEDUP_REASON_MERGED: Final = "dedup_merged"
 DEDUP_REASON_OBSERVED: Final = "dedup_observed"
@@ -60,11 +82,11 @@ DEDUP_REASON_DETECTOR_FAILED: Final = "dedup_detector_failed"
 DEDUP_REASON_MERGE_CONFLICT: Final = "dedup_merge_conflict"
 DEDUP_REASON_FACT_MISMATCH: Final = "dedup_fact_mismatch"
 DEDUP_REASON_FACT_OVERLAP: Final = "dedup_fact_overlap"
+DEDUP_REASON_SEMANTIC_OBSERVED: Final = "dedup_semantic_observed"
+DEDUP_REASON_SEMANTIC_MERGED: Final = "dedup_semantic_merged"
 
 MAX_SOURCE_REFS: Final = 32
-MAX_SOURCE_EVIDENCE: Final = 32
 MAX_TOPICS: Final = 5
-MAX_MERGED_IDEMPOTENCY_KEYS: Final = 16
 
 
 class MergeStatus(str, Enum):
@@ -124,17 +146,26 @@ class CanonicalMergeCoordinator:
         load_memory: LoadMemory,
         update_memory: UpdateMemory,
         metrics_recorder: DedupMetricsRecorder | None = None,
+        semantic_search: SemanticDocumentSearch | None = None,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        """绑定配置读取器与 canonical 检索/读写端口。"""
+        """绑定配置读取器与 canonical 检索/读写端口。
+
+        ``semantic_search`` 缺省为 ``None``：语义检测是可选能力，端口缺失时
+        等价于 `semantic_unavailable`，不发起任何 provider 查询。
+        """
 
         self._config_provider = config_provider
         self._search_similar = search_similar
         self._load_memory = load_memory
         self._update_memory = update_memory
         self._metrics_recorder = metrics_recorder
+        self._semantic_search = semantic_search
         self._clock = clock
-        self._locks: dict[str, asyncio.Lock] = {}
+        # 语义 provider 调用的按窗口预算；窗口键只在内存中，不落库不记录。
+        self._semantic_budget = SemanticRequestBudget()
+        # 引用计数注册表：同一 scope 串行合并，空闲后立即回收条目。
+        self._locks = ScopeLockRegistry()
 
     async def merge(self, candidate: MergeCandidate) -> MergeOutcome:
         """检测并合并候选；不确定的中间状态一律返回可回落的终态。"""
@@ -149,11 +180,7 @@ class CanonicalMergeCoordinator:
         )
         if scope is None:
             return MergeOutcome(MergeStatus.MISS)
-        lock = self._locks.setdefault(
-            f"{scope.session_id}\x00{scope.scope_key}",
-            asyncio.Lock(),
-        )
-        async with lock:
+        async with self._locks.hold(f"{scope.session_id}\x00{scope.scope_key}"):
             return await self._merge_locked(candidate, config)
 
     def _resolve_config(self) -> MemoryDedupConfig:
@@ -203,7 +230,8 @@ class CanonicalMergeCoordinator:
             )
         if detection.verdict is NearDuplicateVerdict.MISS:
             await self._record_metrics(config.mode, "checked")
-            return MergeOutcome(MergeStatus.MISS)
+            semantic = await self._semantic_outcome(candidate, config)
+            return semantic or MergeOutcome(MergeStatus.MISS)
         if detection.verdict is NearDuplicateVerdict.FACT_MISMATCH:
             logger.info(
                 "同 scope 近重复候选的事实不同，不合并",
@@ -223,12 +251,14 @@ class CanonicalMergeCoordinator:
                 extra={"reason_code": DEDUP_REASON_FACT_OVERLAP},
             )
             await self._record_metrics(config.mode, "checked", "fact_overlap")
-            return MergeOutcome(
+            overlap_outcome = MergeOutcome(
                 MergeStatus.OBSERVED,
                 detection.memory_id,
                 detection.score,
                 DEDUP_REASON_FACT_OVERLAP,
             )
+            semantic = await self._semantic_outcome(candidate, config)
+            return semantic or overlap_outcome
         document = detection.document
         if document is None:
             await self._record_metrics(config.mode, "checked", "failed")
@@ -251,6 +281,80 @@ class CanonicalMergeCoordinator:
         await self._record_metrics(config.mode, "checked", "hit")
         return await self._apply_merge(
             candidate, document, detection.score, config.mode
+        )
+
+    async def _semantic_outcome(
+        self,
+        candidate: MergeCandidate,
+        config: MemoryDedupConfig,
+    ) -> MergeOutcome | None:
+        """lexical 未命中/事实重叠后的可选语义检测。
+
+        返回 ``None`` 表示调用方保留 lexical 结论：``semantic_mode=off``、
+        端口缺失、预算耗尽、provider 失败或候选未通过作用域/事实/用户来源
+        证据护栏都不会改变普通写入语义。``observe`` 只记录命中，``enforce``
+        复用既有 owner CAS 写回路径。
+        """
+
+        if config.semantic_mode == "off":
+            return None
+        metric_mode = f"semantic_{config.semantic_mode}"
+        try:
+            decision = await detect_semantic_duplicate(
+                content=candidate.content,
+                metadata=candidate.metadata,
+                session_id=candidate.session_id,
+                persona_id=candidate.persona_id,
+                search_semantic=self._semantic_search,
+                load_memory=self._load_memory,
+                budget=self._semantic_budget,
+                window_key=_semantic_window_key(candidate),
+                threshold=config.semantic_threshold,
+                candidate_limit=config.candidate_limit,
+                min_tokens=config.min_tokens,
+                fact_evidence_guard=lambda owner_metadata: (
+                    merge_fact_evidence(owner_metadata, candidate.metadata) is not None
+                ),
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.error(
+                "语义近重复检测失败，回落普通写入",
+                extra={"reason_code": SEMANTIC_OUTCOME_FAILED},
+            )
+            logger.debug("语义近重复检测异常类型=%s", error.__class__.__name__)
+            await self._record_metrics(metric_mode, SEMANTIC_OUTCOME_FAILED)
+            return None
+        for outcome in decision.outcomes:
+            await self._record_metrics(metric_mode, outcome)
+        document = decision.document
+        if document is None:
+            return None
+        if config.semantic_mode != "enforce":
+            logger.info(
+                "语义观测到同 scope 近重复候选，observe 模式不合并",
+                extra={"reason_code": DEDUP_REASON_SEMANTIC_OBSERVED},
+            )
+            return MergeOutcome(
+                MergeStatus.OBSERVED,
+                document.memory_id,
+                decision.score,
+                DEDUP_REASON_SEMANTIC_OBSERVED,
+            )
+        outcome = await self._apply_merge(
+            candidate,
+            document,
+            decision.score,
+            metric_mode,
+        )
+        if not outcome.merged:
+            return outcome
+        return MergeOutcome(
+            MergeStatus.MERGED,
+            outcome.memory_id,
+            outcome.score,
+            DEDUP_REASON_SEMANTIC_MERGED,
         )
 
     async def _apply_merge(
@@ -280,14 +384,14 @@ class CanonicalMergeCoordinator:
                 score,
                 DEDUP_REASON_MERGE_CONFLICT,
             )
-        metadata = _normalize_metadata(fresh.get("metadata") if fresh else None)
+        metadata = normalize_metadata(fresh.get("metadata") if fresh else None)
         incoming_scope = candidate_scope(
             candidate.metadata,
             session_id=candidate.session_id,
             persona_id=candidate.persona_id,
         )
         owner_scope = stored_scope(metadata)
-        fact_evidence = _merge_fact_evidence(metadata, candidate.metadata)
+        fact_evidence = merge_fact_evidence(metadata, candidate.metadata)
         if (
             not fresh
             or not is_memory_recallable(metadata)
@@ -309,7 +413,7 @@ class CanonicalMergeCoordinator:
                 score,
                 DEDUP_REASON_MERGE_CONFLICT,
             )
-        if candidate.idempotency_key and candidate.idempotency_key in _merged_keys(
+        if candidate.idempotency_key and candidate.idempotency_key in merged_keys(
             metadata
         ):
             # 重放：同一候选已经并入过该 canonical，不再重复记账。
@@ -331,7 +435,7 @@ class CanonicalMergeCoordinator:
             )
         updates = self._merge_updates(candidate, metadata)
         updates["metadata"]["fact_source_evidence"] = fact_evidence
-        baseline_merge_count = _merge_count(metadata)
+        baseline_merge_count = merge_count(metadata)
         try:
             applied = await self._update_memory(owner_id, updates, expected_revision)
         except asyncio.CancelledError:
@@ -410,10 +514,10 @@ class CanonicalMergeCoordinator:
             raise
         except Exception:
             return False
-        metadata = _normalize_metadata(current.get("metadata") if current else None)
+        metadata = normalize_metadata(current.get("metadata") if current else None)
         if candidate.idempotency_key:
-            return candidate.idempotency_key in _merged_keys(metadata)
-        return _merge_count(metadata) > baseline_merge_count
+            return candidate.idempotency_key in merged_keys(metadata)
+        return merge_count(metadata) > baseline_merge_count
 
     def _merge_updates(
         self,
@@ -424,9 +528,9 @@ class CanonicalMergeCoordinator:
 
         incoming = candidate.metadata
         merged_metadata: dict[str, Any] = {
-            "merge_count": _merge_count(metadata) + 1,
+            "merge_count": merge_count(metadata) + 1,
             "last_merged_at": self._clock(),
-            "merged_idempotency_keys": _merge_keys(
+            "merged_idempotency_keys": merge_keys(
                 metadata,
                 candidate.idempotency_key,
             ),
@@ -435,13 +539,13 @@ class CanonicalMergeCoordinator:
             ("source_refs", MAX_SOURCE_REFS),
             ("topics", MAX_TOPICS),
         ):
-            union = _union(metadata.get(field), incoming.get(field), limit=limit)
-            if union:
-                merged_metadata[field] = union
+            merged_items = union(metadata.get(field), incoming.get(field), limit=limit)
+            if merged_items:
+                merged_metadata[field] = merged_items
         return {
             "importance": max(
-                _importance(metadata.get("importance")),
-                _importance(candidate.importance),
+                importance(metadata.get("importance")),
+                importance(candidate.importance),
             ),
             "metadata": merged_metadata,
         }
@@ -475,6 +579,7 @@ def build_canonical_merge_coordinator(
         load_memory=engine.get_memory,
         update_memory=_update_memory,
         metrics_recorder=metrics_recorder,
+        semantic_search=build_semantic_document_search(engine),
         clock=clock,
     )
 
@@ -514,7 +619,7 @@ def build_recent_document_search(engine: Any) -> SimilarDocumentSearch:
                 continue
             if not isinstance(text, str) or not text.strip():
                 continue
-            metadata = _load_metadata(row[2])
+            metadata = load_metadata(row[2])
             if metadata is None:
                 continue
             documents.append(
@@ -525,149 +630,17 @@ def build_recent_document_search(engine: Any) -> SimilarDocumentSearch:
     return search
 
 
-def _load_metadata(value: Any) -> dict[str, Any] | None:
-    """解析落库 metadata；非法 JSON 或非对象返回 ``None``。"""
+def _semantic_window_key(candidate: MergeCandidate) -> str:
+    """返回语义预算的窗口键：来源窗口摘要优先，缺省退化为候选幂等键。
 
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except (TypeError, json.JSONDecodeError):
-            return None
-    if not isinstance(value, dict):
-        return None
-    return value
+    两者都是既有稳定摘要，只作为内存预算的分桶键，不写入日志、指标或
+    canonical metadata；缺省退化时每个候选自成一个预算窗口，仍然有界。
+    """
 
-
-def _normalize_metadata(value: Any) -> dict[str, Any]:
-    """把 canonical metadata 规范化为字典；缺失或非法时返回空字典。"""
-
-    return _load_metadata(value) or {}
-
-
-def _importance(value: Any) -> float:
-    """把重要性规范化为 0..1 浮点；非法值按 0 处理（max 只升不降）。"""
-
-    if isinstance(value, bool):
-        return 0.0
-    try:
-        return max(0.0, min(1.0, float(value)))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _merge_count(metadata: Mapping[str, Any]) -> int:
-    """读取既有合并计数；非法值按 0 处理。"""
-
-    value = metadata.get("merge_count")
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return 0
-    return value
-
-
-def _items(value: Any) -> tuple[Any, ...]:
-    """把并集输入规范化为元组；非法类型按空处理。"""
-
-    if value is None:
-        return ()
-    if isinstance(value, (list, tuple)):
-        return tuple(value)
-    return ()
-
-
-def _identity(item: Any) -> str:
-    """构造稳定去重键；不可 JSON 序列化时回退 repr。"""
-
-    try:
-        return json.dumps(item, sort_keys=True, ensure_ascii=False, default=str)
-    except (TypeError, ValueError):
-        return repr(item)
-
-
-def _union(existing: Any, incoming: Any, *, limit: int) -> list[Any]:
-    """按“既有在前、新增在后”合并去重并截断到上限。"""
-
-    merged: list[Any] = []
-    seen: set[str] = set()
-    for item in (*_items(existing), *_items(incoming)):
-        key = _identity(item)
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(item)
-    return merged[:limit]
-
-
-def _merge_fact_evidence(
-    existing: Mapping[str, Any], incoming: Mapping[str, Any]
-) -> list[list[dict[str, Any]]] | None:
-    """Union evidence only for the same normalized fact, preserving owner order."""
-    paired: list[tuple[list[str], list[list[dict[str, Any]]]]] = []
-    for metadata in (existing, incoming):
-        facts = metadata.get("key_facts")
-        evidence = metadata.get("fact_source_evidence")
-        if (
-            not isinstance(facts, list)
-            or not facts
-            or any(not isinstance(fact, str) or not fact.strip() for fact in facts)
-            or not isinstance(evidence, list)
-            or len(facts) != len(evidence)
-            or not all(has_user_source_evidence(group) for group in evidence)
-        ):
-            return None
-        paired.append((facts, evidence))
-    owner_facts, owner_evidence = paired[0]
-    additions: dict[str, list[dict[str, Any]]] = {}
-    for fact, group in zip(*paired[1], strict=True):
-        additions.setdefault(_fact_key(fact), []).extend(group)
-    if not additions.keys() <= {_fact_key(fact) for fact in owner_facts}:
-        return None
-    merged: list[list[dict[str, Any]]] = []
-    for fact, group in zip(owner_facts, owner_evidence, strict=True):
-        seen: set[tuple[Any, ...]] = set()
-        refs: list[dict[str, Any]] = []
-        for item in (*group, *additions.get(_fact_key(fact), ())):
-            key = tuple(
-                item[field]
-                for field in (
-                    "message_id",
-                    "message_seq",
-                    "role",
-                    "start",
-                    "end",
-                    "message_fingerprint",
-                )
-            )
-            if key not in seen:
-                seen.add(key)
-                refs.append(dict(item))
-        retained = refs[:MAX_SOURCE_EVIDENCE]
-        if not has_user_source_evidence(retained):
-            return None
-        merged.append(retained)
-    return merged
-
-
-def _fact_key(fact: str) -> str:
-    return " ".join(unicodedata.normalize("NFKC", fact).casefold().split())
-
-
-def _merged_keys(metadata: Mapping[str, Any]) -> list[str]:
-    """读取 canonical metadata 中已合并的幂等键，忽略非法项。"""
-
-    return [
-        item
-        for item in _items(metadata.get("merged_idempotency_keys"))
-        if isinstance(item, str) and item.strip()
-    ]
-
-
-def _merge_keys(metadata: Mapping[str, Any], key: str) -> list[str]:
-    """追加候选幂等键并保留最近 ``MAX_MERGED_IDEMPOTENCY_KEYS`` 项。"""
-
-    keys = _merged_keys(metadata)
-    if key and key not in keys:
-        keys.append(key)
-    return keys[-MAX_MERGED_IDEMPOTENCY_KEYS:]
+    digest = candidate.metadata.get("source_digest")
+    if isinstance(digest, str) and digest.strip():
+        return digest.strip()
+    return candidate.idempotency_key
 
 
 __all__ = [
@@ -677,6 +650,8 @@ __all__ = [
     "DEDUP_REASON_MERGED",
     "DEDUP_REASON_MERGE_CONFLICT",
     "DEDUP_REASON_OBSERVED",
+    "DEDUP_REASON_SEMANTIC_MERGED",
+    "DEDUP_REASON_SEMANTIC_OBSERVED",
     "MAX_MERGED_IDEMPOTENCY_KEYS",
     "MAX_SOURCE_EVIDENCE",
     "MAX_SOURCE_REFS",

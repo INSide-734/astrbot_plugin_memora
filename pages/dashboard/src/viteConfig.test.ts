@@ -88,7 +88,7 @@ describe("vite config", () => {
     ) as string;
     const schema = JSON.parse(schemaText) as Record<string, unknown>;
     expect(Object.keys(schema)).toHaveLength(43);
-    expect(countSchemaLeaves(schema)).toBe(260);
+    expect(countSchemaLeaves(schema)).toBe(262);
     expect(schema).not.toHaveProperty("index_management");
     expect(schema).toMatchObject({
       reflection_engine: {

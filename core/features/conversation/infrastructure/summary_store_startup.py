@@ -14,26 +14,13 @@ from ...reflection.domain.summary_models import (
     SummaryJobStatus,
     normalize_exception_type,
 )
+from .summary_store_ledger import OWNER_ID_DISPOSITIONS, TERMINAL_DISPOSITIONS
 from .summary_store_observability import log_summary_startup_reconcile
 
 if TYPE_CHECKING:
     pass
 
 
-_CANONICAL_DISPOSITIONS = frozenset(
-    {
-        CandidateDisposition.CANONICAL.value,
-        CandidateDisposition.MARK_WRITE.value,
-        CandidateDisposition.SKIPPED_IDEMPOTENT.value,
-    }
-)
-_TERMINAL_DISPOSITIONS = _CANONICAL_DISPOSITIONS | frozenset(
-    {
-        CandidateDisposition.QUARANTINED.value,
-        CandidateDisposition.DISCARD.value,
-        CandidateDisposition.FAILED.value,
-    }
-)
 _RECOVERABLE_QUARANTINE_STATUSES = frozenset({"pending", "blocked"})
 
 
@@ -116,6 +103,16 @@ class SummaryStoreStartupMixin:
         """注入只按幂等键查询 canonical owner 的恢复回调。"""
         self._summary_canonical_owner_lookup = lookup
 
+    def set_summary_merged_owner_lookup(
+        self, lookup: Callable[[str], int | None | Awaitable[int | None]]
+    ) -> None:
+        """注入只按 merged 幂等键查询 canonical owner 的恢复回调。
+
+        合并只更新既有 canonical 的 metadata，不会建立 canonical 幂等映射；
+        崩溃恢复必须能证明「owner 已强化」，否则保持 unknown。
+        """
+        self._summary_merged_owner_lookup = lookup
+
     def set_summary_quarantine_candidate_lookup(
         self,
         lookup: Callable[
@@ -185,9 +182,11 @@ class SummaryStoreStartupMixin:
                 }
             )
 
+        merged_lookup = getattr(self, "_summary_merged_owner_lookup", None)
         canonical_lookup = getattr(self, "_summary_canonical_owner_lookup", None)
         quarantine_lookup = getattr(self, "_summary_quarantine_candidate_lookup", None)
         owners: dict[tuple[str, int], int] = {}
+        merged_owners: dict[tuple[str, int], int] = {}
         quarantine: dict[tuple[str, int], Mapping[str, object]] = {}
         evidence_errors: dict[str, str] = {}
         for job_id, job in jobs.items():
@@ -200,33 +199,49 @@ class SummaryStoreStartupMixin:
                 key = slot["key"]
                 if not key or key.startswith("quality:"):
                     continue
-                owner: object | None = None
-                owner_failed = False
-                if callable(canonical_lookup):
+                slot_id = (job_id, slot["slot"])
+                evidence_failed = False
+                # 合并只改既有 canonical 的 metadata，因此先按 merged 键恢复
+                # merged 槽位，再按普通键恢复 canonical 槽位；都无法证明时保持
+                # unknown，绝不猜测 owner。
+                for lookup, target in (
+                    (merged_lookup, merged_owners),
+                    (canonical_lookup, owners),
+                ):
+                    if not callable(lookup):
+                        continue
+                    owner: object | None = None
                     try:
-                        owner = canonical_lookup(key)
+                        owner = lookup(key)
                         if inspect.isawaitable(owner):
                             owner = await owner
                     except asyncio.CancelledError:
                         raise
                     except Exception as error:
-                        owner_failed = True
+                        evidence_failed = True
                         evidence_errors.setdefault(
                             job_id,
                             normalize_exception_type(error.__class__.__name__)
                             or "unknown",
                         )
+                        break
+                    if owner is None:
+                        continue
                     if (
-                        not owner_failed
-                        and isinstance(owner, int)
+                        isinstance(owner, int)
                         and not isinstance(owner, bool)
                         and owner > 0
                     ):
-                        owners[(job_id, slot["slot"])] = owner
-                    elif not owner_failed and owner is not None:
-                        owner_failed = True
-                        evidence_errors.setdefault(job_id, "unknown")
-                if owner_failed or owners.get((job_id, slot["slot"])) is not None:
+                        target[slot_id] = owner
+                        break
+                    evidence_failed = True
+                    evidence_errors.setdefault(job_id, "unknown")
+                    break
+                if (
+                    evidence_failed
+                    or merged_owners.get(slot_id) is not None
+                    or owners.get(slot_id) is not None
+                ):
                     continue
                 if not callable(quarantine_lookup):
                     continue
@@ -259,7 +274,8 @@ class SummaryStoreStartupMixin:
                         SELECT session_id,session_epoch,status,
                                canonical_count,quarantine_count,discard_count,
                                mark_write_count,failed_count,skipped_count,
-                               start_seq,end_seq,expected_count,source_digest,exception_type
+                               start_seq,end_seq,expected_count,source_digest,
+                               exception_type,merged_count
                         FROM summary_jobs WHERE job_id=?
                         """,
                         (job_id,),
@@ -408,14 +424,24 @@ class SummaryStoreStartupMixin:
                                 (now, job_id, slot_number),
                             )
                             continue
+                        merged_owner = merged_owners.get((job_id, slot_number))
                         owner = owners.get((job_id, slot_number))
                         evidence = quarantine.get((job_id, slot_number))
                         slot_data = {"key": current_key}
-                        if owner is not None:
+                        if merged_owner is not None or owner is not None:
+                            # merged 证据优先：它证明 owner 已被强化且没有新增行。
+                            disposition = (
+                                CandidateDisposition.MERGED.value
+                                if merged_owner is not None
+                                else CandidateDisposition.CANONICAL.value
+                            )
+                            resolved_owner = (
+                                merged_owner if merged_owner is not None else owner
+                            )
                             updated = await connection.execute(
                                 """
                                 UPDATE summary_job_candidates
-                                SET status='committed',disposition='canonical',canonical_id=?,
+                                SET status='committed',disposition=?,canonical_id=?,
                                     updated_at=?
                                 WHERE job_id=? AND slot=? AND idempotency_key=?
                                   AND status IN ('writing','unknown')
@@ -428,12 +454,13 @@ class SummaryStoreStartupMixin:
                                   )
                                 """,
                                 (
-                                    owner,
+                                    disposition,
+                                    resolved_owner,
                                     now,
                                     job_id,
                                     slot_number,
                                     current_key,
-                                    owner,
+                                    resolved_owner,
                                     job_id,
                                     session_id,
                                     epoch,
@@ -512,13 +539,13 @@ class SummaryStoreStartupMixin:
                                 CandidateLedgerStatus.COMMITTED.value,
                                 CandidateLedgerStatus.FAILED.value,
                             }
-                            or disposition not in _TERMINAL_DISPOSITIONS
+                            or disposition not in TERMINAL_DISPOSITIONS
                             or (
-                                disposition in _CANONICAL_DISPOSITIONS
+                                disposition in OWNER_ID_DISPOSITIONS
                                 and not isinstance(canonical_id, int)
                             )
                             or (
-                                disposition not in _CANONICAL_DISPOSITIONS
+                                disposition not in OWNER_ID_DISPOSITIONS
                                 and canonical_id is not None
                             )
                         ):
@@ -561,6 +588,7 @@ class SummaryStoreStartupMixin:
                         "mark_write_count": counts[
                             CandidateDisposition.MARK_WRITE.value
                         ],
+                        "merged_count": counts[CandidateDisposition.MERGED.value],
                         "failed_count": 0,
                         "skipped_count": counts[
                             CandidateDisposition.SKIPPED_IDEMPOTENT.value
@@ -572,7 +600,8 @@ class SummaryStoreStartupMixin:
                         SET status='completed',reason_code='completed',failed_stage=NULL,
                             exception_type=?,claim_token=NULL,lease_until=NULL,
                             canonical_count=?,quarantine_count=?,discard_count=?,
-                            mark_write_count=?,failed_count=0,skipped_count=?,updated_at=?
+                            mark_write_count=?,merged_count=?,failed_count=0,
+                            skipped_count=?,updated_at=?
                         WHERE job_id=? AND session_id=? AND session_epoch=?
                           AND start_seq=? AND end_seq=? AND expected_count=?
                           AND source_digest=?
@@ -584,6 +613,7 @@ class SummaryStoreStartupMixin:
                             values["quarantine_count"],
                             values["discard_count"],
                             values["mark_write_count"],
+                            values["merged_count"],
                             values["skipped_count"],
                             now,
                             job_id,
@@ -609,6 +639,7 @@ class SummaryStoreStartupMixin:
                         "mark_write_count": int(
                             _row(job_row, "mark_write_count", 6) or 0
                         ),
+                        "merged_count": int(_row(job_row, "merged_count", 14) or 0),
                         "failed_count": int(_row(job_row, "failed_count", 7) or 0),
                         "skipped_count": int(_row(job_row, "skipped_count", 8) or 0),
                     }
@@ -617,6 +648,7 @@ class SummaryStoreStartupMixin:
                         "quarantine_total": "quarantine_count",
                         "discard_total": "discard_count",
                         "mark_write_total": "mark_write_count",
+                        "merged_total": "merged_count",
                         "failed_candidate_total": "failed_count",
                         "skipped_idempotent_total": "skipped_count",
                     }.items():

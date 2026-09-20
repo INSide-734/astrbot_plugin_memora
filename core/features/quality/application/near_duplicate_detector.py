@@ -16,6 +16,11 @@ scope 的候选纳入相似度比较。
 达标事实（>= ``FACT_MATCH_FLOOR``）占比达到 ``FACT_OVERLAP_RATIO`` 即认为
 “部分共享事实”。该信号只用于灰度计数，不改变 HIT/FACT_MISMATCH 判定，
 也不参与写回决策。
+
+本模块保持确定性纯计算；可选的语义扩展在
+`semantic_duplicate_detector.py`：lexical 仍是第一判据，只有协调器在
+MISS/FACT_OVERLAP 之后才调用有界的语义端口，并复用本模块的
+``document_is_comparable`` 与 ``fact_guard_passes`` 护栏。
 """
 
 from __future__ import annotations
@@ -196,7 +201,7 @@ async def detect_near_duplicate(
     incoming_tokens = frozenset(candidate_tokens)
     evaluated: list[tuple[float, DedupDocument]] = []
     for document in documents:
-        if not _is_comparable(document, incoming, min_tokens=min_tokens):
+        if not document_is_comparable(document, incoming, min_tokens=min_tokens):
             continue
         evaluated.append(
             (
@@ -222,13 +227,23 @@ async def detect_near_duplicate(
 
     # 同分时固定选择最早的 canonical，结论与检索返回顺序无关。
     score, document = max(scored, key=lambda item: (item[0], -item[1].memory_id))
-    if _fact_jaccard(metadata, document.metadata) < FACT_JACCARD_FLOOR:
+    if not fact_guard_passes(metadata, document.metadata):
         return NearDuplicateOutcome(
             NearDuplicateVerdict.FACT_MISMATCH,
             document,
             score,
         )
     return NearDuplicateOutcome(NearDuplicateVerdict.HIT, document, score)
+
+
+def fact_guard_passes(incoming: Mapping[str, Any], stored: Mapping[str, Any]) -> bool:
+    """两侧 ``key_facts`` 词集 Jaccard 达到事实护栏门槛。
+
+    语义扩展与 lexical 命中判定共用同一道护栏：任一侧没有事实 token 时按
+    0 处理，因此只有词面事实确实重合的候选才能通过。
+    """
+
+    return _fact_jaccard(incoming, stored) >= FACT_JACCARD_FLOOR
 
 
 def _build_scope(
@@ -302,7 +317,7 @@ def _needs_participant_boundary(scope: DedupScope) -> bool:
     )
 
 
-def _is_comparable(
+def document_is_comparable(
     document: DedupDocument,
     incoming: DedupScope,
     *,
@@ -427,6 +442,8 @@ __all__ = [
     "SimilarDocumentSearch",
     "candidate_scope",
     "detect_near_duplicate",
+    "document_is_comparable",
+    "fact_guard_passes",
     "same_dedup_scope",
     "stored_scope",
 ]

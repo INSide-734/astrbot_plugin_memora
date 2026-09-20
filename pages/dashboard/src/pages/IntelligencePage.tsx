@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Activity, AlertTriangle, BrainCircuit, ClipboardCheck, Gauge, GitBranch, Stethoscope } from "lucide-react";
 import { CandidateReuseConfig } from "@/components/CandidateReuseConfig";
 import { MemoryDedupMetrics } from "@/components/MemoryDedupMetrics";
+import { QualityFunnelMetrics } from "@/components/QualityFunnelMetrics";
 import { PageContent, PageFrame, PageHeader } from "@/components/layout/PageLayout";
 import { DiagnosticCenter } from "@/components/intelligence/DiagnosticCenter";
 import { EvaluationWorkbench } from "@/components/intelligence/EvaluationWorkbench";
@@ -48,6 +49,7 @@ const panelByTab: Record<IntelligenceTabId, (
     <div className="space-y-6">
       <CandidateReuseConfig showToast={showToast} />
       <MemoryDedupMetrics />
+      <QualityFunnelMetrics />
     </div>
   ),
 };

@@ -25,6 +25,8 @@ Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection �
 - 并发：进程内按 `session + scope_key` 的 `asyncio.Lock` 串行化「检测 → 合并」，覆盖总结窗口的候选并发；跨进程并发不在支持范围（单实例单 DB）。
 - 失败语义：检测异常、目标正文在检测后被改写、CAS 冲突、写回异常一律 fail-open，由调用方回落普通 canonical 写入；写回返回 False 时以回读 `merged_idempotency_keys`/`merge_count` 判定是否已提交，避免在已合并的情况下插入重复 canonical。
 - 默认关闭：`memory_dedup.mode=off` 不发起任何近重复查询；`observe` 只记录 `dedup_observed`；`enforce` 才写回。
+- 语义扩展（默认关闭）：`memory_dedup.semantic_mode=off|observe|enforce` 与 `semantic_threshold`（默认 0.9）只在 lexical MISS/FACT_OVERLAP 之后调用 `quality` 的 `semantic_duplicate_detector` 窄端口，窗口键取候选的 `source_digest`（缺省退化为幂等键），`SemanticRequestBudget` 按窗口固定 8 次；候选必须回读 canonical 并通过作用域/可召回/长度/事实/用户来源证据护栏，`observe` 只记录、`enforce` 复用同一 owner CAS 写回。端口缺失、预算耗尽与 provider 异常都 fail-open 回落普通写入，语义 outcome 只记入 `semantic_observe`/`semantic_enforce` 模式。
+- 模块结构：纯 metadata 规范化/并集/幂等键助手在 `application/canonical_merge_metadata.py`（`canonical_merge.py` 继续 re-export `MAX_SOURCE_EVIDENCE`/`MAX_MERGED_IDEMPOTENCY_KEYS`），协调器只保留检测、终态分派与写回。
 - 观测：`infrastructure/dedup_metrics_store.py` 是独立 SQLite 小时桶聚合 `dedup_metrics(bucket_ms, mode, outcome, count)`，**只保存计数与时间桶/模式/outcome**，不含 scope、会话、正文、ID 或 reason 明细，因此不需要 HMAC 摘要键；七类终态由协调器的可选 `metrics_recorder` 端口（缺省 no-op）UPSERT 增量写入，`off` 不产生任何行。其中 `fact_overlap` 是 `quality` 检测器在「整段无命中但候选事实被既有 canonical 覆盖到阈值」时给出的附加信号：`observe`/`enforce` 都记录 `checked` + `fact_overlap`，返回 OBSERVED 等价终态且**永不写回**；`checked` 始终是分母，派生 `overlap_rate = fact_overlap/checked`（`checked=0` → 0.0），`hit_rate`/`guard_rate`/`failure_rate` 语义不变。记录异常只降级 debug 日志且不影响合并结果，`asyncio.CancelledError` 继续传播；保留期由 `memory_dedup.metrics_retention_days`（默认 30，范围 1-3650）控制，在初始化后与写入节流（每 64 次写入或每小时至多一次）清理过期桶。只读消费方是 Page API `GET /memory-dedup/metrics`。
 
 ```mermaid

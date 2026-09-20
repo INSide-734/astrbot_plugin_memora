@@ -11,6 +11,8 @@
 2. `ReviewDetector`/`ReviewStore` 扫描已有 canonical 记忆的低置信度、重复、陈旧、敏感、噪声或来源缺失迹象，维护独立人工复核队列。
 3. 可配置门禁运行时：`gate_config.py` 定义 `GateConfig`/`GateProfile`/`GateBinding` 域模型与校验；`gate_runtime.py` 的 `GateRuntime` 持有不可变 `GateSnapshot`，热重载为原子替换；`gate_rule_engine.py` 在 profile 内评估 AND/OR/NOT 规则树并应用六类动作；`gate_disposition_filter.py` 默认过滤 mark_write 召回结果。
 4. `near_duplicate_detector.py` 提供写入前的确定性近重复检测：token 集合 Jaccard + `min_tokens` 短文本护栏 + `key_facts` 事实护栏，近邻候选由调用方注入的检索端口给出，比较范围先收敛到同 `scope_key`/privacy/会话与主体边界。整段未达阈值时再按 `key_facts` 覆盖率给出 `FACT_OVERLAP` 观测结论（只计数、不写回，HIT/FACT_MISMATCH 判定与合并决策不变）。检测器只读不写，合并决策属于 [`memory/AGENTS.md`](../memory/AGENTS.md) 的 `canonical_merge`。
+5. `semantic_duplicate_detector.py` 是可选的语义窄端口（`memory_dedup.semantic_mode`，默认 `off`）：只在 lexical MISS/FACT_OVERLAP 之后调用注入的 `VectorRetriever.search` adapter，`SemanticRequestBudget` 按窗口固定上限（默认 8 次）；每条候选必须回读 canonical 并通过 `document_is_comparable`（ID/可召回/长度/作用域）与 `fact_guard_passes`，用户来源证据护栏由协调器以回调注入。端口缺失/预算耗尽/provider 异常都是 fail-open 的稳定 outcome，且不写任何状态。
+6. `quality_funnel.py` 把候选生成、事实准入/拒绝、dedup 与注入决策按 UTC 日聚合成只读质量漏斗：stage state 为 `available|degraded|unavailable`，缺 store、读取失败与 HMAC 轮换都走闭集 reason（轮换窗口不得伪装零值），对外只暴露计数、比率、时间与固定 reason code。消费方是 Page API `GET /metrics/quality-funnel` 与 Dashboard「洞察 → Topic 治理」面板。
 
 它不执行结构化抽取、不拥有 canonical 表，也不把检测信号自动当作删除或授权决定。
 
@@ -75,6 +77,9 @@ python -m pytest -q tests/test_memory_quarantine.py
 python -m pytest -q tests/test_quarantine_durable_recovery.py tests/test_api_quarantine.py
 python -m pytest -q tests/test_review_detector.py tests/test_api_quality.py
 python -m pytest -q tests/test_memory_quality_pipeline.py
+python -m pytest -q tests/test_near_duplicate_detector.py tests/test_semantic_duplicate_detector.py
+python -m pytest -q tests/test_memory_dedup_evidence.py
+python -m pytest -q tests/test_quality_funnel.py tests/test_api_quality_funnel.py
 python -m pytest -q tests/test_gate_config.py tests/test_gate_rule_engine.py
 python -m pytest -q tests/test_gate_runtime.py tests/test_gate_disposition_filter.py
 python -m pytest -q tests/test_memory_quality_gate.py tests/test_memory_evolution_hooks.py

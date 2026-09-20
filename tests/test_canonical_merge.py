@@ -776,6 +776,11 @@ async def test_observe_hit_persists_checked_and_hit_rows(tmp_path) -> None:
             "fact_overlap": 0,
             "conflict": 0,
             "failed": 0,
+            "semantic_checked": 0,
+            "semantic_hit": 0,
+            "semantic_failed": 0,
+            "semantic_unavailable": 0,
+            "semantic_budget_exhausted": 0,
         }
     finally:
         await store.close()

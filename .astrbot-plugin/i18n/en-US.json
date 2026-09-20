@@ -1852,6 +1852,104 @@
       },
       "outcomeHint": "Counts are aggregated by hourly bucket and mode only; no scope, session, or content is stored."
     },
+    "qualityFunnel": {
+      "title": "Quality funnel",
+      "description": "Read-only UTC-day aggregation of candidate generation, fact admission, dedup, and injection (no per-request correlation).",
+      "windowLabel": "Aggregation window",
+      "refresh": "Refresh",
+      "advisory": "Observation only: counts are aggregated per UTC day, with no threshold verdict or automatic rollout.",
+      "reasonLabel": "Reason code",
+      "countsUnavailable": "This stage is unavailable; counts are withheld instead of showing zeros.",
+      "trendTitle": "UTC day trend",
+      "trendEmpty": "No calendar aggregation is available for this window.",
+      "trend": {
+        "day": "Day",
+        "candidates": "Candidates",
+        "canonical": "New canonical",
+        "merged": "Merged",
+        "facts_rejected": "Facts rejected",
+        "dedup_checked": "Dedup checked",
+        "dedup_hit": "Dedup hits",
+        "decisions": "Injection decisions",
+        "selected": "Selected"
+      },
+      "window": {
+        "1h": "Last hour",
+        "24h": "Last 24 hours",
+        "7d": "Last 7 days",
+        "30d": "Last 30 days"
+      },
+      "stage": {
+        "candidates": "Candidates",
+        "facts": "Fact admission",
+        "dedup": "Cross-window dedup",
+        "injection": "Injection outcome"
+      },
+      "state": {
+        "available": "Available",
+        "degraded": "Degraded",
+        "unavailable": "Unavailable",
+        "loading": "Loading quality funnel",
+        "empty": "No funnel data in this window",
+        "emptyHint": "No terminal windows are available to aggregate yet; refresh later.",
+        "error": "Could not load quality funnel"
+      },
+      "count": {
+        "candidates": {
+          "candidates": "Candidates",
+          "exact_reuse": "Exact reuse",
+          "identity_drops": "Identity drops",
+          "budget_exceeded": "Budget exceeded",
+          "catalog_degraded": "Catalog degraded"
+        },
+        "facts": {
+          "canonical": "New canonical",
+          "merged": "Merged into owner",
+          "quarantined": "Quarantined",
+          "discarded": "Discarded",
+          "facts_rejected": "Rejected facts"
+        },
+        "dedup": {
+          "checked": "Checked",
+          "hit": "Hits",
+          "merged": "Merged",
+          "fact_mismatch": "Fact mismatch",
+          "fact_overlap": "Fact overlap"
+        },
+        "injection": {
+          "decisions": "Decisions",
+          "selected": "Selected items",
+          "dropped": "Dropped items",
+          "memory_present": "Memory present",
+          "payload_injected": "Payload injected"
+        }
+      },
+      "value": {
+        "injection": {
+          "budget_utilization": "Budget utilization"
+        }
+      },
+      "rate": {
+        "candidates": {
+          "reuse_rate": "Reuse rate",
+          "degraded_rate": "Catalog degraded rate"
+        },
+        "facts": {
+          "merge_rate": "Merge rate",
+          "discard_rate": "Discard rate"
+        },
+        "dedup": {
+          "hit_rate": "Hit rate",
+          "guard_rate": "Guard rate",
+          "overlap_rate": "Overlap rate",
+          "failure_rate": "Failure rate"
+        },
+        "injection": {
+          "memory_present_rate": "Memory present rate",
+          "payload_injected_rate": "Payload injected rate"
+        }
+      }
+    },
     "category": {
       "fact": "Fact",
       "concept": "Concept",

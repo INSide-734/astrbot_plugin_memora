@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
+
+from ....shared.memory_status import is_memory_recallable
 
 if TYPE_CHECKING:
     import aiosqlite
@@ -68,6 +71,9 @@ _ALLOWED_METADATA_EXPRESSIONS = frozenset(
 )
 _PRESERVED_NON_OWNER = "preserved_non_owner"
 _SQLITE_TIMESTAMP_SQL = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+# merged 键回查的有界扫描行数：键只可能出现在极少数 owner 的 metadata 中；
+# 超出该边界时只可能是损坏数据，erroneous 情况下同样 fail-closed。
+_MAX_MERGED_OWNER_ROWS = 8
 
 
 def normalize_canonical_idempotency_key(value: Any) -> str:
@@ -102,6 +108,83 @@ async def find_canonical_memory_id_by_idempotency_key(
     if row[1] is None:
         raise RuntimeError("canonical_idempotency_mapping_invalid")
     return int(row[0])
+
+
+async def find_canonical_memory_id_by_merged_idempotency_key(
+    connection: aiosqlite.Connection,
+    key: Any,
+) -> int | None:
+    """按 metadata 中记录的 merged 幂等键查找 active canonical owner。
+
+    合并只强化既有 canonical 的 metadata，不写入
+    ``canonical_idempotency_keys``，因此崩溃恢复只能靠这里回查。查询参数绑定
+    JSON1 ``json_each``，只返回正整数 ID、不返回正文；命中多个不同 owner 时
+    fail-closed（无法证明归属），不猜测最小或最新 ID。
+    """
+
+    normalized_key = normalize_canonical_idempotency_key(key)
+    if not normalized_key:
+        return None
+    cursor = await connection.execute(
+        """
+        SELECT documents.id, documents.metadata
+        FROM documents, json_each(
+            CASE
+                WHEN json_valid(documents.metadata)
+                THEN COALESCE(
+                    json_extract(documents.metadata, '$.merged_idempotency_keys'),
+                    '[]'
+                )
+                ELSE '[]'
+            END
+        ) AS merged
+        WHERE merged.value = ?
+        ORDER BY documents.id
+        LIMIT ?
+        """,
+        (normalized_key, _MAX_MERGED_OWNER_ROWS),
+    )
+    rows = await cursor.fetchall()
+    await cursor.close()
+    owners: set[int] = set()
+    for row in rows:
+        memory_id = row[0]
+        if (
+            isinstance(memory_id, bool)
+            or not isinstance(memory_id, int)
+            or memory_id <= 0
+        ):
+            continue
+        if not _is_accepted_owner_metadata(row[1]):
+            continue
+        owners.add(int(memory_id))
+    if not owners:
+        return None
+    if len(owners) > 1:
+        raise RuntimeError("canonical_merged_idempotency_mapping_invalid")
+    return owners.pop()
+
+
+def _is_accepted_owner_metadata(value: Any) -> bool:
+    """只接受 active、来源已接受且 merged 键形状正确的 owner。"""
+
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return False
+    if not isinstance(value, dict):
+        return False
+    merged_keys = value.get("merged_idempotency_keys")
+    if not isinstance(merged_keys, list) or any(
+        not isinstance(item, str) or not item.strip() for item in merged_keys
+    ):
+        return False
+    if not is_memory_recallable(value):
+        return False
+    return not (
+        value.get("summary_source_pending") or value.get("summary_source_orphan")
+    )
 
 
 async def create_canonical_idempotency_schema(
@@ -430,6 +513,7 @@ __all__ = [
     "count_current_canonical_idempotency_conflicts",
     "create_canonical_idempotency_schema",
     "find_canonical_memory_id_by_idempotency_key",
+    "find_canonical_memory_id_by_merged_idempotency_key",
     "normalize_canonical_idempotency_key",
     "rebuild_canonical_idempotency_mapping",
     "validate_canonical_idempotency_mapping",

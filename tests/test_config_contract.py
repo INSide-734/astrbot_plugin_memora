@@ -260,6 +260,7 @@ class TestMemoryDedupConfigContract:
             "similarity_threshold",
             "candidate_limit",
             "min_tokens",
+            "semantic_threshold",
             "metrics_retention_days",
         ],
     )
@@ -277,15 +278,20 @@ class TestMemoryDedupConfigContract:
         assert (node["min"], node["max"]) == (ge, le)
 
     def test_mode_enum_and_ranges(self):
-        """mode 只接受闭集；数值叶拒绝越界值。"""
+        """mode/semantic_mode 只接受闭集；数值叶拒绝越界值。"""
 
         for mode in ("off", "observe", "enforce"):
             config = validate_config({"memory_dedup": {"mode": mode}})
             assert config.memory_dedup.mode == mode
+            semantic = validate_config({"memory_dedup": {"semantic_mode": mode}})
+            assert semantic.memory_dedup.semantic_mode == mode
         for invalid in (
             {"mode": "enabled"},
+            {"semantic_mode": "enabled"},
             {"similarity_threshold": 1.01},
             {"similarity_threshold": -0.01},
+            {"semantic_threshold": 1.01},
+            {"semantic_threshold": -0.01},
             {"candidate_limit": 0},
             {"candidate_limit": 51},
             {"min_tokens": 0},

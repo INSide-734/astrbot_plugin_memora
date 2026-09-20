@@ -8,6 +8,11 @@
 totals、by_mode、trend 与命中率/护栏率/重叠率/失败率。保留期清理在初始化后
 执行一次，之后按写入次数或时间节流（默认 64 次写入或 1 小时至多一次）；清理
 失败只降级日志，不影响已经落库的计数。
+
+模式闭集含词法 ``observe``/``enforce`` 与可选语义 ``semantic_observe``/
+``semantic_enforce``；语义模式与 lexical 分模式存放，四个比率只按词法模式
+计算，因此新增的语义 outcome 不会改变既有灰度比率口径。Dashboard 只渲染词法
+outcome 标签，语义计数经由 API 的 totals/by_mode/trend 暴露。
 """
 
 from __future__ import annotations
@@ -25,7 +30,12 @@ from .base_store import BaseStore
 HOUR_MS: Final = 3_600_000
 DAY_MS: Final = 86_400_000
 
-DEDUP_METRIC_MODES: Final = ("observe", "enforce")
+DEDUP_METRIC_MODES: Final = (
+    "observe",
+    "enforce",
+    "semantic_observe",
+    "semantic_enforce",
+)
 DEDUP_METRIC_OUTCOMES: Final = (
     "checked",
     "hit",
@@ -34,6 +44,11 @@ DEDUP_METRIC_OUTCOMES: Final = (
     "fact_overlap",
     "conflict",
     "failed",
+    "semantic_checked",
+    "semantic_hit",
+    "semantic_failed",
+    "semantic_unavailable",
+    "semantic_budget_exhausted",
 )
 DEDUP_METRIC_WINDOWS: Final = ("1h", "24h", "7d", "30d")
 
@@ -190,7 +205,7 @@ class DedupMetricsStore(BaseStore):
             now_ms: 聚合基准毫秒；省略时取当前墙钟。
 
         Returns:
-            字段白名单固定的摘要字典；``by_mode`` 始终包含两个模式的全零
+            字段白名单固定的摘要字典；``by_mode`` 始终包含全部模式的全零
             outcome 计数，``trend`` 只列出窗口内有数据的小时桶。
 
         Raises:
@@ -259,16 +274,29 @@ class DedupMetricsStore(BaseStore):
         by_mode: dict[str, dict[str, int]],
         trend: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        """组装固定字段顺序的摘要（白名单即此处键集合）。"""
+        """组装固定字段顺序的摘要（白名单即此处键集合）。
 
+        四个比率只统计词法模式（``observe``/``enforce``）：语义模式的
+        ``merged``/``conflict``/``failed`` 计入 ``by_mode``/trend 与窗口合计，
+        但不进入词法命中率/护栏率/失败率分母，避免灰度口径互相污染。
+        """
+
+        lexical = {
+            outcome: sum(
+                by_mode.get(mode, {}).get(outcome, 0)
+                for mode in DEDUP_METRIC_MODES
+                if not mode.startswith("semantic_")
+            )
+            for outcome in DEDUP_METRIC_OUTCOMES
+        }
         return {
             "window": window,
             **totals,
-            "hit_rate": cls._rate(totals["hit"], totals["checked"]),
-            "guard_rate": cls._rate(totals["fact_mismatch"], totals["checked"]),
-            "overlap_rate": cls._rate(totals["fact_overlap"], totals["checked"]),
+            "hit_rate": cls._rate(lexical["hit"], lexical["checked"]),
+            "guard_rate": cls._rate(lexical["fact_mismatch"], lexical["checked"]),
+            "overlap_rate": cls._rate(lexical["fact_overlap"], lexical["checked"]),
             "failure_rate": cls._rate(
-                totals["conflict"] + totals["failed"], totals["checked"]
+                lexical["conflict"] + lexical["failed"], lexical["checked"]
             ),
             "by_mode": by_mode,
             "trend": trend,

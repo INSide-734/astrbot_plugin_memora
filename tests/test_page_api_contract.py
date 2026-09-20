@@ -40,6 +40,7 @@ KNOWN_ENDPOINT_ROOTS = {
     "memories",
     "memory",
     "memory-dedup",
+    "metrics",
     "notes",
     "profiles",
     "quality",

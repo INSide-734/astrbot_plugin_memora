@@ -19,7 +19,12 @@ Memora 的所有重要变更都记录在此文件中。
 - 注入决策摘要补齐选择器收益与预算利用率：窗口聚合新增 `selected_count_total`、`dropped_count_total`、`truncated_count_total`、`effective_budget_chars_avg`、`budget_utilization_avg`、`budget_utilization_p95`，`cost_trend` 每小时桶同步带上选择/丢弃合计与利用率均值；Dashboard 概览页新增选择/丢弃卡片与预算利用率图表序列。
 - 新增跨窗口近重复合并（B5，默认关闭）：反思候选在写入 canonical 前，于同 scope（`scope_key` + `privacy_level` + 会话/人格 + 私聊主体交集）内做确定性 token 集合 Jaccard 近重复检测，命中且两侧 `key_facts` 词集 Jaccard ≥ 0.5 时把候选并入既有 canonical——`importance` 取最大、`source_refs`/`source_evidence`/`topics` 并集去重（各限 32/32/5）、`merge_count` +1、`last_merged_at`、`merged_idempotency_keys`（限 16，重放短路），不再插入第二条 canonical，正文与派生索引不重写。
 - 新增 `memory_dedup` 配置节：`mode`（`off`/`observe`/`enforce`，默认 `off`）、`similarity_threshold`（0.85）、`candidate_limit`（5）、`min_tokens`（12）；反思候选新增 `merged` 终态与 `ReflectionStoreSummary.merged` 计数，命中/观测/事实护栏/合并冲突/检测失败分别记录 `dedup_merged`、`dedup_observed`、`dedup_fact_mismatch`、`dedup_merge_conflict`、`dedup_detector_failed` reason code。
-- 新增跨窗口去重观测面（灰度前置）：独立 SQLite 小时桶聚合 `dedup_metrics(bucket_ms, mode, outcome, count)` 只保存计数与时间桶/模式/outcome（不含 scope、会话/人格、正文、记忆 ID 或 reason 明细），记录 `checked`/`hit`/`merged`/`fact_mismatch`/`conflict`/`failed` 六类终态；`mode=off` 零记录零查询，记录失败不影响候选写入与合并结果。新增只读 Page API `GET /memory-dedup/metrics?window=1h|24h|7d|30d`（窗口合计、命中率/护栏率/失败率、分模式计数与小时趋势；未知窗口返回 `invalid_window`，Store 不可用回落零值契约），Dashboard 洞察页新增「Topic 治理」页签展示同源面板（与 Topic 候选重用配置同页）与三语言文案；新增配置叶 `memory_dedup.metrics_retention_days`（默认 30，范围 1-3650）控制过期桶清理，Dashboard Schema 叶计数同步为 43/260。
+- 新增跨窗口去重观测面（灰度前置）：独立 SQLite 小时桶聚合 `dedup_metrics(bucket_ms, mode, outcome, count)` 只保存计数与时间桶/模式/outcome（不含 scope、会话/人格、正文、记忆 ID 或 reason 明细），记录 `checked`/`hit`/`merged`/`fact_mismatch`/`conflict`/`failed` 六类终态；`mode=off` 零记录零查询，记录失败不影响候选写入与合并结果。新增只读 Page API `GET /memory-dedup/metrics?window=1h|24h|7d|30d`（窗口合计、命中率/护栏率/失败率、分模式计数与小时趋势；未知窗口返回 `invalid_window`，Store 不可用回落零值契约），Dashboard 洞察页新增「Topic 治理」页签展示同源面板（与 Topic 候选重用配置同页）与三语言文案；新增配置叶 `memory_dedup.metrics_retention_days`（默认 30，范围 1-3650）控制过期桶清理，Dashboard Schema 叶计数同步为 43/262。
+- 跨窗口重复治理补齐显式 `merged` 终态闭环：同一窗口多个候选并入同 owner 时不再拒绝重复 canonical ID（`merged` 槽位允许共享 owner，`canonical`/`mark_write`/`skipped_idempotent` 仍跨槽唯一并保持 fail-closed）；`summary_jobs` 持久化 `merged_count`/`facts_rejected_count`，commit/terminal/reconcile/startup/snapshot/abandon/trim 与计数公式统一；近重复合并移入 claim/source fence runner，post-fence 失去 claim 不再回落二次插入；新增 `merged_idempotency_keys` 受控回读，恢复「owner 已更新但 worker 退出」的窗口；per-scope 锁改为引用计数，在成功、异常、取消与等待者场景下均不泄漏。
+- 新增可选语义近重复检测：`memory_dedup.semantic_mode=off|observe|enforce`（默认 `off`）与 `semantic_threshold`（默认 0.90），仅在 lexical MISS/FACT_OVERLAP 后调用注入的 `VectorRetriever.search` 窄端口，每窗口固定 8 次请求上限；候选必须回读 canonical 并通过作用域/可召回/事实/用户来源证据护栏，observe 零写回、enforce 复用既有 owner CAS，端口缺失/预算耗尽/Provider 异常一律 fail-open。
+- 新增只读语义校准 CLI `scripts/benchmark_memory_dedup_semantic.py`：预注册阈值网格、fixture 严格校验、隐私 canary fail-closed、混淆矩阵与证据门，不写生产数据、不自动修改配置或开启 enforce。
+- 新增历史表示迁移 `scripts/migrate_memory_representation.py`：默认只读 keyset dry-run 输出版本化脱敏报告；`--apply-plan` 要求计划 schema、目标表示版本、operator confirmation 与逐条 expected revision，CAS 冲突只计数不覆盖，支持 checkpoint/resume，apply 后按 `DerivedRebuildCoordinator` 固定顺序重建派生。
+- 新增质量漏斗观测面：候选生成、事实准入/拒绝、去重与注入四个 stage 按 UTC 日聚合，stage state 为 `available|degraded|unavailable`，HMAC 密钥轮换与键缺失一律不可用而非零值；新增只读 `GET /metrics/quality-funnel?window=1h|24h|7d|30d` 与 Dashboard「洞察 → Topic 治理」面板（加载/空态/错误/降级四态与三语言文案）。
 
 ### 变更
 
@@ -42,12 +47,14 @@ Memora 的所有重要变更都记录在此文件中。
 - 修复图 embedding 宿主单请求超过供应商上限的问题，并将持久化操作恢复移到 canonical/图文档存储就绪之后；符合重试预算的历史 `source_missing` 操作可在 canonical 仍存在时恢复。
 - 为 Grounding Judge unavailable 增加闭集原因归因；显式关闭 Judge 时不再因成本模式允许而调用 Provider，质量门 profile 缺失继续 fail-closed。
 - 修复好感度分类使用现有 `LLMClient.complete()`，并改用宿主 v3 人格 API 读取 `prompt`；不改变配置、版本或生产数据。
+- 修复事实去重仅按普通子串判断的问题：非 FACTS 内容级别下，只有完整独立事实边界（CJK 完整 clause 相等，拉丁/数字带 ASCII 词边界且同一 clause 无否定词）才省略独立 `Key facts` 行；否定、长词子串、部分匹配与截断事实一律保留显式事实行。
 
 ### 测试
 
 - 新增来源证据稳定性、角色门（助手单方面声称、系统内容）、群聊同名成员主体判定、重验证拒绝替换与窗口序号保留的回归用例。
 - `memory_grounding.py` 按职责拆分为 `grounding_evidence.py`（证据解析与定位）与 `grounding_checks.py`（词面/主体/数字/否定检查），消除原文件超出行数硬上限的问题。
 - 补充逐事实证据准入、用户来源召回/注入门、图请求作用域与管理员总览、来源可重放、revision CAS、图源清理、宿主响应边界和闭集回复原因码的 Python 与 Dashboard 回归用例。
+- 新增 `merged` 多槽位共享 owner、merged-key 恢复、scope 锁回收、semantic off/observe/enforce 三模式、事实边界判定、历史迁移 dry-run/apply plan 与质量漏斗 stage 状态/HMAC 轮换的定向回归；本轮受影响 Python 与 Dashboard 定向测试、Dashboard 构建、迁移 dry-run 隐私 canary、Ruff、pre-commit 与 LSP 诊断均通过。
 
 ### 升级说明
 
@@ -55,6 +62,8 @@ Memora 的所有重要变更都记录在此文件中。
 - 缺少稳定消息标识、窗口序号或逐事实证据的旧 canonical 记录不会被自动猜测补齐，可能显示为不可重放并被自动召回、注入和图派生排除；人工复核必须重新取证。
 - 角色门生效后，仅由助手复述支撑的候选会从「写入 canonical」变为「进入隔离队列」，升级后隔离量可能上升；这些候选可在 Dashboard 人工复核后再决定是否写入，也可通过门禁 profile 调整处置。
 - 跨窗口近重复合并默认 `memory_dedup.mode=off`，行为与升级前一致；建议先切 `observe` 观测命中率与误伤样本，再切 `enforce`。检测或合并失败一律 fail-open 回落普通写入，不阻断候选落库；该功能只作用于自动反思产线，人工批准、导入与工具直写路径不受影响。
+- 总结库 schema 自动扩展 `merged_count`/`facts_rejected_count`，保留既有行，无需手工迁移。
+- 语义近重复检测默认 `off`、历史表示迁移默认只读：未显式配置时不产生额外 Provider 调用、不写任何 canonical；真实 apply 与 enforce 灰度需要显式计划、独立授权和隔离实例。
 
 
 ## [1.3.0] — 2026-09-10

@@ -217,6 +217,7 @@ async def test_scheduler_snapshot_falls_back_to_safe_scalars_on_store_error() ->
         "quarantine_total": 0,
         "discard_total": 0,
         "mark_write_total": 0,
+        "merged_total": 0,
         "failed_candidate_total": 0,
         "skipped_idempotent_total": 0,
         "candidate_total": 0,

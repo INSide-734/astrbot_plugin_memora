@@ -38,9 +38,9 @@ _RESULT_DISPOSITIONS = {
     ReflectionStoreOutcome.QUARANTINED: CandidateDisposition.QUARANTINED,
     ReflectionStoreOutcome.DISCARDED: CandidateDisposition.DISCARD,
     ReflectionStoreOutcome.MARK_WRITE: CandidateDisposition.MARK_WRITE,
-    # 合并同普通写入一样消费该候选 slot（canonical_id 指向被强化的 owner）：
-    # ledger 的 disposition 是含 DB CHECK 的闭集，不为近重复新增取值。
-    ReflectionStoreOutcome.MERGED: CandidateDisposition.CANONICAL,
+    # 合并消费候选 slot 但不新增 canonical：ledger 使用显式 merged 处置，
+    # 以便同窗口多个槽位合法共享同一 owner。
+    ReflectionStoreOutcome.MERGED: CandidateDisposition.MERGED,
     ReflectionStoreOutcome.SKIPPED_IDEMPOTENT: CandidateDisposition.SKIPPED_IDEMPOTENT,
     ReflectionStoreOutcome.FAILED: CandidateDisposition.FAILED,
 }
@@ -51,6 +51,33 @@ def _claim_fence(claim: ClaimedJob) -> str:
     """根据 claim 的 epoch、generation 和 token 生成不透明来源 fence。"""
     fence = f"{claim.session_epoch}:{claim.worker_generation}:{claim.claim_token}"
     return hashlib.sha256(fence.encode()).hexdigest()
+
+
+def count_rejected_facts(candidates: Sequence[dict[str, Any]]) -> int:
+    """统计本窗口被逐事实准入拒绝的事实数（只读安全标量）。
+
+    每条候选的 ``fact_dispositions`` 覆盖该候选的全部事实；部分拒绝时处理器还会
+    产出只携带被拒事实的隔离载荷副本，其处置数与 ``key_facts`` 逐一相等，跳过它
+    可避免同一拒绝被计数两次。计数只用于诊断，不影响任何写入终态。
+    """
+
+    rejected = 0
+    for candidate in candidates:
+        metadata = candidate.get("metadata") if isinstance(candidate, dict) else None
+        if not isinstance(metadata, Mapping):
+            continue
+        dispositions = metadata.get("fact_dispositions")
+        facts = metadata.get("key_facts")
+        if not isinstance(dispositions, list) or not isinstance(facts, list):
+            continue
+        if len(dispositions) == len(facts):
+            continue
+        rejected += sum(
+            1
+            for item in dispositions
+            if isinstance(item, Mapping) and str(item.get("status") or "") != "grounded"
+        )
+    return rejected
 
 
 class SummaryWorkerCandidateMixin:
@@ -307,34 +334,57 @@ class SummaryWorkerCandidateMixin:
     async def _find_completed_keys(
         self,
         candidates: Sequence[dict[str, Any]],
-    ) -> dict[str, int]:
-        """识别已写成功的候选；暂存/拒绝 owner 不得推进窗口 cursor。"""
+    ) -> tuple[dict[str, int], dict[str, int]]:
+        """识别已写入或已合并的候选。
 
-        finder = getattr(
+        返回 ``(canonical owners, merged owners)``。合并只更新既有 canonical 的
+        metadata，不建立 canonical 幂等映射，因此重放必须先按 merged 键证明
+        owner；暂存/拒绝 owner 不得推进窗口 cursor，两者都为空时由调用方决定
+        是否重新写入。
+        """
+
+        merged_finder = getattr(
+            self._memory_engine,
+            "find_memory_id_by_merged_idempotency_key",
+            None,
+        )
+        canonical_finder = getattr(
             self._memory_engine,
             "find_memory_id_by_idempotency_key",
             None,
         )
-        if not callable(finder):
-            return {}
+        if not callable(merged_finder) and not callable(canonical_finder):
+            return {}, {}
         verifier = getattr(self._memory_engine, "is_memory_source_accepted", None)
-        finder_call = cast(Callable[[str], Awaitable[int | None]], finder)
         completed: dict[str, int] = {}
+        merged: dict[str, int] = {}
         try:
             for candidate in candidates:
                 key = str(candidate["metadata"]["idempotency_key"])
-                owner = await finder_call(key)
-                if owner is None:
-                    continue
-                if isinstance(owner, bool) or not isinstance(owner, int) or owner <= 0:
-                    raise ValueError("canonical_owner_invalid")
-                if callable(verifier):
-                    accepted = verifier(owner)
-                    if inspect.isawaitable(accepted):
-                        accepted = await accepted
-                    if accepted is not True:
+                for finder, target in (
+                    (merged_finder, merged),
+                    (canonical_finder, completed),
+                ):
+                    if not callable(finder):
                         continue
-                completed[key] = owner
+                    finder_call = cast(Callable[[str], Awaitable[int | None]], finder)
+                    owner = await finder_call(key)
+                    if owner is None:
+                        continue
+                    if (
+                        isinstance(owner, bool)
+                        or not isinstance(owner, int)
+                        or owner <= 0
+                    ):
+                        raise ValueError("canonical_owner_invalid")
+                    if callable(verifier):
+                        accepted = verifier(owner)
+                        if inspect.isawaitable(accepted):
+                            accepted = await accepted
+                        if accepted is not True:
+                            continue
+                    target[key] = owner
+                    break
         except asyncio.CancelledError:
             raise
         except Exception as error:
@@ -344,7 +394,7 @@ class SummaryWorkerCandidateMixin:
                 retryable=False,
                 exception_type=error.__class__.__name__,
             ) from error
-        return completed
+        return completed, merged
 
     def _build_outcome(
         self,
@@ -353,6 +403,7 @@ class SummaryWorkerCandidateMixin:
         *,
         expected_idempotency_keys: Sequence[tuple[str, str]] | None = None,
         candidate_metrics: CandidateMetrics | None = None,
+        facts_rejected_count: int = 0,
     ) -> WindowOutcome:
         """映射候选写入结果及 canonical ID，并将不一致收敛为 unknown。"""
         if len(results) != len(intents):
@@ -376,6 +427,7 @@ class SummaryWorkerCandidateMixin:
         required_ids = {
             CandidateDisposition.CANONICAL,
             CandidateDisposition.MARK_WRITE,
+            CandidateDisposition.MERGED,
             CandidateDisposition.SKIPPED_IDEMPOTENT,
         }
         for index, (intent, result) in enumerate(zip(intents, results, strict=True)):
@@ -487,6 +539,8 @@ class SummaryWorkerCandidateMixin:
             quarantine_count=counts[CandidateDisposition.QUARANTINED],
             discard_count=counts[CandidateDisposition.DISCARD],
             mark_write_count=counts[CandidateDisposition.MARK_WRITE],
+            merged_count=counts[CandidateDisposition.MERGED],
+            facts_rejected_count=facts_rejected_count,
             failed_count=failed_count,
             skipped_idempotent_count=counts[CandidateDisposition.SKIPPED_IDEMPOTENT],
             unknown_count=unknown_count,
@@ -520,4 +574,4 @@ class SummaryWorkerCandidateMixin:
         )
 
 
-__all__ = ["SummaryWorkerCandidateMixin", "_claim_fence"]
+__all__ = ["SummaryWorkerCandidateMixin", "_claim_fence", "count_rejected_facts"]

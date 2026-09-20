@@ -7,8 +7,13 @@ import json
 import time
 from typing import Any
 
-SUMMARY_SCHEMA_VERSION = 6
-_MIGRATION_ID = "summary_schema_v6_scope_snapshot"
+from .summary_schema_constraints import (
+    ensure_candidate_disposition_constraint,
+    ensure_reason_code_constraint,
+)
+
+SUMMARY_SCHEMA_VERSION = 7
+_MIGRATION_ID = "summary_schema_v7_merged_ledger"
 
 _SUMMARY_STATUSES = (
     "queued",
@@ -26,6 +31,7 @@ _DISPOSITIONS = (
     "discard",
     "mark_write",
     "canonical",
+    "merged",
     "skipped_idempotent",
     "failed",
 )
@@ -264,6 +270,8 @@ async def _validate_schema_shape(connection: Any) -> None:
             "privacy_level",
             "resolver_revision",
             "scope_provenance_complete",
+            "merged_count",
+            "facts_rejected_count",
         },
         "summary_job_candidates": {
             "job_id",
@@ -395,6 +403,9 @@ async def _ensure_summary_tables(connection: Any) -> None:
             scope_provenance_complete INTEGER NOT NULL DEFAULT 0 CHECK(
                 scope_provenance_complete IN (0,1)
             ),
+            merged_count INTEGER NOT NULL DEFAULT 0 CHECK(merged_count >= 0),
+            facts_rejected_count INTEGER NOT NULL DEFAULT 0
+                CHECK(facts_rejected_count >= 0),
             UNIQUE(session_id, session_epoch, start_seq, end_seq)
         )
         """,
@@ -434,6 +445,7 @@ async def _ensure_summary_tables(connection: Any) -> None:
         "quarantine_total",
         "discard_total",
         "mark_write_total",
+        "merged_total",
         "failed_candidate_total",
         "skipped_idempotent_total",
     ):
@@ -470,6 +482,14 @@ async def _ensure_summary_extensions(connection: Any) -> None:
             "scope_provenance_complete",
             "INTEGER NOT NULL DEFAULT 0 CHECK(scope_provenance_complete IN (0,1))",
         ),
+        (
+            "merged_count",
+            "INTEGER NOT NULL DEFAULT 0 CHECK(merged_count >= 0)",
+        ),
+        (
+            "facts_rejected_count",
+            "INTEGER NOT NULL DEFAULT 0 CHECK(facts_rejected_count >= 0)",
+        ),
     ):
         if column not in job_columns:
             await connection.execute(
@@ -480,58 +500,6 @@ async def _ensure_summary_extensions(connection: Any) -> None:
         await connection.execute(
             "ALTER TABLE summary_job_candidates ADD COLUMN idempotency_key TEXT NOT NULL DEFAULT '' CHECK(length(idempotency_key) <= 256)"
         )
-
-
-async def _ensure_reason_code_constraint(connection: Any) -> None:
-    """重建旧任务表，使新增固定 reason code 可持久化且数据不变。"""
-
-    row = await (
-        await connection.execute(
-            "SELECT sql FROM sqlite_schema WHERE type='table' AND name='summary_jobs'"
-        )
-    ).fetchone()
-    schema_sql = str(row[0] or "") if row is not None else ""
-    if "CHECK(reason_code IN" not in schema_sql or all(
-        f"'{code}'" in schema_sql
-        for code in ("no_facts", "summary_invalid", "scope_unavailable")
-    ):
-        return
-
-    job_columns = (
-        "job_id,session_id,session_epoch,start_seq,end_seq,expected_count,"
-        "source_digest,persona_id,chat_type,group_id,scope_id,gate_revision,"
-        "gate_snapshot_json,triggered_by,status,attempt_count,next_attempt_at,"
-        "claim_token,lease_until,worker_generation,failed_stage,reason_code,"
-        "exception_type,canonical_count,quarantine_count,discard_count,"
-        "mark_write_count,failed_count,skipped_count,created_at,updated_at,"
-        "operator_action,scope_key,privacy_level,resolver_revision,"
-        "scope_provenance_complete"
-    )
-    candidate_columns = (
-        "job_id,slot,slot_key,content_digest,idempotency_key,disposition,"
-        "status,canonical_id,updated_at"
-    )
-    await connection.execute("PRAGMA defer_foreign_keys=ON")
-    await connection.execute(
-        "ALTER TABLE summary_job_candidates RENAME TO summary_job_candidates_reason_v4"
-    )
-    await connection.execute(
-        "ALTER TABLE summary_jobs RENAME TO summary_jobs_reason_v4"
-    )
-    await _ensure_summary_tables(connection)
-    await connection.execute(
-        f"INSERT INTO summary_jobs({job_columns}) "
-        f"SELECT {job_columns} FROM summary_jobs_reason_v4"
-    )
-    await connection.execute(
-        f"INSERT INTO summary_job_candidates({candidate_columns}) "
-        f"SELECT {candidate_columns} FROM summary_job_candidates_reason_v4"
-    )
-    await connection.execute("DROP TABLE summary_job_candidates_reason_v4")
-    await connection.execute("DROP TABLE summary_jobs_reason_v4")
-    violations = await (await connection.execute("PRAGMA foreign_key_check")).fetchone()
-    if violations is not None:
-        raise RuntimeError("summary_reason_constraint_migration_failed")
 
 
 async def _migrate_legacy_summary_cursors(connection: Any) -> None:
@@ -666,7 +634,8 @@ async def migrate_conversation_schema(connection: Any) -> None:
         await _backfill_message_sequences(connection)
         await _ensure_summary_tables(connection)
         await _ensure_summary_extensions(connection)
-        await _ensure_reason_code_constraint(connection)
+        await ensure_reason_code_constraint(connection)
+        await ensure_candidate_disposition_constraint(connection)
         await _migrate_legacy_summary_cursors(connection)
         await _validate_schema_shape(connection)
         await _validate_data_integrity(connection)

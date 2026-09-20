@@ -25,6 +25,10 @@ vi.mock("@/components/MemoryDedupMetrics", () => ({
   MemoryDedupMetrics: () => <div>Memory Dedup Metrics</div>,
 }));
 
+vi.mock("@/components/QualityFunnelMetrics", () => ({
+  QualityFunnelMetrics: () => <div>Quality Funnel Metrics</div>,
+}));
+
 import { IntelligencePage } from "./IntelligencePage";
 
 afterEach(() => {
@@ -78,4 +82,5 @@ it("renders topic governance panels on the governance tab", () => {
 
   expect(screen.getByText("Candidate Reuse Config")).toBeTruthy();
   expect(screen.getByText("Memory Dedup Metrics")).toBeTruthy();
+  expect(screen.getByText("Quality Funnel Metrics")).toBeTruthy();
 });

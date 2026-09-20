@@ -1633,6 +1633,180 @@ function handleMemoryDedupMetrics(params: Record<string, string>): ApiResponse {
   });
 }
 
+// ---- 质量 funnel（UTC 日聚合观测面） ----
+
+/** 与后端闭集一致的 funnel 窗口。 */
+const QUALITY_FUNNEL_WINDOWS = ["1h", "24h", "7d", "30d"] as const;
+
+/** 固定基准日，使 mock 趋势确定可复现（最旧 → 最新）。 */
+const QUALITY_FUNNEL_DAYS = ["2025-06-13", "2025-06-14", "2025-06-15"] as const;
+
+/** 确定性样本：与后端口径一致的四阶段计数与实测标量。 */
+const QUALITY_FUNNEL_DAY_SAMPLES: Array<{
+  candidates: Record<string, number>;
+  facts: Record<string, number>;
+  dedup: Record<string, number>;
+  injection: Record<string, number>;
+  budget_utilization: number;
+}> = [
+  {
+    candidates: { windows: 4, candidates: 10, exact_reuse: 2, duplicate_topics: 1, identity_drops: 0, budget_exceeded: 0, catalog_degraded: 0 },
+    facts: { windows: 4, canonical: 5, merged: 1, quarantined: 0, discarded: 1, mark_write: 0, failed: 0, skipped: 1, facts_rejected: 1 },
+    dedup: { checked: 6, hit: 2, merged: 1, fact_mismatch: 0, fact_overlap: 1, conflict: 0, failed: 0 },
+    injection: { decisions: 4, selected: 8, dropped: 1, truncated: 0, memory_present: 3, payload_injected: 2 },
+    budget_utilization: 0.5,
+  },
+  {
+    candidates: { windows: 5, candidates: 16, exact_reuse: 3, duplicate_topics: 1, identity_drops: 1, budget_exceeded: 1, catalog_degraded: 0 },
+    facts: { windows: 5, canonical: 7, merged: 2, quarantined: 1, discarded: 1, mark_write: 0, failed: 0, skipped: 1, facts_rejected: 2 },
+    dedup: { checked: 8, hit: 3, merged: 2, fact_mismatch: 1, fact_overlap: 1, conflict: 0, failed: 0 },
+    injection: { decisions: 5, selected: 10, dropped: 2, truncated: 1, memory_present: 4, payload_injected: 3 },
+    budget_utilization: 0.55,
+  },
+  {
+    candidates: { windows: 6, candidates: 22, exact_reuse: 4, duplicate_topics: 2, identity_drops: 2, budget_exceeded: 1, catalog_degraded: 1 },
+    facts: { windows: 6, canonical: 8, merged: 3, quarantined: 1, discarded: 1, mark_write: 1, failed: 0, skipped: 0, facts_rejected: 2 },
+    dedup: { checked: 10, hit: 3, merged: 3, fact_mismatch: 1, fact_overlap: 1, conflict: 1, failed: 1 },
+    injection: { decisions: 5, selected: 12, dropped: 3, truncated: 1, memory_present: 4, payload_injected: 4 },
+    budget_utilization: 0.62,
+  },
+];
+
+const QUALITY_FUNNEL_COUNT_KEYS: Record<string, string[]> = {
+  candidates: ["windows", "candidates", "exact_reuse", "duplicate_topics", "identity_drops", "budget_exceeded", "catalog_degraded"],
+  facts: ["windows", "canonical", "merged", "quarantined", "discarded", "mark_write", "failed", "skipped", "facts_rejected"],
+  dedup: ["checked", "hit", "merged", "fact_mismatch", "fact_overlap", "conflict", "failed"],
+  injection: ["decisions", "selected", "dropped", "truncated", "memory_present", "payload_injected"],
+};
+
+/** 窗口涉及的样本日数：1h/24h 只覆盖最近一日，7d/30d 覆盖全部样本日。 */
+const QUALITY_FUNNEL_WINDOW_DAYS: Record<string, number> = {
+  "1h": 1,
+  "24h": 1,
+  "7d": 3,
+  "30d": 3,
+};
+
+function qualityFunnelRatio(numerator: number, denominator: number): number {
+  return denominator > 0 ? numerator / denominator : 0;
+}
+
+function sumQualityFunnelCounts(
+  rows: typeof QUALITY_FUNNEL_DAY_SAMPLES,
+  stage: "candidates" | "facts" | "dedup" | "injection",
+): Record<string, number> {
+  return Object.fromEntries(
+    QUALITY_FUNNEL_COUNT_KEYS[stage].map((key) => [
+      key,
+      rows.reduce((total, row) => total + (row[stage][key] ?? 0), 0),
+    ]),
+  );
+}
+
+function qualityFunnelRates(
+  stage: "candidates" | "facts" | "dedup" | "injection",
+  counts: Record<string, number>,
+): Record<string, number> {
+  if (stage === "candidates") {
+    return {
+      reuse_rate: qualityFunnelRatio(counts.exact_reuse, counts.candidates),
+      degraded_rate: qualityFunnelRatio(counts.catalog_degraded, counts.windows),
+    };
+  }
+  if (stage === "facts") {
+    const dispositions =
+      counts.canonical + counts.merged + counts.quarantined + counts.discarded
+      + counts.mark_write + counts.failed + counts.skipped;
+    return {
+      merge_rate: qualityFunnelRatio(counts.merged, dispositions),
+      discard_rate: qualityFunnelRatio(counts.discarded, dispositions),
+    };
+  }
+  if (stage === "dedup") {
+    return {
+      hit_rate: qualityFunnelRatio(counts.hit, counts.checked),
+      guard_rate: qualityFunnelRatio(counts.fact_mismatch, counts.checked),
+      overlap_rate: qualityFunnelRatio(counts.fact_overlap, counts.checked),
+      failure_rate: qualityFunnelRatio(counts.conflict + counts.failed, counts.checked),
+    };
+  }
+  return {
+    memory_present_rate: qualityFunnelRatio(counts.memory_present, counts.decisions),
+    payload_injected_rate: qualityFunnelRatio(counts.payload_injected, counts.decisions),
+  };
+}
+
+/**
+ * 按后端口径聚合确定性样本：窗口涉及日求和、由计数派生比率、UTC 日趋势。
+ * 未知窗口返回稳定错误码 invalid_window。
+ */
+function handleQualityFunnelMetrics(params: Record<string, string>): ApiResponse {
+  const windowValue = params.window ?? "24h";
+  const windowDays = QUALITY_FUNNEL_WINDOW_DAYS[windowValue];
+  if (windowDays === undefined) {
+    return err("window must be one of 1h, 24h, 7d, 30d", "invalid_window");
+  }
+  const days = QUALITY_FUNNEL_DAYS.slice(-windowDays);
+  const rows = QUALITY_FUNNEL_DAY_SAMPLES.slice(-windowDays);
+  const counts = {
+    candidates: sumQualityFunnelCounts(rows, "candidates"),
+    facts: sumQualityFunnelCounts(rows, "facts"),
+    dedup: sumQualityFunnelCounts(rows, "dedup"),
+    injection: sumQualityFunnelCounts(rows, "injection"),
+  };
+  const budgetUtilization = rows.reduce((total, row) => total + row.budget_utilization, 0) / rows.length;
+  return ok({
+    window: windowValue,
+    bucket: "utc_day",
+    advisory: true,
+    stages: [
+      {
+        id: "candidates",
+        state: "available",
+        reason: "ok",
+        counts: counts.candidates,
+        values: {},
+        rates: qualityFunnelRates("candidates", counts.candidates),
+      },
+      {
+        id: "facts",
+        state: "available",
+        reason: "ok",
+        counts: counts.facts,
+        values: {},
+        rates: qualityFunnelRates("facts", counts.facts),
+      },
+      {
+        id: "dedup",
+        state: "available",
+        reason: "ok",
+        counts: counts.dedup,
+        values: {},
+        rates: qualityFunnelRates("dedup", counts.dedup),
+      },
+      {
+        id: "injection",
+        state: "available",
+        reason: "ok",
+        counts: counts.injection,
+        values: { budget_utilization: budgetUtilization },
+        rates: qualityFunnelRates("injection", counts.injection),
+      },
+    ],
+    trend: days.map((day, index) => ({
+      day,
+      candidates: rows[index].candidates.candidates,
+      canonical: rows[index].facts.canonical,
+      merged: rows[index].facts.merged,
+      facts_rejected: rows[index].facts.facts_rejected,
+      dedup_checked: rows[index].dedup.checked,
+      dedup_hit: rows[index].dedup.hit,
+      decisions: rows[index].injection.decisions,
+      selected: rows[index].injection.selected,
+    })),
+  });
+}
+
 function injectionInteger(value: string, field: string): number {
   if (!/^-?\d+$/.test(value)) throw new Error(`${field} must be an integer`);
   const parsed = Number(value);
@@ -1776,6 +1950,9 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   }
   if (p === "memory-dedup/metrics" || p.startsWith("memory-dedup/metrics?")) {
     return handleMemoryDedupMetrics(params);
+  }
+  if (p === "metrics/quality-funnel" || p.startsWith("metrics/quality-funnel?")) {
+    return handleQualityFunnelMetrics(params);
   }
   if (p === "stats") return handleStats();
   if (p === "metrics/summary") return handleMetricsSummary();

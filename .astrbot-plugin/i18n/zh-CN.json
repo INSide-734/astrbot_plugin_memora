@@ -1852,6 +1852,104 @@
       },
       "outcomeHint": "计数仅按小时桶与模式聚合，不保存 scope、会话或正文。"
     },
+    "qualityFunnel": {
+      "title": "质量 funnel",
+      "description": "按 UTC 日聚合候选生成、事实准入、去重与注入四阶段的只读观测（不承诺逐请求关联）。",
+      "windowLabel": "聚合窗口",
+      "refresh": "刷新",
+      "advisory": "仅供观测参考：计数按 UTC 日聚合，不含阈值判定或自动发布结论。",
+      "reasonLabel": "原因码",
+      "countsUnavailable": "该阶段当前不可用，计数不返回（不使用零值伪装）。",
+      "trendTitle": "UTC 日趋势",
+      "trendEmpty": "当前窗口没有可用的日历聚合。",
+      "trend": {
+        "day": "日期",
+        "candidates": "候选",
+        "canonical": "新增 canonical",
+        "merged": "并入既有",
+        "facts_rejected": "事实拒绝",
+        "dedup_checked": "去重检查",
+        "dedup_hit": "去重命中",
+        "decisions": "注入决策",
+        "selected": "注入选中"
+      },
+      "window": {
+        "1h": "最近 1 小时",
+        "24h": "最近 24 小时",
+        "7d": "最近 7 天",
+        "30d": "最近 30 天"
+      },
+      "stage": {
+        "candidates": "候选生成",
+        "facts": "事实准入",
+        "dedup": "跨窗口去重",
+        "injection": "注入结果"
+      },
+      "state": {
+        "available": "可用",
+        "degraded": "降级",
+        "unavailable": "不可用",
+        "loading": "正在加载质量 funnel",
+        "empty": "当前窗口没有 funnel 数据",
+        "emptyHint": "插件尚未产生可聚合的窗口终态，请稍后刷新。",
+        "error": "无法加载质量 funnel"
+      },
+      "count": {
+        "candidates": {
+          "candidates": "候选数",
+          "exact_reuse": "精确复用",
+          "identity_drops": "身份丢弃",
+          "budget_exceeded": "预算超限",
+          "catalog_degraded": "目录降级"
+        },
+        "facts": {
+          "canonical": "新增 canonical",
+          "merged": "并入既有",
+          "quarantined": "隔离",
+          "discarded": "丢弃",
+          "facts_rejected": "拒绝事实"
+        },
+        "dedup": {
+          "checked": "检查数",
+          "hit": "命中数",
+          "merged": "合并数",
+          "fact_mismatch": "事实冲突",
+          "fact_overlap": "事实重叠"
+        },
+        "injection": {
+          "decisions": "决策数",
+          "selected": "选中条目",
+          "dropped": "丢弃条目",
+          "memory_present": "有记忆候选",
+          "payload_injected": "载荷已注入"
+        }
+      },
+      "value": {
+        "injection": {
+          "budget_utilization": "预算利用率"
+        }
+      },
+      "rate": {
+        "candidates": {
+          "reuse_rate": "复用率",
+          "degraded_rate": "目录降级率"
+        },
+        "facts": {
+          "merge_rate": "合并率",
+          "discard_rate": "丢弃率"
+        },
+        "dedup": {
+          "hit_rate": "命中率",
+          "guard_rate": "护栏率",
+          "overlap_rate": "重叠率",
+          "failure_rate": "失败率"
+        },
+        "injection": {
+          "memory_present_rate": "候选存在率",
+          "payload_injected_rate": "载荷注入率"
+        }
+      }
+    },
     "category": {
       "fact": "事实",
       "concept": "概念",

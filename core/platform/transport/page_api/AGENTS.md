@@ -43,7 +43,7 @@ flowchart TD
 | 画像/知识/笔记 | `ProfileApiMixin`、`KnowledgeApiMixin`、`NoteApiMixin` | 各领域 list/detail/create/update/delete/batch；笔记另有 versions/archive |
 | 情感与社交 | `AffectionApiMixin`、`SocialApiMixin`、`ExpressionApiMixin`、`JargonApiMixin` | `/affection/*`、`/social/*`、`/expression/patterns`、`/jargon/*` |
 | 质量与审查 | `QualityApiMixin`、`ReviewApiMixin`、`QuarantineApiMixin`、`MemoryEvolutionReviewApiMixin`、`ReconsolidationReviewApiMixin` | `/quality/*`、`/review/items*`、`/review/refresh`、`/review/action`、`/review/quarantine*`、`/review/derived*`、`/review/reconsolidation*` |
-| 诊断/评测/指标 | `DiagnosticsApiMixin`、`EvaluationApiMixin`、`MetricsApiMixin`、`DedupMetricsApiMixin` | `/diagnostics/*`、`/evaluation/*`、`/metrics/summary`、GET `/memory-dedup/metrics?window=1h|24h|7d|30d` |
+| 诊断/评测/指标 | `DiagnosticsApiMixin`、`EvaluationApiMixin`、`MetricsApiMixin`、`DedupMetricsApiMixin`、`QualityFunnelApiMixin` | `/diagnostics/*`、`/evaluation/*`、`/metrics/summary`、GET `/memory-dedup/metrics?window=1h|24h|7d|30d`、GET `/metrics/quality-funnel?window=1h|24h|7d|30d` |
 | 运维/备份 | `MaintenanceApiMixin`、`BackupApiMixin` | `/maintenance/*`、`/health/persistence*`、`/backup/list|create|restore|status|restore/cancel|delete|batch-delete`、`/system/*` 兼容路径、`/dashboard/install|build` |
 | 配置/回填 | `ConfigApiMixin`、`TopicSegmentationApiMixin` | `/config/schema`、`/config/state`、`/config/apply`、`/config/topic-segmentation`、`/backfill/*` |
 | 插件更新 | `UpdateApiMixin` | `/update/check`、`/update/ignore`、`/update/download`、`/update/apply`、`/update/status` |

@@ -11,6 +11,7 @@ _COUNTERS = (
     "quarantine_total",
     "discard_total",
     "mark_write_total",
+    "merged_total",
     "failed_candidate_total",
     "skipped_idempotent_total",
 )
@@ -106,6 +107,7 @@ class SummaryStoreSnapshotMixin:
             quarantine_total=totals["quarantine_total"],
             discard_total=totals["discard_total"],
             mark_write_total=totals["mark_write_total"],
+            merged_total=totals["merged_total"],
             failed_candidate_total=totals["failed_candidate_total"],
             skipped_idempotent_total=totals["skipped_idempotent_total"],
             candidate_total=candidate_total,

@@ -270,6 +270,31 @@ const KNOWN_RELATION_TYPES = [
   "close_friend", "confidant",
 ] as const;
 
+/** 质量 funnel 面板的模板键：计数与比率按 stage 动态拼接。 */
+const QUALITY_FUNNEL_COUNT_LABEL_KEYS = Object.entries({
+  candidates: [
+    "candidates",
+    "exact_reuse",
+    "identity_drops",
+    "budget_exceeded",
+    "catalog_degraded",
+  ],
+  facts: ["canonical", "merged", "quarantined", "discarded", "facts_rejected"],
+  dedup: ["checked", "hit", "merged", "fact_mismatch", "fact_overlap"],
+  injection: ["decisions", "selected", "dropped", "memory_present", "payload_injected"],
+} as Record<string, string[]>).flatMap(([stage, names]) =>
+  names.map((name) => `qualityFunnel.count.${stage}.${name}`),
+);
+
+const QUALITY_FUNNEL_RATE_LABEL_KEYS = Object.entries({
+  candidates: ["reuse_rate", "degraded_rate"],
+  facts: ["merge_rate", "discard_rate"],
+  dedup: ["hit_rate", "guard_rate", "overlap_rate", "failure_rate"],
+  injection: ["memory_present_rate", "payload_injected_rate"],
+} as Record<string, string[]>).flatMap(([stage, names]) =>
+  names.map((name) => `qualityFunnel.rate.${stage}.${name}`),
+);
+
 const DYNAMIC_KEYS = [
   ...MOOD_TYPES.map((mood) => `mood.${mood.type}`),
   ...Object.keys(RELATION_CATEGORIES).map((category) => `social.category.${category}`),
@@ -336,6 +361,9 @@ const DYNAMIC_KEYS = [
     .map((status) => `detail.sourceStatus.${status}`),
   ...["proposed", "applied", "manual_reject", "rolled_back", "source_revision_mismatch", "candidate_changed"]
     .map((reason) => `intelligence.reconsolidation.reason.${reason}`),
+  ...QUALITY_FUNNEL_COUNT_LABEL_KEYS,
+  ...QUALITY_FUNNEL_RATE_LABEL_KEYS,
+  "qualityFunnel.value.injection.budget_utilization",
   ...["healthy", "watch", "degraded", "critical"]
     .map((level) => `intelligence.diagnostics.level.${level}`),
   ...["healthy", "watch", "degraded", "critical", "info", "unknown", "ok", "resolved", "failed", "error", "warning"]

@@ -3,6 +3,10 @@
 字段全部来自显式键映射白名单：响应只含窗口合计、四个比率、分模式计数与
 小时趋势，不含 scope/session/正文/记忆 ID。未知窗口返回稳定错误码
 ``invalid_window``；Store 缺失或读取失败时返回零值契约而不是 500。
+
+窗口合计/分模式/趋势包含可选语义模式的闭集 outcome（``semantic_*``）；
+四个比率仍是词法模式口径（由 Store 计算），语义计数只追加不改变既有比率。
+Dashboard 面板只渲染词法 outcome 标签，新增字段不改变面板字段形状。
 """
 
 from __future__ import annotations
@@ -23,13 +27,7 @@ from .response_utils import error_response, ok_response
 
 _OUTCOME_FIELDS = DEDUP_METRIC_OUTCOMES
 _SUMMARY_FIELDS = (
-    "checked",
-    "hit",
-    "merged",
-    "fact_mismatch",
-    "fact_overlap",
-    "conflict",
-    "failed",
+    *_OUTCOME_FIELDS,
     "hit_rate",
     "guard_rate",
     "overlap_rate",

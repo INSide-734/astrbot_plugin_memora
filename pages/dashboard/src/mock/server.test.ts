@@ -1075,3 +1075,122 @@ describe("memory dedup metrics mock", () => {
     expect(response).toMatchObject({ status: "error", code: "invalid_window" });
   });
 });
+
+describe("quality funnel mock", () => {
+  it("aggregates four stages deterministically over the requested window", async () => {
+    const data = okData(await get("metrics/quality-funnel", { window: "7d" }));
+
+    expect(data.window).toBe("7d");
+    expect(data.bucket).toBe("utc_day");
+    expect(data.advisory).toBe(true);
+    const stages = data.stages as JsonObject[];
+    expect(stages.map((stage) => stage.id)).toEqual([
+      "candidates",
+      "facts",
+      "dedup",
+      "injection",
+    ]);
+    for (const stage of stages) {
+      expect(stage.state).toBe("available");
+      expect(stage.reason).toBe("ok");
+    }
+    expect(stages[0].counts).toMatchObject({
+      windows: 15,
+      candidates: 48,
+      exact_reuse: 9,
+      duplicate_topics: 4,
+      identity_drops: 3,
+      budget_exceeded: 2,
+      catalog_degraded: 1,
+    });
+    expect((stages[0].rates as JsonObject).reuse_rate).toBeCloseTo(9 / 48, 10);
+    expect((stages[0].rates as JsonObject).degraded_rate).toBeCloseTo(1 / 15, 10);
+    expect(stages[1].counts).toMatchObject({
+      windows: 15,
+      canonical: 20,
+      merged: 6,
+      quarantined: 2,
+      discarded: 3,
+      facts_rejected: 5,
+    });
+    expect((stages[1].rates as JsonObject).merge_rate).toBeCloseTo(6 / 34, 10);
+    expect((stages[1].rates as JsonObject).discard_rate).toBeCloseTo(3 / 34, 10);
+    expect(stages[2].counts).toMatchObject({
+      checked: 24,
+      hit: 8,
+      merged: 6,
+      fact_mismatch: 2,
+      fact_overlap: 3,
+      conflict: 1,
+      failed: 1,
+    });
+    expect((stages[2].rates as JsonObject).hit_rate).toBeCloseTo(8 / 24, 10);
+    expect(stages[3].counts).toMatchObject({
+      decisions: 14,
+      selected: 30,
+      dropped: 6,
+      truncated: 2,
+      memory_present: 11,
+      payload_injected: 9,
+    });
+    expect((stages[3].values as JsonObject).budget_utilization).toBeCloseTo(
+      (0.5 + 0.55 + 0.62) / 3,
+      10,
+    );
+    expect((stages[3].rates as JsonObject).memory_present_rate).toBeCloseTo(11 / 14, 10);
+
+    const trend = data.trend as JsonObject[];
+    expect(trend.map((point) => point.day)).toEqual([
+      "2025-06-13",
+      "2025-06-14",
+      "2025-06-15",
+    ]);
+    expect(trend[2]).toMatchObject({
+      candidates: 22,
+      canonical: 8,
+      merged: 3,
+      facts_rejected: 2,
+      dedup_checked: 10,
+      dedup_hit: 3,
+      decisions: 5,
+      selected: 12,
+    });
+  });
+
+  it("keeps the day-granular windows stable", async () => {
+    const day = okData(await get("metrics/quality-funnel", { window: "24h" }));
+    const hour = okData(await get("metrics/quality-funnel", { window: "1h" }));
+
+    for (const data of [day, hour]) {
+      const stages = data.stages as JsonObject[];
+      expect(stages[0].counts).toMatchObject({ windows: 6, candidates: 22 });
+      expect(data.trend as JsonObject[]).toHaveLength(1);
+    }
+    const month = okData(await get("metrics/quality-funnel", { window: "30d" }));
+    expect((month.trend as JsonObject[])).toHaveLength(3);
+  });
+
+  it("never exposes sensitive or conclusion fields", async () => {
+    const serialized = JSON.stringify(
+      await get("metrics/quality-funnel", { window: "7d" }),
+    );
+
+    for (const marker of [
+      "scope_key",
+      "session_id",
+      "persona_id",
+      "memory_id",
+      "threshold",
+      "pass_fail",
+      "content",
+    ]) {
+      expect(serialized).not.toContain(marker);
+    }
+  });
+
+  it("rejects an unknown window with invalid_window", async () => {
+    const response = await get("metrics/quality-funnel", { window: "12h" });
+
+    expect(response).toMatchObject({ status: "error", code: "invalid_window" });
+  });
+});

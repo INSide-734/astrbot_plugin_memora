@@ -56,7 +56,7 @@ flowchart LR
 
 分层顺序为前瞻计划、普通记忆、认知上下文；包装开销也计入预算。候选按确定性 utility、稳定 ID 和原始顺序排序，并受 `max_memories`、单条估算与总字符预算共同约束。超预算时从最低优先级候选开始移除，不得截断安全边界标签。
 
-非 `FACTS` 内容级别下，formatter 只在 `content` 未完整包含 `key_facts` 时输出独立 `Key facts` 行，避免同一事实二次占用预算；`content` 同时是 FTS5/FAISS 索引文本与 Page API 展示源，禁止为消除重复而从存储层剥离 `key_facts`。
+非 `FACTS` 内容级别下，formatter 只在 `content` 已按独立事实边界完整包含全部 `key_facts` 时才省略独立 `Key facts` 行：CJK 事实须与按 `；;|｜/换行/句末标点` 切分后的完整 clause 相等，拉丁/数字事实须带 ASCII 词边界且同一 clause 前文无否定词；否定、长词子串、部分匹配和截断事实一律保留显式事实行。宁可重复也不让事实丢失；`content` 同时是 FTS5/FAISS 索引文本与 Page API 展示源，禁止为消除重复而从存储层剥离 `key_facts`。
 
 ### 不可违反的 System Prompt 边界
 

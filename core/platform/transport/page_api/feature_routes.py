@@ -307,6 +307,14 @@ class FeatureRoutesApiMixin:
             "页面接口：跨窗口去重指标摘要",
         )
 
+        # ---- 质量 funnel 观测 ----
+        register(
+            f"{PAGE_API_PREFIX}/metrics/quality-funnel",
+            self.get_quality_funnel,
+            ["GET"],
+            "页面接口：质量 funnel 四阶段日聚合",
+        )
+
         # ---- 黑话 ----
         register(
             f"{PAGE_API_PREFIX}/jargon/candidates",
