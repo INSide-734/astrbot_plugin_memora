@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ....shared.memory_status import is_memory_recallable
@@ -53,11 +54,18 @@ class GraphMemoryManager:
         graph_store: GraphStore,
         graph_vector_retriever: GraphVectorRetriever,
         graph_extractor: GraphExtractor,
+        *,
+        atom_loader: Callable[[int], Awaitable[list]] | None = None,
     ) -> None:
-        """保存图存储、向量检索器和抽取器，并创建变更串行锁。"""
+        """保存图存储、向量检索器、抽取器与可选原子加载器。
+
+        ``atom_loader`` 让未显式传原子的重建/更新路径复用与增量写入相同的
+        原子表示；读取失败保持可见，只在返回空集合时回落 legacy 派生。
+        """
         self.graph_store = graph_store
         self.graph_vector_retriever = graph_vector_retriever
         self.graph_extractor = graph_extractor
+        self._atom_loader = atom_loader
         self._mutation_lock = asyncio.Lock()
 
     async def index_memory(
@@ -69,7 +77,7 @@ class GraphMemoryManager:
     ) -> None:
         """为一条源记忆重建图产物。
 
-        当提供原子时，每个原子独立贡献节点/边/条目，
+        当提供原子（或可由加载器取得）时，每个原子独立贡献节点/边/条目，
         并携带各自的置信度分数。重建先按 canonical 源记忆回收旧图向量，
         再在一个事务内替换全部 revision 的图行，最后写入新向量：
         向量清理失败时旧图行与其向量映射保持不变，便于重试与修复。
@@ -84,6 +92,9 @@ class GraphMemoryManager:
             gate_reason = graph_source_gate_reason(canonical_metadata)
             if gate_reason is not None:
                 raise ValueError(gate_reason)
+            if atoms is None and self._atom_loader is not None:
+                loaded = await self._atom_loader(int(source_memory_id))
+                atoms = list(loaded) if loaded else None
             extracted = self.graph_extractor.extract(
                 source_memory_id,
                 canonical_content,

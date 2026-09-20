@@ -124,6 +124,51 @@ class TestMemoryEngineGetMemory:
         assert result is not None
         assert result["updated_at"] == raw_revision
 
+    @pytest.mark.asyncio
+    async def test_get_memory_closes_cursor_when_revision_read_fails(self) -> None:
+        """SQLite 时间列读取失败时必须关闭游标，并回退到文档自身字段。"""
+        from core.features.memory.infrastructure.canonical_memory_reader import (
+            load_canonical_memory,
+        )
+
+        class _FailingCursor:
+            def __init__(self) -> None:
+                self.closed = False
+
+            async def fetchone(self):
+                raise RuntimeError("read failed")
+
+            async def close(self) -> None:
+                self.closed = True
+
+        class _FailingConnection:
+            def __init__(self) -> None:
+                self.cursor = _FailingCursor()
+
+            async def execute(self, sql: str, params: tuple = ()):
+                return self.cursor
+
+        mock_faiss = MagicMock()
+        mock_faiss.document_storage.get_documents = AsyncMock(
+            return_value=[
+                {
+                    "id": 17,
+                    "text": "匿名 canonical 正文",
+                    "metadata": {},
+                    "created_at": "doc-created",
+                    "updated_at": "doc-updated",
+                }
+            ]
+        )
+        connection = _FailingConnection()
+
+        result = await load_canonical_memory(mock_faiss, connection, 17)
+
+        assert connection.cursor.closed is True
+        assert result is not None
+        assert result["created_at"] == "doc-created"
+        assert result["updated_at"] == "doc-updated"
+
 
 class TestMemoryEngineAddMemoryErrors:
     """测试不装配完整数据库时的 add_memory 错误路径。"""

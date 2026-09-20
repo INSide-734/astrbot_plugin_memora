@@ -165,7 +165,7 @@ class LifecycleOperationsMixin:
                     if "emotion_tags" in metadata:
                         metadata["_archived_emotion_tags"] = metadata["emotion_tags"]
                     metadata["emotional_intensity"] = round(
-                        float(metadata.get("emotional_intensity", 0.5)) * 0.5, 3
+                        safe_float(metadata.get("emotional_intensity"), 0.5) * 0.5, 3
                     )
                 elif new_status == "archived":
                     metadata["emotion_tags"] = []

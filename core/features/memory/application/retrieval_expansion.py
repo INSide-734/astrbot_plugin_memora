@@ -15,6 +15,11 @@ from ....shared.memory_status import is_memory_recallable
 from ....shared.number_utils import safe_float
 from ....shared.temporal import canonical_visible_at
 from ...injection.application.selection import metadata_has_user_evidence
+from ...quality.application.near_duplicate_detector import (
+    DedupScope,
+    same_dedup_scope,
+    stored_scope,
+)
 from ...retrieval.rrf_fusion import HybridResult
 from ..domain.revision import memory_revision
 from ..graph.domain.models import GraphBoundary, GraphQueryScope
@@ -314,8 +319,8 @@ class RetrievalExpansionMixin:
     # ---- 梦境整合 ----
 
     async def consolidate(self) -> dict[str, int]:
-        """夜间整合：基于共享话题关联高重要度记忆。"""
-        if self._db is None:
+        """夜间整合：基于共享话题关联同一来源边界内的高重要度记忆。"""
+        if self._db is None or self._update_memory is None:
             return {"paired": 0}
 
         try:
@@ -329,38 +334,34 @@ class RetrievalExpansionMixin:
             if len(rows) < 2:
                 return {"paired": 0}
 
-            high_imp: list[tuple[int, dict]] = []
+            high_imp: list[tuple[int, dict, DedupScope]] = []
             for row in rows:
                 metadata = _safe_json(row["metadata"])
+                if not is_memory_recallable(metadata):
+                    continue
                 last_access = safe_float(metadata.get("last_access_time"), 0.0)
-                if last_access >= recent_cutoff:
-                    high_imp.append((int(row["id"]), metadata))
+                if last_access < recent_cutoff:
+                    continue
+                scope = stored_scope(metadata)
+                if scope is None:
+                    continue
+                high_imp.append((int(row["id"]), metadata, scope))
 
             paired = 0
             for i in range(len(high_imp)):
                 for j in range(i + 1, min(i + 4, len(high_imp))):
-                    t_i = set(high_imp[i][1].get("topics", []) or [])
-                    t_j = set(high_imp[j][1].get("topics", []) or [])
-                    if t_i & t_j:
-                        meta_i = high_imp[i][1]
-                        pairs = list(meta_i.get("consolidated_pairs", []) or [])
-                        if high_imp[j][0] not in pairs and len(pairs) < 5:
-                            pairs.append(high_imp[j][0])
-                            meta_i["consolidated_pairs"] = pairs
-                            meta_i["importance"] = min(
-                                0.95,
-                                float(meta_i.get("importance", 0.5)) + 0.02,
-                            )
-                            await self._db.execute(
-                                "UPDATE documents SET metadata = ? WHERE id = ?",
-                                (
-                                    json.dumps(meta_i, ensure_ascii=False),
-                                    high_imp[i][0],
-                                ),
-                            )
-                            paired += 1
+                    if not same_dedup_scope(high_imp[i][2], high_imp[j][2]):
+                        continue
+                    topics_i = set(high_imp[i][1].get("topics", []) or [])
+                    topics_j = set(high_imp[j][1].get("topics", []) or [])
+                    if not topics_i & topics_j:
+                        continue
+                    if await self._apply_consolidation_pair(
+                        high_imp[i][0], high_imp[j][0], scope=high_imp[i][2]
+                    ):
+                        paired += 1
             if paired:
-                await self._db.commit()
+                self.invalidate_cache()
                 logger.info(f"[梦境整合] {paired} 对记忆已关联巩固")
             return {"paired": paired}
         except asyncio.CancelledError:
@@ -368,6 +369,65 @@ class RetrievalExpansionMixin:
         except Exception:
             logger.error("[梦境整合] 失败", exc_info=True)
             return {"paired": 0}
+
+    async def _apply_consolidation_pair(
+        self, owner_id: int, target_id: int, *, scope: DedupScope
+    ) -> bool:
+        """经 canonical 写入口以 source revision CAS 提交单条整合关联。
+
+        扫描阶段的选择不是授权：提交前必须回读两端最新 canonical，重新确认两端
+        仍活跃、仍落在同一来源边界，且 owner 边界与配对时选择一致；任一项失效
+        即跳过本对，不把新 revision 当成旧选择的延续。
+        """
+
+        update_memory = self._update_memory
+        get_memory = self._get_memory
+        if update_memory is None or get_memory is None:
+            return False
+        fresh_owner = await get_memory(owner_id)
+        fresh_target = await get_memory(target_id)
+        if not isinstance(fresh_owner, Mapping) or not isinstance(
+            fresh_target, Mapping
+        ):
+            return False
+        owner_metadata = _safe_json(fresh_owner.get("metadata"))
+        target_metadata = _safe_json(fresh_target.get("metadata"))
+        owner_scope = stored_scope(owner_metadata)
+        target_scope = stored_scope(target_metadata)
+        if owner_scope is None or target_scope is None:
+            return False
+        if not is_memory_recallable(owner_metadata) or not is_memory_recallable(
+            target_metadata
+        ):
+            return False
+        if not same_dedup_scope(owner_scope, target_scope) or not same_dedup_scope(
+            scope, owner_scope
+        ):
+            return False
+        if not set(owner_metadata.get("topics", []) or []) & set(
+            target_metadata.get("topics", []) or []
+        ):
+            return False
+        expected_revision = memory_revision(dict(fresh_owner))
+        if not expected_revision:
+            return False
+        pairs = list(owner_metadata.get("consolidated_pairs", []) or [])
+        if target_id in pairs or len(pairs) >= 5:
+            return False
+        pairs.append(target_id)
+        applied = await update_memory(
+            owner_id,
+            {
+                "metadata": {
+                    "consolidated_pairs": pairs,
+                    "importance": min(
+                        0.95, safe_float(owner_metadata.get("importance"), 0.5) + 0.02
+                    ),
+                }
+            },
+            expected_revision=expected_revision,
+        )
+        return bool(applied)
 
     # ---- 触发词注册 ----
 

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import time
+from pathlib import Path
+
+import aiosqlite
 import pytest
 
 from core.features.memory.application.retrieval_optimizer import (
@@ -246,20 +251,6 @@ class TestArrangeNarrative:
         narrative = opt.arrange_narrative([r1, r2])
         assert "另外，" in narrative
 
-    def test_different_topics_with_large_time_gap(self) -> None:
-        """Very old memories separated by topic show topic_switch (not time_jump for first segment)."""
-        opt = RetrievalOptimizer(config={})
-        import time
-
-        now = time.time()
-        r1 = self._make_result(
-            1, "Python memory", topics=["python"], create_time=now - 86400 * 10
-        )
-        r2 = self._make_result(2, "Cooking memory", topics=["cooking"], create_time=now)
-        narrative = opt.arrange_narrative([r1, r2])
-        # Different topics produce topic_switch
-        assert "另外，" in narrative
-
     def test_narrative_truncated(self) -> None:
         """Narrative is truncated at max_length."""
         opt = RetrievalOptimizer(config={})
@@ -276,9 +267,9 @@ class TestArrangeNarrative:
         )  # same topic group
         r3 = self._make_result(3, "New", topics=["b"], create_time=100 + 86400 * 10)
         narrative = opt.arrange_narrative([r1, r2, r3])
-        # The time_jump detection uses sorted_results[i] for both prev and first_ts;
-        # with >= 3 segments the prev_time differs from first_ts, producing time_jump.
-        assert ("那之后，" in narrative) or ("另外，" in narrative)
+        # 段首时间取自该段首条记忆，对比时间取自上一段的末条记忆：
+        # 10 天的间隔超过 7 天阈值，必须给出时间跳跃过渡。
+        assert "那之后，" in narrative
         assert "Old" in narrative
 
     def test_narrative_content_with_punctuation_stripping(self) -> None:
@@ -307,6 +298,53 @@ class TestArrangeNarrative:
         narrative = opt.arrange_narrative([r1, r2])
         assert "" not in narrative or "我记得：" in narrative
         assert "Real content" in narrative
+
+    def test_narrative_skips_empty_content_without_misaligning_time(self) -> None:
+        """被跳过的空正文条目不得让后续段时间判断指向无关记忆。"""
+
+        opt = RetrievalOptimizer(config={})
+        base = 1_700_000_000.0
+        first = _make_hr(
+            1,
+            "A",
+            metadata={"topics": ["a"], "create_time": base},
+        )
+        second = _make_hr(
+            2,
+            "B",
+            metadata={"topics": ["b"], "create_time": base + 86400},
+        )
+        skipped = _make_hr(
+            3,
+            "   ",
+            metadata={"topics": ["c"], "create_time": base + 30 * 86400},
+        )
+
+        narrative = opt.arrange_narrative([first, second, skipped])
+
+        assert "那之后，" not in narrative
+        assert "另外，" in narrative
+
+    def test_narrative_uses_segment_time_without_create_time(self) -> None:
+        """只有 timestamp 的记忆不得因缺失 create_time 被误判为时间跳跃。"""
+
+        opt = RetrievalOptimizer(config={})
+        base = 1_700_000_000.0
+        first = _make_hr(
+            1,
+            "A",
+            metadata={"topics": ["a"], "create_time": base},
+        )
+        second = _make_hr(
+            2,
+            "B",
+            metadata={"topics": ["b"], "timestamp": base + 86400},
+        )
+
+        narrative = opt.arrange_narrative([first, second])
+
+        assert "另外，" in narrative
+        assert "那之后，" not in narrative
 
     @pytest.mark.asyncio
     async def test_apply_boosts_empty_results(self) -> None:
@@ -504,6 +542,44 @@ class TestSeasonalBoost:
     def test_seasonal_no_timestamp(self) -> None:
         """没有 boost when no timestamp fields present."""
         r = _make_hr(1, "test", score=1.0, metadata={})
+        result = RetrievalOptimizer._apply_seasonal_boost([r])
+        assert result[0].final_score == 1.0
+
+    def test_seasonal_skips_unparsable_event_time(self) -> None:
+        """ISO 字符串事件时间不得抛错，也不得回退成 create_time 倍率。"""
+
+        r = _make_hr(
+            1,
+            "test",
+            score=1.0,
+            metadata={"event_time": "2026-08-01T09:00:00Z", "create_time": 1000000.0},
+        )
+        result = RetrievalOptimizer._apply_seasonal_boost([r])
+        assert result[0].final_score == 1.0
+
+    def test_seasonal_skips_zero_event_time(self) -> None:
+        """epoch 起点不是有效事件时间，不得回退成 create_time 倍率。"""
+
+        r = _make_hr(
+            1,
+            "test",
+            score=1.0,
+            metadata={"event_time": 0, "create_time": 1000000.0},
+        )
+        result = RetrievalOptimizer._apply_seasonal_boost([r])
+        assert result[0].final_score == 1.0
+
+    def test_seasonal_skips_empty_string_timestamp(self) -> None:
+        """空字符串时间戳不得触发 float() 异常。"""
+
+        r = _make_hr(1, "test", score=1.0, metadata={"event_time": ""})
+        result = RetrievalOptimizer._apply_seasonal_boost([r])
+        assert result[0].final_score == 1.0
+
+    def test_seasonal_skips_out_of_range_timestamp(self) -> None:
+        """超出 datetime 范围的时间戳必须跳过增强而不是中断召回。"""
+
+        r = _make_hr(1, "test", score=1.0, metadata={"event_time": 10**18})
         result = RetrievalOptimizer._apply_seasonal_boost([r])
         assert result[0].final_score == 1.0
 
@@ -937,3 +1013,200 @@ class TestChainExpansionAblation:
 
         assert calls == []
         assert [result.doc_id for result in results] == [1]
+
+
+def _consolidation_metadata(
+    *,
+    session_id: str = "session-1",
+    scope_key: str = "scope-a",
+    privacy_level: str = "shared",
+    topics: tuple[str, ...] = ("咖啡",),
+    importance: float = 0.7,
+    memory_status: str = "active",
+) -> dict:
+    """构造参与梦境整合的 canonical metadata。"""
+
+    return {
+        "session_id": session_id,
+        "persona_id": None,
+        "scope_key": scope_key,
+        "privacy_level": privacy_level,
+        "chat_type": "group",
+        "topics": list(topics),
+        "importance": importance,
+        "memory_status": memory_status,
+        "last_access_time": time.time(),
+    }
+
+
+class TestConsolidate:
+    """测试梦境整合的 canonical 写入口与来源边界。"""
+
+    @staticmethod
+    async def _prepare_db(
+        tmp_path: Path, rows: list[tuple[int, dict]]
+    ) -> aiosqlite.Connection:
+        """建最小 documents 表并写入待整合记忆。"""
+
+        db = await aiosqlite.connect(tmp_path / "consolidate.db")
+        db.row_factory = aiosqlite.Row
+        await db.execute(
+            "CREATE TABLE documents "
+            "(id INTEGER PRIMARY KEY, metadata TEXT, updated_at TEXT)"
+        )
+        for memory_id, metadata in rows:
+            await db.execute(
+                "INSERT INTO documents (id, metadata, updated_at) VALUES (?, ?, ?)",
+                (
+                    memory_id,
+                    json.dumps(metadata, ensure_ascii=False),
+                    f"rev-{memory_id}",
+                ),
+            )
+        await db.commit()
+        return db
+
+    @staticmethod
+    async def _stored_metadata(db: aiosqlite.Connection, memory_id: int) -> dict:
+        """读取 canonical 行的 metadata。"""
+
+        cursor = await db.execute(
+            "SELECT metadata FROM documents WHERE id = ?", (memory_id,)
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        return json.loads(row[0])
+
+    @pytest.mark.asyncio
+    async def test_consolidate_writes_through_canonical_update_port(
+        self, tmp_path: Path
+    ) -> None:
+        """整合必须经 canonical 写入口携带 source revision 提交。"""
+
+        metadata = _consolidation_metadata()
+        db = await self._prepare_db(tmp_path, [(1, metadata), (2, dict(metadata))])
+        calls: list[tuple[int, dict, str]] = []
+
+        async def get_memory(memory_id: int):
+            return {
+                "id": memory_id,
+                "text": "记忆正文",
+                "metadata": json.dumps(metadata, ensure_ascii=False),
+                "updated_at": f"rev-{memory_id}",
+            }
+
+        async def update_memory(memory_id, updates, *, expected_revision):
+            calls.append((memory_id, updates, expected_revision))
+            return True
+
+        optimizer = RetrievalOptimizer(
+            {},
+            db_connection=db,
+            get_memory_cb=get_memory,
+            update_memory_cb=update_memory,
+        )
+
+        assert await optimizer.consolidate() == {"paired": 1}
+
+        assert len(calls) == 1
+        memory_id, updates, expected_revision = calls[0]
+        assert memory_id == 1
+        assert updates["metadata"]["consolidated_pairs"] == [2]
+        assert expected_revision == "rev-1"
+
+        stored = await self._stored_metadata(db, 1)
+        assert "consolidated_pairs" not in stored
+        await db.close()
+
+    @pytest.mark.asyncio
+    async def test_consolidate_skips_cross_boundary_and_inactive_sources(
+        self, tmp_path: Path
+    ) -> None:
+        """跨 scope/privacy 或未激活来源不得写入整合关联。"""
+
+        rows = [
+            (1, _consolidation_metadata()),
+            (2, _consolidation_metadata(scope_key="scope-b")),
+            (3, _consolidation_metadata(memory_status="dormant")),
+        ]
+        db = await self._prepare_db(tmp_path, rows)
+        latest = {memory_id: metadata for memory_id, metadata in rows}
+        calls: list[int] = []
+
+        async def get_memory(memory_id: int):
+            # 与生产一致：可读回真实 metadata 与有效 revision，
+            # 因此是否写入只取决于边界/活跃校验本身。
+            return {
+                "id": memory_id,
+                "text": "记忆正文",
+                "metadata": json.dumps(latest[memory_id], ensure_ascii=False),
+                "updated_at": f"rev-{memory_id}",
+            }
+
+        async def update_memory(memory_id, updates, *, expected_revision):
+            calls.append(memory_id)
+            return True
+
+        optimizer = RetrievalOptimizer(
+            {},
+            db_connection=db,
+            get_memory_cb=get_memory,
+            update_memory_cb=update_memory,
+        )
+
+        assert await optimizer.consolidate() == {"paired": 0}
+        assert calls == []
+        await db.close()
+
+    @pytest.mark.asyncio
+    async def test_consolidate_rechecks_boundary_before_write(
+        self, tmp_path: Path
+    ) -> None:
+        """配对后 owner 边界或活跃状态变化时，提交前必须重新校验并跳过。"""
+
+        rows = [(1, _consolidation_metadata()), (2, _consolidation_metadata())]
+        db = await self._prepare_db(tmp_path, rows)
+        # get_memory 模拟扫描之后 owner 被归档并改到另一个 scope。
+        fresh_owner = _consolidation_metadata(
+            scope_key="scope-other",
+            memory_status="dormant",
+        )
+        calls: list[int] = []
+
+        async def get_memory(memory_id: int):
+            metadata = fresh_owner if memory_id == 1 else rows[1][1]
+            return {
+                "id": memory_id,
+                "text": "记忆正文",
+                "metadata": json.dumps(metadata, ensure_ascii=False),
+                "updated_at": f"rev-{memory_id}",
+            }
+
+        async def update_memory(memory_id, updates, *, expected_revision):
+            calls.append(memory_id)
+            return True
+
+        optimizer = RetrievalOptimizer(
+            {},
+            db_connection=db,
+            get_memory_cb=get_memory,
+            update_memory_cb=update_memory,
+        )
+
+        assert await optimizer.consolidate() == {"paired": 0}
+        assert calls == []
+        await db.close()
+
+    @pytest.mark.asyncio
+    async def test_consolidate_without_write_port_is_noop(self, tmp_path: Path) -> None:
+        """未装配 canonical 写端口时整合必须零副作用。"""
+
+        metadata = _consolidation_metadata()
+        db = await self._prepare_db(tmp_path, [(1, metadata), (2, dict(metadata))])
+        optimizer = RetrievalOptimizer({}, db_connection=db)
+
+        assert await optimizer.consolidate() == {"paired": 0}
+
+        stored = await self._stored_metadata(db, 1)
+        assert "consolidated_pairs" not in stored
+        await db.close()

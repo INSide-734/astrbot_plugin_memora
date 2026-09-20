@@ -166,6 +166,28 @@ class TestConnectionRegistry:
             result = await ConnectionRegistry.try_repair()
             assert result is False
 
+    @pytest.mark.asyncio
+    async def test_try_repair_closes_new_connection_when_setup_fails(self) -> None:
+        """重连后置配置失败必须回收新连接，注册表不得残留坏死句柄。"""
+
+        old_mock = MagicMock()
+        old_mock._conn = None
+        ConnectionRegistry.register("test.db", old_mock, [])
+        new_conn = MagicMock()
+        new_conn.close = AsyncMock()
+
+        with (
+            patch("aiosqlite.connect", AsyncMock(return_value=new_conn)),
+            patch(
+                "core.features.memory.infrastructure.base.apply_perf_pragmas",
+                AsyncMock(side_effect=RuntimeError("pragma failed")),
+            ),
+        ):
+            assert await ConnectionRegistry.try_repair() is False
+
+        new_conn.close.assert_awaited_once()
+        assert ConnectionRegistry._connection is None
+
 
 class TestWriteWithRetry:
     """测试 write_with_retry。"""

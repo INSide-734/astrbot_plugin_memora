@@ -188,20 +188,30 @@ class ConnectionRegistry:
 
         try:
             new_conn = await aiosqlite.connect(cls._db_path)
+        except Exception as exc:
+            logger.error(f"[重连] 数据库自动重连失败: {exc}")
+            cls._connection = None
+            return False
+
+        try:
             new_conn.row_factory = aiosqlite.Row
             from ..infrastructure.base import apply_perf_pragmas
 
             await apply_perf_pragmas(new_conn)
-
-            cls._connection = new_conn
-            for mod in cls._modules:
-                mod._db = new_conn
-
-            logger.info("[重连] 数据库自动重连成功")
-            return True
         except Exception as exc:
+            # 新连接未交付给任何持有方，失败时必须自行回收，避免线程/句柄泄漏。
+            with contextlib.suppress(Exception):
+                await new_conn.close()
             logger.error(f"[重连] 数据库自动重连失败: {exc}")
+            cls._connection = None
             return False
+
+        cls._connection = new_conn
+        for mod in cls._modules:
+            mod._db = new_conn
+
+        logger.info("[重连] 数据库自动重连成功")
+        return True
 
 
 # ---- 内部：可重试执行核心 ----

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ....shared.number_utils import safe_float
 from ...retrieval.rrf_fusion import HybridResult
 
 
@@ -15,6 +16,20 @@ class RetrievalNarrativeMixin:
         "time_jump": "那之后，",
         "introduction": "我记得：",
     }
+
+    @staticmethod
+    def _result_timestamp(result: HybridResult) -> float | None:
+        """按 create_time → timestamp 读取正数时间戳，无有效值时返回 ``None``。"""
+
+        metadata = result.metadata if isinstance(result.metadata, dict) else {}
+        for key in ("create_time", "timestamp"):
+            raw_value = metadata.get(key)
+            if raw_value is None:
+                continue
+            parsed = safe_float(raw_value, 0.0)
+            if parsed > 0:
+                return parsed
+        return None
 
     def arrange_narrative(
         self,
@@ -34,20 +49,14 @@ class RetrievalNarrativeMixin:
             return ""
 
         # 1. 按时间线排序（优先 create_time，其次 timestamp）
-        def _sort_key(r: HybridResult) -> float:
-            meta = r.metadata or {}
-            ts = meta.get("create_time") or meta.get("timestamp") or 0.0
-            try:
-                return float(ts)
-            except (TypeError, ValueError):
-                return 0.0
+        sorted_results = sorted(results, key=lambda r: self._result_timestamp(r) or 0.0)
 
-        sorted_results = sorted(results, key=_sort_key)
-
-        # 2. 按 topic 聚类：相邻同 topic 的记忆归为一组
-        segments: list[tuple[str | None, list[str]]] = []
+        # 2. 按 topic 聚类：相邻同 topic 的记忆归为一组，并保留段内首/末时间
+        segments: list[tuple[str | None, list[str], float | None, float | None]] = []
         current_topic: str | None = None
         current_texts: list[str] = []
+        current_first: float | None = None
+        current_last: float | None = None
 
         for r in sorted_results:
             meta = r.metadata or {}
@@ -56,45 +65,40 @@ class RetrievalNarrativeMixin:
             text = (r.content or "").strip()
             if not text:
                 continue
+            timestamp = self._result_timestamp(r)
 
             if primary_topic == current_topic and current_texts:
                 current_texts.append(text)
+                if timestamp is not None:
+                    current_last = timestamp
             else:
                 if current_texts:
-                    segments.append((current_topic, current_texts))
+                    segments.append(
+                        (current_topic, current_texts, current_first, current_last)
+                    )
                 current_topic = primary_topic
                 current_texts = [text]
+                current_first = timestamp
+                current_last = timestamp
 
         if current_texts:
-            segments.append((current_topic, current_texts))
+            segments.append((current_topic, current_texts, current_first, current_last))
 
         # 3. 拼接过渡短语
         parts: list[str] = []
         prev_time: float | None = None
 
-        for i, (_topic, texts) in enumerate(segments):
+        for i, (_topic, texts, first_ts, last_ts) in enumerate(segments):
             if i == 0:
                 parts.append(self._TRANSITIONS["introduction"])
+            elif (
+                prev_time is not None
+                and first_ts is not None
+                and abs(first_ts - prev_time) / 86400.0 > 7
+            ):
+                parts.append(self._TRANSITIONS["time_jump"])
             else:
-                # 判断时间跳跃（> 7 天）
-                first_ts = None
-                if i < len(sorted_results):
-                    try:
-                        first_ts = float(
-                            (sorted_results[i].metadata or {}).get("create_time")
-                            or (sorted_results[i].metadata or {}).get("timestamp")
-                            or 0
-                        )
-                    except (TypeError, ValueError):
-                        first_ts = None
-                if prev_time is not None and first_ts is not None:
-                    gap_days = abs(first_ts - prev_time) / 86400.0
-                    if gap_days > 7:
-                        parts.append(self._TRANSITIONS["time_jump"])
-                    else:
-                        parts.append(self._TRANSITIONS["topic_switch"])
-                else:
-                    parts.append(self._TRANSITIONS["topic_switch"])
+                parts.append(self._TRANSITIONS["topic_switch"])
 
             # 同 topic 下多条记忆用 "还有，" 连接
             for j, text in enumerate(texts):
@@ -102,17 +106,8 @@ class RetrievalNarrativeMixin:
                 if j < len(texts) - 1:
                     parts.append(self._TRANSITIONS["same_topic"])
 
-            # 更新 prev_time
-            try:
-                prev_time = float(
-                    (
-                        sorted_results[min(i + 1, len(sorted_results) - 1)].metadata
-                        or {}
-                    ).get("create_time")
-                    or 0
-                )
-            except (TypeError, ValueError):
-                prev_time = None
+            # 更新 prev_time：上一段时间取当前段最后一条记忆的时间
+            prev_time = last_ts
 
         # 4. 截断到 max_length，保持句子完整
         narrative = "".join(parts)

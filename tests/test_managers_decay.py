@@ -220,6 +220,51 @@ class TestDecayWriteBoundaries:
         host._db.executemany.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_batch_access_update_tolerates_dirty_importance(self) -> None:
+        """importance 为 null 或非数字时整批仍应强化，并使用默认基准值。"""
+
+        host = _DecayHost()
+        select_cursor = AsyncMock()
+        select_cursor.fetchall.return_value = [
+            {"id": 1, "metadata": json.dumps({"importance": None})},
+            {"id": 2, "metadata": json.dumps({"importance": "未知"})},
+        ]
+        host._db.execute = AsyncMock(return_value=select_cursor)
+        host._db.executemany = AsyncMock()
+
+        with patch(
+            "core.features.decay.application.operations.coordinated_transaction",
+            return_value=_TxnContext(host._db),
+        ):
+            affected = await host.update_access_times_batch([1, 2])
+
+        assert affected == 2
+        updates = host._db.executemany.await_args.args[1]
+        written = [json.loads(payload) for payload, _ in updates]
+        assert [item["importance"] for item in written] == [0.51, 0.51]
+        assert [item["access_count"] for item in written] == [1, 1]
+
+    @pytest.mark.asyncio
+    async def test_single_access_update_tolerates_dirty_importance(self) -> None:
+        """单条强化的 importance 非数字时按默认基准值强化并返回成功。"""
+
+        host = _DecayHost()
+        select_cursor = AsyncMock()
+        select_cursor.fetchone.return_value = (json.dumps({"importance": "0.9?"}),)
+        host._db.execute = AsyncMock(return_value=select_cursor)
+
+        with patch(
+            "core.features.decay.application.operations.coordinated_transaction",
+            return_value=_TxnContext(host._db),
+        ):
+            updated = await host.update_access_time(1, recall_type="active")
+
+        assert updated is True
+        update_args = host._db.execute.await_args_list[1].args
+        assert update_args[1][1] == 1
+        assert json.loads(update_args[1][0])["importance"] == 0.55
+
+    @pytest.mark.asyncio
     async def test_daily_decay_uses_one_coordinated_transaction(self) -> None:
         """每日衰减应在一次协调事务内完成。"""
 

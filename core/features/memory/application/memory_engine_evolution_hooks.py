@@ -76,6 +76,16 @@ class MemoryEngineEvolutionHooksMixin:
                     )
                     return
                 metadata = await self._read_source_metadata_for_evolution(memory_id)
+                if metadata is None:
+                    report_debug_event(
+                        "storage_task",
+                        component="memory_engine",
+                        stage="evolution_schedule",
+                        status="skipped",
+                        reason_code="evolution_source_metadata_unavailable",
+                        task_type="evolution",
+                    )
+                    return
                 if is_mark_write(metadata):
                     report_debug_event(
                         "storage_task",
@@ -137,15 +147,18 @@ class MemoryEngineEvolutionHooksMixin:
 
     async def _read_source_metadata_for_evolution(
         self, memory_id: int
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """尽力读取 canonical metadata，供 mark_write 演化守卫判断。
 
-        引擎未初始化或读取失败时返回空字典，不阻断正常演化调度。
+        引擎未初始化、canonical 记录缺失或读取失败时返回 ``None``；调用方必须
+        按“元数据不可用”跳过演化，不能把读取失败当成空元数据放行 mark_write
+        或未激活来源。
         """
 
         db_connection = getattr(self, "db_connection", None)
         if db_connection is None:
-            return {}
+            logger.warning("[演化] canonical 连接不可用，跳过演化调度")
+            return None
         try:
             cursor = await db_connection.execute(
                 "SELECT metadata FROM documents WHERE id = ?", (int(memory_id),)
@@ -154,10 +167,14 @@ class MemoryEngineEvolutionHooksMixin:
             await cursor.close()
         except asyncio.CancelledError:
             raise
-        except Exception:
-            return {}
+        except Exception as error:
+            logger.warning(
+                "[演化] canonical metadata 读取失败，跳过演化调度 (异常类型=%s)",
+                error.__class__.__name__,
+            )
+            return None
         if row is None:
-            return {}
+            return None
         raw_metadata = row[0]
         if isinstance(raw_metadata, dict):
             return raw_metadata
@@ -165,9 +182,10 @@ class MemoryEngineEvolutionHooksMixin:
             try:
                 parsed = json.loads(raw_metadata)
             except (TypeError, ValueError):
-                return {}
-            return parsed if isinstance(parsed, dict) else {}
-        return {}
+                logger.warning("[演化] canonical metadata 不是合法 JSON，跳过演化调度")
+                return None
+            return parsed if isinstance(parsed, dict) else None
+        return None
 
     async def _invalidate_evolution_after_delete(self, memory_id: int) -> None:
         """canonical 删除提交后标记关联 relation/projection 不可见。"""

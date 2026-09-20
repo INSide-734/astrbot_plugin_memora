@@ -11,6 +11,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from ....shared.contracts.events import CanonicalMemoryCommitted
 from ....shared.number_utils import clamp_float
 from ....shared.recall_strategy import RecallStrategy
 from ....shared.temporal import canonical_visible_at, normalize_datetime
@@ -94,6 +95,8 @@ class MemoryEngineCRUDMixin(
             "add",
             {
                 "content_preview": content[:500],
+                # 崩溃修复用摘要证明正文未被改写；正文本身不得进入账本之外的日志。
+                "content_digest": CanonicalMemoryCommitted.digest_content(content)[:32],
                 "session_id": session_id,
                 "persona_id": persona_id,
                 "importance": importance,

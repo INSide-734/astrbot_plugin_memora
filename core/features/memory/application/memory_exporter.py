@@ -137,9 +137,14 @@ class MemoryImporter:
                 if not line:
                     continue
                 try:
-                    records.append(json.loads(line))
+                    record = json.loads(line)
                 except json.JSONDecodeError:
-                    logger.warning(f"[Import] skip malformed: {line[:60]}...")
+                    logger.warning("[Import] 跳过无法解析的 JSONL 行")
+                    continue
+                if not isinstance(record, dict):
+                    logger.warning("[Import] 跳过非对象 JSONL 记录")
+                    continue
+                records.append(record)
 
         result = {
             "total": len(records),
@@ -192,6 +197,10 @@ class MemoryImporter:
                 result["imported"] += 1
                 seen_hashes.add(h)
                 continue
+            if self._add_memory is None:
+                logger.error("[Import] add_memory 回调未配置，记录未写入 canonical")
+                result["errors"] += 1
+                continue
             try:
                 meta = rec.get("metadata", {}) or {}
                 if session_id:
@@ -200,18 +209,17 @@ class MemoryImporter:
                     meta["persona_id"] = persona_id
                 meta["imported_at"] = time.time()
                 meta["import_source_id"] = rec.get("id")
-                if self._add_memory is not None:
-                    await self._add_memory(
-                        content=content,
-                        session_id=session_id,
-                        persona_id=persona_id,
-                        importance=float(meta.get("importance", 0.5)),
-                        metadata=meta,
-                    )
+                await self._add_memory(
+                    content=content,
+                    session_id=session_id,
+                    persona_id=persona_id,
+                    importance=float(meta.get("importance", 0.5)),
+                    metadata=meta,
+                )
                 result["imported"] += 1
                 seen_hashes.add(h)
             except Exception:
-                logger.debug(f"[Import] failed: {content[:60]}...", exc_info=True)
+                logger.debug("[Import] 记录导入失败", exc_info=True)
                 result["errors"] += 1
 
         logger.info(

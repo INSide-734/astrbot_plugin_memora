@@ -279,7 +279,18 @@ async def test_engine_schedules_evolution_only_after_canonical_add_succeeds():
     manager.schedule_consider = AsyncMock()
     engine.memory_evolution_manager = manager
 
-    assert await engine.add_memory("canonical") == 17
+    async with aiosqlite.connect(":memory:") as conn:
+        await conn.execute(
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY, metadata TEXT)"
+        )
+        await conn.execute(
+            "INSERT INTO documents (id, metadata) VALUES (?, ?)",
+            (17, '{"memory_status": "active"}'),
+        )
+        await conn.commit()
+        engine.db_connection = conn
+
+        assert await engine.add_memory("canonical") == 17
     manager.store.load_sources.assert_awaited_once_with((17,))
     manager.schedule_consider.assert_awaited_once_with(source)
 

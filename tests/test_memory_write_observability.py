@@ -5,6 +5,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import aiosqlite
 import pytest
 
 import core.features.observability.application.memory_write_timing as write_timing
@@ -92,10 +93,11 @@ async def test_failed_canonical_write_does_not_emit_completed_stages(
 class _EngineEvolutionHarness(MemoryEngineEvolutionHooksMixin):
     """为引擎演化钩子提供最小依赖。"""
 
-    def __init__(self, manager: object) -> None:
-        """保存待测的演化管理器。"""
+    def __init__(self, manager: object, db_connection: object | None = None) -> None:
+        """保存待测的演化管理器与可选 canonical 连接。"""
 
         self.memory_evolution_manager = manager
+        self.db_connection = db_connection
 
 
 @pytest.mark.asyncio
@@ -138,7 +140,41 @@ async def test_engine_evolution_reports_actual_gate_decision(
         lambda event_name, **fields: events.append({"event": event_name, **fields}),
     )
 
-    await _EngineEvolutionHarness(manager)._schedule_evolution_after_write(17)
+    async with aiosqlite.connect(":memory:") as conn:
+        await conn.execute(
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY, metadata TEXT)"
+        )
+        await conn.execute(
+            "INSERT INTO documents (id, metadata) VALUES (?, ?)",
+            (17, '{"memory_status": "active"}'),
+        )
+        await conn.commit()
+
+        await _EngineEvolutionHarness(manager, conn)._schedule_evolution_after_write(17)
 
     expected = "evolution_scheduled" if should_enqueue else "evolution_skipped"
     assert events[-1]["reason_code"] == expected
+
+
+@pytest.mark.asyncio
+async def test_engine_evolution_skips_when_source_metadata_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """canonical metadata 不可读时必须跳过演化，不能按空元数据放行。"""
+
+    source = MagicMock()
+    manager = MagicMock(mode="active")
+    manager.store.load_sources = AsyncMock(return_value=[source])
+    manager.schedule_consider = AsyncMock(
+        return_value=SimpleNamespace(should_enqueue=True)
+    )
+    events: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        "core.features.memory.application.memory_engine_evolution_hooks.report_debug_event",
+        lambda event_name, **fields: events.append({"event": event_name, **fields}),
+    )
+
+    await _EngineEvolutionHarness(manager)._schedule_evolution_after_write(17)
+
+    manager.schedule_consider.assert_not_awaited()
+    assert events[-1]["reason_code"] == "evolution_source_metadata_unavailable"

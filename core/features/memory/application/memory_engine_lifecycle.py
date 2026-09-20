@@ -247,7 +247,14 @@ class MemoryEngineLifecycleMixin:
                 memory_loader=self.get_memory,
             )
             self.graph_memory_manager = GraphMemoryManager(
-                self.graph_store, self.graph_vector_retriever, self.graph_extractor
+                self.graph_store,
+                self.graph_vector_retriever,
+                self.graph_extractor,
+                atom_loader=(
+                    self.atom_store.get_by_parent
+                    if self.atom_store is not None and self.atom_enabled
+                    else None
+                ),
             )
             self._write_journal._graph_memory_manager = self.graph_memory_manager
             self._write_journal._atom_store = self.atom_store

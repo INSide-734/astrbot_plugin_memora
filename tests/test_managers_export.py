@@ -323,6 +323,35 @@ class TestImporterImportJsonl:
         assert result["imported"] == 2
 
     @pytest.mark.asyncio
+    async def test_import_skips_valid_json_that_is_not_object(
+        self, tmp_path: Path
+    ) -> None:
+        """合法但非对象的 JSON 行必须跳过，不能中断整个导入。"""
+
+        input_path = tmp_path / "non-object.jsonl"
+        input_path.write_text(
+            '["array-record"]\n"text-record"\n{"content": "good"}\n',
+            encoding="utf-8",
+        )
+        imp = MemoryImporter()
+        result = await imp.import_jsonl(str(input_path), dry_run=True)
+        assert result["total"] == 1
+        assert result["imported"] == 1
+
+    @pytest.mark.asyncio
+    async def test_import_without_add_callback_reports_errors(
+        self, tmp_path: Path
+    ) -> None:
+        """未配置写入回调时不得把记录报告为已导入。"""
+
+        input_path = tmp_path / "no-callback.jsonl"
+        input_path.write_text('{"content": "not persisted"}\n', encoding="utf-8")
+        imp = MemoryImporter()
+        result = await imp.import_jsonl(str(input_path))
+        assert result["imported"] == 0
+        assert result["errors"] == 1
+
+    @pytest.mark.asyncio
     async def test_import_with_callbacks(self, tmp_path: Path) -> None:
         add_mock = AsyncMock()
         search_mock = AsyncMock(return_value=[])  # no existing memories

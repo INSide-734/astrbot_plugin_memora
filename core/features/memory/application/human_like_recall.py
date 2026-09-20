@@ -65,6 +65,18 @@ def apply_emotion_boost(
     return results
 
 
+def _event_timestamp(metadata: dict[str, object]) -> float:
+    """读取事件时间；只接受数值 Unix 秒，字段缺失或非法时返回 0。"""
+
+    for key in ("event_time", "create_time", "timestamp"):
+        raw_value = metadata.get(key)
+        if raw_value is None:
+            continue
+        # 字段存在即视为事件时间来源：非法值直接跳过，不回退到另一字段。
+        return safe_float(raw_value, 0.0)
+    return 0.0
+
+
 def apply_seasonal_boost(
     results: list[HybridResult],
     *,
@@ -76,13 +88,14 @@ def apply_seasonal_boost(
         return results
     for result in results:
         metadata = result.metadata if isinstance(result.metadata, dict) else {}
-        timestamp = (
-            metadata.get("event_time")
-            or metadata.get("create_time")
-            or metadata.get("timestamp")
-        )
-        if timestamp is not None:
-            result.final_score *= seasonal_boost(float(timestamp))
+        event_timestamp = _event_timestamp(metadata)
+        if event_timestamp <= 0:
+            continue
+        try:
+            result.final_score *= seasonal_boost(event_timestamp)
+        except (OverflowError, OSError, ValueError):
+            # 派生增强失败不得中断召回链：时间值超出可转换范围时跳过。
+            continue
     return results
 
 

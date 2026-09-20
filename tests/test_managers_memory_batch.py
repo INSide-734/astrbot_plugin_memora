@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
 import pytest
 
 from core.features.memory.application.memory_engine import MemoryEngine
+
+# 派生清理失败时用于验证内部异常原文不会进入 API 响应。
+SENSITIVE_DERIVED_ERROR = "graph-store-path=/srv/private/graph.db query=select-secret"
 
 
 @pytest.mark.asyncio
@@ -244,3 +248,57 @@ class TestBatchDeleteMemoriesIntegration:
             cursor = await db.execute("SELECT COUNT(*) as cnt FROM documents")
             row = await cursor.fetchone()
             assert row["cnt"] == 0
+
+    async def test_batch_delete_survives_derived_cleanup_failure(
+        self, tmp_db_path: str
+    ) -> None:
+        """派生清理失败不得让已提交的 canonical 删除向上抛错或丢失计数。"""
+
+        mock_faiss = MagicMock()
+        mock_faiss.delete = AsyncMock()
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)"
+            )
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)"
+            )
+            await db.execute("INSERT INTO memora_memories_fts (doc_id) VALUES (1), (2)")
+            await db.execute(
+                "INSERT INTO documents (id, doc_id) VALUES (1, 'uuid-1'), (2, 'uuid-2')"
+            )
+            await db.commit()
+
+            engine = MemoryEngine(db_path=tmp_db_path, faiss_db=mock_faiss)
+            engine.db_connection = db
+            engine._retrieval = MagicMock()
+            engine._retrieval.invalidate_cache = MagicMock()
+            engine._write_journal.start_op = AsyncMock(return_value=1)
+            engine._write_journal.advance_op = AsyncMock()
+            engine._delete_graph_and_atoms_for_batch = AsyncMock(
+                side_effect=RuntimeError(SENSITIVE_DERIVED_ERROR)
+            )
+
+            result = await engine.batch_delete_memories_detailed([1, 2])
+
+            assert result["deleted_count"] == 2
+            assert result["deleted_ids"] == [1, 2]
+            assert result["failed_ids"] == []
+            assert result["errors"][0]["stage"] == "derived_cleanup"
+            assert result["errors"][0]["reason_code"] == "derived_cleanup_failed"
+            assert result["errors"][0]["error_type"] == "RuntimeError"
+            # 内部异常原文不得进入面向 Page API 的响应。
+            assert SENSITIVE_DERIVED_ERROR not in json.dumps(result, ensure_ascii=False)
+
+            cursor = await db.execute("SELECT COUNT(*) as cnt FROM documents")
+            row = await cursor.fetchone()
+            assert row is not None
+            assert row["cnt"] == 0
+
+        # 账本必须停留在 needs_repair，等待 write_op_repair 重放派生清理。
+        advances = engine._write_journal.advance_op.await_args_list
+        assert len(advances) == 1
+        assert advances[0].args[1] == "batch_delete_derived_failed"
+        assert advances[0].kwargs["status"] == "needs_repair"

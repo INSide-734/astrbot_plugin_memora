@@ -37,7 +37,18 @@ async def test_evolution_schedule_delegates_retry_to_store() -> None:
     manager.schedule_consider = AsyncMock(return_value=None)
     engine.memory_evolution_manager = manager
 
-    await engine._schedule_evolution_after_write(17)
+    async with aiosqlite.connect(":memory:") as conn:
+        await conn.execute(
+            "CREATE TABLE documents (id INTEGER PRIMARY KEY, metadata TEXT)"
+        )
+        await conn.execute(
+            "INSERT INTO documents (id, metadata) VALUES (?, ?)",
+            (17, '{"memory_status": "active"}'),
+        )
+        await conn.commit()
+        engine.db_connection = conn
+
+        await engine._schedule_evolution_after_write(17)
 
     manager.schedule_consider.assert_awaited_once_with(source)
 

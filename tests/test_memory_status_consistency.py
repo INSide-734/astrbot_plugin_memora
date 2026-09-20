@@ -218,6 +218,25 @@ async def test_lifecycle_transition_writes_both_status_fields() -> None:
     assert cache.get_cached(cache_key) is None
 
 
+@pytest.mark.asyncio
+async def test_lifecycle_transition_survives_invalid_emotional_intensity() -> None:
+    """emotional_intensity 为非法旧值时，休眠迁移与情感衰减仍必须落库。"""
+
+    host = _LifecycleHost()
+    cursor = AsyncMock()
+    cursor.fetchone.return_value = (
+        json.dumps({"status": "active", "emotional_intensity": "high"}),
+    )
+    host._db.execute = AsyncMock(side_effect=[cursor, None])
+
+    updated = await host._batch_update_status([17], "dormant", 123.0)
+
+    assert updated == 1
+    payload = json.loads(host._db.execute.await_args_list[1].args[1][0])
+    assert payload["memory_status"] == "dormant"
+    assert payload["emotional_intensity"] == 0.25
+
+
 class _StatsHost(StatsOperationsMixin):
     """为统计状态聚合提供最小可观测宿主。"""
 

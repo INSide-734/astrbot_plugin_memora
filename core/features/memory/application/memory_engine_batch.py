@@ -44,6 +44,7 @@ class MemoryEngineBatchMixin:
             )
             batch_deleted = 0
             batch_existing_ids: list[int] = []
+            derived_repair_needed = False
             try:
                 await self.db_connection.execute(
                     MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
@@ -75,7 +76,41 @@ class MemoryEngineBatchMixin:
                 )
                 await self.db_connection.commit()
                 batch_deleted = int(cursor.rowcount or 0)
-                await self._delete_graph_and_atoms_for_batch(batch)
+                try:
+                    await self._delete_graph_and_atoms_for_batch(batch)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as derived_error:
+                    # canonical 删除已提交；派生清理失败只进入可恢复维护路径，
+                    # 既不能回滚 canonical，也不能丢弃用户剩余的删除请求。
+                    # 对外只暴露固定原因码与异常类型，避免内部错误细节进入 Page API。
+                    derived_repair_needed = True
+                    errors.append(
+                        {
+                            "batch_offset": i,
+                            "stage": "derived_cleanup",
+                            "reason_code": "derived_cleanup_failed",
+                            "error_type": derived_error.__class__.__name__,
+                            "memory_ids": batch_existing_ids[:batch_deleted],
+                        }
+                    )
+                    await self._write_journal.advance_op(
+                        op_id,
+                        "batch_delete_derived_failed",
+                        status="needs_repair",
+                        error=str(derived_error),
+                        payload_patch={
+                            "memory_ids": batch,
+                            "deleted_count": batch_deleted,
+                        },
+                    )
+                    logger.warning(
+                        "[批量删除] 派生清理失败，已加入修复队列 "
+                        "(offset=%s, batch_size=%s, 异常类型=%s)",
+                        i,
+                        len(batch),
+                        derived_error.__class__.__name__,
+                    )
                 for deleted_id in batch_existing_ids[:batch_deleted]:
                     await self._invalidate_evolution_after_delete(deleted_id)
             except asyncio.CancelledError:
@@ -96,17 +131,21 @@ class MemoryEngineBatchMixin:
             deleted_ids.extend(batch_deleted_ids)
             existing_set = set(batch_existing_ids)
             not_found_ids.extend([mid for mid in batch if mid not in existing_set])
-            await self._write_journal.advance_op(
-                op_id,
-                "completed",
-                status="completed",
-                payload_patch={
-                    "memory_ids": batch,
-                    "deleted_count": batch_deleted,
-                    "deleted_ids": batch_deleted_ids,
-                    "not_found_ids": [mid for mid in batch if mid not in existing_set],
-                },
-            )
+            if not derived_repair_needed:
+                await self._write_journal.advance_op(
+                    op_id,
+                    "completed",
+                    status="completed",
+                    payload_patch={
+                        "memory_ids": batch,
+                        "deleted_count": batch_deleted,
+                        "deleted_ids": batch_deleted_ids,
+                        "not_found_ids": [
+                            mid for mid in batch if mid not in existing_set
+                        ],
+                    },
+                )
+            # 派生清理待修复时保留 needs_repair 账本状态，交由 write_op_repair 重放。
             total_deleted += batch_deleted
         if total_deleted:
             logger.info(f"[批量删除] 共删除 {total_deleted} 条记忆")
