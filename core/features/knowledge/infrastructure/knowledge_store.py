@@ -281,7 +281,7 @@ class KnowledgeStore(BaseStore):
                 await db.execute(
                     """UPDATE knowledge_entries SET title=?, content=?, category=?,
                    confidence=?, tags=?, source_ids=?, updated_at=?, access_count=?,
-                   origin=?, provenance_json=? WHERE id=?""",
+                   expires_at=?, origin=?, provenance_json=? WHERE id=?""",
                     (
                         entry.title,
                         entry.content,
@@ -291,6 +291,7 @@ class KnowledgeStore(BaseStore):
                         json.dumps(entry.source_ids),
                         entry.updated_at,
                         entry.access_count,
+                        entry.expires_at,
                         entry.origin.value,
                         (
                             self._to_json(entry.provenance.to_dict())

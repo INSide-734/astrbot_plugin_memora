@@ -47,12 +47,23 @@ class KnowledgeExtractor:
             else:
                 return None
 
+        if not isinstance(data, dict):
+            return None
+        try:
+            category = KnowledgeType(data.get("category", "fact"))
+        except (TypeError, ValueError):
+            category = KnowledgeType.FACT
+        try:
+            confidence = max(0.1, min(1.0, float(data.get("confidence", 0.5))))
+        except (TypeError, ValueError):
+            confidence = 0.5
+        tags = data.get("tags")
         return KnowledgeEntry(
-            title=str(data.get("title", ""))[:100],
-            content=str(data.get("content", ""))[:2000],
-            category=KnowledgeType(data.get("category", "fact")),
-            confidence=max(0.1, min(1.0, float(data.get("confidence", 0.5)))),
-            tags=list(data.get("tags", []) or []),
+            title=str(data.get("title") or "")[:100],
+            content=str(data.get("content") or "")[:2000],
+            category=category,
+            confidence=confidence,
+            tags=list(tags) if isinstance(tags, list) else [],
         )
 
 

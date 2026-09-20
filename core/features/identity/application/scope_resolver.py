@@ -252,25 +252,32 @@ class CanonicalScopeResolver:
         # 不允许占位值或从 session/persona/group 反推。
         # identity_namespace/stable_user_id 为诊断辅助字段；快照缺失时从
         # resolver 自身生成的 scope_key（chat_type:namespace:subject）解码，
-        # 并与 scope_id 主体段互校，不引入第二套身份来源。
+        # 并与 scope_id 主体段互校，不引入第二套身份来源。namespace 自身可能
+        # 含分隔符（QQ 官方为 ``qq-official:<platform-instance>``，私聊的
+        # scope_id 还会再次包含该 namespace），因此以已知 scope_id 为后缀锚点
+        # 取完整 namespace，而不是取第一个冒号段。快照字段互相矛盾
+        # （chat_type 与 key 前缀不符、scope_id 与 key 主体段不符、或
+        # identity_namespace 与 key 中编码的 namespace 不符）即视为不可信快照。
         scope_value = self._normalized_identifier(values.get("scope_id"))
         namespace = self._normalized_identifier(values.get("identity_namespace"))
         stable_user = self._normalized_identifier(values.get("stable_user_id"))
         if not scope_value:
             return self._unavailable()
-        prefix, _, remainder = scope_key.partition(":")
-        namespace_from_key, separator, subject = remainder.partition(":")
-        if not separator or not subject:
+        prefix, separator, remainder = scope_key.partition(":")
+        suffix = f":{scope_value}"
+        if not separator or prefix != chat_type or not remainder.endswith(suffix):
+            return self._unavailable()
+        namespace_from_key = remainder[: -len(suffix)]
+        if not namespace_from_key:
+            return self._unavailable()
+        if namespace and namespace != namespace_from_key:
             return self._unavailable()
         if not namespace:
             namespace = namespace_from_key
         if not stable_user:
-            if prefix == "private":
-                stable_user = subject
-            else:
-                # 群聊 scope 的主体是群实例；stable_user 属于个体身份，
-                # 快照未提供时以主体段占位诊断，不参与任何身份写入。
-                stable_user = subject
+            # 群聊 scope 的主体是群实例；stable_user 属于个体身份，
+            # 快照未提供时以主体段占位诊断，不参与任何身份写入。
+            stable_user = scope_value
         return ScopeResolution(
             scope_key=scope_key,
             chat_type=chat_type,

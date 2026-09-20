@@ -546,6 +546,90 @@ async def test_reflection_passes_identity_and_uses_canonical_affection_user(
     assert affection.process_interaction.await_args.kwargs["user_id"] == "10001"
 
 
+def _reflection_case(monkeypatch) -> SimpleNamespace:
+    """构造反射处理器与可观察的会话/认知/总结替身。"""
+
+    from core.features.reflection.application.reflection_handler import (
+        ReflectionHandler,
+    )
+
+    config = MagicMock()
+    config.get.side_effect = lambda _key, default=None: default
+    conversation = MagicMock()
+    conversation.add_message_from_event = AsyncMock()
+    conversation.get_session_info = AsyncMock(return_value=None)
+    conversation.get_context = AsyncMock(
+        return_value=[{"role": "user", "content": "用户问题"}]
+    )
+    affection = MagicMock()
+    affection.process_interaction = AsyncMock()
+    scheduler = MagicMock()
+    scheduler.enqueue_automatic = AsyncMock()
+    monkeypatch.setattr(
+        "core.features.reflection.application.reflection_handler.get_persona_id",
+        AsyncMock(return_value="persona-1"),
+    )
+    handler = ReflectionHandler(
+        context=MagicMock(),
+        config_manager=config,
+        memory_engine=MagicMock(),
+        memory_processor=MagicMock(),
+        conversation_manager=conversation,
+        enforce_limit_cb=AsyncMock(),
+        affection_manager=affection,
+        summary_scheduler=scheduler,
+    )
+    return SimpleNamespace(
+        handler=handler,
+        conversation=conversation,
+        affection=affection,
+        scheduler=scheduler,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("identity_factory", "persists", "affection_runs"),
+    [
+        (conflict_identity, False, False),
+        (unsupported_identity, True, True),
+        (anonymous_identity, True, False),
+    ],
+)
+async def test_reflection_assistant_persistence_follows_identity_trust(
+    monkeypatch, identity_factory, persists, affection_runs
+) -> None:
+    """冲突身份不得写入助手行、认知投喂与总结队列；其余状态保持既有写入。"""
+
+    case = _reflection_case(monkeypatch)
+    event = MagicMock()
+    event.unified_msg_origin = "aiocqhttp:private:10007"
+    event.get_sender_id.return_value = "legacy-name"
+    response = SimpleNamespace(
+        role="assistant",
+        tools_call_name=None,
+        tools_call_extra_content=None,
+        completion_text="可见回复",
+    )
+
+    await case.handler.handle_memory_reflection(
+        event,
+        cast(Any, response),
+        identity=identity_factory(),
+    )
+
+    assert response.completion_text == "可见回复"
+    if persists:
+        case.conversation.add_message_from_event.assert_awaited_once()
+    else:
+        case.conversation.add_message_from_event.assert_not_awaited()
+        case.scheduler.enqueue_automatic.assert_not_awaited()
+    if affection_runs:
+        case.affection.process_interaction.assert_awaited_once()
+    else:
+        case.affection.process_interaction.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_factory_identity_store_failure_returns_resolver_only_runtime(
     monkeypatch, tmp_path
@@ -692,6 +776,7 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
     store = MagicMock()
     store.close = AsyncMock()
     runtime = ProtocolIdentityRuntime(store=store)
+    diagnostics_store = object()
     memory_processor = MagicMock()
     initializer = PluginInitializer(MagicMock(), MagicMock(), str(tmp_path))
     initializer._faiss_checker.load_vec_db_class = MagicMock(return_value=MagicMock())
@@ -711,6 +796,7 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
             "decay_scheduler": None,
             "injection_decision_store": None,
             "injection_decision_recorder": None,
+            "diagnostic_event_store": diagnostics_store,
             "summary_scheduler": SimpleNamespace(
                 start=AsyncMock(),
                 close=AsyncMock(),
@@ -746,6 +832,7 @@ async def test_initializer_closes_published_identity_runtime_after_init_failure(
         with pytest.raises(InitializationError, match="cognitive failed"):
             await initializer._run_full_init()
 
+    assert initializer.diagnostic_event_store is diagnostics_store
     store.close.assert_awaited_once()
 
 

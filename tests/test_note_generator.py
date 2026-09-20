@@ -41,6 +41,26 @@ class TestNoteGenerator:
         assert result is None or isinstance(result, dict)
 
     @pytest.mark.asyncio
+    async def test_non_object_json_is_treated_as_unparseable(self, llm_client):
+        """合法但非对象的 JSON 必须按「无法解析」返回 None。"""
+        llm_client.complete.return_value = "[1, 2]"
+        gen = self.make_gen(llm_client)
+        assert await gen.generate("x" * 100) is None
+
+    @pytest.mark.asyncio
+    async def test_non_list_tags_keeps_generated_title_and_content(self, llm_client):
+        """非法 tags 容器只丢弃标签，不能连标题正文一起丢给 fallback。"""
+        llm_client.complete.return_value = json.dumps(
+            {"title": "T", "content": "C", "tags": 5}
+        )
+        gen = self.make_gen(llm_client)
+        assert await gen.generate("x" * 100) == {
+            "title": "T",
+            "content": "C",
+            "tags": [],
+        }
+
+    @pytest.mark.asyncio
     async def test_below_min_length_skipped(self, llm_client):
         gen = NoteGenerator(llm_client=llm_client, min_length=100)
         result = await gen.generate("short")

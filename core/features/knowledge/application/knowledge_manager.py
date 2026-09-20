@@ -245,11 +245,12 @@ class KnowledgeManager:
             entries, _ = await self._store.list_entries(limit=page_size, offset=offset)
             if not entries:
                 break
-            for entry in entries:
-                if 0 < entry.expires_at < now:
-                    await self._store.delete(entry.entry_id)
-                    removed += 1
-            offset += page_size
+            expiring = [entry for entry in entries if 0 < entry.expires_at < now]
+            for entry in expiring:
+                await self._store.delete(entry.entry_id)
+                removed += 1
+            # 删除会让后续条目前移，offset 只能按本页保留的条目数推进。
+            offset += len(entries) - len(expiring)
         if removed:
             logger.info("[知识库] 已清理过期条目，数量=%s", removed)
         return removed

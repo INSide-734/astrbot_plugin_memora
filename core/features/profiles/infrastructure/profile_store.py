@@ -132,7 +132,30 @@ class ProfileStore(ProfileTagMixin):
         profile = await self.get_profile(user_id)
         if profile is not None:
             return profile
-        return await self.create_profile(user_id)
+        return await self._create_profile_if_absent(user_id)
+
+    async def _create_profile_if_absent(self, user_id: str) -> UserProfile:
+        """原子补建缺失画像；并发插入由唯一键冲突降级为回读既有行。"""
+
+        now = time.time()
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await db.execute(
+                    """INSERT INTO user_profiles
+                       (user_id, display_name, first_seen_at, last_seen_at, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(user_id) DO NOTHING""",
+                    (user_id, "", now, now, now, now),
+                )
+                created = await self._get_profile_with_db(db, user_id)
+                if created is None:
+                    raise EntityNotFoundError("画像不存在")
+                await db.commit()
+                return created
+            except BaseException:
+                await self._rollback_safely(db)
+                raise
 
     async def create_profile(self, user_id: str, display_name: str = "") -> UserProfile:
         """创建或返回画像。"""

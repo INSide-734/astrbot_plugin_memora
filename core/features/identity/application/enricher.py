@@ -482,7 +482,7 @@ def build_memory_identity_context(
             ordered_ids.append(user_id)
             labels[user_id] = label
             sources[user_id] = source
-        name = _non_empty_text(message.sender_name)
+        name = _normalize_reference_text(message.sender_name)
         names[user_id] = name or labels[user_id]
     return MemoryIdentityContext(
         participant_ids=tuple(ordered_ids),
@@ -494,15 +494,6 @@ def build_memory_identity_context(
             user_id: dict(sources[user_id]) for user_id in ordered_ids
         },
     )
-
-
-def _non_empty_text(value: object) -> str | None:
-    """把非空字符串限制为 128 个码点，其他输入按缺失处理。"""
-
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip()
-    return normalized[:128] if normalized else None
 
 
 def _plain_identifier(value: object) -> str | None:
@@ -517,15 +508,19 @@ def _plain_identifier(value: object) -> str | None:
 
 
 def _normalize_reference_text(value: object) -> str | None:
-    """以 NFKC 清理模型可见名称或标签，并限制为 128 个码点。"""
+    """以 NFKC 清理模型可见名称或标签，并限制为 128 个码点。
+
+    NFKC 不会消除 U+2028/U+2029 等行/段分隔符（类别 Zl/Zp），它们也不是
+    `C*`；该函数必须让名称严格单行，否则可信约束块可被伪造成多条 bullet。
+    """
 
     if not isinstance(value, str):
         return None
     normalized = unicodedata.normalize("NFKC", value)
-    without_controls = "".join(
-        character
-        for character in normalized
-        if not unicodedata.category(character).startswith("C")
-    )
-    stripped = without_controls.strip()
+    cleaned: list[str] = []
+    for character in normalized:
+        if unicodedata.category(character)[0] == "C":
+            continue
+        cleaned.append(" " if character.isspace() else character)
+    stripped = "".join(cleaned).strip()
     return stripped[:_MAX_REFERENCE_NAME_CHARS] if stripped else None

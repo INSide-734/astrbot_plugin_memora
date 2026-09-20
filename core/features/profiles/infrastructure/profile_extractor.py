@@ -68,6 +68,9 @@ class ProfileExtractor:
             )
             return [], {}
 
+        if not isinstance(result, dict):
+            return [], {}
+
         tags = self._build_tags(result.get("tags", []))
         preferences = result.get("preferences", {}) or {}
         return tags, preferences
@@ -122,11 +125,17 @@ class ProfileExtractor:
             return {}
 
     @staticmethod
-    def _build_tags(tag_data: list[dict[str, Any]] | None) -> list[UserTag]:
+    def _build_tags(tag_data: object) -> list[UserTag]:
         """把不可信标签数据规范为最多五个领域模型。"""
 
+        if not isinstance(tag_data, (list, tuple)):
+            # 模型可能把 tags 写成标量/对象/字符串；容器非法时按无标签处理，
+            # 不能让整个 proposal（含合法 preferences）失败。
+            return []
         tags: list[UserTag] = []
-        for item in tag_data or []:
+        for item in tag_data:
+            if not isinstance(item, dict):
+                continue
             try:
                 category = TagCategory(item.get("category", "custom"))
             except ValueError:
@@ -134,7 +143,10 @@ class ProfileExtractor:
             value = str(item.get("value", "")).strip()
             if not value or len(value) > 50:
                 continue
-            confidence = max(0.1, min(1.0, float(item.get("confidence", 0.5))))
+            try:
+                confidence = max(0.1, min(1.0, float(item.get("confidence", 0.5))))
+            except (TypeError, ValueError):
+                confidence = 0.5
             tags.append(
                 UserTag(
                     category=category,

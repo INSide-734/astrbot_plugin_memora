@@ -64,10 +64,15 @@ class NoteGenerator:
             else:
                 return None
 
+        # LLM 输出不可信：合法但非对象的 JSON（如 ``[1,2]``）与非法标签容器
+        # 一律按「无法解析」处理，不能把异常抛给调用方。
+        if not isinstance(data, dict):
+            return None
+        tags = data.get("tags", [])
         return {
             "title": str(data.get("title", "Note"))[:80],
             "content": str(data.get("content", "")),
-            "tags": list(data.get("tags", []) or []),
+            "tags": list(tags) if isinstance(tags, (list, tuple)) else [],
         }
 
     @staticmethod
