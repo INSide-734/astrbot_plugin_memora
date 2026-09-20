@@ -56,19 +56,19 @@ def test_plugin_version_sources_are_aligned() -> None:
         assert badges == [PLUGIN_VERSION]
 
 
-def test_development_environment_pins_astrbot_4_27_2() -> None:
+def test_development_environment_pins_astrbot_4_28_0() -> None:
     """开发环境锁定宿主版本；运行时依赖不得声明 astrbot 包。"""
 
     project = tomllib.loads(_read_text("pyproject.toml"))
     dev_dependencies = project["dependency-groups"]["dev"]
-    assert "astrbot==4.27.2" in dev_dependencies
+    assert "astrbot==4.28.0" in dev_dependencies
     assert "astrbot" not in project["project"]["dependencies"]
 
     lock = tomllib.loads(_read_text("uv.lock"))
     astrbot_packages = [
         package for package in lock["package"] if package["name"] == "astrbot"
     ]
-    assert [package["version"] for package in astrbot_packages] == ["4.27.2"]
+    assert [package["version"] for package in astrbot_packages] == ["4.28.0"]
 
 
 def test_main_register_uses_metadata_author_and_repo() -> None:
