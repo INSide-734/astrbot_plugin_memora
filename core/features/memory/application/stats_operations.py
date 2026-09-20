@@ -74,6 +74,21 @@ def _recent_utc_date(value: Any, *, today: date) -> str | None:
     return memory_date.isoformat()
 
 
+def _canonical_connection(host: Any) -> Any:
+    """返回宿主的 canonical SQLite 连接；宿主未注入时返回 ``None``。
+
+    生产装配的 ``MaintenanceOperations`` 只注入私有 ``_db``；``MemoryEngine``
+    一类宿主暴露 ``db_connection``，两种宿主都必须兼容。这里按属性名探测而不是
+    绑定到某个 Mixin 实例，任何持有连接的宿主都能复用（含只把 ``self`` 当普通
+    对象传入的调用方）。
+    """
+
+    connection = getattr(host, "db_connection", None)
+    if connection is None:
+        connection = getattr(host, "_db", None)
+    return connection
+
+
 async def _read_allocated_id_watermark(connection: Any) -> int:
     """读取 canonical ID 序列的已分配高水位；序列不可用时返回 0。
 
@@ -155,18 +170,6 @@ def _build_daily_memory_counts(
 class StatsOperationsMixin:
     """统计信息、存储维护和图索引重建。"""
 
-    def _canonical_connection(self) -> Any:
-        """返回 canonical SQLite 连接；宿主未注入时返回 ``None``。
-
-        生产装配的 ``MaintenanceOperations`` 只注入私有 ``_db``；``MemoryEngine``
-        一类宿主暴露 ``db_connection``，两种宿主都必须兼容。
-        """
-
-        connection = getattr(self, "db_connection", None)
-        if connection is None:
-            connection = getattr(self, "_db", None)
-        return connection
-
     async def count_canonical_created_on(self, day_ts: int) -> int:
         """统计指定 UTC 日（00:00 时间戳）写入的 canonical 记忆数量。
 
@@ -177,7 +180,7 @@ class StatsOperationsMixin:
             该日创建的 canonical 记忆条数；数据库未初始化时返回 0。
         """
 
-        connection = self._canonical_connection()
+        connection = _canonical_connection(self)
         if connection is None:
             return 0
         day_str = datetime.fromtimestamp(day_ts, tz=UTC).strftime("%Y-%m-%d")
@@ -608,7 +611,7 @@ class StatsOperationsMixin:
         lister = getattr(self._graph_store, "list_residual_source_memory_ids", None)
         if not callable(lister):
             return sorted(residue)
-        snapshot = await read_canonical_id_snapshot(self._canonical_connection())
+        snapshot = await read_canonical_id_snapshot(_canonical_connection(self))
         if snapshot is None:
             logger.warning(
                 "[GraphRebuild] canonical 快照不可用，跳过已删除来源回收，"

@@ -608,9 +608,10 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
         每个 200 条来源批次交给 ``AtomLifecycleManager.rederive_for_sources``
         按当前 canonical 重新分类并替换 Atom 行；不可召回来源的 Atom 行一并
         清除。残留父来源按扫描结束后的 canonical 快照（ID 序列水位线 + 存活
-        ID 集合）判定，扫描期间并发新增的来源不会被回收。批次或单来源失败只
-        降级计数（``atoms_rebuild_partial_failed``），不阻断 canonical；原子
-        组件未装配时按跳过报告；``asyncio.CancelledError`` 继续传播。
+        ID 集合）判定，扫描期间并发新增的来源不会被回收；Atom 表没有父来源时
+        没有待判定的残留，不会去读快照。批次或单来源失败只降级计数
+        （``atoms_rebuild_partial_failed``），不阻断 canonical；原子组件未装配
+        时按跳过报告；``asyncio.CancelledError`` 继续传播。
         """
 
         store = getattr(self.memory_engine, "atom_store", None)
@@ -664,14 +665,11 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
                 failed += report["failed"]
             offset += len(docs)
 
-        snapshot = await read_canonical_id_snapshot(
-            getattr(self.memory_engine, "db_connection", None)
-        )
         (
             residue_cleaned,
             residue_failed,
             residue_reason,
-        ) = await self._cleanup_atom_residue(store, snapshot)
+        ) = await self._cleanup_atom_residue(store)
         result = {
             "rebuilt": rebuilt,
             "purged": purged,
@@ -723,22 +721,19 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
             "failed": _safe_stage_count(result.get("failed")),
         }
 
-    async def _cleanup_atom_residue(
-        self,
-        store: Any,
-        canonical_snapshot: tuple[int, set[int]] | None,
-    ) -> tuple[int, int, str | None]:
+    async def _cleanup_atom_residue(self, store: Any) -> tuple[int, int, str | None]:
         """删除父 canonical 已不存在的 Atom 行；枚举或删除失败只降级计数。
 
-        ``canonical_snapshot`` 是扫描结束后一次性读出的
-        ``(ID 序列水位线, 存活 ID 集合)``，判定口径与图残留回收一致：只有 ID 不超过
-        水位线、且不在存活集合中的父来源才可证明已被物理删除。重建扫描期间并发新增
+        先枚举 Atom 表现存父来源：一个父来源都没有时没有待判定的残留，直接按成功
+        返回，也不读 canonical 快照。确有待判定父来源时，才按扫描结束后一次性读出的
+        ``(ID 序列水位线, 存活 ID 集合)`` 判定孤儿，口径与图残留回收一致：只有 ID 不超
+        过水位线、且不在存活集合中的父来源才可证明已被物理删除。重建扫描期间并发新增
         的来源 ID 大于水位线，不会被回收；刚删除的最新来源仍在水位线内，可正常回收。
 
-        返回 ``(已清理数, 失败计数, 稳定原因码)``，成功时原因码为 ``None``。
-        快照缺失（canonical 连接不可用或读取失败）时 fail-closed，按「至少一项残留
-        处理失败」计 1 并给出 ``atom_residue_scan_failed``；枚举不到父来源不等于
-        清理成功，阶段必须据此降级。
+        返回 ``(已清理数, 失败计数, 稳定原因码)``，成功时原因码为 ``None``。存在待判定
+        父来源却读不到快照（canonical 连接不可用或读取失败）时 fail-closed：不删除任何
+        Atom 行，按失败降级并给出 ``atom_residue_scan_failed``；父来源枚举失败同样降级，
+        不得把「枚举不到」当成清理成功。``asyncio.CancelledError`` 继续传播。
         """
 
         lister = getattr(store, "list_parent_ids", None)
@@ -747,11 +742,6 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
             return 0, 0, None
         list_parents = cast(Callable[[], Awaitable[Any]], lister)
         delete_parents = cast(Callable[[list[int]], Awaitable[Any]], deleter)
-        if canonical_snapshot is None:
-            logger.warning(
-                "Atom 残留判定缺少 canonical 快照，reason_code=atom_residue_scan_failed"
-            )
-            return 0, 1, "atom_residue_scan_failed"
         try:
             parent_ids = await list_parents()
         except asyncio.CancelledError:
@@ -761,13 +751,23 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
                 "Atom 残留父来源枚举失败，reason_code=atom_residue_scan_failed"
             )
             return 0, 1, "atom_residue_scan_failed"
-        watermark, alive_ids = canonical_snapshot
         parents: set[int] = set()
         for parent_id in parent_ids or ():
             try:
                 parents.add(int(parent_id))
             except (TypeError, ValueError):
                 continue
+        if not parents:
+            return 0, 0, None
+        snapshot = await read_canonical_id_snapshot(
+            getattr(self.memory_engine, "db_connection", None)
+        )
+        if snapshot is None:
+            logger.warning(
+                "Atom 残留判定缺少 canonical 快照，reason_code=atom_residue_scan_failed"
+            )
+            return 0, 1, "atom_residue_scan_failed"
+        watermark, alive_ids = snapshot
         orphan_ids = sorted(
             parent_id
             for parent_id in parents
