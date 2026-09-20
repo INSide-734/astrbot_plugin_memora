@@ -172,6 +172,22 @@ class MaintenanceCommandMixin:
                     "重建图记忆未走统一入口，reason_code=rebuild_coordinator_unavailable"
                 )
                 result = await self.memory_engine.rebuild_graph_index()
+
+            # 统一入口把阶段异常降级为 success=False 的结果，阶段缺失时 stage_result
+            # 直接返回整份报告。两种形态都必须先拦截，否则故障会渲染成 0/0/0 的成功。
+            if result.get("success") is False:
+                yield event.plain_result(
+                    t(
+                        "rebuild_graph.failed",
+                        message=(
+                            result.get("reason_code")
+                            or result.get("message")
+                            or t("common.unknown_error")
+                        ),
+                    )
+                )
+                return
+
             yield event.plain_result(
                 t(
                     "rebuild_graph.success",

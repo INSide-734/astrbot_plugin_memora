@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -535,6 +536,83 @@ class TestMaintenanceHandleRebuildIndex:
         assert results
 
 
+def _recording_event() -> Any:
+    """构造最小事件替身：``plain_result`` 返回文本本身，便于断言最终渲染。
+
+    该命令路径只依赖 ``plain_result``；用真实返回文案的替身替代 ``MagicMock``，
+    使断言落在用户可见文本而不是 mock 调用上。
+    """
+
+    messages: list[str] = []
+
+    def plain_result(text: str) -> str:
+        messages.append(text)
+        return text
+
+    return SimpleNamespace(messages=messages, plain_result=plain_result)
+
+
+class _GraphCoordinatorStub:
+    """最小协调器替身：复用真实阶段投影并回放固定报告。"""
+
+    def __init__(self, report: dict) -> None:
+        self._report = report
+
+    async def rebuild_stages(self, stages, trigger_reason=None):
+        """记录请求阶段并回放固定报告。"""
+
+        self.requested_stages = list(stages)
+        return self._report
+
+    @staticmethod
+    def stage_result(report, stage):
+        """复用真实阶段投影，保留「阶段缺失时回落到整份报告」的语义。"""
+
+        from core.platform.composition import DerivedRebuildCoordinator
+
+        return DerivedRebuildCoordinator.stage_result(report, stage)
+
+
+def _graph_handler(report: dict) -> Any:
+    """构造真实 CommandHandler，其统一重建入口回放给定报告。"""
+
+    from core.platform.transport.commands.command_handler import CommandHandler
+
+    validator = MagicMock()
+    validator.derived_rebuild_coordinator = _GraphCoordinatorStub(report)
+    engine = MagicMock()
+    engine.rebuild_graph_index = AsyncMock()
+    return CommandHandler(
+        context=None,
+        config_manager=MagicMock(),
+        memory_engine=engine,
+        conversation_manager=None,
+        index_validator=validator,
+    )
+
+
+@pytest.fixture
+def zh_i18n():
+    """加载真实后端 i18n，使断言基于用户可见文案而非键名。"""
+
+    from core.platform.resources import i18n_backend
+
+    previous = (
+        i18n_backend._fallback,
+        i18n_backend._translations,
+        i18n_backend._current_lang,
+    )
+    i18n_backend.init("zh")
+    try:
+        yield
+    finally:
+        (
+            i18n_backend._fallback,
+            i18n_backend._translations,
+            i18n_backend._current_lang,
+        ) = previous
+
+
 class TestMaintenanceHandleRebuildGraph:
     """Tests for handle_rebuild_graph."""
 
@@ -559,7 +637,7 @@ class TestMaintenanceHandleRebuildGraph:
         assert len(results) == 1
 
     @pytest.mark.asyncio
-    async def test_rebuild_graph_routes_through_stage_entry(self) -> None:
+    async def test_rebuild_graph_routes_through_stage_entry(self, zh_i18n) -> None:
         """图重建命令必须经 rebuild_stages 的 graph 阶段执行。"""
 
         from types import SimpleNamespace
@@ -587,8 +665,7 @@ class TestMaintenanceHandleRebuildGraph:
             memory_engine = engine
             index_validator = SimpleNamespace(derived_rebuild_coordinator=coordinator)
 
-        event = MagicMock()
-        event.plain_result = MagicMock(return_value="rendered")
+        event = _recording_event()
 
         results = []
         async for result in TestMixin().handle_rebuild_graph(event):
@@ -597,6 +674,61 @@ class TestMaintenanceHandleRebuildGraph:
         coordinator.rebuild_stages.assert_awaited_once_with(["graph"])
         engine.rebuild_graph_index.assert_not_awaited()
         assert results
+        assert "重建: 2 条" in event.messages[-1]
+        assert "跳过: 1 条" in event.messages[-1]
+
+    @pytest.mark.asyncio
+    async def test_reports_failure_when_graph_stage_fails(self, zh_i18n) -> None:
+        """图阶段降级为 success=False 时必须渲染失败文案，不得显示 0/0/0 成功。"""
+
+        handler = _graph_handler(
+            {
+                "success": False,
+                "degraded": True,
+                "reason_code": "graph_rebuild_failed",
+                "stages": {
+                    "graph": {
+                        "status": "failed",
+                        "success": False,
+                        "reason_code": "graph_rebuild_failed",
+                    }
+                },
+                "errors": 1,
+            }
+        )
+        event = _recording_event()
+
+        async for _ in handler.handle_rebuild_graph(event):
+            pass
+
+        message = event.messages[-1]
+        assert "图记忆重建失败" in message
+        assert "graph_rebuild_failed" in message
+        assert "重建: " not in message
+
+    @pytest.mark.asyncio
+    async def test_reports_failure_when_canonical_unavailable(self, zh_i18n) -> None:
+        """canonical 不可用使 stages 为空时，报告级失败同样不得伪装成功。"""
+
+        handler = _graph_handler(
+            {
+                "success": False,
+                "degraded": True,
+                "reason_code": "canonical_unavailable",
+                "canonical": {"status": "failed", "success": False},
+                "stages": {},
+                "errors": 1,
+            }
+        )
+        event = _recording_event()
+
+        async for _ in handler.handle_rebuild_graph(event):
+            pass
+
+        message = event.messages[-1]
+        assert "图记忆重建失败" in message
+        assert "canonical_unavailable" in message
+        assert "重建: " not in message
 
 
 class TestMaintenanceHandleReset:
