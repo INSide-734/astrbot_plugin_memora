@@ -10,8 +10,11 @@
 """
 
 import asyncio
+import inspect
 import json
 import time
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from astrbot.api import logger
 
@@ -19,6 +22,14 @@ from ....shared.memory_status import effective_memory_status, set_memory_status
 from ....shared.number_utils import clamp_float, safe_float
 from ...decay.application.operations import _normalize_batch_metadata
 from .write_coordinator import ConnectionRegistry, check_db_alive, is_connection_fatal
+
+
+def _safe_count(value: Any) -> int:
+    """把派生端口报告的计数规范化为非负整数；布尔与非整数按 0 处理。"""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        return 0
+    return max(0, value)
 
 
 class LifecycleOperationsMixin:
@@ -140,7 +151,7 @@ class LifecycleOperationsMixin:
         if not memory_ids or self._db is None:
             return 0
 
-        updated = 0
+        updated_ids: list[int] = []
         for mem_id in memory_ids:
             try:
                 cursor = await self._db.execute(
@@ -175,16 +186,197 @@ class LifecycleOperationsMixin:
                     "UPDATE documents SET metadata = ?, updated_at = ? WHERE id = ?",
                     (json.dumps(metadata, ensure_ascii=False), timestamp, mem_id),
                 )
-                updated += 1
+                updated_ids.append(mem_id)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 logger.debug(f"[维护] 状态更新失败 (id={mem_id})", exc_info=True)
-        if updated:
+        if updated_ids:
             await self._db.commit()
             if self._invalidate_cache:
                 self._invalidate_cache()
-        return updated
+            await self._invalidate_derived_after_status_change(updated_ids, new_status)
+        return len(updated_ids)
+
+    async def _invalidate_derived_after_status_change(
+        self, memory_ids: list[int], new_status: str
+    ) -> dict[str, Any]:
+        """状态批更新提交后统一失效派生面，返回安全计数。
+
+        canonical 行已经提交，这里只处理可重建派生数据：evolution relation/projection
+        按新 revision 失效、graph 源级残留回收、Atom 重派生（固定签名
+        ``rederive_for_sources(ids, reason)``，实现缺失时按 debug 跳过）。catalog 的
+        dirty 登记由 canonical ``UPDATE`` 触发器在同一事务写入，不在此重复登记。
+        任一步普通失败只记降级计数与固定原因码，不回滚状态写；Atom 重派生失败按
+        manager 报告如实透出（``atoms_failed``/``atoms_reason_code``），持久收敛由
+        atoms 重建阶段承担；``asyncio.CancelledError`` 继续传播。
+        """
+
+        normalized_ids = sorted({int(memory_id) for memory_id in memory_ids})
+        if not normalized_ids:
+            return {
+                "sources": 0,
+                "evolution_invalidated": 0,
+                "graph_cleaned": 0,
+                "graph_failed": 0,
+                "atoms_rederived": 0,
+                "atoms_failed": 0,
+                "atoms_reason_code": None,
+                "steps_failed": 0,
+            }
+
+        engine = self._resolve_memory_engine_owner()
+        invalidated, evolution_ok = await self._invalidate_evolution_sources(
+            normalized_ids, engine
+        )
+        graph_cleaned, graph_ok = await self._reap_graph_residue(normalized_ids, engine)
+        (
+            atoms_rederived,
+            atoms_failed,
+            atoms_reason_code,
+        ) = await self._rederive_atoms_for_sources(normalized_ids, new_status, engine)
+        return {
+            "sources": len(normalized_ids),
+            "evolution_invalidated": invalidated,
+            "graph_cleaned": graph_cleaned,
+            "graph_failed": 0 if graph_ok else len(normalized_ids),
+            "atoms_rederived": atoms_rederived,
+            "atoms_failed": atoms_failed,
+            "atoms_reason_code": atoms_reason_code,
+            "steps_failed": sum(
+                1 for ok in (evolution_ok, graph_ok, atoms_failed == 0) if not ok
+            ),
+        }
+
+    def _resolve_memory_engine_owner(self) -> Any | None:
+        """从已注入的绑定回调恢复宿主引擎，用于解析派生失效端口。
+
+        ``MaintenanceOperations`` 只持有回调对象，宿主引擎是这些绑定回调的
+        ``__self__``；与 reconsolidation 的既有权属解析保持同一做法。
+        """
+
+        for attr in ("_update_memory", "_batch_delete_memories"):
+            callback = getattr(self, attr, None)
+            owner = getattr(callback, "__self__", None)
+            if owner is not None:
+                return owner
+        return None
+
+    def _resolve_derived_port(self, name: str, engine: Any | None) -> Any | None:
+        """解析派生面端口：宿主自身属性优先，其次绑定回调所属的引擎。"""
+
+        port = getattr(self, name, None)
+        if port is not None:
+            return port
+        return getattr(engine, name, None) if engine is not None else None
+
+    async def _invalidate_evolution_sources(
+        self, memory_ids: list[int], engine: Any | None
+    ) -> tuple[int, bool]:
+        """按当前 revision 失效 relation/projection；失败只降级计数。"""
+
+        store = self._resolve_derived_port("memory_evolution_store", engine)
+        invalidate = getattr(store, "invalidate_for_source_revision", None)
+        load_sources = getattr(store, "load_sources", None)
+        if not callable(invalidate) or not callable(load_sources):
+            logger.debug(
+                "[维护] evolution 派生失效不可用，"
+                "reason_code=evolution_invalidate_unavailable"
+            )
+            return 0, True
+        invalidate_revision = cast(Callable[[int, str], Awaitable[Any]], invalidate)
+        load_source_rows = cast(Callable[..., Awaitable[list[Any]]], load_sources)
+        invalidated = 0
+        try:
+            for memory_id in memory_ids:
+                sources = await load_source_rows((memory_id,), active_only=False)
+                if not sources:
+                    continue
+                revision_token = str(getattr(sources[0], "revision_token", "") or "")
+                if not revision_token:
+                    continue
+                invalidated += max(
+                    0, int(await invalidate_revision(memory_id, revision_token) or 0)
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "[维护] evolution 派生失效降级，reason_code=evolution_invalidate_failed"
+            )
+            return invalidated, False
+        return invalidated, True
+
+    async def _reap_graph_residue(
+        self, memory_ids: list[int], engine: Any | None
+    ) -> tuple[int, bool]:
+        """回收不再可召回来源的图行列；失败只降级计数。"""
+
+        manager = self._resolve_derived_port("graph_memory_manager", engine)
+        batch_delete = getattr(manager, "batch_delete_memories", None)
+        if not callable(batch_delete):
+            logger.debug(
+                "[维护] graph 源级残留回收不可用，"
+                "reason_code=graph_residue_cleanup_unavailable"
+            )
+            return 0, True
+        delete_residue = cast(Callable[[list[int]], Awaitable[None]], batch_delete)
+        try:
+            await delete_residue(list(memory_ids))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "[维护] graph 源级残留回收降级，"
+                "reason_code=graph_residue_cleanup_failed"
+            )
+            return 0, False
+        return len(memory_ids), True
+
+    async def _rederive_atoms_for_sources(
+        self, memory_ids: list[int], new_status: str, engine: Any | None
+    ) -> tuple[int, int, str | None]:
+        """按固定签名重派生 Atom；实现缺失时只记 debug 日志。
+
+        返回 ``(已收敛来源数, 失败来源数, 稳定原因码)``。manager 报告
+        ``failed``/``needs_repair`` 时必须如实透出，不得在报告失败时返回成功语义：
+        ``atoms_rederived`` 只计 ``rederived + purged``（父已不可召回而清除 Atom 行
+        同样属于收敛成功），失败来源数交给状态批更新结果计入 ``steps_failed``。
+        失败只降级、不回滚状态写；持久收敛由 atoms 重建阶段承担。
+        """
+
+        manager = self._resolve_derived_port("atom_lifecycle_manager", engine)
+        rederive = getattr(manager, "rederive_for_sources", None)
+        if not callable(rederive):
+            logger.debug(
+                "[维护] Atom 重派生不可用，reason_code=atom_rederive_unavailable"
+            )
+            return 0, 0, None
+        try:
+            result = rederive(list(memory_ids), f"decay_{new_status}")
+            if inspect.isawaitable(result):
+                result = await cast(Awaitable[Any], result)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("[维护] Atom 重派生降级，reason_code=atom_rederive_failed")
+            return 0, len(memory_ids), "atom_rederive_failed"
+        if not isinstance(result, dict):
+            # 无报告的旧实现：按请求来源数计成功，保持既有调用形状。
+            return len(memory_ids), 0, None
+        rederived = _safe_count(result.get("rederived")) + _safe_count(
+            result.get("purged")
+        )
+        failed = _safe_count(result.get("failed"))
+        if not failed and result.get("needs_repair"):
+            # 报告只给 needs_repair 时按「至少一个来源待修复」计入，不当成功。
+            failed = 1
+        if failed:
+            logger.warning(
+                "[维护] Atom 重派生部分失败，reason_code=atom_rederive_failed"
+            )
+            return rederived, failed, "atom_rederive_failed"
+        return rederived, 0, None
 
     async def migrate_session_if_needed(self, unified_msg_origin: str) -> None:
         """运行时自动迁移：将旧格式 session_id 更新为 unified_msg_origin 格式。"""

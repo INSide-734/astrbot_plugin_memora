@@ -35,6 +35,7 @@ class WriteOpJournal(WriteOpRepairMixin):
         delete_doc_indexes_batch_cb: Callable | None = None,
         delete_graph_atoms_batch_cb: Callable | None = None,
         topic_catalog_store: Any | None = None,
+        repair_document_indexes_cb: Callable | None = None,
     ) -> None:
         """保存写日志依赖，并可选持有 topic catalog 修复端口。"""
 
@@ -48,6 +49,7 @@ class WriteOpJournal(WriteOpRepairMixin):
         self._delete_doc_indexes_batch = delete_doc_indexes_batch_cb
         self._delete_graph_atoms_batch = delete_graph_atoms_batch_cb
         self._topic_catalog_store = topic_catalog_store
+        self._repair_document_indexes = repair_document_indexes_cb
 
     # ---- 表创建 ----
 

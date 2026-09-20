@@ -7,19 +7,44 @@ import inspect
 import json
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, NamedTuple
+
+from astrbot.api import logger
 
 from ....shared.summary_source_fence import SummarySourceFence
 from ...observability.application.memory_write_timing import (
     measure_memory_write_stage,
     observe_memory_write,
 )
+from ...retrieval.bm25_retriever import BM25Retriever
+from ...retrieval.vector_retriever import VectorRetriever, fit_embedding_text
 from ..infrastructure.canonical_idempotency import (
     find_canonical_memory_id_by_idempotency_key,
     find_canonical_memory_id_by_merged_idempotency_key,
     normalize_canonical_idempotency_key,
 )
+from ..infrastructure.write_op_repair import (
+    CONTENT_PREVIEW_LIMIT,
+    ledger_content_digest,
+)
 from .memory_engine_atom_support import reinforce_existing_atoms
+
+
+class DocumentWriteOutcome(NamedTuple):
+    """文档阶段结果：已提交的 canonical ID 与派生索引状态。"""
+
+    doc_id: int
+    owner_reused: bool
+    index_degraded: bool
+
+
+class _StagedIndexPorts(NamedTuple):
+    """真实检索器暴露的 canonical/FAISS/FTS 分段写入端口。"""
+
+    document_storage: Any
+    embedding_provider: Any
+    embedding_storage: Any
+    fts_add: Callable[..., Any]
 
 
 class MemoryEngineIdempotencyMixin:
@@ -505,42 +530,223 @@ class MemoryEngineIdempotencyMixin:
             self._canonical_idempotency_lock = lock
         return lock
 
+    def _staged_index_ports(self) -> _StagedIndexPorts | None:
+        """返回真实检索器的 canonical/FAISS/FTS 分段写入端口。
+
+        只有装配了真实 ``VectorRetriever``/``BM25Retriever`` 的混合检索器才暴露
+        可分段的主机组件；测试替身与仅实现 ``add_memory`` 的适配器返回 ``None``，
+        继续走单段写入，避免按猜想的端口协议调用它们。
+        """
+
+        vector_retriever = getattr(self.hybrid_retriever, "vector_retriever", None)
+        bm25_retriever = getattr(self.hybrid_retriever, "bm25_retriever", None)
+        if not isinstance(vector_retriever, VectorRetriever) or not isinstance(
+            bm25_retriever, BM25Retriever
+        ):
+            return None
+        faiss_db = getattr(vector_retriever, "faiss_db", None)
+        document_storage = getattr(faiss_db, "document_storage", None)
+        embedding_provider = getattr(faiss_db, "embedding_provider", None)
+        embedding_storage = getattr(faiss_db, "embedding_storage", None)
+        fts_add = getattr(bm25_retriever, "add_document", None)
+        if not (
+            callable(getattr(document_storage, "insert_document", None))
+            and callable(getattr(embedding_provider, "get_embedding", None))
+            and callable(getattr(embedding_storage, "insert", None))
+            and callable(fts_add)
+        ):
+            return None
+        return _StagedIndexPorts(
+            document_storage=document_storage,
+            embedding_provider=embedding_provider,
+            embedding_storage=embedding_storage,
+            fts_add=fts_add,
+        )
+
+    async def _insert_canonical_document(
+        self,
+        ports: _StagedIndexPorts,
+        content: str,
+        full_metadata: dict[str, Any],
+    ) -> tuple[int, Any]:
+        """先算向量再落 canonical 行，返回整数 ID 与待写入的向量。
+
+        顺序与宿主 ``FaissVecDB.insert`` 一致（embedding → documents → 向量），
+        区别只在把 documents 提交与向量写入拆开，好让整数 canonical ID 在派生
+        索引失败前就能进入账本。embedding 输入沿用向量层的字符预算规则。
+        """
+
+        import uuid
+
+        import numpy as np
+
+        with measure_memory_write_stage("document_vector"):
+            embedding_content = fit_embedding_text(content)
+            if embedding_content != content:
+                logger.warning(
+                    "[MemoryEngine] 记忆内容过长，正文完整入库，仅 embedding "
+                    f"输入压缩至 {len(embedding_content)} 字符"
+                )
+            vector = np.asarray(
+                await ports.embedding_provider.get_embedding(embedding_content),
+                dtype=np.float32,
+            )
+            doc_id = await ports.document_storage.insert_document(
+                str(uuid.uuid4()),
+                content,
+                full_metadata,
+            )
+        return int(doc_id), vector
+
     async def _write_document_stage(
         self,
         content: str,
         full_metadata: dict[str, Any],
         metadata: dict[str, Any] | None,
         op_id: int | None,
-    ) -> tuple[int, bool]:
-        """写入文档向量并在 keyed 竞态失败时恢复既有 canonical owner。"""
+    ) -> DocumentWriteOutcome:
+        """提交 canonical 行，并把 canonical 之后的索引失败降级为待修复。
 
+        canonical 提交后立即用整数 ID 与正文摘要登记 ``documents_committed``
+        意图；FAISS/FTS 阶段失败只记 ``needs_repair``（原因码
+        ``index_stage_degraded``）并返回该 ID，调用方不会把已提交的 canonical
+        当成写失败重试。只有 canonical 提交本身失败才向上报错；缺少分段端口时
+        保持既有单段 ``add_memory`` 语义。
+        """
+
+        ports = self._staged_index_ports()
+        vector: Any = None
         try:
-            with measure_memory_write_stage("document_vector"):
-                doc_id = await self.hybrid_retriever.add_memory(
+            if ports is None:
+                with measure_memory_write_stage("document_vector"):
+                    doc_id = await self.hybrid_retriever.add_memory(
+                        content,
+                        full_metadata,
+                    )
+            else:
+                doc_id, vector = await self._insert_canonical_document(
+                    ports,
                     content,
                     full_metadata,
                 )
-            await self._write_journal.advance_op(
-                op_id,
-                "document_indexed",
-                memory_id=doc_id,
-                payload_patch={"memory_id": doc_id},
-            )
-            return doc_id, False
         except asyncio.CancelledError:
             raise
-        except Exception as error:
+        except Exception:
             owner_id = await self._recover_idempotent_write_owner(op_id, metadata)
             if owner_id is not None:
-                return owner_id, True
+                return DocumentWriteOutcome(owner_id, True, False)
             await self._write_journal.advance_op(
                 op_id,
                 "document_failed",
                 status="failed",
-                error=str(error),
+                error="canonical_write_failed",
             )
             self._record_add_memory_failure("document")
             raise
+        await self._write_journal.advance_op(
+            op_id,
+            "documents_committed",
+            memory_id=doc_id,
+            payload_patch={
+                "memory_id": doc_id,
+                "content_digest": ledger_content_digest(content),
+                "content_preview": content[:CONTENT_PREVIEW_LIMIT],
+                "indexes_pending": ports is not None,
+            },
+        )
+        if ports is None:
+            await self._write_journal.advance_op(
+                op_id,
+                "document_indexed",
+                memory_id=doc_id,
+            )
+            return DocumentWriteOutcome(doc_id, False, False)
+        degraded = await self._index_committed_document(
+            ports,
+            doc_id,
+            content,
+            full_metadata,
+            vector,
+        )
+        await self._write_journal.advance_op(
+            op_id,
+            "index_stage_degraded" if degraded else "document_indexed",
+            status="needs_repair" if degraded else "pending",
+            memory_id=doc_id,
+            error="index_stage_degraded" if degraded else None,
+            payload_patch={"indexes_pending": degraded},
+        )
+        return DocumentWriteOutcome(doc_id, False, degraded)
+
+    async def _index_committed_document(
+        self,
+        ports: _StagedIndexPorts,
+        doc_id: int,
+        content: str,
+        full_metadata: dict[str, Any],
+        vector: Any,
+    ) -> bool:
+        """为已提交的 canonical 补写 FAISS 与 FTS；失败只降级不报错。"""
+
+        degraded = False
+        try:
+            with measure_memory_write_stage("document_vector"):
+                await ports.embedding_storage.insert(vector, doc_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            degraded = True
+            self._record_add_memory_failure("vector")
+            logger.error(
+                "[MemoryEngine] FAISS 写入降级 reason_code=index_stage_degraded"
+            )
+        try:
+            with measure_memory_write_stage("fts"):
+                await ports.fts_add(doc_id, content, full_metadata)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            degraded = True
+            self._record_add_memory_failure("fts")
+            logger.error("[MemoryEngine] FTS 写入降级 reason_code=index_stage_degraded")
+        return degraded
+
+    async def _repair_document_indexes(self, memory_id: int) -> bool:
+        """只按当前 canonical 重建指定 ID；删除旧向量/FTS 后补写，重放不重复。"""
+
+        ports = self._staged_index_ports()
+        if ports is None:
+            return False
+        source = await self.get_memory(memory_id)
+        if source is None:
+            return False
+        content = str(source.get("text") or "")
+        import numpy as np
+
+        try:
+            vector = np.asarray(
+                await ports.embedding_provider.get_embedding(
+                    fit_embedding_text(content)
+                ),
+                dtype=np.float32,
+            )
+            # 与正文 CAS/删除共用锁；embedding 等待期间来源变化时不覆盖新索引。
+            async with self.hybrid_retriever.vector_retriever._vector_write_lock:
+                current = await self.get_memory(memory_id)
+                if current is None or current.get("text") != content:
+                    return False
+                await ports.embedding_storage.delete([memory_id])
+                await ports.embedding_storage.insert(vector, memory_id)
+                return await self.hybrid_retriever.bm25_retriever.update_document(
+                    memory_id, content, current.get("metadata") or {}
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "[MemoryEngine] 索引修复未完成 reason_code=index_stage_degraded"
+            )
+            return False
 
     async def _recover_idempotent_write_owner(
         self,

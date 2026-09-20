@@ -71,6 +71,8 @@ class MemoryEngine(
         self.atom_store = None
         self.atom_lifecycle_manager = None
         self.atom_retriever = None
+        # Atom 重派生复用的规则分类端口，由组合根在 MemoryProcessor 建立后挂载。
+        self.memory_processor = None
         self.db_connection = None
         # 用户画像组件
         self.profile_store = None
@@ -95,6 +97,8 @@ class MemoryEngine(
         self.memory_evolution_store = None
         self.memory_evolution_manager = None
         self._last_write_reason_code = None
+        # ponytail: 单实例替换串行化；仅在吞吐瓶颈实测后再按 source 分锁。
+        self._replacement_write_lock = asyncio.Lock()
         self._last_debug_trace: list[dict[str, Any]] = []
         # 子模块（db_connection 在 initialize 中注入）
         self._retrieval = RetrievalOptimizer(
@@ -121,6 +125,7 @@ class MemoryEngine(
             delete_doc_indexes_batch_cb=self._delete_document_indexes_for_batch,
             delete_graph_atoms_batch_cb=self._delete_graph_and_atoms_for_batch,
             topic_catalog_store=self.topic_catalog_store,
+            repair_document_indexes_cb=self._repair_document_indexes,
         )
         self._schema = SchemaManager(db_connection=None)
         self._maintenance = MaintenanceOperations(
@@ -140,6 +145,34 @@ class MemoryEngine(
         """返回最近一次同步 canonical 写入的稳定原因码。"""
 
         return self._last_write_reason_code
+
+    async def find_replacement_memory_id(self, old_id: int) -> int | None:
+        """按替换账本确认当前新 owner；未收敛、已删或无法证明时不返回 ID。"""
+
+        if self.db_connection is None:
+            return None
+        cursor = await self.db_connection.execute(
+            """
+            SELECT op.memory_id FROM memory_write_ops AS op
+            JOIN documents AS new ON new.id = op.memory_id
+            WHERE op.op_type = 'replace_content'
+              AND op.status IN ('completed', 'needs_repair')
+              AND op.step IN ('replacement_committed', 'replacement_cleanup_pending')
+              AND CASE WHEN json_valid(op.payload)
+                  THEN json_extract(op.payload, '$.old_id') END = ?
+              AND new.id != ?
+              AND NOT EXISTS (SELECT 1 FROM documents WHERE id = ?)
+              AND json_valid(new.metadata)
+              AND NOT COALESCE(json_extract(new.metadata, '$.replacement_pending'), 0)
+            ORDER BY op.id DESC LIMIT 1
+            """,
+            (int(old_id), int(old_id), int(old_id)),
+        )
+        try:
+            row = await cursor.fetchone()
+            return int(row[0]) if row is not None else None
+        finally:
+            await cursor.close()
 
     async def update_importance(self, memory_id: int, new_importance: float) -> bool:
         return await self.update_memory(memory_id, {"importance": new_importance})

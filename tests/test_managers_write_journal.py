@@ -11,6 +11,7 @@ import pytest
 
 from core.features.memory.infrastructure.schema_manager import SchemaManager
 from core.features.memory.infrastructure.write_op_journal import WriteOpJournal
+from core.features.memory.infrastructure.write_op_repair import ledger_content_digest
 from tests.fact_evidence_helpers import source_evidence
 
 
@@ -785,3 +786,377 @@ class TestWriteOpRepairAddIntegration:
             assert row["status"] == "failed"
             assert row["step"] == "source_missing"
             assert "source document missing" in row["error"]
+
+
+async def _insert_canonical_row(
+    db: aiosqlite.Connection,
+    memory_id: int,
+    *,
+    content: str,
+    previous_id: int | None = None,
+) -> None:
+    """写入一条 canonical 行；``previous_id`` 标记它由内容替换产生。"""
+
+    metadata: dict[str, object] = {"session_id": "s1"}
+    if previous_id is not None:
+        metadata["previous_id"] = previous_id
+    await db.execute(
+        """
+        INSERT INTO documents(id, doc_id, text, metadata, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'r1', 'r1')
+        """,
+        (
+            memory_id,
+            f"doc-{memory_id}",
+            content,
+            json.dumps(metadata, ensure_ascii=False),
+        ),
+    )
+    await db.commit()
+
+
+async def _document_ids(db: aiosqlite.Connection) -> list[int]:
+    """返回当前 canonical 行 ID（升序），用于断言 active 行数。"""
+
+    cursor = await db.execute("SELECT id FROM documents ORDER BY id")
+    return [int(row[0]) for row in await cursor.fetchall()]
+
+
+async def _operation_row(db: aiosqlite.Connection, op_id: int) -> aiosqlite.Row:
+    """读取账本行的状态字段。"""
+
+    cursor = await db.execute(
+        "SELECT status, step, error FROM memory_write_ops WHERE id = ?",
+        (op_id,),
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+    return row
+
+
+def _replacement_ports(db: aiosqlite.Connection):
+    """构造真实删除 canonical 行的替换清理端口。"""
+
+    async def delete_indexes(memory_ids: list[int]) -> int:
+        await db.execute(
+            "DELETE FROM documents WHERE id IN (SELECT value FROM json_each(?))",
+            (json.dumps([int(item) for item in memory_ids]),),
+        )
+        await db.commit()
+        return len(memory_ids)
+
+    async def delete_graph_atoms(memory_ids: list[int]) -> None:
+        """图/原子清理端口：替换测试只断言 canonical 行收敛。"""
+
+        assert all(isinstance(item, int) for item in memory_ids)
+
+    return delete_indexes, delete_graph_atoms
+
+
+async def _start_replace_op(
+    db: aiosqlite.Connection,
+    journal: WriteOpJournal,
+    *,
+    old_id: int,
+    new_id: int | None,
+    digest: str,
+    status: str = "needs_repair",
+    step: str = "replacement_created",
+) -> int:
+    """登记一条两阶段替换账本行，模拟崩溃或删除失败后的中间状态。"""
+
+    payload: dict[str, object] = {"old_id": old_id, "content_digest": digest}
+    if new_id is not None:
+        payload["new_id"] = new_id
+    op_id = await journal.start_op("replace_content", payload, memory_id=old_id)
+    assert op_id is not None
+    await db.execute(
+        "UPDATE memory_write_ops SET status = ?, step = ? WHERE id = ?",
+        (status, step, op_id),
+    )
+    await db.commit()
+    return op_id
+
+
+@pytest.mark.asyncio
+class TestWriteOpRepairReplace:
+    """两阶段正文替换的修复收敛（replacement_* 语义）。"""
+
+    async def test_digest_match_deletes_old_and_completes(
+        self, tmp_db_path: str
+    ) -> None:
+        """新行摘要匹配账本意图：删除旧行并收口为已提交。"""
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            delete_indexes, delete_graph_atoms = _replacement_ports(db)
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=None,
+                atom_store=None,
+                delete_doc_indexes_batch_cb=delete_indexes,
+                delete_graph_atoms_batch_cb=delete_graph_atoms,
+            )
+            await _create_test_schema(db, journal)
+            await _insert_canonical_row(db, 1, content="旧正文")
+            await _insert_canonical_row(db, 2, content="新正文", previous_id=1)
+            op_id = await _start_replace_op(
+                db,
+                journal,
+                old_id=1,
+                new_id=2,
+                digest=ledger_content_digest("新正文"),
+            )
+
+            assert await journal.repair_incomplete() == 1
+
+            assert await _document_ids(db) == [2]
+            row = await _operation_row(db, op_id)
+            assert (row["status"], row["step"]) == (
+                "completed",
+                "replacement_committed",
+            )
+
+    async def test_digest_mismatch_deletes_new_and_keeps_old(
+        self, tmp_db_path: str
+    ) -> None:
+        """新行摘要不匹配（已被再次编辑）：删除新行，旧行保持权威。"""
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            delete_indexes, delete_graph_atoms = _replacement_ports(db)
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=None,
+                atom_store=None,
+                delete_doc_indexes_batch_cb=delete_indexes,
+                delete_graph_atoms_batch_cb=delete_graph_atoms,
+            )
+            await _create_test_schema(db, journal)
+            await _insert_canonical_row(db, 1, content="旧正文")
+            await _insert_canonical_row(db, 2, content="被再次编辑", previous_id=1)
+            op_id = await _start_replace_op(
+                db,
+                journal,
+                old_id=1,
+                new_id=2,
+                digest=ledger_content_digest("新正文"),
+            )
+
+            assert await journal.repair_incomplete() == 0
+
+            assert await _document_ids(db) == [1]
+            row = await _operation_row(db, op_id)
+            assert (row["status"], row["step"]) == (
+                "failed",
+                "replacement_rolled_back",
+            )
+            assert row["error"] == "content_digest_mismatch"
+
+    async def test_missing_new_id_is_discovered_by_previous_id(
+        self, tmp_db_path: str
+    ) -> None:
+        """账本未记录 new_id（add 提交后崩溃）：按 previous_id 反查并收敛。"""
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            delete_indexes, delete_graph_atoms = _replacement_ports(db)
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=None,
+                atom_store=None,
+                delete_doc_indexes_batch_cb=delete_indexes,
+                delete_graph_atoms_batch_cb=delete_graph_atoms,
+            )
+            await _create_test_schema(db, journal)
+            await _insert_canonical_row(db, 1, content="旧正文")
+            await _insert_canonical_row(db, 2, content="新正文", previous_id=1)
+            op_id = await _start_replace_op(
+                db,
+                journal,
+                old_id=1,
+                new_id=None,
+                digest=ledger_content_digest("新正文"),
+                status="pending",
+                step="started",
+            )
+
+            assert await journal.repair_incomplete() == 1
+
+            assert await _document_ids(db) == [2]
+            row = await _operation_row(db, op_id)
+            assert row["status"] == "completed"
+
+    async def test_ambiguous_candidates_stay_needs_repair(
+        self, tmp_db_path: str
+    ) -> None:
+        """同一旧行出现多个替换候选：不误删任何行，保持待修复。"""
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            delete_indexes, delete_graph_atoms = _replacement_ports(db)
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=None,
+                atom_store=None,
+                delete_doc_indexes_batch_cb=delete_indexes,
+                delete_graph_atoms_batch_cb=delete_graph_atoms,
+            )
+            await _create_test_schema(db, journal)
+            await _insert_canonical_row(db, 1, content="旧正文")
+            await _insert_canonical_row(db, 2, content="新正文", previous_id=1)
+            await _insert_canonical_row(db, 3, content="另一次替换", previous_id=1)
+            op_id = await _start_replace_op(
+                db,
+                journal,
+                old_id=1,
+                new_id=None,
+                digest=ledger_content_digest("新正文"),
+            )
+
+            assert await journal.repair_incomplete() == 0
+
+            assert await _document_ids(db) == [1, 2, 3]
+            row = await _operation_row(db, op_id)
+            assert (row["status"], row["step"]) == (
+                "needs_repair",
+                "replacement_ambiguous",
+            )
+
+    async def test_single_sided_rows_converge_by_fact(self, tmp_db_path: str) -> None:
+        """单边存在时按事实收敛：只剩新行即已提交，只剩旧行即未提交。"""
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            delete_indexes, delete_graph_atoms = _replacement_ports(db)
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=None,
+                atom_store=None,
+                delete_doc_indexes_batch_cb=delete_indexes,
+                delete_graph_atoms_batch_cb=delete_graph_atoms,
+            )
+            await _create_test_schema(db, journal)
+            digest = ledger_content_digest("新正文")
+            await _insert_canonical_row(db, 2, content="新正文", previous_id=1)
+            committed_op = await _start_replace_op(
+                db, journal, old_id=1, new_id=2, digest=digest
+            )
+            assert await journal.repair_incomplete() == 1
+            assert await _document_ids(db) == [2]
+            committed = await _operation_row(db, committed_op)
+            assert committed["status"] == "completed"
+            assert committed["step"] == "replacement_committed"
+
+            await _insert_canonical_row(db, 5, content="未替换的正文")
+            rolled_back_op = await _start_replace_op(
+                db, journal, old_id=5, new_id=6, digest=digest
+            )
+            assert await journal.repair_incomplete() == 0
+            assert await _document_ids(db) == [2, 5]
+            rolled_back = await _operation_row(db, rolled_back_op)
+            assert (rolled_back["status"], rolled_back["step"]) == (
+                "failed",
+                "replacement_rolled_back",
+            )
+            assert rolled_back["error"] == "replacement_document_missing"
+
+    async def test_missing_delete_ports_keep_needs_repair(
+        self, tmp_db_path: str
+    ) -> None:
+        """缺少 canonical 删除端口时不得把未确认删除当成收敛。"""
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=None,
+                atom_store=None,
+            )
+            await _create_test_schema(db, journal)
+            await _insert_canonical_row(db, 1, content="旧正文")
+            await _insert_canonical_row(db, 2, content="新正文", previous_id=1)
+            op_id = await _start_replace_op(
+                db,
+                journal,
+                old_id=1,
+                new_id=2,
+                digest=ledger_content_digest("新正文"),
+            )
+
+            assert await journal.repair_incomplete() == 0
+
+            assert await _document_ids(db) == [1, 2]
+            row = await _operation_row(db, op_id)
+            assert (row["status"], row["step"]) == (
+                "needs_repair",
+                "replacement_commit_failed",
+            )
+
+    async def test_failed_replace_rows_are_reselected(self, tmp_db_path: str) -> None:
+        """失败的替换行仍被选取：账本中止后落地的替换新行不会被漏掉。"""
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            delete_indexes, delete_graph_atoms = _replacement_ports(db)
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=None,
+                atom_store=None,
+                delete_doc_indexes_batch_cb=delete_indexes,
+                delete_graph_atoms_batch_cb=delete_graph_atoms,
+            )
+            await _create_test_schema(db, journal)
+            await _insert_canonical_row(db, 1, content="旧正文")
+            await _insert_canonical_row(db, 2, content="新正文", previous_id=1)
+            op_id = await _start_replace_op(
+                db,
+                journal,
+                old_id=1,
+                new_id=None,
+                digest=ledger_content_digest("新正文"),
+                status="failed",
+                step="replacement_aborted",
+            )
+
+            assert await journal.repair_incomplete() == 1
+
+            assert await _document_ids(db) == [2]
+            row = await _operation_row(db, op_id)
+            assert row["status"] == "completed"
+
+    async def test_converged_failed_replace_row_is_not_reselected(
+        self, tmp_db_path: str
+    ) -> None:
+        """已收敛的失败替换行不再进入修复选取，避免无谓重放。"""
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            delete_indexes, delete_graph_atoms = _replacement_ports(db)
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=None,
+                atom_store=None,
+                delete_doc_indexes_batch_cb=delete_indexes,
+                delete_graph_atoms_batch_cb=delete_graph_atoms,
+            )
+            await _create_test_schema(db, journal)
+            await _insert_canonical_row(db, 1, content="旧正文")
+            op_id = await _start_replace_op(
+                db,
+                journal,
+                old_id=1,
+                new_id=2,
+                digest=ledger_content_digest("新正文"),
+                status="failed",
+                step="replacement_rolled_back",
+            )
+
+            assert await journal.repair_incomplete() == 0
+
+            assert await _document_ids(db) == [1]
+            row = await _operation_row(db, op_id)
+            assert (row["status"], row["step"]) == (
+                "failed",
+                "replacement_rolled_back",
+            )

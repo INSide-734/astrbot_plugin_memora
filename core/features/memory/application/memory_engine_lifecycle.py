@@ -217,7 +217,9 @@ class MemoryEngineLifecycleMixin:
             await self.atom_store.initialize()
             if self.atom_enabled:
                 self.atom_lifecycle_manager = AtomLifecycleManager(
-                    self.atom_store, self.config
+                    self.atom_store,
+                    self.config,
+                    classifier=getattr(self, "memory_processor", None),
                 )
                 self.atom_retriever = AtomRetriever(
                     self.atom_store,

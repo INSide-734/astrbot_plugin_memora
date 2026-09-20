@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
+from datetime import datetime, timezone
 from typing import Any
 
 from astrbot.api import logger
@@ -16,6 +18,7 @@ from ..application.atom_source_binding import (
     bind_atoms_to_canonical_source,
     validate_bound_atoms_match_canonical_source,
 )
+from ..application.write_coordinator import coordinated_transaction
 from ..domain.memory_atom import MemoryAtom
 from .write_op_serialization import _deserialize_atom_from_repair, safe_json_dict
 
@@ -30,8 +33,13 @@ def source_acceptance_allows_derivation(metadata: Any) -> bool:
 
     if not isinstance(metadata, dict):
         return True
-    return not metadata.get("summary_source_orphan") and not metadata.get(
-        "summary_source_pending"
+    return not any(
+        metadata.get(field)
+        for field in (
+            "summary_source_orphan",
+            "summary_source_pending",
+            "replacement_pending",
+        )
     )
 
 
@@ -67,11 +75,22 @@ class WriteOpRepairMixin:
                     status IN ('pending', 'needs_repair')
                     OR (
                       status = 'failed'
-                      AND step = 'source_missing'
-                      AND op_type IN ('add', 'graph_reindex')
-                      AND EXISTS (
-                        SELECT 1 FROM documents
-                        WHERE documents.id = memory_write_ops.memory_id
+                      AND (
+                        (
+                          step = 'source_missing'
+                          AND op_type IN ('add', 'graph_reindex')
+                          AND EXISTS (
+                            SELECT 1 FROM documents
+                            WHERE documents.id = memory_write_ops.memory_id
+                          )
+                        )
+                        OR (
+                          op_type = 'replace_content'
+                          AND step NOT IN (
+                            'replacement_committed',
+                            'replacement_rolled_back'
+                          )
+                        )
                       )
                     )
                   )
@@ -89,6 +108,17 @@ class WriteOpRepairMixin:
 
         repaired = 0
         for row in rows:
+            current_cursor = await self._db.execute(
+                "SELECT status, step FROM memory_write_ops WHERE id = ?",
+                (int(row["id"]),),
+            )
+            current = await current_cursor.fetchone()
+            await current_cursor.close()
+            if current is None or (current["status"], current["step"]) != (
+                row["status"],
+                row["step"],
+            ):
+                continue
             payload = safe_json_dict(row["payload"])
             try:
                 op_type = row["op_type"]
@@ -115,21 +145,28 @@ class WriteOpRepairMixin:
                         int(memory_id) if memory_id is not None else None,
                         payload,
                     )
+                elif op_type == "replace_content":
+                    ok = await self._repair_replace(
+                        int(row["id"]),
+                        payload,
+                    )
                 else:
                     ok = False
                 repaired += 1 if ok else 0
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
-                logger.error(
-                    f"[WriteOpJournal] 修复写操作失败 (op_id={row['id']})",
-                    exc_info=True,
+            except Exception:
+                reason = (
+                    "content_replace_repair_failed"
+                    if row["op_type"] == "replace_content"
+                    else "write_repair_failed"
                 )
+                logger.error("[WriteOpJournal] 修复未完成 reason_code=%s", reason)
                 await self.advance_op(
                     int(row["id"]),
                     str(row["step"] or "repair_failed"),
                     status="needs_repair",
-                    error=str(e),
+                    error=reason,
                 )
 
         catalog = getattr(self, "_topic_catalog_store", None)
@@ -231,6 +268,23 @@ class WriteOpRepairMixin:
         session_id = metadata.get("session_id")
         persona_id = metadata.get("persona_id")
 
+        if payload.get("indexes_pending"):
+            repair_indexes = getattr(self, "_repair_document_indexes", None)
+            if repair_indexes is None or not await repair_indexes(int(memory_id)):
+                await self.advance_op(
+                    op_id,
+                    "index_stage_degraded",
+                    status="needs_repair",
+                    memory_id=int(memory_id),
+                    error="index_stage_degraded",
+                )
+                return False
+            await self.advance_op(
+                op_id,
+                "document_indexed",
+                memory_id=int(memory_id),
+                payload_patch={"indexes_pending": False},
+            )
         atom_payloads = payload.get("failed_atoms") or payload.get("atoms", []) or []
         atoms: list[MemoryAtom] = []
         for atom_payload in atom_payloads:
@@ -408,18 +462,16 @@ class WriteOpRepairMixin:
             )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:
-            # canonical 已接受：图失败只进入修复队列，不回滚 canonical。
+        except Exception:
             await self.advance_op(
                 int(op["op_id"]),
                 "graph_failed",
                 status="needs_repair",
                 memory_id=int(memory_id),
-                error=str(exc),
+                error="graph_reindex_failed",
             )
             logger.error(
-                f"[WriteOpJournal] 来源接受后建图失败 (memory_id={memory_id})",
-                exc_info=True,
+                "[WriteOpJournal] 来源接受后建图降级 reason_code=graph_reindex_failed"
             )
             return False
 
@@ -568,6 +620,283 @@ class WriteOpRepairMixin:
                 await self._atom_store.insert_many(atoms_to_insert)
         elif not existing_atoms:
             await self._atom_store.insert_many(atoms)
+
+    @staticmethod
+    def _ledger_memory_id(payload: dict[str, Any], key: str) -> int | None:
+        """解析账本载荷中的整数 ID；缺失或非法时返回 ``None``。"""
+
+        value = payload.get(key)
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    async def _repair_replace(self, op_id: int, payload: dict[str, Any]) -> bool:
+        """收敛两阶段正文替换：按正文摘要判定赢家，绝不复活已删除内容。
+
+        - 新旧并存且新行摘要等于账本 ``content_digest`` → 删除旧行（含派生清理），
+          替换提交；
+        - 新旧并存但摘要不匹配（新行已被再次编辑）→ 删除新行，替换失败，旧行保持
+          权威；
+        - 单边存在按事实收敛（只剩新行即已提交，只剩旧行即未提交）；
+        - 账本尚未记录 ``new_id`` 时按 ``previous_id`` 反查替换新行，覆盖 add 提交
+          后账本未收口的窗口；候选多于一个时保留待修复，不误删任何行。
+        """
+
+        old_id = self._ledger_memory_id(payload, "old_id")
+        if old_id is None:
+            await self.advance_op(
+                op_id,
+                "unrepairable",
+                status="failed",
+                error="missing old_id for content replace repair",
+            )
+            return False
+        new_id = self._ledger_memory_id(payload, "new_id")
+        if new_id == old_id:
+            await self.advance_op(
+                op_id,
+                "replacement_rolled_back",
+                status="failed",
+                error="replacement_id_conflict",
+            )
+            return False
+        if new_id is None:
+            candidates = await self._find_replacement_documents(old_id)
+            if len(candidates) > 1:
+                await self.advance_op(
+                    op_id,
+                    "replacement_ambiguous",
+                    status="needs_repair",
+                    memory_id=old_id,
+                    error="multiple_replacement_candidates",
+                )
+                return False
+            new_id = candidates[0] if candidates else None
+        old_text = await self._load_canonical_text(old_id)
+        new_text = (
+            await self._load_canonical_text(new_id) if new_id is not None else None
+        )
+        if old_text is not None and new_text is not None and new_id is not None:
+            digest = payload.get("content_digest")
+            if (
+                isinstance(digest, str)
+                and digest
+                and ledger_content_digest(new_text) == digest
+            ):
+                return await self._commit_replacement(op_id, old_id, new_id, payload)
+            return await self._rollback_replacement(op_id, old_id, new_id, payload)
+        if new_id is not None and new_text is not None:
+            # canonical 旧行虽已删，派生清理可能上次失败，必须重放后才能收口。
+            return await self._commit_replacement(op_id, old_id, new_id, payload)
+        if old_text is not None:
+            await self._switch_replacement_visibility(old_id, new_id, payload, old_id)
+            if new_id is not None and not await self._delete_replacement_side(new_id):
+                return False
+            await self.advance_op(
+                op_id,
+                "replacement_rolled_back",
+                status="failed",
+                memory_id=old_id,
+                error="replacement_document_missing",
+            )
+            return False
+        await self.advance_op(
+            op_id,
+            "replacement_rolled_back",
+            status="failed",
+            memory_id=old_id,
+            error="replacement_documents_missing",
+        )
+        return False
+
+    async def _commit_replacement(
+        self, op_id: int, old_id: int, new_id: int, payload: dict[str, Any]
+    ) -> bool:
+        """新行摘要匹配账本意图：删除旧行并收口为已提交。"""
+        if not await self._switch_replacement_visibility(
+            old_id, new_id, payload, new_id
+        ):
+            return False
+
+        if not await self._delete_replacement_side(old_id):
+            await self.advance_op(
+                op_id,
+                "replacement_commit_failed",
+                status="needs_repair",
+                memory_id=new_id,
+                error="content_replace_delete_failed",
+                payload_patch={"old_id": old_id, "new_id": new_id},
+            )
+            return False
+        await self.finalize_add_derivation(new_id)
+        await self.advance_op(
+            op_id,
+            "replacement_committed",
+            status="completed",
+            memory_id=new_id,
+            payload_patch={"old_id": old_id, "new_id": new_id},
+        )
+        return True
+
+    async def _rollback_replacement(
+        self,
+        op_id: int,
+        old_id: int,
+        new_id: int,
+        payload: dict[str, Any],
+    ) -> bool:
+        """新行摘要不匹配账本意图：删除新行，旧行保持权威。"""
+        if not await self._switch_replacement_visibility(
+            old_id, new_id, payload, old_id
+        ):
+            return False
+
+        if not await self._delete_replacement_side(new_id):
+            await self.advance_op(
+                op_id,
+                "replacement_rollback_failed",
+                status="needs_repair",
+                memory_id=old_id,
+                error="content_replace_rollback_failed",
+                payload_patch={"old_id": old_id, "new_id": new_id},
+            )
+            return False
+        await self.advance_op(
+            op_id,
+            "replacement_rolled_back",
+            status="failed",
+            memory_id=old_id,
+            error="content_digest_mismatch",
+            payload_patch={"old_id": old_id, "new_id": new_id},
+        )
+        return False
+
+    async def _delete_replacement_side(self, memory_id: int) -> bool:
+        """删除替换的一侧（canonical 与派生清理），并证明该行已消失。
+
+        端口缺失或删除后行仍存在时返回 ``False``：调用方保持账本开放，不把
+        “未能确认删除”当成收敛，也不制造“正文还在、图与原子已丢”的半删状态。
+        """
+
+        if (
+            self._delete_doc_indexes_batch is None
+            or self._delete_graph_atoms_batch is None
+        ):
+            return False
+        await self._delete_doc_indexes_batch([int(memory_id)])
+        if not await self._canonical_document_deleted(int(memory_id)):
+            return False
+        await self._delete_graph_atoms_batch([int(memory_id)])
+        if self._invalidate_cache:
+            self._invalidate_cache()
+        return True
+
+    async def _switch_replacement_visibility(
+        self,
+        old_id: int,
+        new_id: int | None,
+        payload: dict[str, Any],
+        winner_id: int,
+    ) -> bool:
+        """在同一事务隐藏输家、恢复赢家；不插入行，不复活已被删除的正文。"""
+
+        if self._db is None:
+            return False
+        async with coordinated_transaction(self._db):
+            cursor = await self._db.execute(
+                "SELECT id, text, metadata FROM documents WHERE id IN (?, ?)",
+                (old_id, new_id),
+            )
+            rows = {int(row[0]): row for row in await cursor.fetchall()}
+            await cursor.close()
+            if winner_id not in rows:
+                return False
+            if winner_id == new_id and old_id in rows:
+                if ledger_content_digest(str(rows[winner_id][1])) != payload.get(
+                    "content_digest"
+                ):
+                    return False
+            # 先隐藏输家再恢复赢家；同连接的读取者也不会看到两条可召回行。
+            for memory_id, row in sorted(
+                rows.items(), key=lambda item: item[0] == winner_id
+            ):
+                metadata = safe_json_dict(row[2])
+                if memory_id == winner_id:
+                    if not metadata.pop("replacement_pending", False):
+                        continue
+                    status_key = (
+                        "previous_status"
+                        if memory_id == old_id
+                        else "replacement_status"
+                    )
+                    snapshot = payload.get(status_key) or {}
+                    for field in ("memory_status", "status", "status_changed_at"):
+                        metadata.pop(field, None)
+                        if field in snapshot:
+                            metadata[field] = snapshot[field]
+                else:
+                    metadata.update(
+                        memory_status="deleted",
+                        status="deleted",
+                        replacement_pending=True,
+                    )
+                await self._db.execute(
+                    "UPDATE documents SET metadata=?, updated_at=? WHERE id=?",
+                    (
+                        json.dumps(metadata, ensure_ascii=False),
+                        datetime.now(timezone.utc).isoformat(),
+                        memory_id,
+                    ),
+                )
+        if self._invalidate_cache:
+            self._invalidate_cache()
+        return True
+
+    async def _load_canonical_text(self, memory_id: int) -> str | None:
+        """读取 canonical 正文用于摘要比对；行不存在返回 ``None``（正文不落日志）。"""
+
+        if self._db is None:
+            return None
+        cursor = await self._db.execute(
+            "SELECT text FROM documents WHERE id = ? LIMIT 1",
+            (int(memory_id),),
+        )
+        try:
+            row = await cursor.fetchone()
+        finally:
+            with suppress(Exception):
+                await cursor.close()
+        return str(row[0] or "") if row is not None else None
+
+    async def _find_replacement_documents(self, old_id: int) -> list[int]:
+        """按 ``previous_id`` 反查替换新行，覆盖账本未记录 ``new_id`` 的窗口。
+
+        只用于替换收敛：``previous_id`` 是替换写端唯一写入的元数据锚点；
+        查询按 ID 升序返回，调用方在多于一个候选时放弃收敛。
+        """
+
+        if self._db is None:
+            return []
+        cursor = await self._db.execute(
+            """
+            SELECT id FROM documents
+            WHERE CASE WHEN json_valid(metadata)
+                  THEN json_extract(metadata, '$.previous_id') END
+                  IN (:old_id, :old_id_text)
+            ORDER BY id ASC
+            LIMIT 25
+            """,
+            {"old_id": int(old_id), "old_id_text": str(int(old_id))},
+        )
+        try:
+            rows = await cursor.fetchall()
+        finally:
+            with suppress(Exception):
+                await cursor.close()
+        return [int(row[0]) for row in rows]
 
     async def _repair_delete(
         self,
