@@ -453,7 +453,7 @@ class MaintenanceApiMixin:
         return deleted
 
     @staticmethod
-    def _parse_positive_int(value: Any) -> int | None:
+    def _parse_positive_document_id(value: Any) -> int | None:
         """解析向量文档行的整数 ID；无法证明时返回 None。"""
         if isinstance(value, bool):
             return None
@@ -486,7 +486,7 @@ class MaintenanceApiMixin:
                 if not isinstance(document, Mapping):
                     invalid_row = True
                     break
-                document_id = MaintenanceApiMixin._parse_positive_int(
+                document_id = MaintenanceApiMixin._parse_positive_document_id(
                     document.get("id")
                 )
                 if document_id is None:
@@ -539,7 +539,7 @@ class MaintenanceApiMixin:
                     invalid_row = True
                     break
                 doc_uuid = document.get("doc_id")
-                document_id = MaintenanceApiMixin._parse_positive_int(
+                document_id = MaintenanceApiMixin._parse_positive_document_id(
                     document.get("id")
                 )
                 if not doc_uuid or document_id is None:
