@@ -19,13 +19,16 @@ REBUILD_TRIGGER_REASONS = frozenset(
         "unknown",
     }
 )
-_REBUILD_STAGE_NAMES = frozenset(
+# 重建阶段名的唯一闭集来源：测量快照与 Prometheus 投影（rebuild_metrics）都必须引用它，
+# 任何新增阶段只在此处登记，避免两侧闭集漂移导致遥测落入 "unknown"。
+REBUILD_STAGE_NAMES = frozenset(
     {
         "canonical",
         "indexes",
         "bm25",
         "vector",
         "catalog",
+        "atoms",
         "graph",
         "evolution",
         "semantic_compression",
@@ -130,7 +133,7 @@ class RebuildMeasurement:
     ) -> None:
         """记录阶段安全标量；阶段名称和状态均为固定闭集。"""
 
-        stage_name = name if name in _REBUILD_STAGE_NAMES else "unknown"
+        stage_name = name if name in REBUILD_STAGE_NAMES else "unknown"
         safe_status = status if status in _REBUILD_STATUSES else "failed"
         self.stages[stage_name] = {
             "status": safe_status,
@@ -276,6 +279,7 @@ def closed_rebuild_observability(reason: Any) -> dict[str, Any]:
 
 
 __all__ = [
+    "REBUILD_STAGE_NAMES",
     "REBUILD_TRIGGER_REASONS",
     "RebuildMeasurement",
     "attach_rebuild_observability",

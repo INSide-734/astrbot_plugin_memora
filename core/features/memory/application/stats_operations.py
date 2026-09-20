@@ -15,9 +15,10 @@
 import asyncio
 import inspect
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 from astrbot.api import logger
 
@@ -73,6 +74,81 @@ def _recent_utc_date(value: Any, *, today: date) -> str | None:
     return memory_date.isoformat()
 
 
+def _canonical_connection(host: Any) -> Any:
+    """返回宿主的 canonical SQLite 连接；宿主未注入时返回 ``None``。
+
+    生产装配的 ``MaintenanceOperations`` 只注入私有 ``_db``；``MemoryEngine``
+    一类宿主暴露 ``db_connection``，两种宿主都必须兼容。这里按属性名探测而不是
+    绑定到某个 Mixin 实例，任何持有连接的宿主都能复用（含只把 ``self`` 当普通
+    对象传入的调用方）。
+    """
+
+    connection = getattr(host, "db_connection", None)
+    if connection is None:
+        connection = getattr(host, "_db", None)
+    return connection
+
+
+async def _read_allocated_id_watermark(connection: Any) -> int:
+    """读取 canonical ID 序列的已分配高水位；序列不可用时返回 0。
+
+    ``documents.id`` 由 ``AUTOINCREMENT`` 分配，``sqlite_sequence.seq`` 记录
+    曾经分配过的最大 ID（删除行不会回退）。表不是 AUTOINCREMENT 时该行缺失，
+    返回 0 表示水位线未知，调用方回退到存活最大 ID。
+    """
+
+    try:
+        cursor = await connection.execute(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'documents'"
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return 0
+    if row is None or row[0] is None:
+        return 0
+    try:
+        return max(0, int(row[0]))
+    except (TypeError, ValueError):
+        return 0
+
+
+async def read_canonical_id_snapshot(connection: Any) -> tuple[int, set[int]] | None:
+    """一次性读取 canonical 的存活 ID 集合与 ID 序列水位线。
+
+    返回 ``(水位线, 存活 ID 集合)``，供派生平面判定「来源是否已被物理删除」：
+    只有 ``source_id <= 水位线`` 且不在存活集合中的来源才可证明已删除。水位线取
+    已分配高水位而非存活最大 ID，因此刚刚删除的最新来源（ID 大于存活最大值）
+    仍然落在水位线内、可被回收；而扫描开始后新增的来源必然分配更大的 ID，
+    不会被误判成残留。
+
+    先读水位线再读存活集合：水位线早于集合快照，新增来源的 ID 只会大于水位线，
+    不会出现「ID 在集合里但不在水位线内」的组合。读取失败返回 ``None``，
+    调用方必须 fail-closed，不得据此回收任何派生行。
+    """
+
+    if connection is None:
+        return None
+    watermark = await _read_allocated_id_watermark(connection)
+    try:
+        cursor = await connection.execute("SELECT id FROM documents")
+        rows = await cursor.fetchall()
+        await cursor.close()
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        return None
+    alive_ids: set[int] = set()
+    for row in rows:
+        try:
+            alive_ids.add(int(row[0]))
+        except (TypeError, ValueError, IndexError):
+            continue
+    return max(watermark, max(alive_ids, default=0)), alive_ids
+
+
 def _build_daily_memory_counts(
     timestamps: Iterable[Any],
     *,
@@ -104,11 +180,7 @@ class StatsOperationsMixin:
             该日创建的 canonical 记忆条数；数据库未初始化时返回 0。
         """
 
-        connection = getattr(self, "db_connection", None)
-        if connection is None:
-            # 生产装配的 MaintenanceOperations 只注入私有 `_db`；
-            # 这里必须同时兼容两种宿主，否则日聚合会以 AttributeError 失败。
-            connection = getattr(self, "_db", None)
+        connection = _canonical_connection(self)
         if connection is None:
             return 0
         day_str = datetime.fromtimestamp(day_ts, tz=UTC).strftime("%Y-%m-%d")
@@ -430,6 +502,12 @@ class StatsOperationsMixin:
         逐来源隔离失败：确定不适用（legacy、mark_write、暂存/拒绝、缺逐事实证据）
         的来源计为 ``skipped`` 并继续处理同批后续合法来源；真实的存储/向量失败计为
         ``failed`` 且不伪装成跳过；``asyncio.CancelledError`` 继续传播。
+
+        重建只枚举当前 ``documents``，因此结束时还要对 skipped/不适用来源与可证明
+        已删除的来源执行源级残留回收（复用 ``graph_delete`` 的源级删除），清理计数
+        并入本阶段结果；已删除来源按扫描结束后的 canonical 快照（ID 序列水位线 +
+        存活 ID 集合）判定，扫描期间并发新增的来源不会被回收。清理失败只降级计入
+        ``residue_failed``，不掩盖重建本身的结果。
         """
 
         if self._graph_memory_manager is None:
@@ -445,6 +523,7 @@ class StatsOperationsMixin:
         failed = 0
         skipped_reasons: dict[str, int] = {}
         failed_reasons: dict[str, int] = {}
+        ineligible_ids: set[int] = set()
 
         while offset < total_count:
             docs = await self._faiss_db.document_storage.get_documents(
@@ -456,6 +535,7 @@ class StatsOperationsMixin:
                 break
 
             for doc in docs:
+                memory_id = int(doc["id"])
                 metadata = doc.get("metadata") or {}
                 if isinstance(metadata, str):
                     try:
@@ -470,6 +550,8 @@ class StatsOperationsMixin:
                     skipped_reasons[skip_reason] = (
                         skipped_reasons.get(skip_reason, 0) + 1
                     )
+                    # 不适用来源不得保留旧图行，统一进入源级残留回收。
+                    ineligible_ids.add(memory_id)
                     continue
                 content = str(doc.get("text") or "")
                 # revision_token 属于图派生快照；scope/privacy 等 canonical 边界
@@ -496,13 +578,92 @@ class StatsOperationsMixin:
 
             offset += len(docs)
 
+        residue_candidates = await self._collect_graph_residue_ids(ineligible_ids)
+        residue_cleaned, residue_failed = await self._cleanup_graph_residue(
+            residue_candidates, skipped_reasons, failed_reasons
+        )
+
         if self._invalidate_cache:
             self._invalidate_cache()
         return {
             "rebuilt": rebuilt,
             "skipped": skipped,
             "failed": failed,
+            "residue_candidates": len(residue_candidates),
+            "residue_cleaned": residue_cleaned,
+            "residue_failed": residue_failed,
             "skipped_reasons": skipped_reasons,
             "failed_reasons": failed_reasons,
             "total": rebuilt + skipped + failed,
         }
+
+    async def _collect_graph_residue_ids(self, ineligible_ids: set[int]) -> list[int]:
+        """汇总需要回收的图源级残留：不适用来源与可证明已删除的来源。
+
+        已删除来源的判定只使用**扫描结束后**一次性读出的 canonical 快照
+        （``read_canonical_id_snapshot``）：只有 ID 不超过快照水位线、且不在存活
+        ID 集合中的来源才可证明在快照之前就已删除。重建扫描期间并发新增的来源
+        不在快照水位线内，绝不会被当成残留回收。快照不可用时 fail-closed，
+        只回收本轮扫描已确定不适用的来源。
+        """
+
+        residue = set(ineligible_ids)
+        lister = getattr(self._graph_store, "list_residual_source_memory_ids", None)
+        if not callable(lister):
+            return sorted(residue)
+        snapshot = await read_canonical_id_snapshot(_canonical_connection(self))
+        if snapshot is None:
+            logger.warning(
+                "[GraphRebuild] canonical 快照不可用，跳过已删除来源回收，"
+                "reason_code=graph_residue_scan_failed"
+            )
+            return sorted(residue)
+        watermark, alive_ids = snapshot
+        list_residual = cast(Callable[..., Awaitable[list[int]]], lister)
+        try:
+            residual = await list_residual(alive_ids, max_source_memory_id=watermark)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "[GraphRebuild] 已删除来源枚举失败，reason_code=graph_residue_scan_failed"
+            )
+            return sorted(residue)
+        for memory_id in residual or ():
+            try:
+                residue.add(int(memory_id))
+            except (TypeError, ValueError):
+                continue
+        return sorted(residue)
+
+    async def _cleanup_graph_residue(
+        self,
+        residue_ids: list[int],
+        skipped_reasons: dict[str, int],
+        failed_reasons: dict[str, int],
+    ) -> tuple[int, int]:
+        """按源级删除回收图残留；返回 (已回收数, 失败数)，失败只降级记录。"""
+
+        if not residue_ids:
+            return 0, 0
+        batch_delete = getattr(
+            self._graph_memory_manager, "batch_delete_memories", None
+        )
+        if not callable(batch_delete):
+            reason = "graph_residue_cleanup_unavailable"
+            skipped_reasons[reason] = skipped_reasons.get(reason, 0) + len(residue_ids)
+            return 0, 0
+        delete_residue = cast(Callable[[list[int]], Awaitable[None]], batch_delete)
+        try:
+            await delete_residue(residue_ids)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            reason = "graph_residue_cleanup_failed"
+            failed_reasons[reason] = failed_reasons.get(reason, 0) + len(residue_ids)
+            logger.warning(
+                "[GraphRebuild] 图源级残留回收失败，异常类型=%s",
+                error.__class__.__name__,
+            )
+            return 0, len(residue_ids)
+        return len(residue_ids), 0

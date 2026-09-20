@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -128,12 +129,50 @@ async def test_search_memories_backfills_non_mark_write_over_k() -> None:
     assert [r.doc_id for r in results] == [2, 3]
 
 
+class _CanonicalRows:
+    """缓存命中重校验的最小 canonical 替身：按 ID 返回当前正文与状态。"""
+
+    def __init__(self, rows: dict[int, tuple[str, dict]]) -> None:
+        self._rows = rows
+
+    async def get_documents(
+        self,
+        metadata_filters: dict | None = None,
+        ids: list[int] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict]:
+        """复刻宿主文档存储的按 ID 批量读取形状。"""
+
+        del metadata_filters, offset
+        docs = [
+            {
+                "id": int(doc_id),
+                "text": self._rows[doc_id][0],
+                "metadata": self._rows[doc_id][1],
+            }
+            for doc_id in ids or []
+            if int(doc_id) in self._rows
+        ]
+        return docs[: int(limit)] if limit is not None else docs
+
+
 @pytest.mark.asyncio
 async def test_search_memories_cache_hit_skips_mark_write_access_times() -> None:
     """缓存命中路径不得为被隐藏的 mark_write 记忆更新访问时间。"""
 
     cached = [_result(1, "mark_write"), _result(2, None)]
-    engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
+    engine = MemoryEngine(
+        db_path=":memory:",
+        faiss_db=SimpleNamespace(
+            document_storage=_CanonicalRows(
+                {
+                    1: ("memory-1", {"gate_disposition": "mark_write"}),
+                    2: ("memory-2", {}),
+                }
+            )
+        ),
+    )
     engine._retrieval = MagicMock()
     engine._retrieval.cache_key = MagicMock(return_value="cache-key")
     engine._retrieval.get_cached = MagicMock(return_value=cached)

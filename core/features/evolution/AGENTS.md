@@ -48,6 +48,7 @@ flowchart LR
 9. 在线顺序固定为 direct/graph merge → relation expansion → Projection attachment → reranker → privacy filter。relation 只追加合法 canonical；Projection 只附着命中 primary 的候选，不改 content/doc_id/score/排序/候选数。
 10. 模型可见 Projection 仅 `type/summary/confidence`；source mapping、revision、scope/privacy/role、内部 ID/job 不得外泄。
 11. 普通 reader 故障回退 canonical baseline；单坏 bundle 隔离，`asyncio.CancelledError` 必须传播。
+12. `MemoryAtom` 是排序/前瞻/图信号的派生平面，不参与 relation/Projection 的权威判定：本 feature 的事实依据始终是 canonical source 与它的 revision。统一重建由 `DerivedRebuildCoordinator.rebuild_stages` 调度，evolution 阶段位于 atoms 与 graph 之后、semantic_compression 与 notes 之前；阶段失败只记 `derived_rebuild_failed` 降级，不删除 canonical。派生对象在 canonical 更新、删除或状态变更（含衰减归档）后按 revision 失效，读取面必须过滤失效来源；完整 owner 表与读取门矩阵见本地契约 `.trellis/spec/core/features/memory/backend/canonical-fact-ownership.md`（项目本地 spec 存储，不随仓库分发）。
 
 ## 依赖方向
 
@@ -63,6 +64,7 @@ MemoryEngine/Reflection post-commit hook → evolution application → evolution
 - 改 relation/Projection：同步 candidate generator、Consolidator schema、apply plan、review CAS、reader 与 formatter allowlist。
 - 改 source role/validity：同步 Store mapping、读写双重校验、canonical invalidation、语义压缩和 A/B/C fixtures。
 - 改公开导出：保持 domain/application/root 惰性，更新 feature contract 和无循环导入测试。
+- 改重建阶段：同步 `DerivedRebuildCoordinator` 的阶段注册与相对顺序、降级原因码（`derived_rebuild_failed` 等）和重排队测试；不要把 Provider 调用带进重建路径。
 
 ## 最窄验证入口
 

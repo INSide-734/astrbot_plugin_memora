@@ -49,6 +49,8 @@ COUNT_KEYS: Final[tuple[str, ...]] = (
     "injection_chars",
     "conditional_llm_calls",
     "graph_candidates_rejected",
+    # 缓存命中重校验剔除的失效候选数（canonical 已删除/改写/不可召回）
+    "dropped_stale_count",
 )
 BOOL_KEYS: Final[tuple[str, ...]] = (
     "cache_hit",

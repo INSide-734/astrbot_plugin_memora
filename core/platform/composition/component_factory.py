@@ -386,6 +386,12 @@ class ComponentFactory:
             llm_provider=llm_id if llm_id else None,
         )
         logger.info("MemoryProcessor 已初始化")
+        # Atom 是 canonical 的派生信号：重派生按当前 canonical 重新分类时必须
+        # 复用与写入同源的规则分类器，避免出现第二套事实判定。
+        memory_engine.memory_processor = memory_processor
+        atom_lifecycle_manager = getattr(memory_engine, "atom_lifecycle_manager", None)
+        if atom_lifecycle_manager is not None:
+            atom_lifecycle_manager.classifier = memory_processor
 
         memory_quarantine_store = MemoryQuarantineStore(
             data_dir_path / "memory_quarantine.sqlite3"

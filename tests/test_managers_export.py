@@ -161,6 +161,55 @@ class TestExporterEdgeCases:
     """Edge cases for exporter."""
 
     @pytest.mark.asyncio
+    async def test_export_jsonl_records_canonical_id_and_status(
+        self, tmp_path: Path
+    ) -> None:
+        """JSONL 记录带整数 canonical 身份与显式状态，且不新增来源字段投影。"""
+
+        memories = [
+            {
+                "id": 7,
+                "doc_id": "uuid-7",
+                "text": "归档记忆",
+                "metadata": {
+                    "memory_status": "archived",
+                    "scope_key": "session:canary-scope",
+                    "privacy_level": "confidential-canary",
+                    "revision_token": "revision-canary",
+                },
+            },
+            {"id": "8", "text": "字符串整数身份", "metadata": {}},
+            {"id": "mem-3", "text": "宿主 UUID 不是 canonical 身份", "metadata": {}},
+            {"id": None, "text": "缺失身份", "metadata": {"status": "dormant"}},
+        ]
+        cb = AsyncMock(return_value=memories)
+        exporter = MemoryExporter(get_all_memories_cb=cb)
+        output = str(tmp_path / "canonical.jsonl")
+        count = await exporter.export_jsonl(output)
+        assert count == 4
+
+        records = [
+            json.loads(line)
+            for line in Path(output).read_text(encoding="utf-8").strip().split("\n")
+        ]
+        assert [record["memory_id"] for record in records] == [7, 8, None, None]
+        assert [record["status"] for record in records] == [
+            "archived",
+            "active",
+            "active",
+            "dormant",
+        ]
+        # 保持全集语义：状态不用于过滤，只显式记录。
+        assert len(records) == len(memories)
+        # 新增投影只包含整数身份与状态，不把 scope/privacy/revision 带到顶层。
+        assert all(
+            set(record)
+            == {"id", "memory_id", "status", "content", "metadata", "exported_at"}
+            for record in records
+        )
+        assert all(isinstance(record["memory_id"], int | None) for record in records)
+
+    @pytest.mark.asyncio
     async def test_memory_without_text_field(self, tmp_path: Path) -> None:
         mem = [{"id": "x", "content": "only content", "metadata": {}}]
         cb = AsyncMock(return_value=mem)

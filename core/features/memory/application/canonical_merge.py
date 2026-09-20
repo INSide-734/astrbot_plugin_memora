@@ -74,6 +74,7 @@ from .canonical_merge_metadata import (
     normalize_metadata,
     union,
 )
+from .fact_text_alignment import FactTextAlignment, facts_aligned
 from .scope_lock_registry import ScopeLockRegistry
 
 DEDUP_REASON_MERGED: Final = "dedup_merged"
@@ -392,10 +393,16 @@ class CanonicalMergeCoordinator:
         )
         owner_scope = stored_scope(metadata)
         fact_evidence = merge_fact_evidence(metadata, candidate.metadata)
+        owner_alignment = facts_aligned(
+            fresh.get("text") if fresh else None,
+            metadata.get("key_facts"),
+            metadata.get("fact_source_evidence"),
+        )
         if (
             not fresh
             or not is_memory_recallable(metadata)
             or fresh.get("text") != document.content
+            or owner_alignment is not FactTextAlignment.ALIGNED
             or incoming_scope is None
             or owner_scope is None
             or not same_dedup_scope(incoming_scope, owner_scope)

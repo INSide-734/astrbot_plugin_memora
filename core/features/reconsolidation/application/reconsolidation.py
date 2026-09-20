@@ -18,6 +18,9 @@ from ..domain.errors import (
 from ..infrastructure.reconsolidation_store import ReconsolidationStore
 
 _EVIDENCE_TYPE = "llm_revision"
+# 事实表示的 metadata 键：正文被改写后由 canonical 引擎按新正文逐条重判定，
+# 再巩固不代为决定保留还是清理，只负责让引擎走「未提供事实」分支。
+_FACT_METADATA_KEYS = ("key_facts", "fact_source_evidence")
 
 
 class ReconsolidationManager:
@@ -162,11 +165,17 @@ class ReconsolidationManager:
             return {"applied": False, "reason_code": "apply_result_unverified"}
         return {"applied": True, "candidate": updated}
 
-    @staticmethod
-    def _build_apply_payload(candidate: dict[str, Any]) -> dict[str, Any]:
-        """从候选旧 metadata 构造 canonical apply payload。"""
+    @classmethod
+    def _build_apply_payload(cls, candidate: dict[str, Any]) -> dict[str, Any]:
+        """从候选旧 metadata 构造 canonical apply payload。
 
-        metadata = dict(candidate["old_metadata"])
+        ``key_facts``/``fact_source_evidence`` 描述的是旧正文的事实表示；提案正文
+        由 LLM 改写后通常已不逐字包含旧事实，原样携带会让引擎走「已提供事实」
+        分支并以 ``fact_evidence_mismatch`` 永久拒绝本次 apply。剥离后引擎按
+        「未提供」分支用新正文重判定，并在同一事务内清理与新正文矛盾的旧表示。
+        """
+
+        metadata = cls._apply_target_metadata(candidate["old_metadata"])
         metadata["reconsolidation_count"] = (
             int(metadata.get("reconsolidation_count", 0)) + 1
         )
@@ -226,9 +235,12 @@ class ReconsolidationManager:
                     )
                     blocked += 1
                     continue
+                # 与 _build_apply_payload 同口径：更换实现前写入的 intent 可能带着
+                # 旧正文的事实表示，重放时同样剥离，否则重试仍会被事实门拒绝。
+                target_metadata = self._apply_target_metadata(target_metadata)
                 if current_content == str(
                     candidate["proposed_content"]
-                ) and self._metadata_matches(current_metadata, target_metadata):
+                ) and self._apply_metadata_matches(current_metadata, target_metadata):
                     if current_revision == expected_revision:
                         await self._store.mark_apply_blocked(
                             candidate_id,
@@ -322,7 +334,7 @@ class ReconsolidationManager:
             not revision
             or revision == str(candidate["source_revision"])
             or content != str(candidate["proposed_content"])
-            or not self._metadata_matches(metadata, target_metadata)
+            or not self._apply_metadata_matches(metadata, target_metadata)
         ):
             await self._store.mark_apply_recovery_required(
                 candidate_id,
@@ -368,6 +380,34 @@ class ReconsolidationManager:
             except (TypeError, json.JSONDecodeError):
                 return {}
         return dict(metadata) if isinstance(metadata, dict) else {}
+
+    @staticmethod
+    def _apply_target_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+        """构造 apply 目标 metadata：剥离引擎按新正文重判定的事实表示键。"""
+
+        return {
+            key: value
+            for key, value in metadata.items()
+            if key not in _FACT_METADATA_KEYS
+        }
+
+    @classmethod
+    def _apply_metadata_matches(
+        cls,
+        current: dict[str, Any],
+        expected: dict[str, Any],
+    ) -> bool:
+        """核验 apply 结果 metadata：忽略由引擎决定去留的事实表示键。
+
+        apply 目标 metadata 已在构造时剥离事实表示键，而引擎写回后可能因新正文
+        仍逐字包含旧事实而原样保留它们。两侧都按同一口径比较，才能既发现第三方
+        对整行的编辑，又不把引擎的合法保留或清理误判为未提交。
+        """
+
+        return cls._metadata_matches(
+            cls._apply_target_metadata(current),
+            cls._apply_target_metadata(expected),
+        )
 
     @staticmethod
     def _metadata_matches(

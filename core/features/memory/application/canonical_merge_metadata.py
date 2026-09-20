@@ -5,16 +5,20 @@
 重建路径复用。`merge_fact_evidence` 是唯一带业务护栏的助手：只有两侧
 ``key_facts`` 与 ``fact_source_evidence`` 一一对应、逐条具备用户来源证据且
 候选事实是 owner 事实子集时才返回并集，否则返回 ``None`` 表示不可合并。
+
+事实表示的规范化与 ``key_facts`` ↔ ``fact_source_evidence`` 的一一对应判定
+统一由 `fact_text_alignment` 提供，与图、注入两条读取兜底共用同一口径。
 """
 
 from __future__ import annotations
 
 import json
-import unicodedata
 from collections.abc import Mapping
 from typing import Any, Final
 
 from ..domain.memory_atom import has_user_source_evidence
+from .fact_text_alignment import fact_evidence_paired
+from .fact_text_alignment import normalize_fact as fact_key  # 合并侧沿用既有名称
 
 MAX_SOURCE_EVIDENCE: Final = 32
 MAX_MERGED_IDEMPOTENCY_KEYS: Final = 16
@@ -102,10 +106,8 @@ def merge_fact_evidence(
         evidence = metadata.get("fact_source_evidence")
         if (
             not isinstance(facts, list)
-            or not facts
-            or any(not isinstance(fact, str) or not fact.strip() for fact in facts)
             or not isinstance(evidence, list)
-            or len(facts) != len(evidence)
+            or not fact_evidence_paired(facts, evidence)
             or not all(has_user_source_evidence(group) for group in evidence)
         ):
             return None
@@ -140,12 +142,6 @@ def merge_fact_evidence(
             return None
         merged.append(retained)
     return merged
-
-
-def fact_key(fact: str) -> str:
-    """规范化事实比较键（NFKC + casefold + 空白折叠）。"""
-
-    return " ".join(unicodedata.normalize("NFKC", fact).casefold().split())
 
 
 def merged_keys(metadata: Mapping[str, Any]) -> list[str]:

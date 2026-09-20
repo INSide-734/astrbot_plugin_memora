@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from typing import Any
 
+from ...memory.application.fact_text_alignment import normalize_fact
 from ...memory.domain.memory_atom import has_user_source_evidence
 from ...memory.graph.domain.models import (
     ExtractedGraph,
@@ -13,6 +14,7 @@ from ...memory.graph.domain.models import (
     GraphEntry,
     GraphNode,
 )
+from ...memory.infrastructure.atom_source_integrity import current_canonical_facts
 from .entity_resolver import EntityResolver
 
 # 时序边类型，表示事件发生的先后关系。
@@ -53,6 +55,61 @@ _CAUSAL_PATTERNS: list[tuple[str, str]] = [
 ]
 
 
+def validate_atom_graph_sources(
+    source_memory_id: int,
+    atoms: list[Any],
+    metadata: dict[str, Any] | None,
+) -> None:
+    """校验 Atom 父边界与用户来源证据，违反时抛出与既有相同的 ``ValueError``。
+
+    这是构图前的硬门（父 ID/scope/privacy/revision 与证据完整性），与「事实
+    是否仍属于当前 canonical」的过滤条件不同：硬门不满足属于来源损坏，必须
+    可见失败；事实不满足只是残留派生，按过滤处理。
+    """
+
+    boundary = GraphBoundary.from_metadata(metadata)
+    for atom in atoms:
+        atom_boundary = GraphBoundary(
+            getattr(atom, "parent_scope_key", None),
+            getattr(atom, "parent_privacy_level", None),
+            getattr(atom, "parent_revision", None),
+        )
+        if (
+            atom_boundary != boundary
+            or getattr(atom, "parent_memory_id", None) != source_memory_id
+        ):
+            raise ValueError("graph_boundary_mismatch")
+        if not has_user_source_evidence(getattr(atom, "source_evidence", None)):
+            raise ValueError("grounding_user_source_missing")
+
+
+def filter_atoms_by_current_facts(
+    atoms: list[Any] | None,
+    content: Any,
+    metadata: Any,
+) -> list[Any]:
+    """只保留内容仍属于当前 canonical 事实集合的 Atom。
+
+    事实集合按当前正文与 ``key_facts``/``fact_source_evidence`` 对齐后取出；
+    无法判定（缺事实表示、与正文矛盾或正文不可读）时不消费任何 Atom，由调用方
+    回落 canonical 正文派生，残留 Atom 内容不得进入图节点/entry/边。Atom 自身
+    的 parent revision/scope/privacy 门由加载路径（``AtomStore.get_by_parent``）
+    保证，本函数只补事实集合校验。
+    """
+
+    if not atoms:
+        return []
+    facts = current_canonical_facts(content, metadata)
+    if not facts:
+        return []
+    kept: list[Any] = []
+    for atom in atoms:
+        atom_content = getattr(atom, "content", None)
+        if isinstance(atom_content, str) and normalize_fact(atom_content) in facts:
+            kept.append(atom)
+    return kept
+
+
 def extract_graph_from_atoms(
     source_memory_id: int,
     atoms: list[Any],
@@ -73,20 +130,7 @@ def extract_graph_from_atoms(
     返回:
         保留人物、主题和事实类型的图快照。
     """
-    boundary = GraphBoundary.from_metadata(metadata)
-    for atom in atoms:
-        atom_boundary = GraphBoundary(
-            getattr(atom, "parent_scope_key", None),
-            getattr(atom, "parent_privacy_level", None),
-            getattr(atom, "parent_revision", None),
-        )
-        if (
-            atom_boundary != boundary
-            or getattr(atom, "parent_memory_id", None) != source_memory_id
-        ):
-            raise ValueError("graph_boundary_mismatch")
-        if not has_user_source_evidence(getattr(atom, "source_evidence", None)):
-            raise ValueError("grounding_user_source_missing")
+    validate_atom_graph_sources(source_memory_id, atoms, metadata)
     graph = ExtractedGraph()
     node_map: dict[str, GraphNode] = {}
     participant_values = _canonical_metadata_values(metadata, "participants")
@@ -425,4 +469,6 @@ __all__ = [
     "TEMPORAL_BEFORE",
     "TEMPORAL_DURING",
     "extract_graph_from_atoms",
+    "filter_atoms_by_current_facts",
+    "validate_atom_graph_sources",
 ]

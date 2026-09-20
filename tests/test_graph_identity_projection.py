@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.features.identity import StoredIdentity
+from tests.fact_evidence_helpers import fact_evidence
+
+_FACT_TEXT = "匿名事实"
 
 
 def _stored_identity(display_name: str) -> StoredIdentity:
@@ -165,7 +168,13 @@ async def test_graph_memory_focus_projects_identity_runtime_into_response() -> N
         return_value={
             "id": 42,
             "updated_at": "current-revision",
-            "metadata": {"scope_key": "scope-a", "privacy_level": "public"},
+            "metadata": {
+                "scope_key": "scope-a",
+                "privacy_level": "public",
+                # 聚焦图来源门与管理员画布同义：需要带用户来源证据的事实。
+                "key_facts": [_FACT_TEXT],
+                "fact_source_evidence": fact_evidence([_FACT_TEXT]),
+            },
         }
     )
 

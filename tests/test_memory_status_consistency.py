@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -214,7 +215,13 @@ async def test_lifecycle_transition_writes_both_status_fields() -> None:
     assert payload["memory_status"] == "dormant"
     assert payload["status"] == "dormant"
     assert payload["status_changed_at"] == 123.0
-    assert host._db.execute.await_args_list[1].args[1][1] == 123.0
+    # updated_at 是存储后端按 datetime 解析的 revision 列：写入的必须是 ISO 8601
+    # 文本（float 会让整批 get_documents 抛错），且落在同一个注入时刻。
+    written_updated_at = host._db.execute.await_args_list[1].args[1][1]
+    assert isinstance(written_updated_at, str)
+    assert datetime.fromisoformat(written_updated_at) == datetime.fromtimestamp(
+        123.0, tz=timezone.utc
+    )
     assert cache.get_cached(cache_key) is None
 
 
@@ -422,7 +429,19 @@ class _ReadApiStub:
 
 
 async def _seed_documents(db_path: Path) -> None:
-    """写入冲突新旧状态和仅旧字段的 canonical 记录。"""
+    """写入冲突新旧状态和仅旧字段的 canonical 记录（附带完整来源 provenance）。"""
+
+    def _metadata(**fields: object) -> str:
+        """构造通过 canonical 读取门 provenance 校验的 metadata JSON。"""
+
+        return json.dumps(
+            {
+                "scope_key": "session:test",
+                "privacy_level": "public",
+                "source_provenance_complete": True,
+                **fields,
+            }
+        )
 
     async with aiosqlite.connect(db_path) as db:
         await db.execute(
@@ -439,13 +458,7 @@ async def _seed_documents(db_path: Path) -> None:
                     1,
                     "doc-1",
                     "休眠记忆",
-                    json.dumps(
-                        {
-                            "memory_status": "dormant",
-                            "status": "active",
-                            "create_time": 2,
-                        }
-                    ),
+                    _metadata(memory_status="dormant", status="active", create_time=2),
                     "2026-08-15",
                     "2026-08-15",
                 ),
@@ -453,7 +466,7 @@ async def _seed_documents(db_path: Path) -> None:
                     2,
                     "doc-2",
                     "旧归档记忆",
-                    json.dumps({"status": "archived", "create_time": 1}),
+                    _metadata(status="archived", create_time=1),
                     "2026-08-14",
                     "2026-08-14",
                 ),
@@ -461,7 +474,7 @@ async def _seed_documents(db_path: Path) -> None:
                     3,
                     "doc-3",
                     "旧活跃别名记忆",
-                    json.dumps({"status": "current", "create_time": 3}),
+                    _metadata(status="current", create_time=3),
                     "2026-08-16",
                     "2026-08-16",
                 ),
@@ -729,6 +742,24 @@ class _RecallStatusApiStub:
 
         engine = MagicMock()
         engine.search_memories = AsyncMock(return_value=[Result()])
+
+        # canonical 行当前可召回（读取门放行）；结果 metadata 保留冲突字段，
+        # 用于验证响应投影仍优先读取 memory_status。回读走真实批量端口。
+        async def _get_documents(
+            metadata_filters=None, ids=None, limit=None, offset=None
+        ):
+            return [
+                {
+                    "id": 1,
+                    "text": "休眠记忆",
+                    "metadata": {"memory_status": "active"},
+                }
+                for _ in list(ids or [])
+            ]
+
+        engine.faiss_db = SimpleNamespace(
+            document_storage=SimpleNamespace(get_documents=_get_documents)
+        )
         return {"memory_engine": engine}, None
 
 

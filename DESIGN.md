@@ -7,8 +7,10 @@ stable boundaries that are already implemented and links implementation work bac
 module documentation, tests, and feature-specific design records. It is not a replacement
 for detailed feature specifications and does not introduce a second adaptive-injection spec.
 
-Memora turns chat events into durable `MemoryAtom` records and retrieves the useful subset
-for later requests while keeping storage, prompt cost, privacy, and runtime failure isolated.
+Memora turns chat events into durable canonical memories — `documents` rows with integer IDs —
+and retrieves the useful subset for later requests while keeping storage, prompt cost, privacy,
+and runtime failure isolated. Full-text, vector, graph, atom, catalog and domain projections are
+derived from those rows and never become a second source of truth.
 
 ## System boundaries
 
@@ -35,22 +37,49 @@ components. Shutdown is idempotent and closes producers before their stores.
 
 ## Memory model and lifecycle
 
-`MemoryAtom` is the durable unit shared by extraction, retrieval, lifecycle management, and
-diagnostics. An atom carries typed memory content and allowlisted metadata; indexes are
-derived data and can be rebuilt from durable storage.
+canonical fact object := a `documents` row. Its integer `id` is the only durable memory
+identity, `text` is the only authoritative fact text, and `metadata` carries status,
+scope/privacy, evidence and derived markers. The revision token is
+`COALESCE(updated_at, created_at)` and advances on every canonical write. Every other plane is
+derived from `documents`, holds no independent identity, and may be invalidated or rebuilt:
+
+| Plane | Identity | Fact/lifecycle authority | Invalidation and rebuild |
+|---|---|---|---|
+| canonical (`documents`) | integer `id` | yes — text, status, revision | not applicable |
+| FTS5/BM25 and FAISS | integer `id` | no (tokens/vectors) | rewritten with the source; `indexes` stage |
+| graph (`graph_*`, graph vectors) | `source_memory_id` | no | source scope/privacy/revision boundary; `graph` stage also reaps residue |
+| `memory_atoms` (+ its FTS) | parent `parent_memory_id` | no — signal only | re-derived on canonical change; `atoms` stage |
+| relations/Projections | source ID + revision | no | Store revision invalidation; `evolution` stage |
+| topic catalog | `memory_id` | no | dirty queue + source revalidation; `catalog` stage |
+| profile/knowledge/note | `DomainProvenance` source ID/revision | no | readers filter stale sources; `notes` stage rebuilds notes without a Provider |
+| API and export | integer `id` | no | validated per request; JSONL export carries explicit `memory_id` and `status` |
+
+`MemoryAtom` is a derived retrieval signal, not a memory unit. It is written after a canonical
+commit, re-derived from the current canonical facts (`rederive_for_sources`), consumed by the
+atom evidence route of passive recall (`atom_route_weight`, default 0.25) and by prospective
+recall and graph fact extraction, and rebuilt by the `atoms` stage of
+`DerivedRebuildCoordinator` (batches of 200, degradation code `atoms_rebuild_partial_failed`).
+Atom status/TTL only decides whether that signal participates in ranking or prospective
+candidates; it never changes whether a canonical fact exists, is visible, or is recalled, and
+stale atoms are dropped by the parent revision/scope/privacy filter before they contribute
+evidence. Model-visible text always comes from the current
+canonical fact set, so stale atom rows cannot carry rewritten facts into injection or graph
+nodes. The detailed scenario matrix lives in the local Trellis contract
+`.trellis/spec/core/features/memory/backend/canonical-fact-ownership.md` (project-local spec store, not tracked).
 
 The normal data path is:
 
-1. Extract normalized message content.
+1. Extract normalized message content and pass the pre-canonical quality gate.
 2. Maintain the conversation/session lifecycle.
-3. Generate or update MemoryAtom data through the configured processor.
-4. Persist through SQLite-backed stores and the coordinated write boundary.
-5. Update full-text, vector, and graph-derived indexes.
-6. Apply decay, archive, cleanup, and reconstruction through explicit lifecycle services.
+3. Commit one canonical memory through the coordinated write boundary; content updates are
+   two-phase replacements that keep at most one recallable owner.
+4. Derive full-text, vector, graph, atom, catalog and domain projections from the committed row.
+5. Apply decay, archive, cleanup, and reconstruction through explicit lifecycle services.
 
 SQLite is authoritative for structured durable state. FAISS and graph indexes accelerate
 retrieval but must not become the only copy of a memory. Multi-step writes use the shared
 write coordinator or a store-local transaction following the same serialization contract.
+Canonical-derived failures degrade and are repaired; they never roll back or delete canonical.
 
 ### 自动画像 proposal 闭环
 

@@ -288,6 +288,16 @@ async def test_rebuild_coordinator_runs_note_stage_after_canonical_verification(
     validator.rebuild_indexes = AsyncMock(return_value={"success": True})
     engine = MagicMock()
     engine.rebuild_graph_index = AsyncMock(return_value={"success": True})
+    engine.atom_store = MagicMock()
+    engine.atom_store.list_parent_ids = AsyncMock(return_value=[])
+    engine.atom_lifecycle_manager = MagicMock()
+    engine.atom_lifecycle_manager.rederive_for_sources = AsyncMock(
+        return_value={"rederived": 0, "purged": 0, "skipped": 0, "failed": 0}
+    )
+    engine.faiss_db = MagicMock()
+    engine.faiss_db.document_storage = MagicMock()
+    engine.faiss_db.document_storage.count_documents = AsyncMock(return_value=0)
+    engine.faiss_db.document_storage.get_documents = AsyncMock(return_value=[])
     engine.note_proposal_pipeline = MagicMock()
     engine.note_proposal_pipeline.rebuild_from_canonical = AsyncMock(
         return_value={"success": True, "created": 2, "errors": 0}

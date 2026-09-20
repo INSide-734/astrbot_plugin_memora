@@ -13,6 +13,7 @@ from ....features.memory.domain.revision import memory_revision
 from ....features.memory.graph.domain.models import GraphBoundary
 from ....shared.data_helpers import safe_parse_metadata
 from .response_utils import error_response
+from .shared_helpers import canonical_source_violation
 
 _ONEBOT11_PERSON_LABEL = re.compile(r"QQ:([1-9][0-9]{0,18})", re.ASCII)
 _POSITIVE_INT64_MAX = 9_223_372_036_854_775_807
@@ -59,12 +60,27 @@ class GraphApiMixin:
         memory_engine: Any,
         memory_id: int,
     ) -> GraphBoundary | None:
-        """只从 canonical memory metadata 构造图查询边界。"""
+        """只从当前通过读取门的 canonical memory metadata 构造图查询边界。
+
+        与管理员画布（``graph_canvas``）使用同一套 canonical 来源条件：可召回、
+        非 mark_write 且事实带用户来源证据；任何一项不满足都返回 ``None``，由
+        调用方返回稳定边界错误，派生图正文不得因边界字段匹配而对外可见。
+        """
         try:
             memory = await memory_engine.get_memory(memory_id)
         except asyncio.CancelledError:
             raise
         except Exception:
+            return None
+        if not isinstance(memory, dict):
+            return None
+        if (
+            canonical_source_violation(
+                memory.get("metadata"),
+                require_fact_evidence=True,
+            )
+            is not None
+        ):
             return None
         return GraphApiMixin._graph_boundary_from_memory(memory)
 

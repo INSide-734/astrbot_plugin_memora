@@ -331,6 +331,42 @@ async def test_merge_refuses_legacy_fact_evidence():
 
 
 @pytest.mark.asyncio
+async def test_merge_refuses_misaligned_fact_evidence_pairs():
+    """事实与逐事实证据未一一对应时沿用同一判定：不合并、不写回。"""
+
+    document = _document()
+    engine = _Engine(document)
+    outcome = await _coordinator(engine, _Search([_stored(document)])).merge(
+        _candidate(metadata={"fact_source_evidence": []})
+    )
+
+    assert outcome.status is MergeStatus.CONFLICT
+    assert engine.updates == []
+
+
+@pytest.mark.asyncio
+async def test_merged_evidence_matches_facts_across_width_and_case():
+    """规范化口径与读取兜底共用：全角/大小写差异仍命中同一事实。"""
+
+    fact = "项目使用 SQLite 存储会话记录"
+    document = _document(metadata={"key_facts": [fact]})
+    engine = _Engine(document)
+    outcome = await _coordinator(engine, _Search([_stored(document)])).merge(
+        _candidate(
+            metadata={
+                "key_facts": ["项目使用 ＳＱＬｉｔｅ　存储会话记录"],
+                "fact_source_evidence": [source_evidence(fact, message_id=77)],
+            }
+        )
+    )
+
+    assert outcome.merged
+    # 规范化不命中的话该候选事实不落在 owner 事实集内，合并会退回 CONFLICT。
+    evidence = engine.document["metadata"]["fact_source_evidence"]
+    assert {ref["message_id"] for ref in evidence[0]} == {1, 77}
+
+
+@pytest.mark.asyncio
 async def test_merged_keys_keep_newest_entries() -> None:
     """幂等键上限被占满时保留最新键，保证重放可以短路。"""
 
@@ -837,3 +873,21 @@ async def _raising_update(
     """模拟写回端口异常。"""
 
     raise RuntimeError("update unavailable")
+
+
+@pytest.mark.asyncio
+async def test_enforce_skips_owner_whose_facts_contradict_its_text() -> None:
+    """owner 事实已不在自身正文中时返回 CONFLICT，不把残留事实并入 canonical。"""
+
+    stale = "用户已经搬到上海"
+    document = _document(metadata={"key_facts": [stale]})
+    engine = _Engine(document)
+
+    outcome = await _coordinator(engine, _Search([_stored(document)])).merge(
+        _candidate(metadata={"key_facts": [stale]})
+    )
+
+    assert outcome.status is MergeStatus.CONFLICT
+    assert outcome.reason_code == DEDUP_REASON_MERGE_CONFLICT
+    assert engine.updates == []
+    assert engine.document["text"] == _CONTENT

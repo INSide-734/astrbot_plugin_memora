@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterable
 from typing import Any
 
 import aiosqlite
@@ -20,6 +21,7 @@ from ..domain.memory_atom import (
 from .atom_fts import AtomFTSMixin
 from .atom_source_integrity import (
     filter_atoms_by_current_sources,
+    load_canonical_documents,
     validate_atom_parent_sources,
 )
 from .base import BaseStore
@@ -594,6 +596,94 @@ class AtomStore(BaseStore, AtomFTSMixin):
                 await db.commit()
         return deleted_count
 
+    async def replace_by_parent(
+        self, parent_memory_id: int, atoms: list[MemoryAtom]
+    ) -> list[int]:
+        """在单个事务内替换某个父记忆的全部 Atom 行与 FTS 行。
+
+        重派生按当前 canonical 重新分类后调用：旧行（连同访问/强化/冷等运行态
+        历史）整体删除，新行按既有插入语义写入。事务失败或取消时回滚，不留下
+        半套行，也不保留已分配的 ``atom_id``。
+        """
+
+        parent_id = int(parent_memory_id)
+        async with self._connect() as db:
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await self._delete_rows_for_parent(db, parent_id)
+                prepared: list[MemoryAtom] = []
+                for atom in atoms:
+                    if int(atom.parent_memory_id) != parent_id:
+                        raise ValueError("atom_parent_mismatch")
+                    self._prepare_atom_for_insert(atom)
+                    prepared.append(atom)
+                if prepared:
+                    await validate_atom_parent_sources(db, prepared)
+                atom_ids: list[int] = []
+                for atom in prepared:
+                    atom_ids.append(await self._insert_atom(db, atom))
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                for atom in atoms:
+                    atom.atom_id = 0
+                raise
+        return atom_ids
+
+    @staticmethod
+    async def _delete_rows_for_parent(
+        db: aiosqlite.Connection, parent_memory_id: int
+    ) -> int:
+        """在调用方事务中删除某个父记忆的全部 Atom 行与 FTS 行。"""
+
+        cursor = await db.execute(
+            "SELECT id FROM memory_atoms WHERE parent_memory_id = ?",
+            (parent_memory_id,),
+        )
+        atom_ids = [int(row[0]) for row in await cursor.fetchall()]
+        if not atom_ids:
+            return 0
+        await db.execute(
+            """
+            DELETE FROM memory_atoms_fts
+            WHERE atom_id IN (SELECT value FROM json_each(:atom_ids_json))
+            """,
+            {"atom_ids_json": json.dumps(atom_ids)},
+        )
+        await db.execute(
+            """
+            DELETE FROM memory_atoms
+            WHERE id IN (SELECT value FROM json_each(:atom_ids_json))
+            """,
+            {"atom_ids_json": json.dumps(atom_ids)},
+        )
+        return len(atom_ids)
+
+    async def list_parent_ids(self) -> list[int]:
+        """列出仍持有 Atom 行的父记忆 ID，供重建残留枚举使用。"""
+
+        async with self._connect() as db:
+            cursor = await db.execute(
+                "SELECT DISTINCT parent_memory_id FROM memory_atoms"
+            )
+            rows = await cursor.fetchall()
+        return sorted(int(row[0]) for row in rows if row and row[0] is not None)
+
+    async def load_canonical_documents(
+        self, parent_ids: Iterable[int]
+    ) -> dict[int, dict[str, Any]]:
+        """读取父 canonical 行的正文与 metadata，供事实校验与重派生使用。"""
+
+        normalized = tuple(sorted({int(item) for item in parent_ids if int(item) > 0}))
+        if not normalized:
+            return {}
+        documents: dict[int, dict[str, Any]] = {}
+        async with self._connect() as db:
+            for index in range(0, len(normalized), self._SQLITE_BATCH_SIZE):
+                batch = normalized[index : index + self._SQLITE_BATCH_SIZE]
+                documents.update(await load_canonical_documents(db, batch))
+        return documents
+
     async def get_stats(self) -> dict[str, int]:
         """返回按状态统计的原子数量。"""
         async with self._connect() as db:
@@ -608,11 +698,38 @@ class AtomStore(BaseStore, AtomFTSMixin):
         return stats
 
     async def count_atoms(self) -> int:
-        """返回原子总数。"""
+        """返回原子总数（含陈旧与不可召回行，供健康诊断使用）。"""
         async with self._connect() as db:
             cursor = await db.execute("SELECT COUNT(*) FROM memory_atoms")
             row = await cursor.fetchone()
         return int(row[0]) if row else 0
+
+    async def count_current_atoms(self) -> int:
+        """统计父 canonical 当前有效的 Atom 数量。
+
+        只计入父 canonical 仍存在、revision/scope/privacy 与当前一致且可召回
+        （与 ``get_by_parent`` 同一 ``filter_current_sources`` 口径）的 Atom；
+        原始 ``count_atoms`` 保留给健康诊断。分批读取，避免一次载入全部行。
+        """
+
+        total = 0
+        last_id = 0
+        async with self._connect() as db:
+            db.row_factory = aiosqlite.Row
+            while True:
+                cursor = await db.execute(
+                    "SELECT * FROM memory_atoms WHERE id > ? ORDER BY id ASC LIMIT ?",
+                    (last_id, self._SQLITE_BATCH_SIZE),
+                )
+                rows = await cursor.fetchall()
+                if not rows:
+                    break
+                atoms = [self._row_to_atom(row) for row in rows]
+                total += len(await filter_atoms_by_current_sources(db, atoms))
+                last_id = int(rows[-1]["id"])
+                if len(rows) < self._SQLITE_BATCH_SIZE:
+                    break
+        return total
 
     async def query_upcoming_planned(
         self,

@@ -7,6 +7,7 @@ import pytest
 from core.features.memory.graph.domain.models import GraphBoundary
 from core.features.memory.graph.infrastructure.graph_store import GraphStore
 from core.features.recall.processors.graph_extractor import GraphExtractor
+from tests.fact_evidence_helpers import fact_evidence
 
 BOUNDARY = GraphBoundary("graph-test", "public", "r1")
 
@@ -41,6 +42,17 @@ def _make_atom(content: str, entities: list[str], memory_id: int = 1) -> MagicMo
     return atom
 
 
+def _canonical_metadata(content: str, **extra: object) -> dict:
+    """构造与正文对齐的父事实元数据，供 Atom 路径构图使用。"""
+
+    return {
+        **BOUNDARY.as_params(),
+        "key_facts": [content],
+        "fact_source_evidence": fact_evidence([content]),
+        **extra,
+    }
+
+
 def test_atom_graph_preserves_participant_and_topic_roles() -> None:
     """原子中的参与者应保持 person 类型，且人物类型优先于同名主题。"""
     extractor = GraphExtractor()
@@ -52,11 +64,11 @@ def test_atom_graph_preserves_participant_and_topic_roles() -> None:
     graph = extractor.extract(
         source_memory_id=1,
         content=atom.content,
-        metadata={
-            **BOUNDARY.as_params(),
-            "topics": ["图谱设计", "INSide_734"],
-            "participants": ["INSide_734"],
-        },
+        metadata=_canonical_metadata(
+            atom.content,
+            topics=["图谱设计", "INSide_734"],
+            participants=["INSide_734"],
+        ),
         atoms=[atom],
     )
 
@@ -74,22 +86,25 @@ def test_atom_graph_preserves_participant_and_topic_roles() -> None:
 def test_same_participant_uses_stable_person_key_across_memories() -> None:
     """不同记忆中的同一参与者应生成相同的 person 节点键。"""
     extractor = GraphExtractor()
-    metadata = {
-        **BOUNDARY.as_params(),
-        "topics": ["群聊"],
-        "participants": ["INSide_734"],
-    }
 
     first = extractor.extract(
         source_memory_id=1,
         content="第一条事实",
-        metadata=metadata,
+        metadata=_canonical_metadata(
+            "第一条事实",
+            topics=["群聊"],
+            participants=["INSide_734"],
+        ),
         atoms=[_make_atom("第一条事实", ["群聊", "INSide_734"])],
     )
     second = extractor.extract(
         source_memory_id=2,
         content="第二条事实",
-        metadata=metadata,
+        metadata=_canonical_metadata(
+            "第二条事实",
+            topics=["群聊"],
+            participants=["INSide_734"],
+        ),
         atoms=[_make_atom("第二条事实", ["群聊", "INSide_734"], 2)],
     )
 
@@ -108,17 +123,16 @@ async def test_shared_participant_connects_two_memories_in_subgraph(
     extractor = GraphExtractor()
     store = GraphStore(tmp_db_path)
     await store.initialize()
-    metadata = {
-        **BOUNDARY.as_params(),
-        "topics": ["群聊"],
-        "participants": ["INSide_734"],
-    }
 
     for memory_id, fact in ((1, "第一条事实"), (2, "第二条事实")):
         graph = extractor.extract(
             source_memory_id=memory_id,
             content=fact,
-            metadata=metadata,
+            metadata=_canonical_metadata(
+                fact,
+                topics=["群聊"],
+                participants=["INSide_734"],
+            ),
             atoms=[_make_atom(fact, ["群聊", "INSide_734"], memory_id)],
         )
         node_ids = await store.upsert_nodes(graph.nodes, boundary=BOUNDARY)

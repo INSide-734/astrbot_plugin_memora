@@ -475,3 +475,47 @@ async def test_reap_entries_verifies_source_and_keeps_other_sources():
     assert await retriever.reap_entries_for_memory(1) == 2
 
     assert set(backend.records) == {"other", "unproven"}
+
+
+@pytest.mark.asyncio
+async def test_list_residual_sources_reports_deleted_only(tmp_db_path):
+    """已删来源枚举以 canonical 快照为准，覆盖条目与边两类图行。"""
+
+    manager, store, _backend = await _manager(tmp_db_path)
+    boundary = await _source(store, 1)
+    await _source(store, 2, scope="scope-b")
+    await manager.index_memory(1, "Alice likes coffee", {})
+    await manager.index_memory(2, "Alice likes tea", {})
+
+    assert await store.list_residual_source_memory_ids({1, 2}) == []
+    assert await store.list_residual_source_memory_ids({1}) == [2]
+
+    # 只剩边残留（条目行已删）的来源同样必须被枚举为已删来源。
+    async with store._connect() as db:
+        await db.execute("DELETE FROM graph_entries WHERE source_memory_id = 2")
+        await db.commit()
+    assert await store.list_residual_source_memory_ids({1}) == [2]
+    assert boundary is not None
+
+
+@pytest.mark.asyncio
+async def test_list_unreferenced_vector_doc_ids_rechecks_references(tmp_db_path):
+    """孤儿向量核对只放行当前图表不引用的候选。"""
+
+    manager, store, backend = await _manager(tmp_db_path)
+    await _source(store, 1)
+    await manager.index_memory(1, "Alice likes coffee", {})
+    referenced = [
+        vector_doc_id for _key, vector_doc_id, _s, _r in await _entry_rows(store, 1)
+    ]
+
+    assert referenced
+    assert await store.list_unreferenced_vector_doc_ids(referenced) == []
+    assert await store.list_unreferenced_vector_doc_ids([999999]) == [999999]
+    assert backend.records != {}
+
+    # 删除条目后同一向量 ID 变成未被引用，允许清理。
+    async with store._connect() as db:
+        await db.execute("DELETE FROM graph_entries")
+        await db.commit()
+    assert await store.list_unreferenced_vector_doc_ids(referenced) == referenced

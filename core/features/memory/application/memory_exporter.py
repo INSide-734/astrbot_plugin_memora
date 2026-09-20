@@ -13,6 +13,38 @@ from typing import Any
 import aiofiles
 from astrbot.api import logger
 
+from ....shared.memory_status import effective_memory_status
+
+
+def _canonical_memory_id(value: Any) -> int | None:
+    """把 canonical 整数身份规范化为正整数；其它形态不猜测为身份。"""
+
+    if isinstance(value, bool) or value is None:
+        return None
+    memory_id: Any = value
+    if isinstance(memory_id, str):
+        try:
+            memory_id = int(memory_id.strip())
+        except ValueError:
+            return None
+    if not isinstance(memory_id, int) or memory_id <= 0:
+        return None
+    return memory_id
+
+
+def _status_metadata(value: Any) -> dict[str, Any]:
+    """把导出记录的 metadata 规范化为字典；损坏值按无状态字段处理。"""
+
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return {}
+        return decoded if isinstance(decoded, dict) else {}
+    return {}
+
 
 class MemoryExporter:
     """记忆导出器 — JSONL / Markdown。"""
@@ -25,10 +57,18 @@ class MemoryExporter:
 
     @staticmethod
     def _build_jsonl_line(mem: dict[str, Any]) -> str:
+        metadata = mem.get("metadata", {})
+        # 显式整数身份与状态：导出保持 canonical 全集语义（不按状态过滤），
+        # 由消费方按 memory_id/status 自行筛选，不依赖宿主 UUID 或状态缺省。
+        memory_id = _canonical_memory_id(mem.get("memory_id"))
+        if memory_id is None:
+            memory_id = _canonical_memory_id(mem.get("id"))
         record = {
             "id": mem.get("id"),
+            "memory_id": memory_id,
+            "status": effective_memory_status(_status_metadata(metadata)),
             "content": mem.get("text") or mem.get("content", ""),
-            "metadata": mem.get("metadata", {}),
+            "metadata": metadata,
             "exported_at": time.time(),
         }
         return json.dumps(record, ensure_ascii=False) + "\n"

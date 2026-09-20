@@ -19,7 +19,7 @@
 
 **Memora** is a comprehensive long-term memory plugin for [AstrBot](https://github.com/Soulter/AstrBot), providing end-to-end memory lifecycle management: from message capture, content extraction, and vector storage, to BM25+vector hybrid retrieval, memory decay & forgetting scheduling, graph memory, knowledge base, note system, user profiling, and more.
 
-With **MemoryAtom** as the core data unit, Memora enables fine-grained memory storage, retrieval, and evolution — allowing your Bot to truly "remember" every conversation.
+With SQLite-backed canonical memories as the single authoritative store, Memora keeps full-text, vector, graph and relation/projection views rebuildable — allowing your Bot to truly "remember" every conversation.
 
 ## Core Features
 

@@ -240,3 +240,66 @@ class GraphDeleteMixin(BaseStore):
             except BaseException:
                 await db.rollback()
                 raise
+
+    async def list_residual_source_memory_ids(
+        self,
+        canonical_memory_ids: set[int] | list[int] | tuple[int, ...],
+        *,
+        max_source_memory_id: int | None = None,
+    ) -> list[int]:
+        """列出图行仍引用、但可证明已从 canonical 删除的源记忆 ID（升序、去重）。
+
+        ``canonical_memory_ids`` 必须是扫描结束后一次性读出的**完整**存活 ID 集合，
+        ``max_source_memory_id`` 是同一次快照读到的 canonical ID 序列水位线
+        （已分配的最大 ID）。``documents.id`` 由 ``AUTOINCREMENT`` 单调分配且不复用，
+        因此扫描开始后新增来源的 ID 必然大于水位线，不会进入回收集合；而刚被删除的
+        最新来源仍在水位线内，可正常回收。判定口径与 Atom 残留回收完全一致。
+
+        省略水位线时退化为纯差集语义（只用于直接核对图行，不覆盖并发新增来源）；
+        重建路径必须传入水位线，否则重建期间新增来源的图行会被误当残留回收。
+        函数只读派生表，不触碰 canonical。
+        """
+
+        canonical_ids = {int(item) for item in canonical_memory_ids}
+        watermark = None if max_source_memory_id is None else int(max_source_memory_id)
+        async with self._connect() as db:
+            cursor = await db.execute(
+                """
+                SELECT DISTINCT source_memory_id FROM graph_entries
+                WHERE source_memory_id IS NOT NULL
+                UNION
+                SELECT DISTINCT source_memory_id FROM graph_edges
+                WHERE source_memory_id IS NOT NULL
+                """
+            )
+            graph_ids = {int(row[0]) for row in await cursor.fetchall()}
+        return sorted(
+            memory_id
+            for memory_id in graph_ids - canonical_ids
+            if watermark is None or memory_id <= watermark
+        )
+
+    async def list_unreferenced_vector_doc_ids(
+        self, candidate_vector_doc_ids: list[int]
+    ) -> list[int]:
+        """返回候选中仍未被任何图条目引用的图向量文档 ID（升序、去重）。
+
+        用于孤儿向量清理前的重新核对：只有当前图表不引用的候选才允许删除。
+        """
+
+        candidates = sorted({int(item) for item in candidate_vector_doc_ids})
+        if not candidates:
+            return []
+        unreferenced: list[int] = []
+        async with self._connect() as db:
+            for batch in self._chunked(candidates, self._SQLITE_BATCH_SIZE):
+                cursor = await db.execute(
+                    """
+                    SELECT vector_doc_id FROM graph_entries
+                    WHERE vector_doc_id IN (SELECT value FROM json_each(:ids_json))
+                    """,
+                    {"ids_json": json.dumps(batch)},
+                )
+                referenced = {int(row[0]) for row in await cursor.fetchall()}
+                unreferenced.extend(item for item in batch if item not in referenced)
+        return sorted(unreferenced)

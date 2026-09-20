@@ -363,6 +363,16 @@ async def test_coordinator_orders_catalog_before_graph() -> None:
 
     engine.rebuild_graph_index.side_effect = rebuild_graph
     engine.note_proposal_pipeline = None
+    engine.atom_store = MagicMock()
+    engine.atom_store.list_parent_ids = AsyncMock(return_value=[])
+    engine.atom_lifecycle_manager = MagicMock()
+    engine.atom_lifecycle_manager.rederive_for_sources = AsyncMock(
+        return_value={"rederived": 0, "purged": 0, "skipped": 0, "failed": 0}
+    )
+    engine.faiss_db = MagicMock()
+    engine.faiss_db.document_storage = MagicMock()
+    engine.faiss_db.document_storage.count_documents = AsyncMock(return_value=0)
+    engine.faiss_db.document_storage.get_documents = AsyncMock(return_value=[])
     manager = MagicMock(mode="disabled")
 
     result = await DerivedRebuildCoordinator(

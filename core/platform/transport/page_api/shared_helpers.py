@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, Final
 
+from ....features.memory.domain.memory_atom import has_user_source_evidence
+from ....features.memory.infrastructure.canonical_memory_reader import (
+    load_canonical_memories,
+)
 from ....features.observability.infrastructure.debug_reporter import (
     report_debug_exception,
 )
+from ....features.quality.application.gate_disposition_filter import is_mark_write
+from ....shared.memory_status import is_memory_recallable
 from ....shared.number_utils import safe_float
 from .response_utils import error_response, ok_response
+
+# canonical privacy 枚举：与 graph_canvas / topic_catalog 的来源校验同一集合。
+CANONICAL_PRIVACY_LEVELS: Final = frozenset({"public", "shared", "confidential"})
 
 
 def _page_api_logger():
@@ -18,6 +27,106 @@ def _page_api_logger():
     from . import page_api
 
     return page_api.logger
+
+
+def _metadata_mapping(metadata: Any) -> dict[str, Any] | None:
+    """把 dict 或 JSON 文本规范化为 metadata 字典；损坏值返回 ``None``。
+
+    已是 ``dict`` 时原样返回，不为判定复制调用方持有的字典。
+    """
+
+    if isinstance(metadata, dict):
+        return metadata
+    if isinstance(metadata, Mapping):
+        return dict(metadata)
+    if isinstance(metadata, str):
+        try:
+            decoded = json.loads(metadata)
+        except (TypeError, ValueError):
+            return None
+        return dict(decoded) if isinstance(decoded, Mapping) else None
+    return None
+
+
+def _has_aligned_user_fact_evidence(metadata: Mapping[str, Any]) -> bool:
+    """判断 key_facts 与逐事实 fact_source_evidence 是否对齐且都有用户来源。"""
+
+    facts = metadata.get("key_facts")
+    evidence = metadata.get("fact_source_evidence")
+    return bool(
+        isinstance(facts, list)
+        and facts
+        and all(isinstance(fact, str) and fact.strip() for fact in facts)
+        and isinstance(evidence, list)
+        and len(evidence) == len(facts)
+        and all(has_user_source_evidence(refs) for refs in evidence)
+    )
+
+
+def canonical_source_violation(
+    metadata: Any,
+    *,
+    require_fact_evidence: bool = False,
+) -> str | None:
+    """按 canonical 当前状态判定来源是否可读，返回稳定原因码或 ``None``。
+
+    条件与管理员画布（``graph_canvas``）的来源校验、目录候选校验同义：可召回
+    （active 且非 ``summary_source_orphan``）、非 mark_write；``require_fact_evidence``
+    为真时额外要求 ``key_facts`` 与逐事实用户来源证据对齐。原因码只表达判定
+    类别，不携带 scope/privacy/revision 取值，也不进入响应。
+
+    参数:
+        metadata: canonical 记录的 metadata 映射或 JSON 文本。
+        require_fact_evidence: 是否额外要求事实证据对齐。
+
+    返回:
+        不可读时返回稳定原因码，可读时返回 ``None``。
+    """
+
+    resolved = _metadata_mapping(metadata)
+    if resolved is None:
+        return "canonical_metadata_invalid"
+    if not is_memory_recallable(resolved):
+        return "canonical_not_recallable"
+    if is_mark_write(resolved):
+        return "canonical_mark_write"
+    if require_fact_evidence and not _has_aligned_user_fact_evidence(resolved):
+        return "canonical_fact_evidence_missing"
+    return None
+
+
+async def load_canonical_records(
+    memory_engine: Any,
+    memory_ids: Sequence[int],
+) -> dict[int, dict[str, Any]]:
+    """按 canonical 整数 ID 一次批量回读记录，只做本地主键查询。
+
+    走 canonical 读取端口的批量入口（``faiss_db.document_storage``），不再逐条
+    调用单行读取：读取端口缺失或读取异常都会抛出，由调用方按 fail-closed 处理，
+    读取故障不得伪装成「无行」或部分成功。
+
+    参数:
+        memory_engine: 提供 canonical 读取端口的记忆引擎。
+        memory_ids: 待回读的整数 ID 序列，重复项只读一次。
+
+    返回:
+        整数 ID 到 canonical 记录的映射；不存在的 ID 不进入映射。
+
+    异常:
+        RuntimeError: 引擎缺少 canonical 批量读取端口。
+    """
+
+    unique_ids = list(dict.fromkeys(memory_ids))
+    if not unique_ids:
+        return {}
+    faiss_db = getattr(memory_engine, "faiss_db", None)
+    if faiss_db is None or getattr(faiss_db, "document_storage", None) is None:
+        raise RuntimeError("canonical_reader_unavailable")
+    return await load_canonical_memories(
+        faiss_db,
+        unique_ids,
+        getattr(memory_engine, "db_connection", None),
+    )
 
 
 class SharedPageApiHelpersMixin:
@@ -374,4 +483,9 @@ class SharedPageApiHelpersMixin:
         }
 
 
-__all__ = ["SharedPageApiHelpersMixin"]
+__all__ = [
+    "CANONICAL_PRIVACY_LEVELS",
+    "SharedPageApiHelpersMixin",
+    "canonical_source_violation",
+    "load_canonical_records",
+]

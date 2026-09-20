@@ -23,7 +23,7 @@ Memory Evolution 的 Gate、候选生成、LLM proposal、worker、Projection �
 
 - 生产端口：`build_recent_document_search` 用 `documents` 表已有的 `json_extract(metadata, '$.session_id')` 索引做 `ORDER BY id DESC LIMIT N` 有界查询，scope/privacy/主体过滤留在 Python 侧，不新增索引；`load_memory`/`update_memory` 复用 `MemoryEngine` 既有方法。
 - 并发：进程内按 `session + scope_key` 的 `asyncio.Lock` 串行化「检测 → 合并」，覆盖总结窗口的候选并发；跨进程并发不在支持范围（单实例单 DB）。
-- 失败语义：检测异常、目标正文在检测后被改写、CAS 冲突、写回异常一律 fail-open，由调用方回落普通 canonical 写入；写回返回 False 时以回读 `merged_idempotency_keys`/`merge_count` 判定是否已提交，避免在已合并的情况下插入重复 canonical。
+- 失败语义：检测异常、目标正文在检测后被改写、CAS 冲突、写回异常一律 fail-open，由调用方回落普通 canonical 写入；写回返回 False 时以回读 `merged_idempotency_keys`/`merge_count` 判定是否已提交，避免在已合并的情况下插入重复 canonical。既有 owner 的 `key_facts`/`fact_source_evidence` 与自身正文不对齐（`facts_aligned` 非 `aligned`）时不允许强化合并，按冲突记为 `dedup_merge_conflict` 并回落新增，避免用错误事实强化旧记录。
 - 默认关闭：`memory_dedup.mode=off` 不发起任何近重复查询；`observe` 只记录 `dedup_observed`；`enforce` 才写回。
 - 语义扩展（默认关闭）：`memory_dedup.semantic_mode=off|observe|enforce` 与 `semantic_threshold`（默认 0.9）只在 lexical MISS/FACT_OVERLAP 之后调用 `quality` 的 `semantic_duplicate_detector` 窄端口，窗口键取候选的 `source_digest`（缺省退化为幂等键），`SemanticRequestBudget` 按窗口固定 8 次；候选必须回读 canonical 并通过作用域/可召回/长度/事实/用户来源证据护栏，`observe` 只记录、`enforce` 复用同一 owner CAS 写回。端口缺失、预算耗尽与 provider 异常都 fail-open 回落普通写入，语义 outcome 只记入 `semantic_observe`/`semantic_enforce` 模式。
 - 模块结构：纯 metadata 规范化/并集/幂等键助手在 `application/canonical_merge_metadata.py`（`canonical_merge.py` 继续 re-export `MAX_SOURCE_EVIDENCE`/`MAX_MERGED_IDEMPOTENCY_KEYS`），协调器只保留检测、终态分派与写回。
@@ -63,8 +63,9 @@ graph TD
 | `initialize()` / `close()` | 打开/关闭 SQLite 与图向量库，创建索引组件和可选子系统；`initialize()` 不执行持久化操作恢复，追踪并取消 `_pending_tasks` |
 | `recover_persisted_operations()` | 在 canonical 与图文档存储就绪后，按既有重试与取消语义恢复 WriteOpJournal 和 reconsolidation；未就绪时静态失败且不产生副作用 |
 | `search_memories(...)` | 经缓存、双路/混合检索、触发词、情绪/季节和链式扩展返回 `HybridResult` |
-| `update_memory(...) -> bool` | 元数据原地更新；内容更新采用“新建后删除旧项”，删除失败则删除新项补偿 |
-| `delete_memory(...) -> bool` | 先删文档索引，再清理图和原子；子资源失败进入修复队列 |
+| `update_memory(...) -> bool` | 元数据原地更新；无 `expected_revision` 的内容更新走两阶段替换（暂存不可召回新行 → 单事务切换可见性 → 删除旧行），失败按账本收敛并以 `content_replace_failed` 报告 |
+| `find_replacement_memory_id(old_id)` | 替换新 ID 的唯一查询端口；只在替换账本已提交且新行非暂存时返回，未收敛/已删/无法证明都返回 `None` |
+| `delete_memory(...) -> bool` | 先删文档索引，再清理图和原子；子资源失败进入修复队列；任意返回路径都先失效检索缓存 |
 | `batch_delete_memories[_detailed]()` | 每 200 个 ID 分批删除并返回计数/失败明细 |
 | `apply_daily_decay()` / `cleanup_old_memories()` | 重要性衰减和 `ACTIVE → DORMANT → ARCHIVED → 物理删除` |
 | `maintain_storage()` / `rebuild_graph_index()` | 存储维护和图产物重建 |
@@ -110,9 +111,13 @@ sequenceDiagram
 ```
 
 - 这不是跨 SQLite/FAISS 的单一 ACID 事务。`memory_write_ops` 是跨存储 saga 日志；`repair_incomplete()` 尽力重放 `pending`/`needs_repair` 的 add、delete、batch delete 和 graph reindex。
+- 无 `expected_revision` 的正文更新是两阶段替换，保证任一时刻最多一条可召回 owner：新行先以 `replacement_pending`（`status=deleted`，不可召回、不建图、不强化）写入 → 账本 `replacement_created` → 单事务切换可见性（赢家恢复原状态、输家隐藏）→ 删除旧行后 `replacement_committed`；删除未完成记 `replacement_cleanup_pending`，补偿成功记 `replacement_rolled_back`，补偿失败记 `replacement_rollback_failed`（`needs_repair`），异常中断记 `replacement_aborted`。repair 只在两行并存时按账本 `content_digest` 判定赢家（匹配 → 删旧行；不匹配 → 删新行，旧行保持权威），单边存在按事实收敛，绝不复活已删除内容；`find_replacement_memory_id(old_id)` 是替换新 ID 的唯一查询端口。并发对同一行再次发起替换时以 `content_replace_pending` 拒绝。
+- canonical 插入成功后立即登记 `documents_committed`（含 `content_digest`/预览）；后续 FTS/FAISS 阶段失败时 `add_memory` 仍返回已提交的整数 `doc_id`，并把该操作标为 `needs_repair`（`index_stage_degraded`），调用方不得把派生失败当成写入失败重试；只有 canonical 插入本身失败才向上报错。
 - `add_memory()` 在 canonical 成功后重新读取 source revision，并为 Atom 绑定 parent revision/scope/privacy；来源读取失败时只进入可修复派生失败，不把未绑定 Atom 写入生产 canonical 库。
 - 总结来源 fence 写入是两阶段的：`add_memory(source_fence=...)` 先落不可召回的暂存行（`summary_source_orphan/pending`、账本 step=`source_staged`，不建图、不强化既有 Atom、不触发干扰/触发词/演化/SSE），来源 owner 校验通过后在单个 canonical 事务内激活并同事务登记账本 `derived_pending`，再由 `finalize_add_derivation` 复用修复路径补图并收口同一 add 操作；接受与拒绝都按 `source_fence` token + 暂存状态做 CAS，拒绝仅在本轮 CAS 成功时收口账本，未接受来源既不派生也不推进 summary cursor。
 - canonical metadata 更新默认携带入口读到的 revision 做 CAS（失败原因码 `source_revision_mismatch`），无语义变化时不重建图；测试效应与自动干扰属于运行态维护，只经 `reinforce_recall_state`/`apply_interference_decay` 白名单入口写入，不推进 revision。
+- 事实文本单 owner：`documents.text` 是唯一权威正文，`key_facts`/`fact_source_evidence` 只是同一声明的准入元数据，判据是 `application/fact_text_alignment.py` 的三态（`aligned`/`misaligned`/`undeterminable`）。CAS 正文更新未提供事实字段时在同一事务清除与新正文矛盾的旧事实字段；调用方提供任一事实字段时只按本次提供的那对值判定（不与旧表示混合拼出「新事实 + 旧证据」），不构成对齐表示即以 `fact_evidence_mismatch` 拒绝且不改 canonical；正文已变化时 `canonical_summary` 必须与正文一致（提供值与新正文不一致时同样同步为新正文，绝不提交「新正文 + 旧摘要」）；读取侧（图 fact 抽取含结构化 `graph_extraction` 的 fact 实体、前瞻注入、Atom 事实集合）在消费前校验事实仍属当前正文，不满足按「无事实元数据」回落 canonical 正文，不整条拒绝。
+- 检索缓存命中不再盲信缓存：按结果 `doc_id` 批量回读 canonical（批量端口优先取 SQLite 原始 revision，与候选/派生快照同源），剔除已删除、正文已改写、不可召回、mark_write、缺少用户证据、被本次请求可见性排除（群会话机密行、请求 `query_scope` 与行当前 scope/privacy 不一致），或 revision 已过期的条目（缓存建立时先记录读取窗口起始的缓存代际，发布前代际已前进则整次不发布并剥离未证明的 `derived_projections`；发布时按 `doc_id` 一次批量回读 canonical，仅当候选正文与当前 canonical 正文一致才把权威 revision 快照写进缓存副本，命中时条目携带 `revision_token` 即与行当前 revision 同源比较，无 token 时按同一 `metadata.updated_at` 快照比较；条目完全没有可比快照而 canonical 行已有快照时 fail-closed 视为失效，两侧都无快照时保持现状）并计入 `dropped_stale_count`——失效条目连同其携带的旧派生投影一并剔除；任何推进 revision 的 canonical 写入（正文/语义 metadata 更新、替换、删除、状态维护）都会经 `invalidate_cache` 使缓存整代失效；canonical 回读不可用时按未命中回落实时检索，不返回无法证明仍属当前 canonical 的正文。
 - `memory_write_ops` 的 failed atom payload 保留父来源快照；repair 只接受仍匹配当前 revision 的现代载荷，旧载荷最多恢复为不可主动召回的兼容行。add 修复仅在正文可证明未变时才允许按当前 revision 收敛：add 账本载荷同时记录 `content_preview`（正文前 500 字符）与 `content_digest`（`CanonicalMemoryCommitted.digest_content(content)[:32]`）；有摘要时按摘要比对，没有摘要时只有「预览短于 500 字符且等于当前全文」才能收敛（预览达到 500 字符说明它是被截断的前缀，无法证明第 500 字符之后未变），摘要不匹配或前缀被截断一律保持 `needs_repair`/`source_stale` 且不建图。
 - 原子批量失败后逐条补写，仅仍失败的原子进入修复载荷。图失败不撤销已建文档，而是标记修复。
 - 删除先调用 `HybridRetriever.delete_memory()`；随后图或原子清理失败不会把主删除改成失败，但日志保留 `needs_repair`。delete 修复在清理图/原子前必须在写账本自身的 canonical 连接上按 `documents.id` 严格确认文档已不存在（明确查无行才清理；仍存在或无法确认时写 `needs_repair`/`source_alive` 并原样保留派生数据）。展示型 `get_memory` 会把读取异常吞成 `None`，不得当作“已删除”的证明。
@@ -164,8 +169,9 @@ sequenceDiagram
 |---|---|---|
 | 会话 | `features/conversation/application/`（`conversation_manager.py` 及 6 个 mixin） | `ConversationStore` 上层 LRU、上下文窗口、事件适配和元数据；缓存由 `_cache_lock` 保护 |
 | 图同步 | `graph_memory_manager.py`、`features/memory/graph/infrastructure/` | 删除旧图产物后重建节点/边/条目与图向量；向量 ID 最终回写 SQLite |
-| 原子生命周期 | `atom_lifecycle_manager.py`、`features/memory/application/atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理 |
-| 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护 |
+| 原子生命周期（派生信号） | `atom_lifecycle_manager.py`、`features/memory/application/atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理。Atom 状态/TTL 只决定该信号是否参与排序/前瞻，不改变 canonical 事实的存在、可见性与召回；canonical 变更后由 `rederive_for_sources(ids, reason)` 按当前事实替换该父的 Atom 行与 FTS（运行态历史随之重置），统计端口是 `count_current_atoms()`（父存在、revision/scope/privacy 匹配且可召回），原始 `search_fts`/`search_fts_by_type` 只服务维护与强化 |
+| 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护；状态批更新提交后统一失效派生面（relation/projection 失效、图源级残留回收、Atom 重派生），失败只降级计数 |
+| 派生重建 | `core/platform/composition/derived_rebuild_coordinator.py` | 固定顺序 canonical → indexes → catalog → atoms → graph → evolution → semantic_compression → notes；命令与 Page API 经 `rebuild_stages` 单阶段入口（端口缺失记 `rebuild_coordinator_unavailable`）；atoms 阶段按 200 分页重派生并回收无父残留，失败降级为 `atoms_rebuild_partial_failed`；owner 表、读取门矩阵、替换收敛与原因码见本地契约 `.trellis/spec/core/features/memory/backend/canonical-fact-ownership.md`（项目本地 spec 存储，不随仓库分发） |
 | 画像 | `features/profiles/application/`、`memory_engine_profile_hooks.py` | 管理员编辑使用修订值冲突检测；canonical 写后自动 proposal 仅绑定唯一可信主体，标签与偏好携带 derived provenance 并走存储层原子事务 |
 | 知识/笔记 | `features/knowledge/application/`、`features/notes/application/`、`memory_engine_domain_hooks.py` | 知识与笔记 canonical 写后 proposal、来源约束幂等与失效；自动笔记可无 Provider 重建，人工 CRUD、软删和版本历史保持领域权威 |
 | 异常检测 | `anomaly_detector.py`、`stats_operations.py` | 按 UTC 日聚合 canonical 创建量；只用当前日之前的完整窗口计算 3-sigma 基线，待投递告警随状态恢复，同一天只写一条脱敏诊断事件 |
@@ -195,7 +201,7 @@ sequenceDiagram
 
 - `asyncio.CancelledError` 必须重新抛出；普通检索增强、画像排序、可选维护可降级，但持久化主写失败必须显式失败或进入 `needs_repair`。
 - 内容为空：`add_memory()` 抛 `ValueError`；未初始化核心检索器：抛/返回失败，不能静默写半套数据。
-- 内容更新是新 ID 替换旧 ID，调用方不得假定 `memory_id` 永久不变。
+- 内容更新是新 ID 替换旧 ID，调用方不得假定 `memory_id` 永久不变；需要定位替换后的当前 owner 时只用 `find_replacement_memory_id(old_id)`，不得按时间或相似度猜测。
 - `cleanup_old_memories()`、可选管理器和状态文件通常采用尽力而为语义；返回 0/空结果不等于数据一致性已验证。
 - `BackupManager` 只在 canonical SQLite 快照、manifest 和 quick check 全部成功后发布 `ready` 备份；失败不得发布半成品。`scheduled`、`pre_migration` 与 `pre_restore` 允许按保留期自动 prune，`manual` 和 `version_change` 必须显式删除。
 
@@ -212,6 +218,7 @@ sequenceDiagram
 
 ```bash
 python -m pytest -q tests/test_managers_memory_engine.py tests/test_managers_memory_lifecycle.py tests/test_managers_memory_crud.py tests/test_managers_memory_batch.py
+python -m pytest -q tests/test_canonical_write_recovery.py tests/test_canonical_read_gates_cache.py tests/test_fact_text_alignment_crud.py tests/test_derived_rebuild_coordinator.py
 python -m pytest -q tests/test_managers_write_coordinator.py tests/test_managers_write_journal.py tests/test_managers_write_serial.py
 python -m pytest -q tests/test_managers_decay.py tests/test_managers_stats.py tests/test_managers_schema.py
 python -m pytest -q tests/test_managers_conversation.py tests/test_managers_message.py tests/test_managers_session.py tests/test_managers_range.py tests/test_managers_event.py tests/test_managers_sender.py

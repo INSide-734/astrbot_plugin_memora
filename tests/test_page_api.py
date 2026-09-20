@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiosqlite
 import pytest
 
 from core.features.cognition.jargon.jargon_store import JargonStore
 from core.features.cognition.jargon.models import JargonMeaning
+from core.features.memory.application.memory_engine import MemoryEngine
+from core.features.memory.infrastructure.schema_manager import SchemaManager
 from core.platform.transport.page_api.page_api import (
     PAGE_API_ALIAS_PREFIXES,
     PAGE_API_PREFIX,
@@ -19,6 +23,7 @@ from core.platform.transport.page_api.page_api import (
     PluginPageApi,
 )
 from core.platform.transport.page_api.response_utils import error_response, ok_response
+from core.shared.sql import MEMORY_FTS_CREATE_SQL
 
 # ---------------------------------------------------------------------------
 # Module-level constants
@@ -112,6 +117,7 @@ class TestMemoryFullFormUpdate:
         engine.add_memory = AsyncMock(return_value=8)
         engine.delete_memory = AsyncMock(return_value=True)
         engine.update_memory = AsyncMock(return_value=True)
+        engine.find_replacement_memory_id = AsyncMock(return_value=8)
         api = PluginPageApi(SimpleNamespace())
         api._maintenance_write_guard = MagicMock(return_value=None)
         api._ensure_plugin_ready = AsyncMock(
@@ -162,6 +168,8 @@ class TestMemoryFullFormUpdate:
 
     @pytest.mark.asyncio
     async def test_memory_full_form_applies_content_and_metadata_once(self) -> None:
+        """内容+其它字段一次提交：经引擎替换，页面不再自行 add/delete。"""
+
         api, engine = self._api_and_engine()
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
@@ -183,25 +191,106 @@ class TestMemoryFullFormUpdate:
             result = await api.update_memory()
 
         assert result["status"] == "ok"
-        assert engine.add_memory.await_count == 1
-        assert engine.delete_memory.await_count == 1
-        engine.update_memory.assert_not_awaited()
-        added = engine.add_memory.await_args.kwargs
-        assert added["content"] == "New content"
-        assert added["importance"] == 0.8
-        assert added["metadata"]["importance"] == 0.8
-        assert added["metadata"]["memory_type"] == "factual"
-        assert added["metadata"]["status"] == "active"
-        assert added["metadata"]["update_reason"] == "corrected by administrator"
-        assert [item["field"] for item in added["metadata"]["update_history"]] == [
+        assert result["data"]["old_memory_id"] == 7
+        assert result["data"]["new_memory_id"] == 8
+        engine.update_memory.assert_awaited_once()
+        assert engine.update_memory.await_args.args[0] == 7
+        updates = engine.update_memory.await_args.args[1]
+        assert updates["content"] == "New content"
+        assert updates["importance"] == 0.8
+        assert updates["metadata"]["importance"] == 0.8
+        assert updates["metadata"]["memory_type"] == "factual"
+        assert updates["metadata"]["status"] == "active"
+        assert updates["metadata"]["previous_content"] == "Old content"
+        assert updates["metadata"]["update_reason"] == "corrected by administrator"
+        assert [item["field"] for item in updates["metadata"]["update_history"]] == [
             "content",
             "importance",
             "type",
             "status",
         ]
-        assert {item["reason"] for item in added["metadata"]["update_history"]} == {
+        assert {item["reason"] for item in updates["metadata"]["update_history"]} == {
             "corrected by administrator"
         }
+        engine.find_replacement_memory_id.assert_awaited_once_with(7)
+        engine.add_memory.assert_not_awaited()
+        engine.delete_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_legacy_content_routes_through_engine(self) -> None:
+        """单字段 content 路径同样经引擎替换，并回读替换后的新 owner。"""
+
+        api, engine = self._api_and_engine()
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "field": "content", "value": "New content"}
+        )
+
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
+            result = await api.update_memory()
+
+        assert result["status"] == "ok"
+        assert result["data"]["old_memory_id"] == 7
+        assert result["data"]["new_memory_id"] == 8
+        assert result["data"]["field"] == "content"
+        engine.update_memory.assert_awaited_once()
+        updates = engine.update_memory.await_args.args[1]
+        assert updates["content"] == "New content"
+        assert updates["metadata"]["previous_content"] == "Old content"
+        engine.find_replacement_memory_id.assert_awaited_once_with(7)
+        engine.add_memory.assert_not_awaited()
+        engine.delete_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("full_form", [False, True])
+    async def test_content_replacement_drops_legacy_fact_metadata(
+        self, full_form
+    ) -> None:
+        """正文编辑不携带旧事实表示：引擎按新正文清除/同步，不会被判为 mismatch。"""
+
+        api, engine = self._api_and_engine()
+        original_metadata = {
+            "session_id": "session-1",
+            "persona_id": "persona-1",
+            "importance": 0.2,
+            "status": "archived",
+            "memory_type": "GENERAL",
+            "key_facts": ["旧事实一", "旧事实二"],
+            "fact_source_evidence": [{"fact": "旧事实一"}, {"fact": "旧事实二"}],
+            "canonical_summary": "旧事实一；旧事实二",
+        }
+        api._get_memory_record = AsyncMock(
+            return_value={"text": "Old content", "metadata": original_metadata}
+        )
+        request_mock = MagicMock()
+        payload = (
+            {"memory_id": 7, "changes": {"content": "New content"}}
+            if full_form
+            else {"memory_id": 7, "field": "content", "value": "New content"}
+        )
+        request_mock.get_json = AsyncMock(return_value=payload)
+
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
+            result = await api.update_memory()
+
+        assert result["status"] == "ok"
+        assert result["data"]["new_memory_id"] == 8
+        updates = engine.update_memory.await_args.args[1]
+        metadata = updates["metadata"]
+        assert "key_facts" not in metadata
+        assert "fact_source_evidence" not in metadata
+        assert "canonical_summary" not in metadata
+        # 其余字段照旧随替换写入，且调用方持有的旧 metadata 不被原地修改。
+        assert metadata["status"] == "archived"
+        assert metadata["importance"] == 0.2
+        assert metadata["previous_content"] == "Old content"
+        assert updates["content"] == "New content"
+        assert original_metadata["key_facts"] == ["旧事实一", "旧事实二"]
+        assert original_metadata["canonical_summary"] == "旧事实一；旧事实二"
 
     @pytest.mark.asyncio
     async def test_memory_full_form_validates_every_change_before_writing(self) -> None:
@@ -223,6 +312,7 @@ class TestMemoryFullFormUpdate:
         engine.add_memory.assert_not_awaited()
         engine.delete_memory.assert_not_awaited()
         engine.update_memory.assert_not_awaited()
+        engine.find_replacement_memory_id.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_memory_full_form_updates_metadata_once_with_field_history(
@@ -254,13 +344,16 @@ class TestMemoryFullFormUpdate:
             "importance",
             "status",
         ]
+        engine.find_replacement_memory_id.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_memory_full_form_cleans_up_new_memory_when_old_delete_fails(
         self,
     ) -> None:
+        """旧行删除失败（引擎已回滚）：返回既有失败码，页面不再自行补偿删除。"""
+
         api, engine = self._api_and_engine()
-        engine.delete_memory = AsyncMock(side_effect=[False, True])
+        engine.update_memory = AsyncMock(return_value=False)
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -271,9 +364,165 @@ class TestMemoryFullFormUpdate:
         ):
             result = await api.update_memory()
 
-        assert result["status"] == "error"
-        assert engine.delete_memory.await_args_list[0].args == (7,)
-        assert engine.delete_memory.await_args_list[1].args == (8,)
+        assert result == {
+            "status": "error",
+            "message": "替换记忆失败",
+            "code": "replacement_failed",
+        }
+        engine.add_memory.assert_not_awaited()
+        engine.delete_memory.assert_not_awaited()
+        engine.find_replacement_memory_id.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_cleans_up_once_when_old_delete_raises(self) -> None:
+        """引擎在删除阶段抛错：只报一次通用失败，不重复发起补偿。"""
+
+        api, engine = self._api_and_engine()
+        engine.update_memory = AsyncMock(side_effect=RuntimeError("old delete"))
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "更新记忆失败",
+        }
+        engine.update_memory.assert_awaited_once()
+        engine.add_memory.assert_not_awaited()
+        engine.delete_memory.assert_not_awaited()
+        engine.find_replacement_memory_id.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_reports_rollback_failed_when_cleanup_returns_false(
+        self,
+    ) -> None:
+        """引擎补偿失败（账本 needs_repair）：页面沿用既有失败码，不再自行清理。
+
+        回滚与补偿已下沉到引擎写账本（``replacement_rollback_failed`` +
+        ``content_replace_compensation_failed``），页面不再持有该状态，因此沿用
+        既有 ``replacement_failed`` 而不是旧实现独有的 ``rollback_failed``。
+        """
+
+        api, engine = self._api_and_engine()
+        engine.update_memory = AsyncMock(return_value=False)
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with (
+            patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.logger.error"
+            ) as log_error,
+        ):
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "替换记忆失败",
+            "code": "replacement_failed",
+        }
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
+        assert "New content" not in str(log_error.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_memory_full_form_reports_rollback_failed_when_cleanup_raises(
+        self,
+    ) -> None:
+        """补偿后状态无法确认（账本回读异常）：fail-closed 返回 repair_required。"""
+
+        api, engine = self._api_and_engine()
+        secret = r"rollback lookup failure at C:\private\memory.db"
+        engine.find_replacement_memory_id = AsyncMock(side_effect=RuntimeError(secret))
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with (
+            patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ),
+            patch(
+                "core.platform.transport.page_api.memory_write_api.logger.error"
+            ) as log_error,
+        ):
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "记忆替换状态待修复，请稍后检查",
+            "code": "repair_required",
+        }
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
+        assert secret not in repr(result)
+        assert secret not in str(log_error.call_args_list)
+        assert "RuntimeError" in str(log_error.call_args_list)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("replacement_id", [0, -1, False, True, "8", None])
+    async def test_memory_full_form_rejects_invalid_replacement_ids_before_old_delete(
+        self, replacement_id
+    ) -> None:
+        """账本未确认有效新 owner：返回 repair_required，且页面不删除任何 canonical 行。"""
+
+        api, engine = self._api_and_engine()
+        engine.find_replacement_memory_id = AsyncMock(return_value=replacement_id)
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "changes": {"content": "New content"}}
+        )
+
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "记忆替换状态待修复，请稍后检查",
+            "code": "repair_required",
+        }
+        engine.delete_memory.assert_not_awaited()
+        engine.add_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("replacement_id", [0, -1, False, True, "8", None])
+    async def test_memory_legacy_content_rejects_invalid_replacement_ids(
+        self, replacement_id
+    ) -> None:
+        """单字段 content 路径同样在无法确认新 owner 时 fail-closed。"""
+
+        api, engine = self._api_and_engine()
+        engine.find_replacement_memory_id = AsyncMock(return_value=replacement_id)
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "field": "content", "value": "New content"}
+        )
+
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "记忆替换状态待修复，请稍后检查",
+            "code": "repair_required",
+        }
+        engine.delete_memory.assert_not_awaited()
+        engine.add_memory.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_memory_full_form_rejects_read_only_changes_before_writing(
@@ -336,150 +585,13 @@ class TestMemoryFullFormUpdate:
         assert secret not in result["message"]
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("replacement_id", [0, -1, False, True, "8", None])
-    async def test_memory_full_form_rejects_invalid_replacement_ids_before_old_delete(
-        self, replacement_id
-    ) -> None:
-        api, engine = self._api_and_engine()
-        engine.add_memory = AsyncMock(return_value=replacement_id)
-        request_mock = MagicMock()
-        request_mock.get_json = AsyncMock(
-            return_value={"memory_id": 7, "changes": {"content": "New content"}}
-        )
-
-        with patch(
-            "core.platform.transport.page_api.memory_write_api.request", request_mock
-        ):
-            result = await api.update_memory()
-
-        assert result == {
-            "status": "error",
-            "message": "创建替换记忆失败",
-            "code": "replacement_failed",
-        }
-        engine.delete_memory.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("replacement_id", [0, -1, False, True, "8", None])
-    async def test_memory_legacy_content_rejects_invalid_replacement_ids(
-        self, replacement_id
-    ) -> None:
-        api, engine = self._api_and_engine()
-        engine.add_memory = AsyncMock(return_value=replacement_id)
-        request_mock = MagicMock()
-        request_mock.get_json = AsyncMock(
-            return_value={"memory_id": 7, "field": "content", "value": "New content"}
-        )
-
-        with patch(
-            "core.platform.transport.page_api.memory_write_api.request", request_mock
-        ):
-            result = await api.update_memory()
-
-        assert result == {
-            "status": "error",
-            "message": "创建替换记忆失败",
-            "code": "replacement_failed",
-        }
-        engine.delete_memory.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_memory_full_form_cleans_up_once_when_old_delete_raises(self) -> None:
-        api, engine = self._api_and_engine()
-        engine.delete_memory = AsyncMock(side_effect=[RuntimeError("old delete"), True])
-        request_mock = MagicMock()
-        request_mock.get_json = AsyncMock(
-            return_value={"memory_id": 7, "changes": {"content": "New content"}}
-        )
-
-        with patch(
-            "core.platform.transport.page_api.memory_write_api.request", request_mock
-        ):
-            result = await api.update_memory()
-
-        assert result["code"] == "replacement_failed"
-        assert [call.args for call in engine.delete_memory.await_args_list] == [
-            (7,),
-            (8,),
-        ]
-
-    @pytest.mark.asyncio
-    async def test_memory_full_form_reports_rollback_failed_when_cleanup_returns_false(
-        self,
-    ) -> None:
-        api, engine = self._api_and_engine()
-        engine.delete_memory = AsyncMock(side_effect=[False, False])
-        request_mock = MagicMock()
-        request_mock.get_json = AsyncMock(
-            return_value={"memory_id": 7, "changes": {"content": "New content"}}
-        )
-
-        with (
-            patch(
-                "core.platform.transport.page_api.memory_write_api.request",
-                request_mock,
-            ) as request_patch,
-            patch(
-                "core.platform.transport.page_api.memory_write_api.logger.error"
-            ) as log_error,
-        ):
-            result = await api.update_memory()
-
-        assert result == {
-            "status": "error",
-            "message": "替换回滚失败，请稍后检查记忆状态",
-            "code": "rollback_failed",
-        }
-        assert [call.args for call in engine.delete_memory.await_args_list] == [
-            (7,),
-            (8,),
-        ]
-        assert "New content" not in str(log_error.call_args_list)
-        assert log_error.call_args.args[1:] == (7, 8, "False", None)
-        request_patch.get_json.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_memory_full_form_reports_rollback_failed_when_cleanup_raises(
-        self,
-    ) -> None:
-        api, engine = self._api_and_engine()
-        engine.delete_memory = AsyncMock(
-            side_effect=[False, RuntimeError("cleanup database failure")]
-        )
-        request_mock = MagicMock()
-        request_mock.get_json = AsyncMock(
-            return_value={"memory_id": 7, "changes": {"content": "New content"}}
-        )
-
-        with (
-            patch(
-                "core.platform.transport.page_api.memory_write_api.request",
-                request_mock,
-            ),
-            patch(
-                "core.platform.transport.page_api.memory_write_api.logger.error"
-            ) as log_error,
-        ):
-            result = await api.update_memory()
-
-        assert result["code"] == "rollback_failed"
-        assert [call.args for call in engine.delete_memory.await_args_list] == [
-            (7,),
-            (8,),
-        ]
-        assert "cleanup database failure" not in str(log_error.call_args_list)
-        assert "RuntimeError" in str(log_error.call_args_list)
-
-    @pytest.mark.asyncio
     async def test_memory_full_form_backend_add_cancellation_keeps_original(
         self,
     ) -> None:
+        """引擎写入阶段取消：CancelledError 原样传播，不记为错误日志。"""
+
         api, engine = self._api_and_engine()
-
-        async def add_memory(**_kwargs):
-            raise asyncio.CancelledError
-
-        engine.add_memory = add_memory
+        engine.update_memory = AsyncMock(side_effect=asyncio.CancelledError)
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -493,31 +605,23 @@ class TestMemoryFullFormUpdate:
             patch(
                 "core.platform.transport.page_api.memory_write_api.logger.error"
             ) as log_error,
+            pytest.raises(asyncio.CancelledError),
         ):
-            result = await api.update_memory()
+            await api.update_memory()
 
-        assert result == {
-            "status": "error",
-            "message": "创建替换记忆失败",
-            "code": "replacement_failed",
-        }
+        engine.add_memory.assert_not_awaited()
         engine.delete_memory.assert_not_awaited()
-        assert "New content" not in str(log_error.call_args_list)
-        assert "CancelledError" in str(log_error.call_args_list)
+        engine.find_replacement_memory_id.assert_not_awaited()
+        log_error.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_memory_full_form_backend_old_delete_cancellation_retains_replacement_for_repair(
         self,
     ) -> None:
+        """删除阶段取消：页面只传播取消，替换收敛交回引擎写账本修复。"""
+
         api, engine = self._api_and_engine()
-        delete_calls: list[int] = []
-
-        async def delete_memory(memory_id):
-            delete_calls.append(memory_id)
-            assert memory_id == 7
-            raise asyncio.CancelledError
-
-        engine.delete_memory = delete_memory
+        engine.update_memory = AsyncMock(side_effect=asyncio.CancelledError)
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -528,35 +632,22 @@ class TestMemoryFullFormUpdate:
                 "core.platform.transport.page_api.memory_write_api.request",
                 request_mock,
             ),
-            patch(
-                "core.platform.transport.page_api.memory_write_api.logger.error"
-            ) as log_error,
+            pytest.raises(asyncio.CancelledError),
         ):
-            result = await api.update_memory()
+            await api.update_memory()
 
-        assert result == {
-            "status": "error",
-            "message": "记忆替换状态待修复，请稍后检查",
-            "code": "repair_required",
-        }
-        assert delete_calls == [7]
-        assert log_error.call_args.args[1:] == (7, 8, "retained", "CancelledError")
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
+        assert [call.args for call in engine.add_memory.await_args_list] == []
+        engine.find_replacement_memory_id.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_memory_full_form_backend_cleanup_cancellation_is_rollback_failure(
         self,
     ) -> None:
+        """补偿阶段取消：不得伪造成功响应，也不得由页面发起回滚。"""
+
         api, engine = self._api_and_engine()
-        delete_calls: list[int] = []
-
-        async def delete_memory(memory_id):
-            delete_calls.append(memory_id)
-            if memory_id == 7:
-                return False
-            assert memory_id == 8
-            raise asyncio.CancelledError
-
-        engine.delete_memory = delete_memory
+        engine.update_memory = AsyncMock(side_effect=asyncio.CancelledError)
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -567,121 +658,104 @@ class TestMemoryFullFormUpdate:
                 "core.platform.transport.page_api.memory_write_api.request",
                 request_mock,
             ),
-            patch(
-                "core.platform.transport.page_api.memory_write_api.logger.error"
-            ) as log_error,
+            pytest.raises(asyncio.CancelledError),
         ):
-            result = await api.update_memory()
+            await api.update_memory()
 
-        assert result["code"] == "rollback_failed"
-        assert delete_calls == [7, 8]
-        assert log_error.call_args.args[1:] == (
-            7,
-            8,
-            "backend_cancelled",
-            "CancelledError",
-        )
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
 
     @pytest.mark.asyncio
     async def test_memory_full_form_preserves_terminal_add_caller_cancellation(
         self,
     ) -> None:
+        """新 owner 回读期间调用方取消：取消传播，替换不回滚。"""
+
         api, engine = self._api_and_engine()
-        original_shield = asyncio.shield
-        shield_calls = 0
+        lookup_started = asyncio.Event()
+        lookup_release = asyncio.Event()
 
-        async def cancel_after_completed_add(task):
-            nonlocal shield_calls
-            shield_calls += 1
-            result = await original_shield(task)
-            if shield_calls == 1:
-                raise asyncio.CancelledError
-            return result
+        async def find_replacement_memory_id(_memory_id):
+            lookup_started.set()
+            await lookup_release.wait()
+            return 8
 
+        engine.find_replacement_memory_id = find_replacement_memory_id
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with (
-            patch(
-                "core.platform.transport.page_api.memory_write_api.request",
-                request_mock,
-            ),
-            patch(
-                "core.platform.transport.page_api.memory_write_api.asyncio.shield",
-                cancel_after_completed_add,
-            ),
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
         ):
-            with pytest.raises(asyncio.CancelledError):
-                await api.update_memory()
+            task = asyncio.create_task(api.update_memory())
+            try:
+                await asyncio.wait_for(lookup_started.wait(), timeout=1)
+                task.cancel()
+                lookup_release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=1)
+            finally:
+                lookup_release.set()
+                await asyncio.gather(task, return_exceptions=True)
 
-        assert [call.args for call in engine.delete_memory.await_args_list] == [(8,)]
+        engine.update_memory.assert_awaited_once()
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
 
     @pytest.mark.asyncio
     async def test_memory_full_form_preserves_terminal_old_delete_caller_cancellation(
         self,
     ) -> None:
+        """删除阶段调用方取消：取消传播，且不再继续回读新 owner。"""
+
         api, engine = self._api_and_engine()
-        original_shield = asyncio.shield
-        shield_calls = 0
+        write_started = asyncio.Event()
+        write_release = asyncio.Event()
 
-        async def cancel_after_completed_old_delete(task):
-            nonlocal shield_calls
-            shield_calls += 1
-            result = await original_shield(task)
-            if shield_calls == 2:
-                raise asyncio.CancelledError
-            return result
+        async def update_memory(_memory_id, _updates):
+            write_started.set()
+            await write_release.wait()
+            return True
 
+        engine.update_memory = update_memory
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
         )
 
-        with (
-            patch(
-                "core.platform.transport.page_api.memory_write_api.request",
-                request_mock,
-            ),
-            patch(
-                "core.platform.transport.page_api.memory_write_api.asyncio.shield",
-                cancel_after_completed_old_delete,
-            ),
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
         ):
-            with pytest.raises(asyncio.CancelledError):
-                await api.update_memory()
+            task = asyncio.create_task(api.update_memory())
+            try:
+                await asyncio.wait_for(write_started.wait(), timeout=1)
+                task.cancel()
+                write_release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=1)
+            finally:
+                write_release.set()
+                await asyncio.gather(task, return_exceptions=True)
 
-        assert [call.args for call in engine.delete_memory.await_args_list] == [(7,)]
+        engine.find_replacement_memory_id.assert_not_awaited()
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
 
     @pytest.mark.asyncio
     async def test_memory_full_form_cancellation_while_add_reconciles_cleanup_before_reraising(
         self,
     ) -> None:
+        """写入进行中调用方取消：引擎完成写入后页面仍抛取消，且不自行清理。"""
+
         api, engine = self._api_and_engine()
-        add_started = asyncio.Event()
-        add_release = asyncio.Event()
-        cleanup_started = asyncio.Event()
-        cleanup_release = asyncio.Event()
-        events: list[str] = []
+        write_started = asyncio.Event()
+        write_release = asyncio.Event()
 
-        async def add_memory(**_kwargs):
-            events.append("add:start")
-            add_started.set()
-            await add_release.wait()
-            events.append("add:done")
-            return 8
-
-        async def delete_memory(memory_id):
-            events.append(f"delete:{memory_id}:start")
-            if memory_id == 8:
-                cleanup_started.set()
-                await cleanup_release.wait()
-            events.append(f"delete:{memory_id}:done")
+        async def update_memory(_memory_id, _updates):
+            write_started.set()
+            await write_release.wait()
             return True
 
-        engine.add_memory = add_memory
-        engine.delete_memory = delete_memory
+        engine.update_memory = update_memory
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -692,43 +766,34 @@ class TestMemoryFullFormUpdate:
         ):
             task = asyncio.create_task(api.update_memory())
             try:
-                await asyncio.wait_for(add_started.wait(), timeout=1)
+                await asyncio.wait_for(write_started.wait(), timeout=1)
                 task.cancel()
-                add_release.set()
-                await asyncio.wait_for(cleanup_started.wait(), timeout=1)
-                assert "delete:7:start" not in events
-                cleanup_release.set()
+                write_release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=1)
             finally:
-                add_release.set()
-                cleanup_release.set()
+                write_release.set()
                 await asyncio.gather(task, return_exceptions=True)
 
-        assert events == [
-            "add:start",
-            "add:done",
-            "delete:8:start",
-            "delete:8:done",
-        ]
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
+        assert [call.args for call in engine.add_memory.await_args_list] == []
 
     @pytest.mark.asyncio
     async def test_memory_full_form_cancellation_after_old_delete_succeeds_keeps_replacement(
         self,
     ) -> None:
+        """旧行删除已提交后取消：新 owner 保留，页面不回滚也不重复删除。"""
+
         api, engine = self._api_and_engine()
-        old_delete_started = asyncio.Event()
-        old_delete_release = asyncio.Event()
-        events: list[str] = []
+        lookup_started = asyncio.Event()
+        lookup_release = asyncio.Event()
 
-        async def delete_memory(memory_id):
-            events.append(f"delete:{memory_id}:start")
-            old_delete_started.set()
-            await old_delete_release.wait()
-            events.append(f"delete:{memory_id}:done")
-            return True
+        async def find_replacement_memory_id(_memory_id):
+            lookup_started.set()
+            await lookup_release.wait()
+            return 8
 
-        engine.delete_memory = delete_memory
+        engine.find_replacement_memory_id = find_replacement_memory_id
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -739,41 +804,35 @@ class TestMemoryFullFormUpdate:
         ):
             task = asyncio.create_task(api.update_memory())
             try:
-                await asyncio.wait_for(old_delete_started.wait(), timeout=1)
+                await asyncio.wait_for(lookup_started.wait(), timeout=1)
                 task.cancel()
-                old_delete_release.set()
+                lookup_release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=1)
             finally:
-                old_delete_release.set()
+                lookup_release.set()
                 await asyncio.gather(task, return_exceptions=True)
 
-        assert events == ["delete:7:start", "delete:7:done"]
+        engine.update_memory.assert_awaited_once()
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
+        assert [call.args for call in engine.add_memory.await_args_list] == []
 
     @pytest.mark.asyncio
     async def test_memory_full_form_cancellation_after_old_delete_false_finishes_cleanup(
         self,
     ) -> None:
+        """引擎写入返回失败时调用方已取消：取消优先，不返回错误响应。"""
+
         api, engine = self._api_and_engine()
-        old_delete_started = asyncio.Event()
-        old_delete_release = asyncio.Event()
-        cleanup_started = asyncio.Event()
-        cleanup_release = asyncio.Event()
-        events: list[str] = []
+        write_started = asyncio.Event()
+        write_release = asyncio.Event()
 
-        async def delete_memory(memory_id):
-            events.append(f"delete:{memory_id}:start")
-            if memory_id == 7:
-                old_delete_started.set()
-                await old_delete_release.wait()
-                events.append("delete:7:done")
-                return False
-            cleanup_started.set()
-            await cleanup_release.wait()
-            events.append("delete:8:done")
-            return True
+        async def update_memory(_memory_id, _updates):
+            write_started.set()
+            await write_release.wait()
+            return False
 
-        engine.delete_memory = delete_memory
+        engine.update_memory = update_memory
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -784,49 +843,34 @@ class TestMemoryFullFormUpdate:
         ):
             task = asyncio.create_task(api.update_memory())
             try:
-                await asyncio.wait_for(old_delete_started.wait(), timeout=1)
+                await asyncio.wait_for(write_started.wait(), timeout=1)
                 task.cancel()
-                old_delete_release.set()
-                await asyncio.wait_for(cleanup_started.wait(), timeout=1)
-                cleanup_release.set()
+                write_release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=1)
             finally:
-                old_delete_release.set()
-                cleanup_release.set()
+                write_release.set()
                 await asyncio.gather(task, return_exceptions=True)
 
-        assert events == [
-            "delete:7:start",
-            "delete:7:done",
-            "delete:8:start",
-            "delete:8:done",
-        ]
+        engine.find_replacement_memory_id.assert_not_awaited()
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
 
     @pytest.mark.asyncio
     async def test_memory_full_form_cancellation_after_old_delete_error_finishes_cleanup(
         self,
     ) -> None:
+        """引擎写入抛错时调用方已取消：取消优先，不返回通用失败响应。"""
+
         api, engine = self._api_and_engine()
-        old_delete_started = asyncio.Event()
-        old_delete_release = asyncio.Event()
-        cleanup_started = asyncio.Event()
-        cleanup_release = asyncio.Event()
-        events: list[str] = []
+        write_started = asyncio.Event()
+        write_release = asyncio.Event()
 
-        async def delete_memory(memory_id):
-            events.append(f"delete:{memory_id}:start")
-            if memory_id == 7:
-                old_delete_started.set()
-                await old_delete_release.wait()
-                events.append("delete:7:error")
-                raise RuntimeError("old delete failure")
-            cleanup_started.set()
-            await cleanup_release.wait()
-            events.append("delete:8:done")
-            return True
+        async def update_memory(_memory_id, _updates):
+            write_started.set()
+            await write_release.wait()
+            raise RuntimeError("old delete failure")
 
-        engine.delete_memory = delete_memory
+        engine.update_memory = update_memory
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -837,44 +881,34 @@ class TestMemoryFullFormUpdate:
         ):
             task = asyncio.create_task(api.update_memory())
             try:
-                await asyncio.wait_for(old_delete_started.wait(), timeout=1)
+                await asyncio.wait_for(write_started.wait(), timeout=1)
                 task.cancel()
-                old_delete_release.set()
-                await asyncio.wait_for(cleanup_started.wait(), timeout=1)
-                cleanup_release.set()
+                write_release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=1)
             finally:
-                old_delete_release.set()
-                cleanup_release.set()
+                write_release.set()
                 await asyncio.gather(task, return_exceptions=True)
 
-        assert events == [
-            "delete:7:start",
-            "delete:7:error",
-            "delete:8:start",
-            "delete:8:done",
-        ]
+        engine.find_replacement_memory_id.assert_not_awaited()
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
 
     @pytest.mark.asyncio
     async def test_memory_full_form_repeated_cancellation_waits_for_cleanup_terminal_state(
         self,
     ) -> None:
-        api, engine = self._api_and_engine()
-        cleanup_started = asyncio.Event()
-        cleanup_release = asyncio.Event()
-        events: list[str] = []
+        """重复取消：只传播一次取消，且不产生任何重复副作用。"""
 
-        async def delete_memory(memory_id):
-            events.append(f"delete:{memory_id}:start")
-            if memory_id == 7:
-                return False
-            cleanup_started.set()
-            await cleanup_release.wait()
-            events.append("delete:8:done")
+        api, engine = self._api_and_engine()
+        write_started = asyncio.Event()
+        write_release = asyncio.Event()
+
+        async def update_memory(_memory_id, _updates):
+            write_started.set()
+            await write_release.wait()
             return True
 
-        engine.delete_memory = delete_memory
+        engine.update_memory = update_memory
         request_mock = MagicMock()
         request_mock.get_json = AsyncMock(
             return_value={"memory_id": 7, "changes": {"content": "New content"}}
@@ -885,19 +919,222 @@ class TestMemoryFullFormUpdate:
         ):
             task = asyncio.create_task(api.update_memory())
             try:
-                await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+                await asyncio.wait_for(write_started.wait(), timeout=1)
                 task.cancel()
                 task.cancel()
                 await asyncio.sleep(0)
-                assert not task.done()
-                cleanup_release.set()
+                write_release.set()
                 with pytest.raises(asyncio.CancelledError):
                     await asyncio.wait_for(task, timeout=1)
             finally:
-                cleanup_release.set()
+                write_release.set()
                 await asyncio.gather(task, return_exceptions=True)
 
-        assert events == ["delete:7:start", "delete:8:start", "delete:8:done"]
+        assert [call.args for call in engine.delete_memory.await_args_list] == []
+        assert [call.args for call in engine.add_memory.await_args_list] == []
+
+
+_LEGACY_FACT_METADATA = {
+    "session_id": "session-1",
+    "persona_id": "persona-1",
+    "importance": 0.4,
+    "status": "active",
+    "memory_type": "GENERAL",
+    "key_facts": ["旧事实一", "旧事实二"],
+    "fact_source_evidence": [{"fact": "旧事实一"}, {"fact": "旧事实二"}],
+    "canonical_summary": "旧事实一；旧事实二",
+}
+
+
+class _CanonicalSqliteStore:
+    """真实 SQLite canonical 行存储替身（供 Page API 集成用例使用）。"""
+
+    def __init__(self, db_path: str) -> None:
+        self.db_path = db_path
+
+    async def insert_document(self, doc_id: str, text: str, metadata: dict) -> int:
+        """写入一条 canonical 行并返回整数 ID。"""
+
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "INSERT INTO documents(doc_id, text, metadata, created_at, updated_at)"
+                " VALUES (?, ?, ?, 'r1', 'r1')",
+                (doc_id, text, json.dumps(metadata, ensure_ascii=False)),
+            )
+            await db.commit()
+            row_id = cursor.lastrowid
+            assert row_id is not None
+            return int(row_id)
+
+    async def get_documents(
+        self,
+        *,
+        metadata_filters: dict,
+        ids: list | None = None,
+        offset: int | None = 0,
+        limit: int | None = 100,
+    ) -> list[dict]:
+        """复刻宿主文档存储的按 ID 读取形状。"""
+
+        del metadata_filters, offset
+        query = "SELECT id, text, metadata FROM documents"
+        params: list[object] = []
+        if ids:
+            placeholders = ", ".join("?" for _ in ids)
+            query += f" WHERE id IN ({placeholders})"
+            params.extend(int(item) for item in ids)
+        query += " ORDER BY id ASC LIMIT ?"
+        params.append(int(limit or 100))
+        async with aiosqlite.connect(self.db_path) as db:
+            rows = await (await db.execute(query, params)).fetchall()
+        return [
+            {
+                "id": int(row[0]),
+                "text": row[1],
+                "metadata": json.loads(row[2] or "{}"),
+            }
+            for row in rows
+        ]
+
+
+class _LifecycleWriteStub:
+    """以真实 documents 行实现「新 ID 替换旧 ID」的混合检索器替身。"""
+
+    def __init__(self, store: _CanonicalSqliteStore) -> None:
+        self._store = store
+
+    async def add_memory(self, content: str, metadata: dict) -> int:
+        return await self._store.insert_document(f"doc-{content}", content, metadata)
+
+    async def delete_memory(self, memory_id: int) -> bool:
+        async with aiosqlite.connect(self._store.db_path) as db:
+            await db.execute("DELETE FROM documents WHERE id = ?", (int(memory_id),))
+            await db.commit()
+        return True
+
+
+@pytest.mark.asyncio
+class TestMemoryContentUpdateIntegration:
+    """Page API 内容更新经真实 MemoryEngine 的集成边界。"""
+
+    @staticmethod
+    async def _engine(tmp_db_path: str):
+        """装配真实写账本与真实 canonical 行的引擎边界。"""
+
+        store = _CanonicalSqliteStore(tmp_db_path)
+        db = await aiosqlite.connect(tmp_db_path)
+        db.row_factory = aiosqlite.Row
+        faiss_db = SimpleNamespace(document_storage=store, delete=AsyncMock())
+        engine = MemoryEngine(db_path=":memory:", faiss_db=faiss_db)
+        engine.db_connection = db
+        engine._write_journal._db = db
+        await SchemaManager(db).create_tables(engine._write_journal.create_table)
+        await db.execute(MEMORY_FTS_CREATE_SQL)
+        await db.commit()
+        engine.hybrid_retriever = _LifecycleWriteStub(store)
+        engine.graph_memory_manager = None
+        engine.atom_store = None
+        engine._retrieval = MagicMock()
+        engine._retrieval.invalidate_cache = MagicMock()
+        engine._create_tracked_task = MagicMock()
+        return engine, db, store
+
+    @pytest.mark.parametrize("full_form", [False, True])
+    async def test_content_update_clears_stale_facts_through_real_engine(
+        self, tmp_db_path: str, full_form
+    ) -> None:
+        """既有事实的记忆经 Page API 编辑正文：不返回 fact_evidence_mismatch，新行不残留旧事实。"""
+
+        engine, db, store = await self._engine(tmp_db_path)
+        try:
+            await store.insert_document(
+                "doc-old", "旧正文", dict(_LEGACY_FACT_METADATA)
+            )
+            api = PluginPageApi(
+                SimpleNamespace(
+                    initializer=SimpleNamespace(memory_engine=engine),
+                )
+            )
+            api._maintenance_write_guard = MagicMock(return_value=None)
+            api._ensure_plugin_ready = AsyncMock(
+                return_value=({"memory_engine": engine}, None)
+            )
+            request_mock = MagicMock()
+            payload = (
+                {"memory_id": 1, "changes": {"content": "新正文"}}
+                if full_form
+                else {"memory_id": 1, "field": "content", "value": "新正文"}
+            )
+            request_mock.get_json = AsyncMock(return_value=payload)
+
+            with patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ):
+                result = await api.update_memory()
+
+            assert result["status"] == "ok"
+            assert result["data"]["old_memory_id"] == 1
+            new_memory_id = result["data"]["new_memory_id"]
+            assert isinstance(new_memory_id, int) and new_memory_id != 1
+            assert engine.get_last_write_reason_code() is None
+
+            cursor = await db.execute("SELECT id, text, metadata FROM documents")
+            rows = await cursor.fetchall()
+            await cursor.close()
+            assert [int(row["id"]) for row in rows] == [new_memory_id]
+            assert str(rows[0]["text"]) == "新正文"
+            stored = json.loads(rows[0]["metadata"])
+            assert "key_facts" not in stored
+            assert "fact_source_evidence" not in stored
+            assert stored.get("canonical_summary") != "旧事实一；旧事实二"
+        finally:
+            await db.close()
+
+    @pytest.mark.parametrize("full_form", [False, True])
+    async def test_content_update_without_facts_stays_unchanged(
+        self, tmp_db_path: str, full_form
+    ) -> None:
+        """无事实元数据的记忆编辑正文：同样经引擎提交且只有一行。"""
+
+        engine, db, store = await self._engine(tmp_db_path)
+        try:
+            await store.insert_document(
+                "doc-old",
+                "旧正文",
+                {"session_id": "session-1", "importance": 0.4, "status": "active"},
+            )
+            api = PluginPageApi(
+                SimpleNamespace(
+                    initializer=SimpleNamespace(memory_engine=engine),
+                )
+            )
+            api._maintenance_write_guard = MagicMock(return_value=None)
+            api._ensure_plugin_ready = AsyncMock(
+                return_value=({"memory_engine": engine}, None)
+            )
+            request_mock = MagicMock()
+            payload = (
+                {"memory_id": 1, "changes": {"content": "新正文"}}
+                if full_form
+                else {"memory_id": 1, "field": "content", "value": "新正文"}
+            )
+            request_mock.get_json = AsyncMock(return_value=payload)
+
+            with patch(
+                "core.platform.transport.page_api.memory_write_api.request",
+                request_mock,
+            ):
+                result = await api.update_memory()
+
+            assert result["status"] == "ok"
+            cursor = await db.execute("SELECT id, text FROM documents")
+            rows = await cursor.fetchall()
+            await cursor.close()
+            assert [int(row["id"]) for row in rows] == [result["data"]["new_memory_id"]]
+            assert str(rows[0]["text"]) == "新正文"
+        finally:
+            await db.close()
 
 
 class TestOkError:
@@ -2441,3 +2678,437 @@ class TestSseStream:
 
         with pytest.raises(RuntimeError, match="stream exploded"):
             await api.sse_stream()
+
+
+class TestComposedCanonicalReadGates:
+    """组合后的 PluginPageApi 在列表与召回测试中遵守 canonical 读取门。"""
+
+    @staticmethod
+    def _request(**args) -> MagicMock:
+        """构造 handler 读取的请求替身。"""
+
+        request_mock = MagicMock()
+        request_mock.args = args
+        request_mock.get_json = AsyncMock(return_value=None)
+        return request_mock
+
+    @staticmethod
+    def _plugin(engine) -> MagicMock:
+        """构造就绪的插件替身，让 handler 通过 readiness gate。"""
+
+        plugin = MagicMock()
+        plugin._ensure_plugin_ready = AsyncMock(return_value=(True, None))
+        plugin.initializer = MagicMock()
+        plugin.initializer.memory_engine = engine
+        plugin.initializer.conversation_manager = None
+        plugin.initializer.index_validator = None
+        return plugin
+
+    @staticmethod
+    def _storage(records: dict[int, dict]) -> SimpleNamespace:
+        """构造按 ID 一次批量返回 canonical 记录的读取端口替身。"""
+
+        async def _get_documents(
+            metadata_filters=None, ids=None, limit=None, offset=None
+        ):
+            return [
+                dict(records[memory_id])
+                for memory_id in list(ids or [])
+                if memory_id in records
+            ]
+
+        return SimpleNamespace(
+            document_storage=SimpleNamespace(get_documents=_get_documents)
+        )
+
+    @staticmethod
+    async def _seed(db_path) -> None:
+        """写入一条合法来源与一条 orphan 来源的 canonical 行。"""
+
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE documents ("
+                "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT,"
+                " created_at TEXT, updated_at TEXT)"
+            )
+            await db.executemany(
+                "INSERT INTO documents"
+                " (id, doc_id, text, metadata, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        1,
+                        "doc-1",
+                        "当前正文",
+                        json.dumps(
+                            {
+                                "create_time": 100,
+                                "scope_key": "session:composed",
+                                "privacy_level": "public",
+                                "source_provenance_complete": True,
+                            }
+                        ),
+                        "a",
+                        "a",
+                    ),
+                    (
+                        2,
+                        "doc-2",
+                        "来源失效正文",
+                        json.dumps(
+                            {
+                                "create_time": 200,
+                                "scope_key": "session:composed",
+                                "privacy_level": "public",
+                                "source_provenance_complete": True,
+                                "summary_source_orphan": True,
+                            }
+                        ),
+                        "b",
+                        "b",
+                    ),
+                ],
+            )
+            await db.commit()
+
+    @pytest.mark.asyncio
+    async def test_composed_memories_list_applies_canonical_gate(
+        self, tmp_path
+    ) -> None:
+        """组合入口的 /memories 不返回来源失效的 canonical 行。"""
+
+        db_path = tmp_path / "memora.db"
+        await self._seed(db_path)
+        engine = MagicMock()
+        engine.db_path = str(db_path)
+        engine.atom_store = SimpleNamespace(
+            count_atoms=AsyncMock(return_value=0),
+            count_by_type=AsyncMock(return_value={}),
+        )
+        engine.get_statistics = AsyncMock(return_value={})
+        api = PluginPageApi(self._plugin(engine))
+
+        with patch(
+            "core.platform.transport.page_api.memory_read_api.request",
+            self._request(page="1", page_size="20"),
+        ):
+            listed = await api.list_memories()
+
+        assert listed["status"] == "ok"
+        assert [item["id"] for item in listed["data"]["items"]] == [1]
+        assert listed["data"]["total"] == 1
+        assert "来源失效正文" not in json.dumps(listed, ensure_ascii=False)
+
+    @pytest.mark.asyncio
+    async def test_composed_recall_test_drops_invalidated_candidates(
+        self, tmp_path
+    ) -> None:
+        """组合入口的 /recall/test 剔除 canonical 已失效的缓存候选。"""
+
+        db_path = tmp_path / "memora.db"
+        await self._seed(db_path)
+
+        class _Result:
+            def __init__(self, doc_id: int, content: str) -> None:
+                self.doc_id = doc_id
+                self.content = content
+                self.final_score = 0.8
+                self.metadata = {"memory_type": "GENERAL", "status": "active"}
+                self.score_breakdown = {}
+
+        engine = MagicMock()
+        engine.db_path = str(db_path)
+        engine.search_memories = AsyncMock(
+            return_value=[_Result(1, "当前正文"), _Result(2, "来源失效正文")]
+        )
+        engine.get_memory = None
+        engine.faiss_db = self._storage(
+            {
+                1: {
+                    "id": 1,
+                    "text": "当前正文",
+                    "metadata": {
+                        "memory_status": "active",
+                        "scope_key": "session:composed",
+                        "privacy_level": "public",
+                    },
+                },
+                2: {
+                    "id": 2,
+                    "text": "来源失效正文",
+                    "metadata": {
+                        "memory_status": "active",
+                        "summary_source_orphan": True,
+                    },
+                },
+            }
+        )
+        api = PluginPageApi(self._plugin(engine))
+
+        request_mock = self._request()
+        request_mock.get_json = AsyncMock(return_value={"query": "组合", "k": 5})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            request_mock,
+        ):
+            recalled = await api.test_recall()
+
+        assert recalled["status"] == "ok"
+        assert [item["memory_id"] for item in recalled["data"]["results"]] == [1]
+        assert recalled["data"]["total"] == 1
+        assert recalled["data"]["dropped_stale_count"] == 1
+        assert "来源失效正文" not in json.dumps(recalled, ensure_ascii=False)
+
+    @pytest.mark.asyncio
+    async def test_composed_recall_test_drops_rewritten_canonical_body(
+        self, tmp_path
+    ) -> None:
+        """正文已改写的缓存候选不得作为当前结果返回，旧正文不进入响应。"""
+
+        db_path = tmp_path / "memora.db"
+        await self._seed(db_path)
+
+        class _StaleResult:
+            doc_id = 1
+            content = "旧正文"
+            final_score = 0.8
+            metadata = {
+                "memory_type": "GENERAL",
+                "status": "active",
+                "canonical_summary": "旧正文",
+            }
+            score_breakdown = {}
+
+        engine = MagicMock()
+        engine.db_path = str(db_path)
+        engine.search_memories = AsyncMock(return_value=[_StaleResult()])
+        engine.get_memory = None
+        engine.faiss_db = self._storage(
+            {
+                1: {
+                    "id": 1,
+                    "text": "当前正文",
+                    "metadata": {
+                        "memory_status": "active",
+                        "scope_key": "session:composed",
+                        "privacy_level": "public",
+                        "canonical_summary": "当前摘要",
+                    },
+                }
+            }
+        )
+        api = PluginPageApi(self._plugin(engine))
+
+        request_mock = self._request()
+        request_mock.get_json = AsyncMock(return_value={"query": "组合", "k": 5})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            request_mock,
+        ):
+            recalled = await api.test_recall()
+
+        assert recalled["status"] == "ok"
+        assert recalled["data"]["results"] == []
+        assert recalled["data"]["total"] == 0
+        assert recalled["data"]["dropped_stale_count"] == 1
+        assert "旧正文" not in json.dumps(recalled, ensure_ascii=False)
+
+    @pytest.mark.asyncio
+    async def test_composed_recall_test_projects_canonical_summary(
+        self, tmp_path
+    ) -> None:
+        """正文一致的候选：摘要也必须来自 canonical 行，不回显缓存里的旧摘要。"""
+
+        db_path = tmp_path / "memora.db"
+        await self._seed(db_path)
+
+        class _CurrentResult:
+            doc_id = 1
+            content = "当前正文"
+            final_score = 0.8
+            metadata = {
+                "memory_type": "GENERAL",
+                "status": "active",
+                "canonical_summary": "旧摘要",
+            }
+            score_breakdown = {}
+
+        engine = MagicMock()
+        engine.db_path = str(db_path)
+        engine.search_memories = AsyncMock(return_value=[_CurrentResult()])
+        engine.get_memory = None
+        engine.faiss_db = self._storage(
+            {
+                1: {
+                    "id": 1,
+                    "text": "当前正文",
+                    "metadata": {
+                        "memory_status": "active",
+                        "scope_key": "session:composed",
+                        "privacy_level": "public",
+                        "canonical_summary": "当前摘要",
+                    },
+                }
+            }
+        )
+        api = PluginPageApi(self._plugin(engine))
+
+        request_mock = self._request()
+        request_mock.get_json = AsyncMock(return_value={"query": "组合", "k": 5})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            request_mock,
+        ):
+            recalled = await api.test_recall()
+
+        assert recalled["status"] == "ok"
+        assert recalled["data"]["dropped_stale_count"] == 0
+        item = recalled["data"]["results"][0]
+        assert item["content"] == "当前正文"
+        assert item["summary"] == "当前摘要"
+        assert "旧摘要" not in json.dumps(recalled, ensure_ascii=False)
+
+    @pytest.mark.asyncio
+    async def test_composed_recall_test_drops_stale_revision_candidates(
+        self, tmp_path
+    ) -> None:
+        """正文相同但候选 revision 已过期时同样剔除，当前 revision 的候选保留。"""
+
+        db_path = tmp_path / "memora.db"
+        await self._seed(db_path)
+
+        class _RevisionResult:
+            def __init__(self, doc_id: int, revision: str) -> None:
+                self.doc_id = doc_id
+                self.content = "当前正文"
+                self.final_score = 0.8
+                self.metadata = {
+                    "memory_type": "GENERAL",
+                    "status": "active",
+                    "revision_token": revision,
+                }
+                self.score_breakdown = {}
+
+        record_metadata = {
+            "memory_status": "active",
+            "scope_key": "session:composed",
+            "privacy_level": "public",
+        }
+        engine = MagicMock()
+        engine.db_path = str(db_path)
+        engine.search_memories = AsyncMock(
+            return_value=[_RevisionResult(1, "rev-2"), _RevisionResult(2, "rev-1")]
+        )
+        engine.get_memory = None
+        engine.faiss_db = self._storage(
+            {
+                memory_id: {
+                    "id": memory_id,
+                    "text": "当前正文",
+                    "updated_at": "rev-2",
+                    "metadata": dict(record_metadata),
+                }
+                for memory_id in (1, 2)
+            }
+        )
+        api = PluginPageApi(self._plugin(engine))
+
+        request_mock = self._request()
+        request_mock.get_json = AsyncMock(return_value={"query": "组合", "k": 5})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            request_mock,
+        ):
+            recalled = await api.test_recall()
+
+        assert recalled["status"] == "ok"
+        assert [item["memory_id"] for item in recalled["data"]["results"]] == [1]
+        assert recalled["data"]["dropped_stale_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_composed_recall_keeps_candidate_with_raw_revision(
+        self, tmp_path
+    ) -> None:
+        """host 存储返回 ISO 时间时，raw revision 一致的合法候选不得被误剔。"""
+
+        import aiosqlite
+
+        db_path = tmp_path / "memora.db"
+        raw_revision = "2026-07-24 02:21:07.123456"
+        metadata = json.dumps(
+            {
+                "memory_status": "active",
+                "scope_key": "session:raw",
+                "privacy_level": "shared",
+            }
+        )
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE documents ("
+                "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT,"
+                " created_at TEXT, updated_at TEXT)"
+            )
+            await db.executemany(
+                "INSERT INTO documents"
+                " (id, doc_id, text, metadata, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (17, "doc-17", "当前正文", metadata, raw_revision, raw_revision),
+                    (18, "doc-18", "新正文", metadata, raw_revision, raw_revision),
+                ],
+            )
+            await db.commit()
+
+        class _RevisionResult:
+            def __init__(self, doc_id: int, content: str) -> None:
+                self.doc_id = doc_id
+                self.content = content
+                self.final_score = 0.8
+                self.metadata = {
+                    "memory_type": "GENERAL",
+                    "status": "active",
+                    "revision_token": raw_revision,
+                }
+                self.score_breakdown = {}
+
+        engine = MagicMock()
+        engine.db_path = str(db_path)
+        engine.db_connection = await aiosqlite.connect(db_path)
+        try:
+            engine.search_memories = AsyncMock(
+                return_value=[
+                    _RevisionResult(17, "当前正文"),
+                    _RevisionResult(18, "旧正文"),
+                ]
+            )
+            engine.faiss_db = self._storage(
+                {
+                    memory_id: {
+                        "id": memory_id,
+                        "text": text,
+                        "metadata": json.loads(metadata),
+                        # host 存储形状：时间字段被渲染成 ISO，raw 只在 SQLite 列里。
+                        "created_at": raw_revision.replace(" ", "T"),
+                        "updated_at": raw_revision.replace(" ", "T"),
+                    }
+                    for memory_id, text in ((17, "当前正文"), (18, "新正文"))
+                }
+            )
+            api = PluginPageApi(self._plugin(engine))
+
+            request_mock = self._request()
+            request_mock.get_json = AsyncMock(return_value={"query": "组合", "k": 5})
+            with patch(
+                "core.platform.transport.page_api.memory_stats_recall_api.request",
+                request_mock,
+            ):
+                recalled = await api.test_recall()
+        finally:
+            await engine.db_connection.close()
+
+        assert recalled["status"] == "ok"
+        assert [item["memory_id"] for item in recalled["data"]["results"]] == [17]
+        assert [item["content"] for item in recalled["data"]["results"]] == ["当前正文"]
+        assert recalled["data"]["dropped_stale_count"] == 1
