@@ -158,10 +158,18 @@ export function createConfigSmokeFixture() {
     }
 
     const changedPaths = Object.keys(changes).sort();
+    const before = JSON.stringify(config);
     for (const path of changedPaths) setConfigValue(config, path, changes[path]);
-    revisionSequence += 1;
-    revision = revisionId(revisionSequence);
-    reloadUntil = Date.now() + 550;
+    // revision 只在配置内容真正变化时推进（对齐 configServer 的 configEquals 与
+    // 后端内容哈希 revision）；重载窗口仍按 changed_paths 非空开启，与
+    // configServer 的 reloadScheduled 和后端 config_api 语义一致。
+    if (changedPaths.length > 0) {
+      if (JSON.stringify(config) !== before) {
+        revisionSequence += 1;
+        revision = revisionId(revisionSequence);
+      }
+      reloadUntil = Date.now() + 550;
+    }
     return {
       revision,
       changed_paths: changedPaths,
