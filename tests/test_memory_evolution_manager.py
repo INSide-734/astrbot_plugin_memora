@@ -22,6 +22,7 @@ from core.features.evolution.domain import (
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
 from core.shared.contracts import MemorySourceRef
+from core.shared.contracts.canonical_source import _MAX_READ_CHARS
 
 UTC = timezone.utc
 
@@ -346,6 +347,131 @@ async def test_conflict_projection_requires_both_conflict_sides(manager):
     )
     with pytest.raises(EvolutionProposalRejected, match="conflict_source_roles"):
         manager._proposal_to_plan(proposal, [source(17), source(18)])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "duplicate_aliases",
+    [("M1", "M2"), ("M2", "M1")],
+)
+async def test_duplicate_projections_are_rejected(manager, duplicate_aliases):
+    """同类型且同来源集合的重复 projection 必须整份拒绝，不能落到同一存储键。"""
+
+    proposal = EvolutionProposal(
+        projections=(
+            MemoryProjectionProposal(
+                ProjectionType.EPISODE_SUMMARY,
+                ("M1", "M2"),
+                None,
+                "第一条摘要。",
+                0.9,
+                None,
+                None,
+            ),
+            MemoryProjectionProposal(
+                ProjectionType.EPISODE_SUMMARY,
+                duplicate_aliases,
+                None,
+                "第二条摘要。",
+                0.9,
+                None,
+                None,
+            ),
+        )
+    )
+
+    with pytest.raises(EvolutionProposalRejected, match="duplicate_projection"):
+        manager._proposal_to_plan(proposal, [source(17), source(18)])
+
+
+@pytest.mark.asyncio
+async def test_duplicate_projection_reason_is_reported_by_worker(manager):
+    """重复 projection 必须以稳定 reason code 记账，不能落入笼统的 proposal_invalid。"""
+
+    manager.consolidator.propose.return_value = EvolutionProposal(
+        projections=(
+            MemoryProjectionProposal(
+                ProjectionType.EPISODE_SUMMARY,
+                ("M1", "M2"),
+                None,
+                "第一条摘要。",
+                0.9,
+                None,
+                None,
+            ),
+            MemoryProjectionProposal(
+                ProjectionType.EPISODE_SUMMARY,
+                ("M2", "M1"),
+                None,
+                "第二条摘要。",
+                0.9,
+                None,
+                None,
+            ),
+        )
+    )
+    await seed_documents(manager.store, source(17), source(18))
+    from core.features.evolution.domain import JobSpec
+
+    job = await manager.store.enqueue_job(
+        JobSpec("private:user-a", "bucket", (17, 18), "duplicate", datetime.now(UTC))
+    )
+
+    assert await manager.run_once() is True
+    stored = await manager.store.get_job(job.job_id)
+
+    assert stored is not None
+    assert stored.state is JobState.REJECTED
+    assert manager.get_status_snapshot()["reason_codes"]["duplicate_projection"] == 1
+
+
+@pytest.mark.asyncio
+async def test_manager_clamps_oversized_input_budget_for_long_source(tmp_path):
+    """max_input_chars 高于共享 DTO 上限时，长 canonical 来源不得让 job 进 dead。"""
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    config = {**limits(), "max_input_chars": 100_000}
+    manager = MemoryEvolutionManager(
+        store,
+        MemoryEvolutionGate(config),
+        AsyncMock(),
+        config,
+    )
+    manager.consolidator.propose.return_value = EvolutionProposal()
+    async with aiosqlite.connect(store.db_path) as db:
+        await db.execute(
+            "CREATE TABLE IF NOT EXISTS documents "
+            "(id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT, metadata TEXT, "
+            "created_at TEXT, updated_at TEXT)"
+        )
+        await db.execute(
+            "INSERT INTO documents(id,doc_id,text,metadata,created_at,updated_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (
+                17,
+                "d17",
+                "长" * (_MAX_READ_CHARS + 4_000),
+                '{"session_id":"private:user-a"}',
+                "2026-07-18T00:00:00+00:00",
+                "r-17",
+            ),
+        )
+        await db.commit()
+    from core.features.evolution.domain import JobSpec
+
+    try:
+        job = await store.enqueue_job(
+            JobSpec("private:user-a", "bucket", (17,), "long-source", datetime.now(UTC))
+        )
+
+        assert await manager.run_once() is True
+        stored = await store.get_job(job.job_id)
+        assert stored is not None
+        assert stored.state is JobState.COMPLETED
+    finally:
+        await manager.stop()
+        await store.close()
 
 
 @pytest.mark.asyncio

@@ -331,6 +331,34 @@ def _summary_proposal() -> EvolutionProposal:
 
 
 @pytest.mark.asyncio
+async def test_semantic_compression_reports_cluster_write_failure(caplog) -> None:
+    """聚类写入失败必须计数，并只留下含异常类名的告警。"""
+
+    canary = "CANARY_PROJECTION_SUMMARY"
+
+    async def _failing_applier(proposal, sources):
+        """模拟派生写入边界拒绝该聚类。"""
+        raise RuntimeError(canary)
+
+    compressor = SemanticCompressor(
+        source_store=_SourceStore([_source(17), _source(18)]),
+        proposal_applier=_failing_applier,
+    )
+
+    with caplog.at_level("WARNING"):
+        result = await compressor.compress_old_memories(now=NOW)
+
+    messages = [record.getMessage() for record in caplog.records]
+    assert result["candidate_groups"] == 1
+    assert result["failed_groups"] == 1
+    assert result["projections_applied"] == 0
+    assert any(
+        "聚类写入失败" in message and "RuntimeError" in message for message in messages
+    )
+    assert all(canary not in message for message in messages)
+
+
+@pytest.mark.asyncio
 async def test_manager_rechecks_revision_before_applying_projection() -> None:
     """外部 projection proposal 写入前应重新读取并核对 revision。"""
 

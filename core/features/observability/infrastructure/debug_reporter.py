@@ -46,6 +46,7 @@ EVENTS = frozenset(
         "plugin_stopped",
         "instrumented_call",
         "gate_config_applied",
+        "extra_llm_budget",
         "debug_event_rejected",
         "debug_file_sink_disabled",
     }
@@ -79,6 +80,10 @@ ALLOWED_FIELDS = frozenset(
         "python_major",
         "python_minor",
         "capability",
+        "feature",
+        "allowed",
+        "used",
+        "remaining",
         "function",
         "call_depth",
         "message_count",
@@ -159,8 +164,13 @@ _NUMERIC_FIELDS = frozenset(
         "exact_reuse_count",
         "exact_topic_count",
         "duplicate_topic_count",
+        "used",
+        "remaining",
     }
 )
+# ``allowed`` 是布尔诊断标量：``_valid_number`` 显式拒绝 bool，
+# 因此单独走布尔校验，不能并入数值字段。
+_BOOLEAN_FIELDS = frozenset({"allowed"})
 _ENUM_FIELDS = {
     "status": frozenset(
         {
@@ -175,6 +185,8 @@ _ENUM_FIELDS = {
             "ready",
             "waiting",
             "disabled",
+            "allowed",
+            "denied",
         }
     ),
     "outcome": frozenset(
@@ -268,8 +280,11 @@ _VALUE_FIELDS = {
             "batch_prepare",
             "gate_hot_reload",
             "atom",
+            "budget",
             "call",
             "capture",
+            "capture_readiness",
+            "catalog_readiness",
             "cognitive_components",
             "component_build",
             "component_readiness",
@@ -316,12 +331,28 @@ _VALUE_FIELDS = {
             "startup_restore",
             "storage",
             "summary_gate",
+            "summary_scheduler",
             "summary_window",
             "window_check",
             "window_total",
             "grounding",
             "candidate_selection",
             "write_guard",
+        }
+    ),
+    # 额外 LLM 能力枚举，与 shared.extra_llm_budget._ALLOWED_FEATURES 同步；
+    # 未知能力在 producer 侧已收敛为 "unknown"。
+    "feature": frozenset(
+        {
+            "knowledge_extraction",
+            "llm_query_rewrite",
+            "llm_reranker",
+            "memory_grounding_judge",
+            "note_generation",
+            "profile_extraction",
+            "reflection_extra_batch",
+            "topic_strategy_d",
+            "unknown",
         }
     ),
     "reason_code": frozenset(
@@ -342,7 +373,10 @@ _VALUE_FIELDS = {
             "capture_cancelled",
             "capture_disabled",
             "capture_error",
+            "capture_runtime_published",
             "cancelled",
+            "catalog_startup_decision_invalid",
+            "catalog_startup_unresolved",
             "cognitive_component_ready",
             "cognitive_component_unavailable",
             "cognitive_components_partial",
@@ -353,6 +387,7 @@ _VALUE_FIELDS = {
             "component_inactive",
             "component_lookup_error",
             "component_ready",
+            "component_unavailable",
             "completed",
             "core_components_incomplete",
             "core_components_published",
@@ -373,7 +408,16 @@ _VALUE_FIELDS = {
             "evolution_schedule_error",
             "evolution_scheduled",
             "evolution_skipped",
+            "evolution_source_inactive",
+            "evolution_source_metadata_unavailable",
             "evolution_source_missing",
+            "extra_llm_budget_exhausted",
+            "extra_llm_budget_missing",
+            "extra_llm_committed",
+            "extra_llm_feature_disabled",
+            "extra_llm_released",
+            "extra_llm_reserved",
+            "extra_llm_stale_token",
             "failed",
             "fallback",
             "full_initialization_cancelled",
@@ -383,6 +427,7 @@ _VALUE_FIELDS = {
             "gate_config_applied",
             "group_source_error",
             "history_injection_removed",
+            "identity_untrusted",
             "initialization_cancelled",
             "initialization_error",
             "injected",
@@ -513,6 +558,7 @@ _VALUE_FIELDS = {
             "affection",
             "agent_tools",
             "backfill_scheduler",
+            "conversation_capture",
             "conversation_manager",
             "database",
             "debug_reporting",
@@ -532,6 +578,7 @@ _VALUE_FIELDS = {
             "prompt_protection",
             "provider_waiting",
             "social",
+            "topic_catalog",
         }
     ),
 }
@@ -823,6 +870,11 @@ def report_debug_event(event_name: str, **fields: Any) -> None:
     for field, value in fields.items():
         if field in _NUMERIC_FIELDS:
             if not _valid_number(value):
+                _emit_rejection("invalid_field")
+                return
+            normalized[field] = value
+        elif field in _BOOLEAN_FIELDS:
+            if not isinstance(value, bool):
                 _emit_rejection("invalid_field")
                 return
             normalized[field] = value

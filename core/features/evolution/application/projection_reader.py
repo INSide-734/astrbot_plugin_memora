@@ -293,14 +293,11 @@ class ProjectionReader:
                 (source, mapping)
                 for mapping in bundle.sources
                 for source in (sources_by_id.get(mapping.memory_id),)
-                if _source_is_current(source, mapping, scope, now)
+                if source is not None
+                and _source_is_current(source, mapping, scope, now)
             ]
-            if any(
-                source is not None
-                and not _source_is_current(source, mapping, scope, now)
-                for mapping in bundle.sources
-                for source in (sources_by_id.get(mapping.memory_id),)
-            ):
+            # 来源缺失与失效一律视为越界：任一 mapping 已不可用就隔离整个 bundle。
+            if len(current_pairs) != len(bundle.sources):
                 continue
             current_mappings = tuple(mapping for _, mapping in current_pairs)
             if not current_mappings:

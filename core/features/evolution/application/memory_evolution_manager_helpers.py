@@ -254,6 +254,7 @@ def _reason(error: Exception) -> str:
             "unknown_alias",
             "self_relation",
             "duplicate_or_cycle",
+            "duplicate_projection",
             "duplicate_projection_source",
             "conflict_source_roles",
             "proposal_schema_invalid",

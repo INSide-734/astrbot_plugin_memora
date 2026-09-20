@@ -1,4 +1,5 @@
 import asyncio
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -18,6 +19,7 @@ from core.features.evolution.domain import (
     RetrySpec,
 )
 from core.features.evolution.infrastructure import MemoryEvolutionStore
+from core.shared.contracts.canonical_source import _MAX_READ_CHARS
 
 UTC = timezone.utc
 
@@ -378,6 +380,93 @@ async def test_apply_plan_rolls_back_relation_when_projection_is_invalid(tmp_pat
         assert row is not None
         relation_count = row[0]
     assert relation_count == 0
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_apply_plan_rejects_duplicate_normalized_projection_key(tmp_path):
+    """归一化后撞键的 projection 必须给出稳定错误并整份回滚。"""
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    duplicate = DerivedApplyPlan(
+        relations=valid_plan().relations,
+        projections=(
+            ProjectionView(
+                "p-a",
+                ProjectionType.EPISODE_SUMMARY,
+                "episode",
+                (17, 18),
+                "scope",
+                "shared",
+                0.8,
+            ),
+            ProjectionView(
+                "p-b",
+                ProjectionType.EPISODE_SUMMARY,
+                "episode",
+                (18, 17),
+                "scope",
+                "shared",
+                0.8,
+            ),
+        ),
+        projection_sources=(
+            ProjectionSourceView("p-a", 17, "r17", "primary", 0),
+            ProjectionSourceView("p-a", 18, "r18", "supporting", 1),
+            ProjectionSourceView("p-b", 18, "r18", "primary", 0),
+            ProjectionSourceView("p-b", 17, "r17", "supporting", 1),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="duplicate_projection"):
+        await store.apply_derived_plan(duplicate)
+
+    async with aiosqlite.connect(store.db_path) as db:
+        row = await (
+            await db.execute("SELECT COUNT(*) FROM memory_relations")
+        ).fetchone()
+        assert row is not None
+        relation_count = row[0]
+    assert relation_count == 0
+    await store.close()
+
+
+@pytest.mark.asyncio
+async def test_load_sources_clamps_snapshot_budget_to_dto_limit(tmp_path):
+    """配置预算高于共享 DTO 上限时仍必须返回合法的单条来源快照。"""
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    connection = store.connection
+    assert connection is not None
+    await connection.execute(
+        """CREATE TABLE IF NOT EXISTS documents (
+        id INTEGER PRIMARY KEY,
+        text TEXT NOT NULL,
+        metadata TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+        )"""
+    )
+    await connection.execute(
+        "INSERT INTO documents(id,text,metadata,created_at,updated_at) "
+        "VALUES (?,?,?,?,?)",
+        (
+            17,
+            "长" * (_MAX_READ_CHARS + 4_000),
+            json.dumps({"scope_key": "scope", "privacy_level": "shared"}),
+            "2026-08-01T00:00:00+00:00",
+            "2026-08-01T00:00:00+00:00",
+        ),
+    )
+    await connection.commit()
+
+    sources = await store.load_sources([17], max_content_chars=100_000)
+
+    assert [source.memory_id for source in sources] == [17]
+    assert sources[0].content is not None
+    assert len(sources[0].content) == _MAX_READ_CHARS
     await store.close()
 
 

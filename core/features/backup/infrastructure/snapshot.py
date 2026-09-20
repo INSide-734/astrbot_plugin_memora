@@ -31,15 +31,20 @@ def snapshot_sqlite(source: Path, target: Path) -> SnapshotResult:
     if target.exists():
         target.unlink()
     source_connection = sqlite3.connect(str(source))
-    target_connection = sqlite3.connect(str(target))
     try:
-        source_connection.backup(target_connection)
-        target_connection.commit()
-        quick_check = str(target_connection.execute("PRAGMA quick_check").fetchone()[0])
-        if quick_check.lower() != "ok":
-            raise sqlite3.DatabaseError("sqlite quick_check failed")
+        # 目标库打开失败也必须释放源连接；两个连接的关闭互不短路。
+        target_connection = sqlite3.connect(str(target))
+        try:
+            source_connection.backup(target_connection)
+            target_connection.commit()
+            quick_check = str(
+                target_connection.execute("PRAGMA quick_check").fetchone()[0]
+            )
+            if quick_check.lower() != "ok":
+                raise sqlite3.DatabaseError("sqlite quick_check failed")
+        finally:
+            target_connection.close()
     finally:
-        target_connection.close()
         source_connection.close()
     return SnapshotResult(
         name=target.name,

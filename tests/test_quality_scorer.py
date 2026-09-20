@@ -641,6 +641,20 @@ class TestEdgeCases:
         score = scorer.score_atom(atom, context=context)
         assert 0.0 <= score.consistency <= 1.0
 
+    def test_external_same_dimension_embedding_does_not_break_duplicate_detection(self):
+        """同维但非本模块伪向量的 embedding 不得改变重复判定。"""
+
+        scorer = MemoryQualityScorer()
+        content = "用户在项目里统一使用 SQLite 保存会话记录"
+        score = scorer.score_atom(
+            _make_atom(content=content),
+            context=_make_context(
+                existing_atoms=[{"content": content, "embedding": [-1.0] * 64}]
+            ),
+        )
+        # 完全相同正文必须判为重复：consistency 归零，不能被外部向量抬到 1.0
+        assert score.consistency == 0.0
+
     def test_window_overflow_evicts_oldest(self):
         """验证评分窗口溢出时淘汰最早记录。"""
 

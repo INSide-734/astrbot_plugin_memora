@@ -55,8 +55,8 @@ class MemoryEvolutionPlanBuilderMixin:
             仅包含 relation、Projection 与来源 revision 的派生写入计划。
 
         Raises:
-            EvolutionProposalRejected: proposal 超限、别名非法、来源重复、
-                跨 scope/主体或形成重复/环关系。
+            EvolutionProposalRejected: proposal 超限、别名非法、来源或 projection
+                重复、跨 scope/主体或形成重复/环关系。
         """
 
         if not isinstance(proposal, EvolutionProposal):
@@ -73,6 +73,7 @@ class MemoryEvolutionPlanBuilderMixin:
         projections: list[ProjectionView] = []
         projection_sources: list[ProjectionSourceView] = []
         seen_edges: set[tuple[int, int]] = set()
+        seen_projection_keys: set[tuple[str, frozenset[int]]] = set()
 
         for item in proposal.relations[: self.candidate_limit]:
             source = _alias(aliases, item.source_alias)
@@ -133,6 +134,13 @@ class MemoryEvolutionPlanBuilderMixin:
                 projection_sources_for_item
             ):
                 raise EvolutionProposalRejected("duplicate_projection_source")
+            projection_key = (
+                item.projection_type.value,
+                frozenset(source.memory_id for source in projection_sources_for_item),
+            )
+            if projection_key in seen_projection_keys:
+                raise EvolutionProposalRejected("duplicate_projection")
+            seen_projection_keys.add(projection_key)
             _ensure_projection_compatible(*projection_sources_for_item)
             if (
                 item.projection_type is ProjectionType.CONFLICT_SET

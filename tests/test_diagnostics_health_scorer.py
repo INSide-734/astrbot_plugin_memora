@@ -254,6 +254,24 @@ def test_health_scorer_handles_missing_and_malformed_inputs_defensively():
     assert isinstance(result["recommended_actions"], list)
 
 
+def test_health_scorer_degrades_on_non_finite_counters():
+    """NaN/Inf 计数必须按缺失字段降级，不能让评分整体抛异常。"""
+
+    scorer = HealthScorer()
+
+    result = scorer.score(
+        {
+            "write_coordinator": {"failures_total": float("nan")},
+            "background_tasks": {"failed": float("inf")},
+        }
+    )
+
+    assert result["score"] == 100
+    assert result["level"] == "healthy"
+    assert scorer.level_for_score(float("nan")) == "critical"
+    assert scorer.level_for_score(float("inf")) == "critical"
+
+
 @pytest.mark.asyncio
 async def test_diagnostic_event_store_add_list_get_resolve_filters_and_payload(
     tmp_path: Path,

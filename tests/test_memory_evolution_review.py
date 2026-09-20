@@ -171,6 +171,36 @@ async def test_reject_can_be_replayed_and_stale_revision_cannot_overwrite(
 
 
 @pytest.mark.asyncio
+async def test_replay_after_invalidation_clears_invalid_at(tmp_path) -> None:
+    """复核过的 relation 必须真正重新可见，不能被旧 invalid_at 静默过滤。"""
+
+    store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
+    await store.initialize()
+    await _seed_canonical_sources(store)
+    await store.apply_derived_plan(_candidate_plan())
+
+    invalidated = await store.invalidate_all_derived()
+    replayed = await store.review_relation_candidate(
+        "conflict-1",
+        action="replay",
+        expected_revision=1,
+    )
+    approved = await store.review_relation_candidate(
+        "conflict-1",
+        action="approve",
+        expected_revision=int(replayed["revision"]),
+    )
+    active = await store.active_relations_for_seeds([1], scope_key="private:user")
+
+    assert invalidated["relations_invalidated"] == 1
+    assert replayed["state"] == DerivedState.CANDIDATE.value
+    assert approved["state"] == DerivedState.ACTIVE.value
+    assert [relation.relation_id for relation in active] == ["conflict-1"]
+    assert active[0].invalid_at is None
+    await store.close()
+
+
+@pytest.mark.asyncio
 async def test_background_upsert_cannot_reopen_rejected_candidate(tmp_path) -> None:
     """重复 proposal 不得绕过显式 replay 动作重新打开已拒绝候选。"""
 

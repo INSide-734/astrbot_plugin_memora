@@ -125,7 +125,11 @@ class SemanticCompressor:
                         result["projections_applied"] += max(0, int(applied))
                     except asyncio.CancelledError:
                         raise
-                    except Exception:
+                    except Exception as exc:
+                        logger.warning(
+                            "[语义压缩] 聚类写入失败，已保留 canonical，异常类型=%s",
+                            type(exc).__name__,
+                        )
                         result["failed_groups"] += 1
         except asyncio.CancelledError:
             raise

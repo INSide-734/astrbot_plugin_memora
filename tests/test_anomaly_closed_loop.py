@@ -130,10 +130,18 @@ async def test_daily_feed_is_idempotent_and_emits_sanitized_event(
             500 if day_ts == _day_ts(0) else (99 if (day_ts // 86400) % 2 == 0 else 101)
         )
     )
+
+    from core.features.diagnostics.infrastructure.event_store import (
+        DiagnosticEventStore,
+    )
+
+    store = DiagnosticEventStore(tmp_path / "diagnostics_events.db")
+    await store.initialize()
     scheduler = DecayScheduler(
         memory_engine=engine,
         decay_rate=0.0,
         data_dir=str(tmp_path),
+        diagnostic_event_store=store,
     )
 
     await scheduler._run_anomaly_feed()
@@ -143,12 +151,6 @@ async def test_daily_feed_is_idempotent_and_emits_sanitized_event(
     assert engine.count_canonical_created_on.await_count == first_calls
     assert len(detector._window) == 14
 
-    from core.features.diagnostics.infrastructure.event_store import (
-        DiagnosticEventStore,
-    )
-
-    store = DiagnosticEventStore(tmp_path / "diagnostics_events.db")
-    await store.initialize()
     events = await store.list_events()
     assert len(events) == 1
     payload = events[0]["payload"]
@@ -310,10 +312,15 @@ async def test_failed_anomaly_event_is_retried_before_day_is_marked(
 async def test_anomaly_event_uses_stable_daily_idempotency_key(tmp_path: Path) -> None:
     """同一 UTC 日重复投递只能持久化一条诊断事件。"""
 
+    from core.features.diagnostics import DiagnosticEventStore
+
+    store = DiagnosticEventStore(tmp_path / "diagnostics_events.db")
+    await store.initialize()
     scheduler = DecayScheduler(
         memory_engine=SimpleNamespace(),
         decay_rate=0.0,
         data_dir=str(tmp_path),
+        diagnostic_event_store=store,
     )
     alert = {
         "day_ts": _day_ts(0),
@@ -328,10 +335,25 @@ async def test_anomaly_event_uses_stable_daily_idempotency_key(tmp_path: Path) -
     await scheduler._emit_anomaly_event(alert)
     await scheduler._emit_anomaly_event(alert)
 
-    store = await scheduler._get_diagnostic_event_store()
     events = await store.list_events()
     assert len(events) == 1
     assert events[0]["event_id"] == f"anomaly-{_day_ts(0)}"
+
+
+@pytest.mark.asyncio
+async def test_anomaly_event_skips_without_published_store(tmp_path: Path) -> None:
+    """未注入共享 Store 时调度器不得自行建库，也不能阻塞异常喂给。"""
+
+    scheduler = DecayScheduler(
+        memory_engine=SimpleNamespace(),
+        decay_rate=0.0,
+        data_dir=str(tmp_path),
+    )
+
+    await scheduler._emit_anomaly_event({"day_ts": _day_ts(0)})
+    await scheduler._run_anomaly_feed()
+
+    assert not (tmp_path / "diagnostics_events.db").exists()
 
 
 def test_pending_anomaly_alert_survives_restart_until_marked(tmp_path: Path) -> None:

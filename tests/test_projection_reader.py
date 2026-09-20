@@ -176,6 +176,20 @@ async def test_reader_drops_stale_source_and_invalid_scope_or_time() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reader_rejects_bundle_when_any_source_is_missing() -> None:
+    """非主来源已被删除或归档时不得去掉边界继续附着。"""
+
+    reader = make_reader(bundle())
+    del reader.store.sources[18]
+
+    result = await reader.attach(
+        [candidate(17)], scope=read_scope(), budget=read_budget()
+    )
+
+    assert result[0].metadata.get("derived_projections") is None
+
+
+@pytest.mark.asyncio
 async def test_reader_requires_both_conflict_roles() -> None:
     invalid = bundle(
         projection_type=ProjectionType.CONFLICT_SET,

@@ -397,6 +397,67 @@ def test_file_rotation_keeps_current_file_and_two_backups(
     assert (tmp_path / "diagnostics" / "memora-debug.jsonl").exists()
 
 
+@pytest.mark.parametrize(
+    ("status", "reason_code", "allowed"),
+    [
+        ("allowed", "extra_llm_reserved", True),
+        ("denied", "extra_llm_budget_exhausted", False),
+    ],
+)
+def test_extra_llm_budget_event_is_accepted_with_callable_fields(
+    tmp_path: Path,
+    status: str,
+    reason_code: str,
+    allowed: bool,
+) -> None:
+    """预算决策事件与它的标量字段必须通过 allowlist，不得被静默拒绝。"""
+    debug_reporter.configure_debug_reporting(True, tmp_path)
+
+    debug_reporter.report_debug_event(
+        "extra_llm_budget",
+        component="event_handler",
+        stage="budget",
+        status=status,
+        reason_code=reason_code,
+        feature="note_generation",
+        allowed=allowed,
+        used=1,
+        remaining=2,
+    )
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "diagnostics" / "memora-debug.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [record["event"] for record in records] == ["extra_llm_budget"]
+    assert records[0]["allowed"] is allowed
+    assert records[0]["feature"] == "note_generation"
+
+
+def test_extra_llm_budget_rejects_non_boolean_allowed(tmp_path: Path) -> None:
+    """布尔诊断字段只接受真正的 bool，字符串不得混入事件。"""
+    debug_reporter.configure_debug_reporting(True, tmp_path)
+
+    debug_reporter.report_debug_event(
+        "extra_llm_budget",
+        stage="budget",
+        status="allowed",
+        reason_code="extra_llm_reserved",
+        allowed="yes",
+    )
+
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "diagnostics" / "memora-debug.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    assert [record["event"] for record in records] == ["debug_event_rejected"]
+    assert records[0]["reason_code"] == "invalid_field"
+
+
 def test_file_sink_initialization_failure_is_safe(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

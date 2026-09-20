@@ -364,9 +364,9 @@ class HealthScorer:
 
     @classmethod
     def _to_int(cls, value: Any) -> int | None:
-        """把合法数值转换为整数，非法输入返回空值。"""
+        """把合法有限数值转换为整数，非法输入返回空值。"""
         number = cls._to_number(value)
-        if number is None:
+        if number is None or not math.isfinite(number):
             return None
         return int(number)
 

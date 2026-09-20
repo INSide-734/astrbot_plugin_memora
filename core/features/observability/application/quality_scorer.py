@@ -278,16 +278,22 @@ class MemoryQualityScorer:
         if not tokens_new:
             return 0.8
 
+        # 本模块伪向量维度固定；存储 embedding 可能来自其它向量空间（真实
+        # embedding 与 64 维字符哈希不可比），因此只有确认它就是本模块对该
+        # existing 正文生成的伪向量时才做余弦，否则回退 token 重叠。
+        # 不得用维度推断向量来源：同维异空间会给出无意义相似度。
+        pseudo_vector = _text_to_simple_embedding(content)
         max_similarity = 0.0
         for existing in existing_atoms:
             existing_content = str(existing.get("content", ""))
             if not existing_content.strip():
                 continue
 
-            # 若存在向量表示，则优先使用余弦相似度
             emb = existing.get("embedding")
-            if emb is not None:
-                sim = _cosine_similarity(_text_to_simple_embedding(content), emb)
+            if isinstance(emb, list) and emb == _text_to_simple_embedding(
+                existing_content
+            ):
+                sim = _cosine_similarity(pseudo_vector, emb)
             else:
                 tokens_existing = set(_tokenize(existing_content))
                 if not tokens_existing:
@@ -299,8 +305,9 @@ class MemoryQualityScorer:
             if sim > max_similarity:
                 max_similarity = sim
 
-        # 1 - max_similarity：重叠越高，一致性越低（更像重复内容）
-        return round(1.0 - max_similarity, 4)
+        # 1 - max_similarity：重叠越高，一致性越低（更像重复内容）；
+        # 余弦对含负分量的真实向量可能为负，必须裁剪回 [0.0, 1.0]。
+        return round(max(0.0, min(1.0, 1.0 - max_similarity)), 4)
 
     def _score_coherence(self, content: str) -> float:
         """使用结构化启发式规则评估文本内部连贯性。"""

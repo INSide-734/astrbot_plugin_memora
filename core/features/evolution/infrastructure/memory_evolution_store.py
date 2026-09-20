@@ -16,6 +16,7 @@ from ....shared.adapter_capabilities import (
     AdapterCapabilityContract,
     AdapterKind,
 )
+from ....shared.contracts.canonical_source import _MAX_READ_CHARS
 from ....shared.memory_status import is_memory_active
 from ....shared.temporal import (
     infer_time_precision,
@@ -271,11 +272,15 @@ class MemoryEvolutionStore(
 
         参数:
             memory_ids: 需要读取的 canonical 整数 ID。
-            max_content_chars: 单个 source 正文的上限字符数。
+            max_content_chars: 单个 source 正文的上限字符数；超过共享 DTO 的
+                读取上限时按上限收敛，避免构造非法 SourceRef。
             active_only: 为真时跳过休眠、归档、删除等非活跃来源；revision
                 失效路径需要读取非活跃来源的当前 revision 时显式传 ``False``。
         """
         ids = tuple(dict.fromkeys(int(memory_id) for memory_id in memory_ids))
+        # 单条 source 正文不得超过 MemorySourceRef 的证据上限；总模型输入
+        # 预算仍可由调用方的 max_content_chars 保持更高。
+        content_limit = min(max(1, max_content_chars), _MAX_READ_CHARS)
         if not ids:
             return []
         rows = await self._fetch_all(
@@ -313,7 +318,7 @@ class MemoryEvolutionStore(
                 or metadata.get("persona_id")
                 or "private:default"
             )
-            content = str(row.get("text") or "")[: max(1, max_content_chars)]
+            content = str(row.get("text") or "")[:content_limit]
             source = MemorySourceRef(
                 memory_id=int(row["id"]),
                 revision_token=revision_token,
@@ -352,7 +357,10 @@ class MemoryEvolutionStore(
         *,
         max_content_chars: int = 4_000,
     ) -> list[MemorySourceRef]:
-        """按 canonical 整数 ID 顺序读取全部可用 source 快照。"""
+        """按 canonical 整数 ID 顺序读取全部可用 source 快照。
+
+        单条 source 正文预算由 :meth:`load_sources` 收敛到共享 DTO 上限。
+        """
         table_exists = await self._fetch_scalar(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='documents'"
         )
@@ -625,6 +633,7 @@ class MemoryEvolutionStore(
                     ),
                 )
             projection_id_map: dict[str, str] = {}
+            seen_projection_keys: set[str] = set()
             for proj in plan.projections:
                 projection_sources = tuple(
                     source
@@ -653,6 +662,11 @@ class MemoryEvolutionStore(
                     )
                 )
                 pkey = f"{proj.projection_type.value}:{proj.scope_key}:{source_key}"
+                # 归一化键重复会合并两行并让后续 mapping 命中主键冲突，
+                # 在写入前用稳定错误拒绝，避免用不透明的 IntegrityError 掩盖计划缺陷。
+                if pkey in seen_projection_keys:
+                    raise ValueError("duplicate_projection")
+                seen_projection_keys.add(pkey)
                 await self.connection.execute(
                     """INSERT INTO memory_projections
                     (projection_id,projection_key,projection_type,revision,state,summary,primary_source_memory_id,scope_key,privacy_level,confidence,valid_from,valid_to,reference_at,discovered_at,invalid_at,time_source,time_precision,origin_job_id,created_at,updated_at)

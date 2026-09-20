@@ -167,6 +167,67 @@ class TestDecayScheduler:
             assert mock_engine.apply_daily_decay.call_count == 0
 
     @pytest.mark.asyncio
+    async def test_concurrent_idempotent_entries_run_daily_chain_once(
+        self, mock_engine, tmp_path
+    ):
+        """启动补偿与循环并发触发时，同一日期只能执行一次每日链。"""
+
+        s = self._make_scheduler(mock_engine, tmp_path)
+        state: dict[str, str] = {}
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow_execute(days: int = 1) -> bool:
+            """模拟耗时的每日链，只在结束时写入当日日期。"""
+            started.set()
+            await release.wait()
+            state["last_decay_date"] = s._get_today_str()
+            return True
+
+        with (
+            patch.object(s, "_load_state", AsyncMock(side_effect=lambda: dict(state))),
+            patch.object(
+                s, "_execute_decay", AsyncMock(side_effect=slow_execute)
+            ) as mock_exec,
+        ):
+            startup = asyncio.create_task(s._check_and_execute())
+            await started.wait()
+            loop_tick = asyncio.create_task(s._check_and_execute())
+            release.set()
+            await asyncio.gather(startup, loop_tick)
+
+        assert mock_exec.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_scheduler_loop_skips_day_already_executed(
+        self, mock_engine, tmp_path
+    ):
+        """循环到点时也必须服从幂等日期，不能重复执行当日链。"""
+
+        s = self._make_scheduler(mock_engine, tmp_path)
+        s._running = True
+        today = s._get_today_str()
+        with (
+            patch.object(s, "_seconds_until_next_run", return_value=0.01),
+            patch.object(
+                s, "_load_state", AsyncMock(return_value={"last_decay_date": today})
+            ),
+            patch.object(
+                s, "_execute_decay", AsyncMock(return_value=True)
+            ) as mock_exec,
+        ):
+            task = asyncio.create_task(s._scheduler_loop())
+            await asyncio.sleep(0.1)
+            s._running = False
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        mock_exec.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_check_and_execute_first_run(self, mock_engine, tmp_path):
         """首次启动应执行一次当日衰减。"""
         s = self._make_scheduler(mock_engine, tmp_path)

@@ -15,6 +15,7 @@ from core.features.evolution.domain import (
     RelationView,
 )
 from core.shared.contracts import MemorySourceRef
+from core.shared.contracts.canonical_source import _MAX_READ_CHARS
 
 
 def test_relation_and_projection_allowlists_are_stable() -> None:
@@ -100,7 +101,7 @@ def test_local_constraints_cover_gate_job_source_and_projection_roles() -> None:
             "scope",
             "shared",
             datetime(2026, 7, 18, tzinfo=timezone.utc),
-            "x" * 4001,
+            "x" * (_MAX_READ_CHARS + 1),
         )
     with pytest.raises(ValueError, match="source role"):
         ProjectionSourceView("p1", 17, "r1", role="unknown")

@@ -161,7 +161,8 @@ class MemoryEvolutionReviewMixin:
             result_revision = current_revision + 1
             updated_at = serialize_datetime(datetime.now(timezone.utc))
             cursor = await self.connection.execute(
-                "UPDATE memory_relations SET state=?,revision=?,updated_at=? "
+                "UPDATE memory_relations SET state=?,revision=?,updated_at=?,"
+                "invalid_at=NULL "
                 "WHERE relation_id=? AND revision=? AND state=?",
                 (
                     new_state.value,

@@ -28,6 +28,7 @@ class DecayScheduler:
         backup_manager: "BackupManager | None" = None,
         backup_enabled: bool = True,
         backup_keep_days: int = 7,
+        diagnostic_event_store: Any | None = None,
     ):
         """初始化衰减调度器。
 
@@ -40,6 +41,8 @@ class DecayScheduler:
             backup_manager: 可选的定时备份管理器。
             backup_enabled: 是否启用每日自动备份。
             backup_keep_days: 委托备份管理器执行的保留天数。
+            diagnostic_event_store: 组合根发布的唯一诊断事件 Store；未注入时
+                调度器不写诊断事件，也不自行建库。
         """
         self.memory_engine = memory_engine
         self.decay_rate = decay_rate
@@ -54,7 +57,9 @@ class DecayScheduler:
         self._task: asyncio.Task | None = None
         self._startup_task: asyncio.Task | None = None
         self._running = False
-        self._diagnostic_event_store: Any | None = None
+        # 启动补偿与每日循环共用同一幂等入口，避免同一日期并发执行。
+        self._decay_lock = asyncio.Lock()
+        self._diagnostic_event_store: Any | None = diagnostic_event_store
         self.last_backup_result: dict[str, object] = {
             "status": "idle",
             "reason_code": None,
@@ -267,22 +272,23 @@ class DecayScheduler:
             return False
 
     async def _check_and_execute(self) -> None:
-        """启动时检查幂等日期并补偿遗漏的衰减。"""
+        """启动时检查幂等日期并补偿遗漏的衰减，同一时刻只允许一个调用。"""
 
-        today_str = self._get_today_str()
-        last_date_str = await self._get_last_decay_date()
+        async with self._decay_lock:
+            today_str = self._get_today_str()
+            last_date_str = await self._get_last_decay_date()
 
-        if last_date_str == today_str:
-            logger.debug("[衰减调度] 今日已执行过衰减，跳过")
-            return
+            if last_date_str == today_str:
+                logger.debug("[衰减调度] 今日已执行过衰减，跳过")
+                return
 
-        missed_days = await self._calculate_missed_days()
-        total_days = missed_days + 1
+            missed_days = await self._calculate_missed_days()
+            total_days = missed_days + 1
 
-        if missed_days > 0:
-            logger.info(f"[衰减调度] 检测到错过 {missed_days} 天衰减，执行补偿")
+            if missed_days > 0:
+                logger.info(f"[衰减调度] 检测到错过 {missed_days} 天衰减，执行补偿")
 
-        await self._execute_decay(total_days)
+            await self._execute_decay(total_days)
 
     async def _run_optional_maintenance(self) -> None:
         """依次执行彼此隔离的可选维护任务。
@@ -420,6 +426,10 @@ class DecayScheduler:
         """
 
         store = await self._get_diagnostic_event_store()
+        if store is None:
+            # 诊断事件是派生观测：未发布共享 Store 时跳过，不自行建库。
+            logger.warning("[衰减调度] 诊断事件 Store 不可用，跳过异常事件投递")
+            return
         event_day = max(0, int(alert.get("day_ts", 0) or 0))
         await store.add_event(
             {
@@ -441,19 +451,14 @@ class DecayScheduler:
             }
         )
 
-    async def _get_diagnostic_event_store(self) -> Any:
-        """懒加载与 Dashboard 诊断页共用的 SQLite 事件库。
+    async def _get_diagnostic_event_store(self) -> Any | None:
+        """返回组合根发布的共享诊断事件 Store。
 
         返回:
-            已初始化且由当前调度器复用的诊断事件 Store。
+            已初始化的共享 Store；未注入时返回 ``None``，调用方按“不可用”跳过，
+            调度器不得在请求或调度路径自行建库。
         """
 
-        if self._diagnostic_event_store is None:
-            from ...diagnostics import DiagnosticEventStore
-
-            store = DiagnosticEventStore(self.data_dir / "diagnostics_events.db")
-            await store.initialize()
-            self._diagnostic_event_store = store
         return self._diagnostic_event_store
 
     async def _run_backup(self) -> None:
@@ -536,7 +541,7 @@ class DecayScheduler:
         return (target - now).total_seconds()
 
     async def _scheduler_loop(self) -> None:
-        """等待每日计划时间并触发衰减，普通失败后一小时重试。"""
+        """等待每日计划时间并触发幂等衰减入口，普通失败后一小时重试。"""
 
         while self._running:
             try:
@@ -548,7 +553,8 @@ class DecayScheduler:
                 if not self._running:
                     break
 
-                await self._execute_decay(1)
+                # 复用幂等入口：启动补偿已写入当日日期时不得重复执行。
+                await self._check_and_execute()
 
             except asyncio.CancelledError:
                 logger.info("[衰减调度] 调度器被取消")

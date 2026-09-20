@@ -239,7 +239,7 @@ class DecayOperationsMixin:
                     access_count = 0
                 metadata["access_count"] = min(access_count + 1, 1_000_000)
 
-                importance = float(metadata.get("importance", 0.5))
+                importance = clamp_float(metadata.get("importance"), default=0.5)
                 if recall_type == "active":
                     importance = min(0.95, importance + 0.05)
                 else:
@@ -332,7 +332,7 @@ class DecayOperationsMixin:
                         access_count = 0
                     metadata["access_count"] = min(access_count + 1, 1_000_000)
 
-                    importance = float(metadata.get("importance", 0.5))
+                    importance = clamp_float(metadata.get("importance"), default=0.5)
                     metadata["importance"] = round(
                         min(0.95, importance + importance_delta), 4
                     )
