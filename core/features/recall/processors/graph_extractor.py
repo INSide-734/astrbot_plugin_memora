@@ -15,6 +15,7 @@ from ...memory.application.fact_text_alignment import (
     FactTextAlignment,
     fact_in_content,
     facts_aligned,
+    normalize_fact,
 )
 from ...memory.graph.domain.models import (
     ExtractedGraph,
@@ -129,6 +130,48 @@ def _aligned_fact_metadata(
     return metadata
 
 
+def _stale_fact_keys(content: str, metadata: dict[str, Any] | None) -> frozenset[str]:
+    """返回「记录过事实文本、但已不在当前正文」的名字比较键。
+
+    归属判据不看实体自声明的类型：凡是名字等于记录过的事实条目（``key_facts``
+    按旧版路径实际消费的 ``str(item)`` 取值、``canonical_summary``）的，就是事实
+    表示的载体，无论它出现在 ``key_facts``、legacy ``topics``/``participants``
+    还是结构化载荷的实体/关系端点上，都必须仍属于当前 canonical 正文才能建节点、
+    生成 entry 或作为关系端点。抽象标签（主题标签、参与者、稳定身份等不来自事实
+    表示的字符串）不参与判定，不受回落影响。判定必须在 ``_aligned_fact_metadata``
+    剥离事实元数据之前完成，否则记录过的事实文本已不可见。
+    """
+
+    if not isinstance(metadata, dict):
+        return frozenset()
+    recorded: list[Any] = []
+    facts = metadata.get("key_facts")
+    if isinstance(facts, (list, tuple)):
+        recorded.extend(facts)
+    summary = metadata.get("canonical_summary")
+    if isinstance(summary, str) and summary.strip():
+        recorded.append(summary)
+    keys: set[str] = set()
+    for entry in recorded:
+        if not entry:
+            continue
+        text = str(entry)
+        if fact_in_content(content, text):
+            continue
+        key = normalize_fact(text)
+        if key:
+            keys.add(key)
+    return frozenset(keys)
+
+
+def _is_stale_fact_name(name: Any, stale_fact_keys: frozenset[str]) -> bool:
+    """判断名字是否是被改写掉的旧事实文本（与来源字段和自声明类型无关）。"""
+
+    if not stale_fact_keys or not isinstance(name, str):
+        return False
+    return normalize_fact(name) in stale_fact_keys
+
+
 class GraphExtractor:
     """将记忆摘要转换为节点、边与可检索的图条目。"""
 
@@ -157,10 +200,12 @@ class GraphExtractor:
         消费事实元数据前先校验条目仍出现在当前正文中；不一致时按「无事实
         元数据」回落 canonical 正文，不拒绝整条记忆。基于 Atom 构图时还要
         逐条确认 Atom 内容仍属于当前 canonical 事实集合：残留 Atom 不产生
-        fact 节点/entry/边，全部残留时同样回落 canonical 正文派生。结构化图
-        载荷里的 fact 实体同样要求文本属于当前正文，残留事实不作为节点、entry
-        或关系端点。
+        fact 节点/entry/边，全部残留时同样回落 canonical 正文派生。事实归属
+        判据不看实体自声明类型：记录过的事实条目只要已不在当前正文中，无论由
+        哪个字段或自声明类型承载，都不产生节点、entry 或关系端点；不来自事实
+        表示的抽象标签不受影响。
         """
+        stale_fact_keys = _stale_fact_keys(content, metadata)
         metadata = _aligned_fact_metadata(content, metadata)
         GraphBoundary.from_metadata(metadata)
         if atoms:
@@ -181,10 +226,13 @@ class GraphExtractor:
                 content,
                 metadata or {},
                 guarded,
+                stale_fact_keys,
             )
             if graph.entries:
                 return graph
-        return self._extract_legacy(source_memory_id, content, metadata)
+        return self._extract_legacy(
+            source_memory_id, content, metadata, stale_fact_keys
+        )
 
     @staticmethod
     def _validate_structured_graph(
@@ -235,6 +283,7 @@ class GraphExtractor:
         content: str,
         metadata: dict[str, Any],
         guarded: GraphExtractionResult,
+        stale_fact_keys: frozenset[str],
     ) -> ExtractedGraph:
         """将通过护栏校验的图数据转换为图记忆模型。"""
         graph = ExtractedGraph()
@@ -307,15 +356,27 @@ class GraphExtractor:
             )
 
         dropped_fact_names: set[str] = set()
+
+        def _is_dropped_fact(name: str) -> bool:
+            """判断名字是否属于被剔除的残留事实（含仅由关系合成的端点）。"""
+
+            return name in dropped_fact_names or _is_stale_fact_name(
+                name, stale_fact_keys
+            )
+
         for entity in guarded.entities:
             name = str(entity.get("name", "")).strip()
             node_type = str(entity.get("type", "entity")).strip() or "entity"
             if not name:
                 continue
-            if node_type == "fact" and not fact_in_content(content, name):
-                # R4.3/D5：事实类型实体必须属于当前 canonical 正文——对齐事实的
-                # 准入条件就是条目出现在正文中。残留事实（结构化载荷里的旧事实）
-                # 不派生节点/entry，也不允许作为关系端点把旧事实带回图。
+            if (node_type == "fact" and not fact_in_content(content, name)) or (
+                _is_stale_fact_name(name, stale_fact_keys)
+            ):
+                # R4.3/D5：事实表示的载体必须属于当前 canonical 正文——对齐事实的
+                # 准入条件就是条目出现在正文中，归属判据不看自声明类型（旧事实被
+                # 贴上 topic/entity 等类型同样是事实文本）。残留事实不派生节点/
+                # entry，也不允许作为关系端点把旧事实带回图；不来自事实表示的
+                # 抽象标签不在此判定范围内。
                 dropped_fact_names.add(name)
                 continue
             extra = {
@@ -348,8 +409,9 @@ class GraphExtractor:
             relation_type = str(relation.get("relation", "")).strip()
             if not source_name or not target_name or not relation_type:
                 continue
-            if source_name in dropped_fact_names or target_name in dropped_fact_names:
-                # 端点是被剔除的残留事实：该关系同样由旧事实派生，不生成边与 entry。
+            if _is_dropped_fact(source_name) or _is_dropped_fact(target_name):
+                # 端点是被剔除的残留事实（含只出现在关系里的名字）：该关系同样由
+                # 旧事实派生，不生成边与 entry，也不合成节点。
                 continue
             source_key = name_to_key.get(source_name)
             if not source_key:
@@ -419,6 +481,7 @@ class GraphExtractor:
         source_memory_id: int,
         content: str,
         metadata: dict[str, Any] | None,
+        stale_fact_keys: frozenset[str],
     ) -> ExtractedGraph:
         """从 metadata 执行旧版图提取逻辑（向后兼容路径）。"""
         metadata = metadata or {}
@@ -428,15 +491,27 @@ class GraphExtractor:
         persona_id = metadata.get("persona_id")
         summary = metadata.get("canonical_summary") or content
 
-        topics = EntityResolver.dedupe_preserve_order(
-            [str(item) for item in metadata.get("topics", []) if item]
-        )[: self.max_topics]
-        participants = EntityResolver.dedupe_preserve_order(
-            [str(item) for item in metadata.get("participants", []) if item]
-        )[: self.max_participants]
-        key_facts = EntityResolver.dedupe_preserve_order(
-            [str(item) for item in metadata.get("key_facts", []) if item]
-        )[: self.max_facts]
+        def _admitted_names(field: str, limit: int) -> list[str]:
+            """读取旧版列表字段，剔除被改写掉的旧事实文本后按上限截断。
+
+            名单字段里的旧事实句子与 ``key_facts`` 里的一样是事实表示的载体：
+            归属判据只看名字是否仍是记录过且当前正文仍保有的事实文本，不看它出现
+            在哪个字段，也不影响不来自事实表示的抽象标签（主题标签、参与者、稳定
+            身份）。
+            """
+
+            values = EntityResolver.dedupe_preserve_order(
+                [str(item) for item in metadata.get(field, []) if item]
+            )
+            return [
+                value
+                for value in values
+                if not _is_stale_fact_name(value, stale_fact_keys)
+            ][:limit]
+
+        topics = _admitted_names("topics", self.max_topics)
+        participants = _admitted_names("participants", self.max_participants)
+        key_facts = _admitted_names("key_facts", self.max_facts)
 
         if not key_facts and summary:
             key_facts = [summary]

@@ -892,6 +892,193 @@ class TestGraphExtractorStructuredFactBoundary:
         assert any("Alice" in entry.content for entry in graph.entries)
 
 
+class TestGraphExtractorFactTextOwnership:
+    """事实文本归属：判据是名字是否仍是记录过的事实文本，不看来源字段与类型。"""
+
+    @pytest.fixture
+    def extractor(self) -> GraphExtractor:
+        return GraphExtractor()
+
+    def test_stale_fact_in_legacy_topics_is_not_derived(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """正文改写后，藏在 legacy topics/participants 里的旧事实不再入图。"""
+
+        stale = "用户已经搬到上海"
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="用户现在住在杭州",
+            metadata={
+                **BOUNDARY.as_params(),
+                "key_facts": [stale],
+                "fact_source_evidence": fact_evidence([stale]),
+                "topics": [stale, "居住地"],
+                "participants": [stale, "Alice"],
+            },
+        )
+
+        assert all(node.value != stale for node in graph.nodes)
+        assert all(stale not in entry.content for entry in graph.entries)
+        assert all(stale not in str(edge.metadata) for edge in graph.edges)
+        # 回落而非拒绝整条记忆：canonical 正文成为唯一事实文本。
+        assert [node.value for node in graph.nodes if node.node_type == "fact"] == [
+            "用户现在住在杭州"
+        ]
+        # 抽象标签（不属于任何事实表示）与参与者不被误杀。
+        assert {node.value for node in graph.nodes if node.node_type == "topic"} == {
+            "居住地"
+        }
+        assert {node.value for node in graph.nodes if node.node_type == "person"} == {
+            "Alice"
+        }
+
+    def test_aligned_fact_text_in_legacy_topics_still_derives(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """同一次抽取里仍属于当前正文的事实照常派生，不因归属判定被误伤。"""
+
+        fact = "用户现在住在杭州"
+        graph = extractor.extract(
+            source_memory_id=1,
+            content=fact,
+            metadata={
+                **BOUNDARY.as_params(),
+                "key_facts": [fact],
+                "fact_source_evidence": fact_evidence([fact]),
+                "topics": [fact],
+            },
+        )
+
+        assert {node.value for node in graph.nodes if node.node_type == "fact"} == {
+            fact
+        }
+        assert {node.value for node in graph.nodes if node.node_type == "topic"} == {
+            fact
+        }
+        assert any(fact in entry.content for entry in graph.entries)
+
+    def test_declared_type_does_not_excuse_stale_fact_entities(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """旧事实贴上 topic 类型仍不建节点，关系与 entry 也不得由它派生。"""
+
+        stale = "用户已经搬到上海"
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="用户现在住在杭州",
+            metadata={
+                **BOUNDARY.as_params(),
+                "key_facts": [stale],
+                "fact_source_evidence": fact_evidence([stale]),
+                "graph_extraction": {
+                    "entities": [
+                        {"name": stale, "type": "topic"},
+                        {"name": "杭州", "type": "location"},
+                    ],
+                    "relations": [
+                        {
+                            "source": stale,
+                            "target": "杭州",
+                            "relation": "located_in",
+                        },
+                        {
+                            "source": "杭州",
+                            "target": "用户现在住在杭州",
+                            "relation": "describes",
+                        },
+                    ],
+                },
+            },
+        )
+
+        assert all(node.value != stale for node in graph.nodes)
+        assert all(stale not in entry.content for entry in graph.entries)
+        assert all(stale not in str(edge.metadata) for edge in graph.edges)
+        # 不来自事实表示的标签与关系照常派生。
+        assert any(node.value == "杭州" for node in graph.nodes)
+        assert [edge.relation_type for edge in graph.edges] == ["describes"]
+
+    def test_stale_fact_relation_endpoints_are_not_synthesized(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """只出现在关系端点里的旧事实不合成节点，也不生成边与 entry。"""
+
+        stale = "用户已经搬到上海"
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="用户现在住在杭州",
+            metadata={
+                **BOUNDARY.as_params(),
+                "key_facts": [stale],
+                "fact_source_evidence": fact_evidence([stale]),
+                "graph_extraction": {
+                    "entities": [{"name": "杭州", "type": "location"}],
+                    "relations": [
+                        {
+                            "source": stale,
+                            "target": "杭州",
+                            "relation": "located_in",
+                        }
+                    ],
+                },
+            },
+        )
+
+        assert all(node.value != stale for node in graph.nodes)
+        assert graph.edges == []
+        assert all(stale not in entry.content for entry in graph.entries)
+        assert any(node.value == "杭州" for node in graph.nodes)
+
+    def test_unparsable_recorded_fact_entries_are_not_derived(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """无法逐条解析的历史事实表示同样按正文成员性准入：旧条目不入图。"""
+
+        stale = "用户已经搬到上海"
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="用户现在住在杭州",
+            metadata={**BOUNDARY.as_params(), "key_facts": [{"text": stale}]},
+        )
+
+        assert [node.value for node in graph.nodes if node.node_type == "fact"] == [
+            "用户现在住在杭州"
+        ]
+        assert all(stale not in node.value for node in graph.nodes)
+        assert all(stale not in entry.content for entry in graph.entries)
+
+    def test_stale_atom_fact_cannot_reenter_through_legacy_metadata(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """残留 Atom 回落正文后，同一旧事实也不得经 legacy 字段重新入图。"""
+
+        stale = "用户已经搬到上海"
+        stale_atom = _atom()
+        stale_atom.content = stale
+        stale_atom.atom_type = "FACTUAL"
+
+        graph = extractor.extract(
+            source_memory_id=1,
+            content="用户现在住在杭州",
+            metadata={
+                **BOUNDARY.as_params(),
+                "key_facts": [stale],
+                "topics": [stale, "居住地"],
+                "participants": [stale],
+            },
+            atoms=[stale_atom],
+        )
+
+        assert all(node.value != stale for node in graph.nodes)
+        assert all(stale not in entry.content for entry in graph.entries)
+        assert [node.value for node in graph.nodes if node.node_type == "fact"] == [
+            "用户现在住在杭州"
+        ]
+        assert {node.value for node in graph.nodes if node.node_type == "topic"} == {
+            "居住地"
+        }
+
+
 @pytest.mark.parametrize(
     ("field", "value", "reason"),
     [
