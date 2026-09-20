@@ -57,6 +57,15 @@ class EntityResolver:
         parent_c = cls.canonicalize(parent)
         if not child_c or not parent_c or child_c == parent_c:
             return
+        # 重新指定父级时必须从旧父级的子集合中清除，否则 _isa_children 与
+        # _isa_parents 不一致，旧父级会继续扩展到该 child 并被持久化。
+        previous = cls._isa_parents.get(child_c)
+        if previous and previous != parent_c:
+            siblings = cls._isa_children.get(previous)
+            if siblings is not None:
+                siblings.discard(child_c)
+                if not siblings:
+                    cls._isa_children.pop(previous, None)
         cls._isa_children.setdefault(parent_c, set()).add(child_c)
         cls._isa_parents[child_c] = parent_c
 

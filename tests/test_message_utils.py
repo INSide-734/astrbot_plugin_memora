@@ -108,8 +108,41 @@ class TestStoreRound:
         metadata = call_args[1]["metadata"]
         assert metadata["truncated"] is True
 
-    def test_store_round_exceeds_double_limit(self, mock_engine: MagicMock) -> None:
-        huge = "x" * (MAX_SINGLE_MESSAGE_LENGTH + 10)
+    def test_store_round_accepts_messages_at_single_limit(
+        self, mock_engine: MagicMock
+    ) -> None:
+        """两段都恰好等于单条上限时，role 前缀与换行的固定开销不得让整轮被误丢弃。"""
+
+        at_limit = "x" * MAX_SINGLE_MESSAGE_LENGTH
+        user_msg = MagicMock()
+        user_msg.content = at_limit
+        user_msg.role = "user"
+        assistant_msg = MagicMock()
+        assistant_msg.content = at_limit
+        assistant_msg.role = "assistant"
+
+        success, error = asyncio.run(
+            store_round_with_length_check(
+                mock_engine,
+                user_msg,
+                assistant_msg,
+                session_id="s1",
+                persona_id="p1",
+                round_index=4,
+            )
+        )
+
+        assert success is True
+        assert error == ""
+        metadata = mock_engine.add_memory.call_args[1]["metadata"]
+        assert metadata["truncated"] is False
+
+    def test_store_round_keeps_oversized_round_after_truncation(
+        self, mock_engine: MagicMock
+    ) -> None:
+        """两段都超限时截断必须真正生效：正文缩短且本轮可存储，不得整轮丢弃。"""
+
+        huge = "x" * (MAX_SINGLE_MESSAGE_LENGTH + 5000)
         user_msg = MagicMock()
         user_msg.content = huge
         user_msg.role = "user"
@@ -127,9 +160,12 @@ class TestStoreRound:
                 round_index=5,
             )
         )
-        assert success is False
-        assert "第5轮" in error
-        mock_engine.add_memory.assert_not_called()
+
+        assert success is True
+        assert error == ""
+        call_args = mock_engine.add_memory.call_args
+        assert call_args[1]["metadata"]["truncated"] is True
+        assert len(call_args[1]["content"]) < len(huge) * 2
 
     def test_store_round_none_engine(
         self, mock_user_msg: MagicMock, mock_assistant_msg: MagicMock

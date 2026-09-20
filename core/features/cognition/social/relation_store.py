@@ -422,30 +422,85 @@ class RelationStore(BaseStore):
         """插入或更新一条 ``SocialRelation``。"""
         async with self._connect() as db:
             _ = self._table_sql
-            await db.execute(
-                """
-                INSERT INTO social_relations
-                    (from_user, to_user, relation_type, strength, frequency,
-                     last_interaction, group_id, tags_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(from_user, to_user, relation_type, group_id) DO UPDATE SET
-                    strength = excluded.strength,
-                    frequency = excluded.frequency,
-                    last_interaction = excluded.last_interaction,
-                    tags_json = excluded.tags_json
-                """,
-                (
-                    rel.from_user,
-                    rel.to_user,
-                    rel.relation_type,
-                    rel.strength,
-                    rel.frequency,
-                    rel.last_interaction,
-                    rel.group_id,
-                    json.dumps(rel.tags, ensure_ascii=False),
-                ),
-            )
-            await db.commit()
+            try:
+                await db.execute(
+                    """
+                    INSERT INTO social_relations
+                        (from_user, to_user, relation_type, strength, frequency,
+                         last_interaction, group_id, tags_json)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(from_user, to_user, relation_type, group_id) DO UPDATE SET
+                        strength = excluded.strength,
+                        frequency = excluded.frequency,
+                        last_interaction = excluded.last_interaction,
+                        tags_json = excluded.tags_json
+                    """,
+                    (
+                        rel.from_user,
+                        rel.to_user,
+                        rel.relation_type,
+                        rel.strength,
+                        rel.frequency,
+                        rel.last_interaction,
+                        rel.group_id,
+                        json.dumps(rel.tags, ensure_ascii=False),
+                    ),
+                )
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
+
+    async def update_relation_tags_if_exists(
+        self,
+        identity: tuple[str, str, str, str],
+        *,
+        tags: list[str],
+    ) -> SocialRelation | None:
+        """原子替换标签列，不改写互动字段；行不存在时返回 ``None``。
+
+        调用方可能持有陈旧快照，因此这里只写 ``tags_json``，不回写
+        ``strength``/``frequency``/``last_interaction``。
+        """
+        async with self._connect() as db:
+            _ = self._table_sql
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                cursor = await db.execute(
+                    """
+                    UPDATE social_relations
+                    SET tags_json = ?
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    (json.dumps(tags, ensure_ascii=False), *identity),
+                )
+                if cursor.rowcount == 0:
+                    await db.rollback()
+                    return None
+
+                cursor = await db.execute(
+                    """
+                    SELECT *
+                    FROM social_relations
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    identity,
+                )
+                row = await cursor.fetchone()
+                if row is None:
+                    raise RuntimeError("标签更新后无法读取关系")
+                updated = SocialRelation.from_row(self._row_to_dict(row))
+                await db.commit()
+                return updated
+            except BaseException:
+                await db.rollback()
+                raise
 
     async def get_relation(
         self,
@@ -576,33 +631,43 @@ class RelationStore(BaseStore):
         """删除单条关系；若成功删除行则返回 ``True``。"""
         async with self._connect() as db:
             _ = self._table_sql
-            cursor = await db.execute(
-                """
-                DELETE FROM social_relations
-                WHERE from_user = ?
-                  AND to_user = ?
-                  AND relation_type = ?
-                  AND group_id = ?
-                """,
-                (from_user, to_user, relation_type, group_id),
-            )
-            await db.commit()
-            return cursor.rowcount > 0
+            try:
+                cursor = await db.execute(
+                    """
+                    DELETE FROM social_relations
+                    WHERE from_user = ?
+                      AND to_user = ?
+                      AND relation_type = ?
+                      AND group_id = ?
+                    """,
+                    (from_user, to_user, relation_type, group_id),
+                )
+                deleted = cursor.rowcount > 0
+                await db.commit()
+                return deleted
+            except BaseException:
+                await db.rollback()
+                raise
 
     async def delete_user_relations(self, user_id: str, group_id: str) -> int:
         """删除指定群组内涉及该用户的全部关系。"""
         async with self._connect() as db:
             _ = self._table_sql
-            cursor = await db.execute(
-                """
-                DELETE FROM social_relations
-                WHERE (from_user = ? OR to_user = ?)
-                  AND group_id = ?
-                """,
-                (user_id, user_id, group_id),
-            )
-            await db.commit()
-            return cursor.rowcount
+            try:
+                cursor = await db.execute(
+                    """
+                    DELETE FROM social_relations
+                    WHERE (from_user = ? OR to_user = ?)
+                      AND group_id = ?
+                    """,
+                    (user_id, user_id, group_id),
+                )
+                removed = cursor.rowcount
+                await db.commit()
+                return removed
+            except BaseException:
+                await db.rollback()
+                raise
 
     async def list_all(
         self,

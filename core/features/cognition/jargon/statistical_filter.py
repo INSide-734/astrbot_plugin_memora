@@ -17,6 +17,7 @@ import re
 import time
 from collections import defaultdict
 from operator import attrgetter
+from typing import Any
 
 from astrbot.api import logger
 
@@ -308,6 +309,7 @@ class JargonStatisticalFilter:
 
         # jieba 实例（懒加载）
         self._jieba_loaded = False
+        self._jieba: Any | None = None
         self._jieba_freq: dict[str, int] = {}
 
     # ------------------------------------------------------------------
@@ -494,7 +496,10 @@ class JargonStatisticalFilter:
         text = re.sub(r"\[.*?\]", "", text)
 
         self._ensure_jieba()
-        import jieba
+        jieba = self._jieba
+        if jieba is None:
+            # jieba 缺失时优雅降级：不累计任何统计，而不是每条消息抛 ImportError。
+            return []
 
         tokens: list[str] = []
         for word in jieba.cut(text):
@@ -518,7 +523,7 @@ class JargonStatisticalFilter:
         return tokens
 
     def _ensure_jieba(self) -> None:
-        """懒加载初始化 jieba，避免 import-time 开销。"""
+        """懒加载初始化 jieba 并缓存模块引用，避免 import-time 开销。"""
         if not self._jieba_loaded:
             try:
                 import jieba
@@ -528,6 +533,7 @@ class JargonStatisticalFilter:
                 if not jieba.dt.initialized:
                     jieba.initialize()
                 self._jieba_freq = jieba.dt.FREQ  # 缓存引用以便快速查找
+                self._jieba = jieba
                 self._jieba_loaded = True
                 logger.info(
                     f"[黑话过滤器] jieba 已加载，词典包含 "

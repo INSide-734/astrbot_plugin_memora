@@ -20,12 +20,23 @@ class StorageBuilder:
             is_group_chat: 是否群聊
         """
         summary = str(structured_data.get("summary", "") or "")
-        key_facts = structured_data.get("key_facts", [])
-        facts = [str(item) for item in key_facts if str(item).strip()]
+        # key_facts 来自不可信的 LLM 结构化输出：先收敛类型，只接受非空字符串。
+        # 否则该键为 None 会抛 TypeError、为字符串会被逐字符拆开、元素为标量时
+        # 会把 "None" 之类的字面量写进唯一可检索正文。
+        raw_key_facts = structured_data.get("key_facts")
+        key_facts = (
+            [
+                item.strip()
+                for item in raw_key_facts
+                if isinstance(item, str) and item.strip()
+            ]
+            if isinstance(raw_key_facts, list)
+            else []
+        )
 
         # 正文只保留一份事实，避免摘要改述与事实列表重复；叙述另存 persona_summary。
         # 保留全部准入事实，不能把原补充片段的五条上限沿用到唯一可检索正文。
-        canonical_summary = "；".join(facts) if facts else summary
+        canonical_summary = "；".join(key_facts) if key_facts else summary
 
         content = canonical_summary or fallback_excerpt
 

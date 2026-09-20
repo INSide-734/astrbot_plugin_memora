@@ -80,13 +80,15 @@ _NEGATION_RE = re.compile(
 
 # ---------- 质量过滤模式 ----------
 
+# 注意：寒暄/纯应答词必须「整句」命中（允许尾部标点），否则会把
+# “行程改到下周三”“可以帮我安排会议吗”等有实质内容的事实误判为无信息量。
 _LOW_INFO_PATTERNS = re.compile(
-    r"^(好的|知道了|嗯+|哦+|哈哈+|嘻嘻|呵呵|嘿嘿|是的|对的|没错|"
+    r"^(?:好的|知道了|嗯+|哦+|哈哈+|嘻嘻|呵呵|嘿嘿|是的|对的|没错|"
     r"可以|行|不行|好哒|ok|OK|Ok|来了|走了|拜拜|再见|"
-    r"早$|早安$|晚安$|吃了吗|在吗|"
+    r"早|早安|晚安|吃了吗|在吗)[\s。，！？,.!?~～]*$|"
     r"\d{1,2}[点:：]\d{1,2}了?$|"  # 纯时间 "3点了"
     r"^[。，！？,.!?\s]*$|"  # 纯标点
-    r"^[👍🙏😊😂❤️🔥🎉💪]+$)"  # 纯 emoji 表情
+    r"^[👍🙏😊😂❤️🔥🎉💪]+$"  # 纯 emoji 表情
 )
 
 # 过滤统计（用于调试和监控）
@@ -224,11 +226,15 @@ def _parse_event_time(text: str) -> float | None:
     if m:
         month, day = int(m.group(1)), int(m.group(2))
         now_dt = datetime.fromtimestamp(now)
-        target = now_dt.replace(
-            month=month, day=day, hour=0, minute=0, second=0, microsecond=0
-        )
-        if target < now_dt:
-            target = target.replace(year=now_dt.year + 1)
+        try:
+            target = now_dt.replace(
+                month=month, day=day, hour=0, minute=0, second=0, microsecond=0
+            )
+            if target < now_dt:
+                target = target.replace(year=now_dt.year + 1)
+        except ValueError:
+            # 非法月/日（如“13月40日”“2月29日”非闰年）来自不可信文本，降级为未识别
+            return None
         return target.timestamp()
 
     return None
@@ -242,6 +248,9 @@ def _has_minimal_information(text: str) -> bool:
     - 纯应答（"好的"、"知道了"、"嗯"）
     - 纯表情/纯标点/纯数字
     - 单字重复（"啊啊啊"）
+
+    仅当文本整体为寒暄/纯应答（可带尾部标点）时才判定无信息量；
+    "行程改到下周三" 这类含实质内容的事实不会被丢弃。
     """
     stripped = text.strip()
     if not stripped:

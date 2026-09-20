@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -43,6 +44,8 @@ class ExpressionPatternLearner:
 
         # 每个群组各自维护学习状态
         self._group_states: dict[str, GroupState] = {}
+        # 每群一个消费锁：同一批缓冲只能被一个 maybe_learn 消费
+        self._group_locks: dict[str, asyncio.Lock] = {}
 
     @property
     def bot_id(self) -> str:
@@ -235,6 +238,14 @@ class ExpressionPatternLearner:
             self._group_states[group_id] = GroupState(group_id=group_id)
         return self._group_states[group_id]
 
+    def _group_lock(self, group_id: str) -> asyncio.Lock:
+        """返回该群的消费锁（不可重入，串行化同一批缓冲的消费）。"""
+        lock = self._group_locks.get(group_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._group_locks[group_id] = lock
+        return lock
+
     def buffer_message(
         self,
         group_id: str,
@@ -260,20 +271,34 @@ class ExpressionPatternLearner:
         user_id: str | None = None,
         min_messages: int = 5,
     ) -> list[ExpressionPattern]:
-        """当缓冲区消息数达到阈值时触发学习。"""
+        """当缓冲区消息数达到阈值时触发学习。
+
+        同一群的消费在该群消费锁下串行：并发调用不会重复处理同一批，也不会把
+        ``await`` 期间新入队的消息当成已消费删除。
+        """
         state = self.get_or_create_state(group_id)
         if state.message_count_since_last_learn < min_messages:
             return []
 
-        messages = list(state.message_buffer)
-        # 清空缓冲区
-        state.message_buffer.clear()
-        state.message_count_since_last_learn = 0
-        state.last_learning_at = time.time()
+        async with self._group_lock(group_id):
+            # 等待锁期间缓冲可能已被前一次调用消费，需要按最新计数重判
+            if state.message_count_since_last_learn < min_messages:
+                return []
 
-        return await self.process_messages(
-            messages, group_id, persona_id=persona_id, user_id=user_id
-        )
+            messages = list(state.message_buffer)
+
+            results = await self.process_messages(
+                messages, group_id, persona_id=persona_id, user_id=user_id
+            )
+
+            # 仅在处理成功后移除已消费的消息；异常时保留缓冲，且不误清 await
+            # 期间新入队的消息。
+            del state.message_buffer[: len(messages)]
+            state.message_count_since_last_learn = max(
+                0, state.message_count_since_last_learn - len(messages)
+            )
+            state.last_learning_at = time.time()
+            return results
 
 
 __all__ = ["ExpressionPatternLearner"]

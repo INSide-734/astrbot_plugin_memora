@@ -11,6 +11,7 @@ from typing import Any
 
 from astrbot.api import logger
 
+from .quality_validator import QualityValidator
 from .topic_embeddings import cosine_sim, dummy_embeddings
 from .topic_fact_index import (
     agglomerative_index_clusters,
@@ -78,8 +79,9 @@ class PromptSegmentationStrategy(TopicSegmentationStrategy):
     ) -> list[MemorySegment]:
         """把模型输出的 memories[] 转换为保持原顺序的独立片段。"""
 
-        if "memories" in structured_data:
-            raw_list: list[dict[str, Any]] = structured_data["memories"]
+        raw_memories = structured_data.get("memories")
+        if isinstance(raw_memories, list):
+            raw_list: list[dict[str, Any]] = raw_memories
             logger.debug(f"[提示词分割] LLM 返回了 {len(raw_list)} 条独立记忆")
         else:
             raw_list = [structured_data]
@@ -91,7 +93,7 @@ class PromptSegmentationStrategy(TopicSegmentationStrategy):
                 continue
             summary = str(mem.get("summary", "") or "")
             key_facts, fact_indices = indexed_facts(mem.get("key_facts"))
-            topics: list[str] = [str(t) for t in (mem.get("topics") or []) if t]
+            topics = QualityValidator.ensure_list(mem.get("topics"))
             if not summary and not key_facts:
                 continue  # 跳过空条目（纯闲聊）
 
@@ -99,7 +101,9 @@ class PromptSegmentationStrategy(TopicSegmentationStrategy):
                 MemorySegment(
                     content=summary,
                     metadata=segment_metadata(mem, key_facts, topics, fact_indices),
-                    importance=float(mem.get("importance", 0.5)),
+                    importance=QualityValidator.validate_importance(
+                        mem.get("importance", 0.5)
+                    ),
                     key_facts=key_facts,
                     topics=topics,
                 )
@@ -647,13 +651,15 @@ def _build_segments_from_clusters(
             continue
         prefix = f"[话题{i + 1}] " if len(clusters) > 1 else ""
         summary = prefix + "；".join(facts)
-        topics = [str(topic) for topic in (data.get("topics") or []) if topic]
+        topics = QualityValidator.ensure_list(data.get("topics"))
         metadata = segment_metadata(data, facts, topics, fact_indices)
         segments.append(
             MemorySegment(
                 content=summary,
                 metadata=metadata,
-                importance=float(data.get("importance", 0.5)),
+                importance=QualityValidator.validate_importance(
+                    data.get("importance", 0.5)
+                ),
                 key_facts=facts,
                 topics=topics,
             )
@@ -670,12 +676,14 @@ def _single_segment(
     summary = str(data.get("summary", "") or "")
     if not summary and not key_facts:
         return []
-    topics = [str(topic) for topic in (data.get("topics") or []) if topic]
+    topics = QualityValidator.ensure_list(data.get("topics"))
     return [
         MemorySegment(
             content=summary,
             metadata=segment_metadata(data, key_facts, topics, fact_indices),
-            importance=float(data.get("importance", 0.5)),
+            importance=QualityValidator.validate_importance(
+                data.get("importance", 0.5)
+            ),
             key_facts=key_facts,
             topics=topics,
         )

@@ -240,18 +240,22 @@ class RelationManager:
         group_id: str,
         tags: list[str],
     ) -> SocialRelation | None:
-        """替换现有关系上的标签列表。"""
-        rel = await self._store.get_relation(
-            from_user,
-            to_user,
-            relation_type,
-            group_id,
+        """替换现有关系上的标签列表。
+
+        只原子写标签列，避免用陈旧快照覆盖并发的自动强度/频次更新；标签与
+        管理员路径使用同一套归一化和校验。
+        """
+        normalized_identity, errors = self._normalize_identity(
+            (from_user, to_user, relation_type, group_id)
         )
-        if rel is None:
-            return None
-        rel.tags = list(tags)
-        await self._store.upsert_relation(rel)
-        return rel
+        if normalized_identity is not None:
+            errors.update(self._validate_tags(tags))
+        if errors or normalized_identity is None:
+            raise EntityValidationError(errors)
+        return await self._store.update_relation_tags_if_exists(
+            normalized_identity,
+            tags=self._normalize_tags(tags),
+        )
 
     async def list_all(
         self,
@@ -332,23 +336,30 @@ class RelationManager:
         elif not 0.0 <= float(strength) <= 1.0:
             errors["strength"] = "必须在 0.0 到 1.0 之间"
 
+        errors.update(RelationManager._validate_tags(tags))
+        return errors
+
+    @staticmethod
+    def _validate_tags(tags: Any) -> dict[str, str]:
+        """校验标签列表；与管理员创建/编辑路径保持同一套约束。"""
+        errors: dict[str, str] = {}
         if not isinstance(tags, list):
             errors["tags"] = "必须为字符串数组"
-        else:
-            normalized_count = 0
-            seen: set[str] = set()
-            for index, tag in enumerate(tags):
-                if not isinstance(tag, str):
-                    errors[f"tags.{index}"] = "必须为字符串"
-                    continue
-                text = tag.strip()
-                if len(text) > 64:
-                    errors[f"tags.{index}"] = "文本过长"
-                if text and text not in seen:
-                    seen.add(text)
-                    normalized_count += 1
-            if normalized_count > 32:
-                errors["tags"] = "项目过多"
+            return errors
+        normalized_count = 0
+        seen: set[str] = set()
+        for index, tag in enumerate(tags):
+            if not isinstance(tag, str):
+                errors[f"tags.{index}"] = "必须为字符串"
+                continue
+            text = tag.strip()
+            if len(text) > 64:
+                errors[f"tags.{index}"] = "文本过长"
+            if text and text not in seen:
+                seen.add(text)
+                normalized_count += 1
+        if normalized_count > 32:
+            errors["tags"] = "项目过多"
         return errors
 
     @staticmethod

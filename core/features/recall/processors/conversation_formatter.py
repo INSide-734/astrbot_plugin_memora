@@ -14,26 +14,15 @@ class ConversationFormatter:
     def format_conversation(self, messages: list[Message]) -> str:
         """保留发送者和秒级时间，将消息列表格式化为普通对话文本。"""
 
-        formatted_lines = []
-        for i, msg in enumerate(messages):
-            logger.debug(
-                f"[_format_conversation] 消息#{i}: "
-                f"sender_id={msg.sender_id}, sender_name={msg.sender_name}, "
-                f"role={msg.role}, group_id={msg.group_id}"
-            )
+        # 日志只允许闭集标量：原始身份、群 ID 与正文预览一律不得进入日志/trace。
+        logger.debug("[_format_conversation] 消息数 count=%d", len(messages))
 
+        formatted_lines = []
+        for msg in messages:
             content_text = self._message_content_to_text(msg.content)
             sender_info = self._format_sender_info(msg)
             formatted_line = f"{sender_info} {content_text}".rstrip()
             formatted_lines.append(formatted_line)
-            if msg.group_id:
-                logger.debug(
-                    f"[_format_conversation] 消息#{i} 格式化结果(群聊): {formatted_line[:100]}..."
-                )
-            else:
-                logger.debug(
-                    f"[_format_conversation] 消息#{i} 格式化结果(私聊): {sender_info[:50]}..."
-                )
         return "\n".join(formatted_lines)
 
     def format_conversation_with_source_refs(self, messages: list[Message]) -> str:

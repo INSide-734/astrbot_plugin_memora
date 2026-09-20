@@ -116,6 +116,21 @@ class TestISAHierarchy:
         assert stats["total_relations"] == 2
         assert stats["parent_count"] == 1
 
+    def test_reparent_drops_stale_child_from_old_parent(self) -> None:
+        """改挂父级后旧父级不得再扩展到该 child，两份索引必须一致。"""
+
+        EntityResolver.add_isa("旺财", "宠物")
+        EntityResolver.add_isa("旺财", "动物")
+
+        assert EntityResolver.expand_with_children("宠物") == ["宠物"]
+        assert EntityResolver.expand_with_children("动物") == ["动物", "旺财"]
+        assert EntityResolver.expand_with_parents("旺财") == ["旺财", "动物"]
+
+        stats = EntityResolver.get_hierarchy_stats()
+        assert stats["total_relations"] == 1
+        assert stats["parent_count"] == 1
+        assert stats["child_count"] == 1
+
     @pytest.mark.asyncio
     async def test_save_and_load_hierarchy(self) -> None:
         EntityResolver.add_isa("旺财", "宠物")

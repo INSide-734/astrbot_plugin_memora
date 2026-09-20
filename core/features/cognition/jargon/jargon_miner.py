@@ -165,6 +165,22 @@ def _extract_meaning_str(data: dict[str, Any]) -> str:
     return str(raw).strip()
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    """把 LLM 返回的布尔字段规范化。
+
+    模型经常把布尔值写成字符串（``"false"``），而非空字符串在 Python 中为真值，
+    直接当真值用会反转语义（例如把 ``is_similar=false`` 判成“相似”）。
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
 # ---------------------------------------------------------------------------
 # 黑话挖掘器
 # ---------------------------------------------------------------------------
@@ -328,7 +344,7 @@ class JargonMiner:
                 return None
 
             # 信息不足 → 放弃本轮（不创建 JargonMeaning）
-            if inference1.get("no_info"):
+            if _coerce_bool(inference1.get("no_info")):
                 logger.info(f"[黑话挖掘器] 候选词={term} 信息不足，等待更多数据")
                 return None
 
@@ -374,7 +390,8 @@ class JargonMiner:
             if response3 is not None:
                 comparison = _safe_parse_json(response3)
                 if comparison is not None:
-                    is_similar = comparison.get("is_similar", False)
+                    # 字段缺失/无法解析时按保守默认（判定为黑话）处理。
+                    is_similar = _coerce_bool(comparison.get("is_similar"))
                     is_jargon = not is_similar
                     # 置信度基于信号评分和推断一致性
                     confidence = self._calc_confidence(candidate, is_jargon)

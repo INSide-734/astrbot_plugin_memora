@@ -58,8 +58,15 @@ class StopwordsManager:
             stopwords_path = await self.get_stopwords(source)
             filepath = Path(stopwords_path) if stopwords_path else None
             if filepath and filepath.exists():
-                self.stopwords = await self._load_from_file(filepath)
-                logger.info(f"已从内置目录加载停用词：{filepath}")
+                loaded = await self._load_from_file(filepath)
+                if loaded:
+                    self.stopwords = loaded
+                    logger.info(f"已从内置目录加载停用词：{filepath}")
+                else:
+                    # 读取失败与文件为空都返回空集合；静默采用空表会让停用词
+                    # 过滤彻底失效，因此与「文件不可用」同样回退后备表。
+                    logger.warning("内置停用词文件为空或读取失败，使用后备停用词")
+                    self.stopwords = self._get_builtin_stopwords()
             else:
                 logger.warning("内置停用词文件不可用，使用后备停用词")
                 self.stopwords = self._get_builtin_stopwords()
@@ -67,7 +74,12 @@ class StopwordsManager:
             # 使用自定义文件路径
             custom_path = Path(source)
             if custom_path.exists():
-                self.stopwords = await self._load_from_file(custom_path)
+                loaded = await self._load_from_file(custom_path)
+                if loaded:
+                    self.stopwords = loaded
+                else:
+                    logger.warning("自定义停用词文件为空或读取失败，使用后备停用词")
+                    self.stopwords = self._get_builtin_stopwords()
             else:
                 logger.error(f"自定义停用词文件不存在：{source}")
                 self.stopwords = self._get_builtin_stopwords()

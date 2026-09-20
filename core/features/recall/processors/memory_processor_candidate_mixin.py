@@ -43,18 +43,20 @@ class MemoryProcessorCandidateMixin:
         if not candidate_selection:
             return base_prompt
 
-        production_labels = candidate_selection.production_labels
-        if not production_labels:
-            return base_prompt
-
-        # 隐私门禁：production_labels 已由 TopicCandidateSelection 过滤
-        # source_provenance_complete=True，此处二次验证防御性检查
+        # 隐私门禁：来源证据不完整时降级为 baseline（先于标签判空，
+        # 保证拒绝事件可观测；production_labels 亦已按同一条件过滤）
         if not candidate_selection.source_provenance_complete:
             logger.warning(
                 "Rejected candidate selection without complete provenance",
-                reason="incomplete_source_provenance",
-                candidate_count=len(production_labels),
+                extra={
+                    "reason": "incomplete_source_provenance",
+                    "candidate_count": len(candidate_selection.labels),
+                },
             )
+            return base_prompt
+
+        production_labels = candidate_selection.production_labels
+        if not production_labels:
             return base_prompt
 
         # 使用反思专用 renderer 渲染候选块

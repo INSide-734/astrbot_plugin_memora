@@ -138,6 +138,24 @@ class TestLLMClient:
         with pytest.raises(RuntimeError):
             asyncio.run(client.call_llm_with_retry("prompt", "system"))
 
+    def test_unavailable_provider_is_resolved_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Provider 不可用是永久性失败：只解析一次，不做退避重试。"""
+
+        client = LLMClient(context=None, llm_provider=None)
+        resolved: list[None] = []
+
+        def _unavailable() -> None:
+            resolved.append(None)
+            return None
+
+        monkeypatch.setattr(client, "get_current_llm_adapter", _unavailable)
+        with pytest.raises(RuntimeError, match="LLM Provider 不可用"):
+            asyncio.run(client.call_llm_with_retry("prompt", "system", max_retries=3))
+
+        assert len(resolved) == 1
+
     def test_call_llm_retry_on_failure(self, mock_provider: MagicMock) -> None:
         # First call fails, second succeeds
         response = AsyncMock()

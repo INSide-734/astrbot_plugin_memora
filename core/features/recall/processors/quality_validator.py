@@ -21,7 +21,11 @@ class QualityValidator:
         key_facts = structured_data.get("key_facts", [])
         importance = structured_data.get("importance", 0.5)
 
-        if not summary or len(summary.strip()) < min_summary_chars:
+        if (
+            not isinstance(summary, str)  # 模型可能返回 list/dict（正则兜底路径）
+            or not summary
+            or len(summary.strip()) < min_summary_chars
+        ):
             return "low"
         if not key_facts:
             return "low"
@@ -63,10 +67,11 @@ class QualityValidator:
             return []
 
     @staticmethod
-    def validate_sentiment(sentiment: str) -> str:
+    def validate_sentiment(sentiment: Any) -> str:
+        """归一化情感标签；模型可能返回非字符串（None/数字），统一降级为 neutral。"""
         valid_sentiments = ["positive", "neutral", "negative"]
-        sentiment = sentiment.lower()
-        return sentiment if sentiment in valid_sentiments else "neutral"
+        normalized = sentiment.lower() if isinstance(sentiment, str) else ""
+        return normalized if normalized in valid_sentiments else "neutral"
 
     @staticmethod
     def validate_importance(importance: Any) -> float:

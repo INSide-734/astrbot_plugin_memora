@@ -40,34 +40,104 @@ class ExpressionPatternStore:
             await db.close()
 
     async def initialize(self) -> None:
-        """创建 ``expression_patterns`` 表及其索引。"""
+        """创建 ``expression_patterns`` 表与索引，并合并历史重复身份行。"""
         async with self._connect() as db:
-            await db.execute(
-                """
-                CREATE TABLE IF NOT EXISTS expression_patterns (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    situation TEXT NOT NULL,
-                    expression TEXT NOT NULL,
-                    group_id TEXT NOT NULL,
-                    persona_id TEXT NOT NULL DEFAULT 'default',
-                    user_id TEXT,
-                    weight REAL NOT NULL DEFAULT 1.0,
-                    usage_count INTEGER NOT NULL DEFAULT 0,
-                    created_at REAL NOT NULL,
-                    last_used_at REAL NOT NULL,
-                    decayed_at REAL NOT NULL
+            try:
+                await db.execute("BEGIN IMMEDIATE")
+                await db.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS expression_patterns (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        situation TEXT NOT NULL,
+                        expression TEXT NOT NULL,
+                        group_id TEXT NOT NULL,
+                        persona_id TEXT NOT NULL DEFAULT 'default',
+                        user_id TEXT,
+                        weight REAL NOT NULL DEFAULT 1.0,
+                        usage_count INTEGER NOT NULL DEFAULT 0,
+                        created_at REAL NOT NULL,
+                        last_used_at REAL NOT NULL,
+                        decayed_at REAL NOT NULL
+                    )
+                    """
                 )
+                await db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_expr_patterns_scope "
+                    "ON expression_patterns(group_id, persona_id, user_id)"
+                )
+                # 旧版 upsert 并发可能留下同身份多行；建唯一索引前先合并，
+                # 避免启动即失败或静默丢弃已学习权重。
+                await self._fold_duplicate_identities(db)
+                await db.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_expr_patterns_identity "
+                    "ON expression_patterns("
+                    "situation, expression, group_id, persona_id, COALESCE(user_id, ''))"
+                )
+                await db.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_expr_patterns_weight "
+                    "ON expression_patterns(group_id, persona_id, user_id, weight DESC)"
+                )
+                await db.commit()
+            except BaseException:
+                await db.rollback()
+                raise
+
+    @staticmethod
+    async def _fold_duplicate_identities(db: aiosqlite.Connection) -> None:
+        """把同一身份的重复行合并为一行，保留一行并汇总其学习状态。
+
+        ``weight``/``usage_count`` 求和、``created_at`` 取最早、
+        ``last_used_at``/``decayed_at`` 取最新，再删除其余行；没有任何重复身份
+        时不做任何写入。
+        """
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            """
+            SELECT situation, expression, group_id, persona_id,
+                   COALESCE(user_id, '') AS uid_key,
+                   SUM(weight) AS total_weight,
+                   SUM(usage_count) AS total_usage,
+                   MIN(created_at) AS first_created_at,
+                   MAX(last_used_at) AS last_used_at,
+                   MAX(decayed_at) AS decayed_at,
+                   MAX(id) AS keep_id
+            FROM expression_patterns
+            GROUP BY situation, expression, group_id, persona_id, COALESCE(user_id, '')
+            HAVING COUNT(*) > 1
+            """
+        )
+        for row in await cursor.fetchall():
+            await db.execute(
                 """
+                UPDATE expression_patterns
+                SET weight = ?, usage_count = ?, created_at = ?,
+                    last_used_at = ?, decayed_at = ?
+                WHERE id = ?
+                """,
+                (
+                    row["total_weight"],
+                    row["total_usage"],
+                    row["first_created_at"],
+                    row["last_used_at"],
+                    row["decayed_at"],
+                    row["keep_id"],
+                ),
             )
             await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_expr_patterns_scope "
-                "ON expression_patterns(group_id, persona_id, user_id)"
+                """
+                DELETE FROM expression_patterns
+                WHERE situation = ? AND expression = ? AND group_id = ?
+                  AND persona_id = ? AND COALESCE(user_id, '') = ? AND id <> ?
+                """,
+                (
+                    row["situation"],
+                    row["expression"],
+                    row["group_id"],
+                    row["persona_id"],
+                    row["uid_key"],
+                    row["keep_id"],
+                ),
             )
-            await db.execute(
-                "CREATE INDEX IF NOT EXISTS idx_expr_patterns_weight "
-                "ON expression_patterns(group_id, persona_id, user_id, weight DESC)"
-            )
-            await db.commit()
 
     # ---- 行数据与模型互转辅助方法 ------------------------------------------------
 
@@ -109,50 +179,26 @@ class ExpressionPatternStore:
     # ---- CRUD ----------------------------------------------------------------
 
     async def upsert(self, pattern: ExpressionPattern) -> ExpressionPattern:
-        """插入新模式，或更新已存在的模式。"""
+        """插入新模式，或原子增权已存在的模式。"""
+        now = time.time()
         async with self._connect() as db:
             db.row_factory = aiosqlite.Row
 
-            cursor = await db.execute(
-                """
-                SELECT id, weight FROM expression_patterns
-                WHERE situation = ? AND expression = ? AND group_id = ?
-                  AND persona_id = ? AND user_id IS ?
-                ORDER BY weight DESC, id DESC
-                LIMIT 1
-                """,
-                (
-                    pattern.situation,
-                    pattern.expression,
-                    pattern.group_id,
-                    pattern.persona_id,
-                    pattern.user_id,
-                ),
-            )
-            row = await cursor.fetchone()
-
-            if row:
-                new_weight = row["weight"] + 1.0
-                await db.execute(
-                    """
-                    UPDATE expression_patterns
-                    SET weight = ?, last_used_at = ?, decayed_at = ?
-                    WHERE id = ?
-                    """,
-                    (new_weight, time.time(), time.time(), row["id"]),
-                )
-                await db.commit()
-                pattern.weight = new_weight
-                pattern.pattern_id = row["id"]
-                return pattern
-
-            # 插入新记录
+            # 单条语句完成「存在则增权，否则插入」，依赖 uq_expr_patterns_identity
+            # 唯一索引，避免 SELECT 后再写造成重复行与增权丢失。
             cursor = await db.execute(
                 """
                 INSERT INTO expression_patterns
                     (situation, expression, group_id, persona_id, user_id,
                      weight, usage_count, created_at, last_used_at, decayed_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(situation, expression, group_id, persona_id,
+                            COALESCE(user_id, ''))
+                DO UPDATE SET
+                    weight = expression_patterns.weight + 1.0,
+                    last_used_at = ?,
+                    decayed_at = ?
+                RETURNING id, weight
                 """,
                 (
                     pattern.situation,
@@ -165,10 +211,17 @@ class ExpressionPatternStore:
                     pattern.created_at,
                     pattern.last_used_at,
                     pattern.decayed_at,
+                    now,
+                    now,
                 ),
             )
-            pattern.pattern_id = cursor.lastrowid or 0
+            row = await cursor.fetchone()
             await db.commit()
+
+            if row is None:
+                raise RuntimeError("表达模式 upsert 后无法读取结果")
+            pattern.pattern_id = row["id"]
+            pattern.weight = row["weight"]
             return pattern
 
     async def get_by_scope(

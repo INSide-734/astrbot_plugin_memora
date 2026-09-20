@@ -201,6 +201,22 @@ class TestSanitizeLLMResponse:
         assert "[ANTI_REPETITION]" not in cleaned
         assert "正确回复。" in cleaned
 
+    def test_removes_leaked_anti_repetition_lines(self) -> None:
+        mgr = ResponseDiversityManager()
+        raw = (
+            '- 避免用以下开头: "你好呀"\n'
+            "- 整体风格过于单一，请尝试不同的句式和表达方式\n"
+            "正常回复内容。"
+        )
+        cleaned = mgr.sanitize_llm_response(raw)
+        assert cleaned == "正常回复内容。"
+
+    def test_keeps_inline_mention_of_anti_repetition_wording(self) -> None:
+        mgr = ResponseDiversityManager()
+        # 行内提及（非行首）不应被兜底清理连带删除
+        raw = "对方说“避免用以下开头: 你好”只是玩笑，我们继续聊别的。"
+        assert mgr.sanitize_llm_response(raw) == raw
+
     def test_collapses_multiple_blank_lines(self) -> None:
         mgr = ResponseDiversityManager()
         raw = "第一段\n\n\n\n第二段"
@@ -231,6 +247,19 @@ class TestHomogeneityAnalysis:
         report = mgr.analyze_homogeneity([])
         assert report.overall_uniqueness == 1.0
         assert report.total_responses == 0
+
+    def test_blank_responses_excluded_from_denominator(self) -> None:
+        mgr = ResponseDiversityManager()
+        report = mgr.analyze_homogeneity(["你好世界哈哈", "   ", "今天天气真好"])
+        # 唯一性以实际参与统计的条数为分母，空白回复不应拉低比例
+        assert report.overall_uniqueness == 1.0
+        assert report.total_responses == 3
+
+    def test_all_blank_responses_are_not_homogeneous(self) -> None:
+        mgr = ResponseDiversityManager()
+        report = mgr.analyze_homogeneity(["", "   ", "\n"])
+        assert report.overall_uniqueness == 1.0
+        assert not report.is_homogeneous
 
     def test_repeated_openings_detected(self) -> None:
         mgr = ResponseDiversityManager()

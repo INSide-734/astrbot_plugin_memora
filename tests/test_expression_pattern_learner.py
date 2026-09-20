@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 
 import pytest
@@ -630,6 +631,79 @@ class TestStoreCRUD:
         assert r2.weight == pytest.approx(2.0)
 
     @pytest.mark.asyncio
+    async def test_concurrent_upsert_keeps_single_row(self, tmp_db_path):
+        store = await _new_store(tmp_db_path)
+
+        await asyncio.gather(
+            *(
+                store.upsert(
+                    ExpressionPattern(
+                        situation="same situation",
+                        expression="same expression",
+                        group_id="g1",
+                        persona_id="default",
+                    )
+                )
+                for _ in range(8)
+            )
+        )
+
+        patterns = await store.get_by_scope(PatternScope("g1", "default"))
+        assert len(patterns) == 1
+        assert patterns[0].weight == pytest.approx(8.0)
+
+    @pytest.mark.asyncio
+    async def test_initialize_folds_legacy_duplicate_identity_rows(self, tmp_db_path):
+        import aiosqlite
+
+        # 旧版 schema（无唯一索引）+ 旧版并发 upsert 可能留下的同身份重复行
+        db = await aiosqlite.connect(tmp_db_path)
+        try:
+            await db.execute(
+                """
+                CREATE TABLE expression_patterns (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    situation TEXT NOT NULL,
+                    expression TEXT NOT NULL,
+                    group_id TEXT NOT NULL,
+                    persona_id TEXT NOT NULL DEFAULT 'default',
+                    user_id TEXT,
+                    weight REAL NOT NULL DEFAULT 1.0,
+                    usage_count INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL,
+                    last_used_at REAL NOT NULL,
+                    decayed_at REAL NOT NULL
+                )
+                """
+            )
+            await db.execute(
+                "INSERT INTO expression_patterns (situation, expression, group_id, "
+                "persona_id, user_id, weight, usage_count, created_at, last_used_at, "
+                "decayed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("s", "e", "g1", "default", None, 1.0, 2, 100.0, 200.0, 200.0),
+            )
+            await db.execute(
+                "INSERT INTO expression_patterns (situation, expression, group_id, "
+                "persona_id, user_id, weight, usage_count, created_at, last_used_at, "
+                "decayed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("s", "e", "g1", "default", None, 2.5, 3, 150.0, 300.0, 300.0),
+            )
+            await db.commit()
+        finally:
+            await db.close()
+
+        store = ExpressionPatternStore(tmp_db_path)
+        await store.initialize()
+
+        patterns = await store.get_by_scope(PatternScope("g1", "default"))
+        assert len(patterns) == 1
+        # 迁移必须保留已学习的权重与使用次数，而不是只留最新一行
+        assert patterns[0].weight == pytest.approx(3.5)
+        assert patterns[0].usage_count == 5
+        assert patterns[0].created_at == pytest.approx(100.0)
+        assert patterns[0].last_used_at == pytest.approx(300.0)
+
+    @pytest.mark.asyncio
     async def test_count_by_scope(self, tmp_db_path):
         store = await _new_store(tmp_db_path)
         for i in range(3):
@@ -812,6 +886,67 @@ class TestGroupBuffer:
         state = learner.get_or_create_state("g1")
         assert len(state.message_buffer) == 0
         assert state.message_count_since_last_learn == 0
+
+    @pytest.mark.asyncio
+    async def test_maybe_learn_keeps_buffer_when_processing_fails(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = await _new_store(tmp_db_path)
+        learner = _make_learner(store)
+        for index in range(5):
+            learner.buffer_message("g1", "user_1", f"message {index}")
+
+        async def _fail(*_args, **_kwargs):
+            raise RuntimeError("store unavailable")
+
+        monkeypatch.setattr(learner, "process_messages", _fail)
+
+        with pytest.raises(RuntimeError):
+            await learner.maybe_learn("g1", min_messages=5)
+
+        # 处理失败时消息与阈值计数必须保留，避免这批消息被静默丢弃
+        state = learner.get_or_create_state("g1")
+        assert len(state.message_buffer) == 5
+        assert state.message_count_since_last_learn == 5
+
+    @pytest.mark.asyncio
+    async def test_concurrent_maybe_learn_consumes_batch_once(
+        self, tmp_db_path, monkeypatch
+    ):
+        store = await _new_store(tmp_db_path)
+        learner = _make_learner(store)
+
+        batches: list[list[str]] = []
+        entered = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _record(messages, *_args, **_kwargs):
+            batches.append([message["content"] for message in messages])
+            entered.set()
+            await release.wait()
+            return []
+
+        monkeypatch.setattr(learner, "process_messages", _record)
+
+        for index in range(5):
+            learner.buffer_message("g1", "user_1", f"old-{index}")
+
+        first = asyncio.create_task(learner.maybe_learn("g1", min_messages=5))
+        await entered.wait()
+        second = asyncio.create_task(learner.maybe_learn("g1", min_messages=5))
+        # 让第二个调用进入等待消费锁的状态
+        await asyncio.sleep(0)
+        learner.buffer_message("g1", "user_2", "new-after-first")
+        release.set()
+        await asyncio.gather(first, second)
+
+        # 同一批只能被消费一次，且 await 期间入队的新消息必须留在缓冲区
+        assert batches == [[f"old-{index}" for index in range(5)]]
+        state = learner.get_or_create_state("g1")
+        assert [message["content"] for message in state.message_buffer] == [
+            "new-after-first"
+        ]
+        assert state.message_count_since_last_learn == 1
 
 
 # ---------------------------------------------------------------------------

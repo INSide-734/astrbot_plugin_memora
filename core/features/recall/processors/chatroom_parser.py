@@ -60,7 +60,8 @@ class ChatroomContextParser:
             if match:
                 actual_message = match.group(1).strip()
                 logger.debug(
-                    f"[ChatroomParser] 提取到用户消息: {actual_message[:100]}..."
+                    "[ChatroomParser] 提取到用户消息 length=%s",
+                    len(actual_message),
                 )
                 return actual_message
             else:

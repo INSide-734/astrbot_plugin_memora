@@ -594,6 +594,40 @@ class TestJargonMiner:
         finally:
             await _close_store(store)
 
+    async def test_step1_string_false_no_info_continues(self) -> None:
+        """LLM 把 no_info 写成字符串 "false" 时不能当成“信息不足”。"""
+        mock_llm = self._make_mock_llm()
+        mock_llm.call_llm_with_retry.side_effect = [
+            json.dumps({"meaning": "永远的神，极度赞扬", "no_info": "false"}),
+            json.dumps({"meaning": "英文字母缩写 yyds"}),
+            json.dumps({"is_similar": True, "reason": "含义相同"}),
+        ]
+        store = await _init_store()
+        try:
+            miner = JargonMiner(mock_llm, self._make_mock_stats(), store)
+            result = await miner.infer_meaning(_make_candidate("yyds", freq=10))
+            assert result is not None
+            assert result.is_jargon is False
+        finally:
+            await _close_store(store)
+
+    async def test_step3_string_false_is_similar_means_jargon(self) -> None:
+        """LLM 返回字符串 "false" 的 is_similar 必须解析为“不相似 → 黑话”。"""
+        mock_llm = self._make_mock_llm()
+        mock_llm.call_llm_with_retry.side_effect = [
+            json.dumps({"meaning": "永远的神，极度赞扬", "no_info": False}),
+            json.dumps({"meaning": "英文字母缩写 yyds"}),
+            json.dumps({"is_similar": "false", "reason": "含义完全不同"}),
+        ]
+        store = await _init_store()
+        try:
+            miner = JargonMiner(mock_llm, self._make_mock_stats(), store)
+            result = await miner.infer_meaning(_make_candidate("yyds", freq=10))
+            assert result is not None
+            assert result.is_jargon is True
+        finally:
+            await _close_store(store)
+
     async def test_step2_fails_graceful_degradation(self) -> None:
         """测试 Step 2 失败 → 优雅降级，保守判定为 jargon。"""
         mock_llm = self._make_mock_llm()
@@ -960,7 +994,7 @@ class TestJargonQueryService:
         assert matched[0].term == "测试词"
 
     async def test_match_ascii_jargon_word_boundary(self) -> None:
-        """测试 ASCII 黑话 word-boundary 匹配。"""
+        """测试 ASCII 黑话在两侧非字母数字时匹配。"""
         entries = [
             JargonMeaning(
                 term="btw", group_id="g1", meaning="by the way", is_jargon=True
@@ -975,6 +1009,31 @@ class TestJargonQueryService:
             "something between us", entries
         )
         assert len(matched2) == 0
+
+    async def test_match_ascii_jargon_adjacent_to_cjk(self) -> None:
+        """ASCII 黑话紧邻汉字时必须命中（群聊主要场景）。"""
+        entries = [
+            JargonMeaning(
+                term="yyds", group_id="g1", meaning="永远的神", is_jargon=True
+            )
+        ]
+        matched = JargonQueryService._match_jargon_in_text("这个yyds啊", entries)
+        assert len(matched) == 1
+
+        # 仍是词边界：不能命中更长的 ASCII 词
+        assert JargonQueryService._match_jargon_in_text("xyyds yydss", entries) == []
+
+    async def test_match_ascii_jargon_with_symbol_tail(self) -> None:
+        """以符号结尾的词条（如 c++）在空格/句尾也必须命中。"""
+        entries = [
+            JargonMeaning(term="c++", group_id="g1", meaning="语言", is_jargon=True)
+        ]
+        assert (
+            len(JargonQueryService._match_jargon_in_text("他用 c++ 写代码", entries))
+            == 1
+        )
+        assert len(JargonQueryService._match_jargon_in_text("我写 c++", entries)) == 1
+        assert JargonQueryService._match_jargon_in_text("c++abc", entries) == []
 
     async def test_match_multiple_jargon(self) -> None:
         """测试匹配多个黑话。"""

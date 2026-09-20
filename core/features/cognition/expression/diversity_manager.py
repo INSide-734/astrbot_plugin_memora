@@ -57,9 +57,10 @@ _LEAK_PATTERNS: list[re.Pattern] = [
     re.compile(r"请用.*?风格回答", re.DOTALL),
     re.compile(r"\[ANTI_REPETITION\].*?\[/ANTI_REPETITION\]", re.DOTALL),
     re.compile(r"\[REPETITION_RULE\].*?\[/REPETITION_RULE\]", re.DOTALL),
-    re.compile(r"避免使用.*?开头", re.DOTALL),
-    re.compile(r"不要重复.*?句式", re.DOTALL),
-    re.compile(r"禁止使用.*?作为结尾", re.DOTALL),
+    # 反重复指令的标签体缺失时的兜底清理：按行匹配本模块实际生成的文案，
+    # 不使用 DOTALL，避免跨行吞掉正常正文。
+    re.compile(r"^[ \t]*-?[ \t]*避免用以下(?:开头|结尾)[:：][^\n]*", re.MULTILINE),
+    re.compile(r"^[ \t]*-?[ \t]*整体风格过于单一[^\n]*", re.MULTILINE),
 ]
 
 
@@ -230,6 +231,18 @@ class ResponseDiversityManager:
             openings.append(text[:8])
             endings.append(text[-8:])
 
+        valid = len(openings)
+        if valid == 0:
+            # 全部为空白回复：没有可比较的样本，不构成同质化信号
+            return HomogeneityReport(
+                opening_uniqueness=1.0,
+                ending_uniqueness=1.0,
+                overall_uniqueness=1.0,
+                total_responses=total,
+                repeated_openings={},
+                repeated_endings={},
+            )
+
         # 统计重复次数
         opening_counts: dict[str, int] = {}
         ending_counts: dict[str, int] = {}
@@ -238,9 +251,9 @@ class ResponseDiversityManager:
         for ed in endings:
             ending_counts[ed] = ending_counts.get(ed, 0) + 1
 
-        # 唯一性比例 = 唯一开头或结尾数量 / 总数
-        opening_unique = len(opening_counts) / total if total > 0 else 1.0
-        ending_unique = len(ending_counts) / total if total > 0 else 1.0
+        # 唯一性比例 = 唯一开头或结尾数量 / 实际参与统计的条数
+        opening_unique = len(opening_counts) / valid
+        ending_unique = len(ending_counts) / valid
         overall = (opening_unique + ending_unique) / 2.0
 
         # 仅保留重复项

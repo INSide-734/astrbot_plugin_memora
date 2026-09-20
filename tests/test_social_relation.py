@@ -720,6 +720,79 @@ class TestRelationManagerTags:
         assert stored.tags == ["office", "lunch_buddy"]
 
     @pytest.mark.asyncio
+    async def test_update_tags_normalizes_and_validates(self, tmp_db_path):
+        manager = await _create_manager(tmp_db_path)
+        await manager.get_or_create("u1", "u2", "g", relation_type="colleague")
+
+        updated = await manager.update_tags(
+            "u1",
+            "u2",
+            "colleague",
+            "g",
+            tags=[" office ", "office", ""],
+        )
+        assert updated is not None
+        assert updated.tags == ["office"]
+
+        with pytest.raises(EntityValidationError) as too_many:
+            await manager.update_tags(
+                "u1",
+                "u2",
+                "colleague",
+                "g",
+                tags=[f"tag{i}" for i in range(33)],
+            )
+        assert "tags" in too_many.value.field_errors
+
+        with pytest.raises(EntityValidationError) as too_long:
+            await manager.update_tags(
+                "u1",
+                "u2",
+                "colleague",
+                "g",
+                tags=["x" * 65],
+            )
+        assert "tags.0" in too_long.value.field_errors
+
+        stored = await manager._store.get_relation("u1", "u2", "colleague", "g")
+        assert stored.tags == ["office"]
+
+    @pytest.mark.asyncio
+    async def test_update_tags_preserves_concurrent_automatic_delta(self, tmp_db_path):
+        """标签替换不得用陈旧快照覆盖并发的自动强度/频次更新。"""
+        store = await _create_store(tmp_db_path)
+        manager = RelationManager(store)
+        identity = ("u1", "u2", "colleague", "g")
+        await manager.get_or_create("u1", "u2", "g", relation_type="colleague")
+
+        stale_snapshot = await store.get_relation(*identity)
+        await store.apply_automatic_delta_if_exists(identity, delta=0.4, difficulty=0.0)
+        bumped = await store.get_relation(*identity)
+        assert bumped is not None
+        assert bumped.frequency == 1
+
+        real_get_relation = store.get_relation
+
+        async def return_stale_snapshot(*args, **kwargs):
+            return stale_snapshot
+
+        store.get_relation = return_stale_snapshot  # type: ignore[method-assign]
+        try:
+            updated = await manager.update_tags(*identity, tags=["tag"])
+        finally:
+            store.get_relation = real_get_relation  # type: ignore[method-assign]
+
+        assert updated is not None
+        assert updated.tags == ["tag"]
+        assert updated.strength == bumped.strength
+        assert updated.frequency == bumped.frequency
+
+        stored = await store.get_relation(*identity)
+        assert stored.strength == bumped.strength
+        assert stored.frequency == bumped.frequency
+        assert stored.tags == ["tag"]
+
+    @pytest.mark.asyncio
     async def test_update_tags_nonexistent(self, tmp_db_path):
         manager = await _create_manager(tmp_db_path)
         result = await manager.update_tags(

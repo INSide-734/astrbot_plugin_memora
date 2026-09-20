@@ -110,6 +110,29 @@ class TestStorageBuilder:
 
         assert all(fact in content for fact in facts)
 
+    def test_untrusted_key_facts_types_are_converged(
+        self, builder: StorageBuilder
+    ) -> None:
+        """非列表/非字符串事实不得抛错、逐字符拆分或写入字面量。"""
+
+        for raw in (None, "用户喜欢拿铁", 42):
+            content, metadata = builder.build_storage_format(
+                "回退摘录",
+                {"summary": "摘要", "key_facts": raw},
+                False,
+            )
+            assert content == "摘要"
+            assert metadata["key_facts"] == []
+
+        content, metadata = builder.build_storage_format(
+            "回退摘录",
+            {"summary": "摘要", "key_facts": [None, " 拿铁 ", "  ", 7, "美式"]},
+            False,
+        )
+        assert metadata["key_facts"] == ["拿铁", "美式"]
+        assert content == "拿铁；美式"
+        assert "None" not in content
+
     def test_summary_without_facts_preserves_literal_pipe(
         self, builder: StorageBuilder
     ) -> None:

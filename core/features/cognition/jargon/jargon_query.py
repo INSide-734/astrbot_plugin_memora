@@ -4,7 +4,7 @@
 - 按关键词查询黑话含义
 - 检查文本中的黑话并生成解释文本（注入 LLM 上下文）
 - 带 TTLCache 的查询缓存
-- ASCII/非ASCII 分别匹配（英文缩写用 word-boundary regex）
+- ASCII/非ASCII 分别匹配（英文缩写要求两侧为非 ASCII 字母数字）
 """
 
 from __future__ import annotations
@@ -12,12 +12,28 @@ from __future__ import annotations
 import re
 import time
 from collections import OrderedDict
+from functools import lru_cache
 from typing import Any
 
 from astrbot.api import logger
 
 from .jargon_store import JargonStore
 from .models import JargonMeaning
+
+
+@lru_cache(maxsize=1024)
+def _ascii_term_pattern(term: str) -> re.Pattern[str]:
+    """编译并缓存 ASCII 词条的匹配模式（词条两侧不得紧邻 ASCII 字母数字）。
+
+    不能用 ``\\b``：Python 的 ``\\w`` 包含中日韩字符，英文缩写紧邻汉字时
+    （例如“这个yyds啊”）两侧都是 word 字符，不存在 word boundary；以非
+    字母数字结尾的词条（例如 ``c++``）在空格或句尾同样不产生 boundary。
+    """
+
+    return re.compile(
+        rf"(?<![A-Za-z0-9]){re.escape(term)}(?![A-Za-z0-9])",
+        re.IGNORECASE,
+    )
 
 
 class TTLCache:
@@ -241,7 +257,8 @@ class JargonQueryService:
         """在文本中匹配黑话词条。
 
         分词策略：
-        - 纯 ASCII（英文缩写等）：用 word-boundary regex ``\\b{term}\\b``
+        - 纯 ASCII（英文缩写等）：用两侧非 ASCII 字母数字的边界匹配
+          （汉字、标点、空格、行首行尾都算边界）
         - 非 ASCII（中文等）：直接子串匹配
 
         Args:
@@ -265,9 +282,8 @@ class JargonQueryService:
                 continue
 
             if term.isascii():
-                # 英文缩写：word-boundary regex
-                pattern = re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE)
-                if pattern.search(text):
+                # 英文缩写：两侧必须是非 ASCII 字母数字
+                if _ascii_term_pattern(term).search(text):
                     matched[term] = entry
             else:
                 # 中文等非 ASCII：直接子串匹配

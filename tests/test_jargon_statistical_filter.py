@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from unittest.mock import patch
 
@@ -27,6 +28,16 @@ class TestUpdate:
         f.update("   ", "g1", "u1")
         candidates = f.get_candidates("g1")
         assert candidates == []
+
+    def test_missing_jieba_degrades_without_raising(self) -> None:
+        """jieba 缺失时 update() 必须优雅降级（每条消息都会调用它）。"""
+        with patch.dict(sys.modules, {"jieba": None}):
+            f = JargonStatisticalFilter()
+            f.update("这个游戏 yyds 太好玩了", "g1", "u1")
+            f.update("yyds 就是他没错了", "g1", "u2")
+
+            assert f.get_candidates("g1") == []
+            assert f.get_stats("g1").total_terms == 0
 
     def test_common_word_filtered_out(self) -> None:
         """常见词（"吃饭"、"睡觉"）被过滤。"""

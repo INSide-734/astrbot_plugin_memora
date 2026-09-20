@@ -162,11 +162,14 @@ class LLMClient:
         """
 
         last_error = None
+        # Provider 解析与可用性校验是永久性失败：放在重试循环外，避免未配置
+        # Provider / 缺少 text_chat 被当成瞬时异常做指数退避并掩盖真实根因。
+        adapter = self.get_current_llm_adapter()
+        if adapter is None:
+            raise RuntimeError("LLM Provider 不可用")
+
         for attempt in range(max_retries):
             try:
-                adapter = self.get_current_llm_adapter()
-                if adapter is None:
-                    raise RuntimeError("LLM Provider 不可用")
                 if self._limiter is None:
                     return await self._generate_once(
                         adapter, prompt, system_prompt, operation

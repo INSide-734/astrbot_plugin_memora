@@ -8,6 +8,9 @@ from astrbot.api import logger
 # 单条消息最大长度（约8k tokens，按4字节/token估算）
 MAX_SINGLE_MESSAGE_LENGTH = 30000  # 30KB
 
+# 截断追加的固定后缀；单条截断后的长度上限是 max_length + 该后缀。
+_TRUNCATION_SUFFIX = "...[内容过长已截断]"
+
 
 def truncate_message_if_needed(
     content: str, max_length: int = MAX_SINGLE_MESSAGE_LENGTH
@@ -23,7 +26,7 @@ def truncate_message_if_needed(
         tuple: (处理后的内容, 是否被截断)
     """
     if len(content) > max_length:
-        truncated_content = content[:max_length] + "...[内容过长已截断]"
+        truncated_content = content[:max_length] + _TRUNCATION_SUFFIX
         return truncated_content, True
     return content, False
 
@@ -66,15 +69,12 @@ async def store_round_with_length_check(
             f"[{session_id}] 助手消息过长({len(assistant_msg.content)}字符)，截断至{MAX_SINGLE_MESSAGE_LENGTH}"
         )
 
+    # 截断已保证每段不超过 MAX_SINGLE_MESSAGE_LENGTH + 后缀，合并正文因此有界。
+    # 这里不再做二次长度判定：阈值若按 2×MAX 算，role 前缀与换行的固定开销会
+    # 误丢合法轮次，而计入后缀开销后该判定恒不成立、只会让截断形同虚设。
     round_content = (
         f"{user_msg.role}: {user_content}\n{assistant_msg.role}: {assistant_content}"
     )
-
-    # 最终检查：如果合并后仍超长，跳过此轮
-    if len(round_content) > MAX_SINGLE_MESSAGE_LENGTH * 2:
-        error_msg = f"第{round_index}轮对话即使截断后仍过长({len(round_content)}字符)"
-        logger.error(f"[{session_id}] {error_msg}，跳过存储")
-        return False, error_msg
 
     round_metadata = {
         "fallback": True,
