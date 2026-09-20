@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
@@ -260,20 +261,47 @@ def test_summary_requires_its_own_user_evidence(summary_role) -> None:
 
     if summary_role == "user":
         assert selected[0]["content"] == "独立摘要"
-        assert selected[0]["metadata"]["key_facts"] == ["事实甲", "事实乙"]
+        # 记录的事实不在正文中：正文路径保留，旧事实不得进入载荷。
+        assert selected[0]["metadata"]["key_facts"] == []
         assert selected[0]["metadata"]["intent_match"] == 1.0
         assert selected[0]["_matched_facets"] == {"event": 1.0}
+        payload = format_memories_for_injection(selected)
+        assert "独立摘要" in payload
+        assert "事实甲" not in payload
+        assert "事实乙" not in payload
         return
 
-    # 摘要没有自己的用户证据：正文重建为保留事实，且无法逐事实归属的排序
-    # 信号（score/facet/查询维度）归零，因此该候选不会进入注入。
+    # 摘要没有自己的用户证据、记录的事实又不在正文中：正文不能按事实归属，
+    # 事实也不能重建载荷，候选整体 fail closed，且不产生按旧事实重建的副本。
     assert selected == []
-    rebuilt = dropped[0]
-    assert rebuilt["content"] == "事实甲；事实乙"
-    assert rebuilt["metadata"]["key_facts"] == ["事实甲", "事实乙"]
-    assert rebuilt["score"] == 0.0
-    assert "_matched_facets" not in rebuilt
-    assert "intent_match" not in rebuilt["metadata"]
+    assert dropped == [candidate]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delivery", _DELIVERIES)
+async def test_misaligned_fact_metadata_falls_back_to_canonical_body(
+    delivery, caplog
+) -> None:
+    """正文改写后残留的旧事实不得进入注入载荷，正文路径保留且回落可观察。"""
+
+    stale_fact = "用户已经搬到上海"
+    candidate = _candidate("用户现在住在杭州")
+    candidate["metadata"].update(
+        key_facts=[stale_fact],
+        fact_source_evidence=[[resolved_reference(stale_fact)]],
+    )
+    caplog.set_level(logging.DEBUG)
+    request = request_stub()
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        request, decision_stub(delivery), _context([candidate])
+    )
+
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert (result.selected_count, result.dropped_count) == (1, 0)
+    payload = _payload(request, delivery)
+    assert "用户现在住在杭州" in payload
+    assert stale_fact not in payload
+    assert "事实元数据与当前正文不一致" in caplog.text
 
 
 def test_final_formatter_inputs_strip_all_internal_fields_and_preserve_filters() -> (

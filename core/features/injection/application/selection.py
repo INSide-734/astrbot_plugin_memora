@@ -6,6 +6,12 @@ import math
 import re
 from typing import Any, Iterable
 
+from astrbot.api import logger
+
+from ...memory.application.fact_text_alignment import (
+    FactTextAlignment,
+    facts_aligned,
+)
 from ...memory.domain.memory_atom import (
     has_user_source_evidence,
     is_resolved_source_reference,
@@ -96,7 +102,14 @@ def metadata_has_user_evidence(
 def _user_supported_candidate(
     memory: dict[str, Any], allowed_source_roles: frozenset[str]
 ) -> dict[str, Any] | None:
-    """在任何评分与预算计算前重建有逐事实用户证据的候选副本。"""
+    """在任何评分与预算计算前重建有逐事实用户证据的候选副本。
+
+    事实元数据只有在条目仍属于当前 canonical 正文时才可作为注入载荷：正文
+    改写后残留的旧事实不能进入 ``Key facts`` 行，也不能由它们重建正文。此时
+    按「无事实元数据」回落 canonical 正文路径——正文本身仍被逐事实用户证据
+    覆盖时保留原正文与分数并丢弃旧事实；正文也失去覆盖时整个候选 fail closed。
+    """
+
     metadata = memory.get("metadata")
     if not isinstance(metadata, dict):
         return None
@@ -104,7 +117,24 @@ def _user_supported_candidate(
     if retained is None:
         return None
     summary_supported = _content_is_user_attributable(metadata, retained)
-    content = memory.get("content") if summary_supported else None
+    body = memory.get("content")
+    body_text = body if isinstance(body, str) and body.strip() else ""
+    if (
+        facts_aligned(
+            body_text,
+            metadata.get("key_facts"),
+            metadata.get("fact_source_evidence"),
+        )
+        is not FactTextAlignment.ALIGNED
+    ):
+        logger.debug(
+            "[注入选择] 事实元数据与当前正文不一致，按无事实元数据回落正文：facts=%d",
+            len(metadata["key_facts"]),
+        )
+        if not summary_supported or not body_text:
+            return None
+        retained = []
+    content = body_text if summary_supported else None
     if not isinstance(content, str) or not content.strip():
         content = "；".join(retained)
     # 证据、身份和边界只用于前置判定，不进入 formatter 的输入。
