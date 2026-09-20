@@ -20,6 +20,7 @@ from astrbot.api import logger
 
 from ....shared.memory_status import effective_memory_status, set_memory_status
 from ....shared.number_utils import clamp_float, safe_float
+from ....shared.temporal import parse_datetime, serialize_datetime
 from ...decay.application.operations import _normalize_batch_metadata
 from .write_coordinator import ConnectionRegistry, check_db_alive, is_connection_fatal
 
@@ -30,6 +31,32 @@ def _safe_count(value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         return 0
     return max(0, value)
+
+
+def _log_derived_invalidation(summary: dict[str, Any], new_status: str) -> None:
+    """把状态批更新的派生失效摘要落成稳定原因码与计数。
+
+    派生失效失败不得只剩各阶段各自的 warning：维护调用方（``cleanup_old_memories``
+    返回整数计数，保持兼容）需要一条可观测的汇总。稳定原因码只表达失败类别，
+    日志不含 memory id、正文、scope/privacy/revision 取值；全部收敛时不写日志。
+    """
+
+    steps_failed = _safe_count(summary.get("steps_failed"))
+    if not steps_failed:
+        return
+    logger.warning(
+        "[维护] 状态派生失效未全部收敛："
+        "reason_code=derived_invalidation_failed"
+        f"，new_status={new_status}"
+        f"，steps_failed={steps_failed}"
+        f"，sources={_safe_count(summary.get('sources'))}"
+        f"，evolution_invalidated={_safe_count(summary.get('evolution_invalidated'))}"
+        f"，graph_cleaned={_safe_count(summary.get('graph_cleaned'))}"
+        f"，graph_failed={_safe_count(summary.get('graph_failed'))}"
+        f"，atoms_rederived={_safe_count(summary.get('atoms_rederived'))}"
+        f"，atoms_failed={_safe_count(summary.get('atoms_failed'))}"
+        f"，atoms_reason_code={summary.get('atoms_reason_code') or 'none'}"
+    )
 
 
 class LifecycleOperationsMixin:
@@ -147,8 +174,23 @@ class LifecycleOperationsMixin:
     async def _batch_update_status(
         self, memory_ids: list[int], new_status: str, timestamp: float
     ) -> int:
-        """批量同步更新生命周期状态和兼容字段，并应用情感衰减。"""
+        """批量同步更新生命周期状态和兼容字段，并应用情感衰减。
+
+        ``documents.updated_at`` 是 revision 与存储后端按 ``datetime`` 解析的
+        时间列，必须写成 ISO 8601 文本：与 ``vector_retriever`` /
+        ``write_op_repair`` 等写入方同格式，写 Unix 秒会让存储后端解析整批
+        读取时抛错。失败不抛出、不改语义：状态写失败只跳过该行，派生失效
+        失败按 ``_invalidate_derived_after_status_change`` 的摘要记录原因码。
+        """
         if not memory_ids or self._db is None:
+            return 0
+
+        updated_at = serialize_datetime(parse_datetime(timestamp))
+        if not updated_at:
+            logger.warning(
+                "[维护] 状态批更新跳过："
+                f"reason_code=status_update_timestamp_invalid，new_status={new_status}"
+            )
             return 0
 
         updated_ids: list[int] = []
@@ -184,7 +226,7 @@ class LifecycleOperationsMixin:
 
                 await self._db.execute(
                     "UPDATE documents SET metadata = ?, updated_at = ? WHERE id = ?",
-                    (json.dumps(metadata, ensure_ascii=False), timestamp, mem_id),
+                    (json.dumps(metadata, ensure_ascii=False), updated_at, mem_id),
                 )
                 updated_ids.append(mem_id)
             except asyncio.CancelledError:
@@ -195,7 +237,10 @@ class LifecycleOperationsMixin:
             await self._db.commit()
             if self._invalidate_cache:
                 self._invalidate_cache()
-            await self._invalidate_derived_after_status_change(updated_ids, new_status)
+            summary = await self._invalidate_derived_after_status_change(
+                updated_ids, new_status
+            )
+            _log_derived_invalidation(summary, new_status)
         return len(updated_ids)
 
     async def _invalidate_derived_after_status_change(

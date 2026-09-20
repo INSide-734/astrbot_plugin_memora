@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -214,7 +215,13 @@ async def test_lifecycle_transition_writes_both_status_fields() -> None:
     assert payload["memory_status"] == "dormant"
     assert payload["status"] == "dormant"
     assert payload["status_changed_at"] == 123.0
-    assert host._db.execute.await_args_list[1].args[1][1] == 123.0
+    # updated_at 是存储后端按 datetime 解析的 revision 列：写入的必须是 ISO 8601
+    # 文本（float 会让整批 get_documents 抛错），且落在同一个注入时刻。
+    written_updated_at = host._db.execute.await_args_list[1].args[1][1]
+    assert isinstance(written_updated_at, str)
+    assert datetime.fromisoformat(written_updated_at) == datetime.fromtimestamp(
+        123.0, tz=timezone.utc
+    )
     assert cache.get_cached(cache_key) is None
 
 
