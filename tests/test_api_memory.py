@@ -1366,6 +1366,234 @@ class TestMemoryReadValidation:
         assert result["data"]["total"] == 1
         assert [item["id"] for item in result["data"]["items"]] == [1]
 
+    @staticmethod
+    async def _list_with_db(db_path: str, **args) -> dict:
+        """用独立 DB 调用列表 handler，返回完整 envelope。"""
+
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
+
+        class Stub:
+            list_memories = MemoryReadApiMixin.list_memories
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.db_path = db_path
+                return {"memory_engine": engine}, None
+
+            def _normalize_metadata(self, md):
+                return md or {}
+
+        with patch(
+            "core.platform.transport.page_api.memory_read_api.request",
+            _mock_request(**args),
+        ):
+            return await Stub().list_memories()
+
+    @staticmethod
+    async def _seed_dropped_source_db(db_path: str) -> None:
+        """写入一行合法来源与五种被 canonical 列表门剔除的变体。"""
+
+        import aiosqlite
+
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE documents ("
+                "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT,"
+                " metadata TEXT, created_at TEXT, updated_at TEXT)"
+            )
+            await db.executemany(
+                "INSERT INTO documents"
+                " (id, doc_id, text, metadata, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        1,
+                        "doc-1",
+                        "visible",
+                        _canonical_list_metadata(
+                            create_time=100, session_id="session-a"
+                        ),
+                        "a",
+                        "b",
+                    ),
+                    # active 且仍可召回，但 provenance 不完整 → 列表门剔除。
+                    (
+                        2,
+                        "doc-2",
+                        "recallable but unlisted",
+                        _canonical_list_metadata(
+                            create_time=200,
+                            session_id="session-a",
+                            scope_key="scope:dropped",
+                            source_provenance_complete=False,
+                        ),
+                        "c",
+                        "d",
+                    ),
+                    # scope_key 非文本 → 同样被列表门剔除。
+                    (
+                        3,
+                        "doc-3",
+                        "scope not text",
+                        _canonical_list_metadata(
+                            create_time=300, session_id="session-a", scope_key=12345
+                        ),
+                        "e",
+                        "f",
+                    ),
+                    # 另一会话的被剔除行只在该会话筛选下计数。
+                    (
+                        4,
+                        "doc-4",
+                        "other session",
+                        _canonical_list_metadata(
+                            create_time=400,
+                            session_id="session-b",
+                            source_provenance_complete=False,
+                        ),
+                        "g",
+                        "h",
+                    ),
+                    # 另一状态的被剔除行只在对应状态筛选下计数。
+                    (
+                        5,
+                        "doc-5",
+                        "archived",
+                        _canonical_list_metadata(
+                            create_time=500,
+                            session_id="session-a",
+                            status="archived",
+                            source_provenance_complete=False,
+                        ),
+                        "i",
+                        "j",
+                    ),
+                    # mark_write 行在被默认筛选挡下时不算来源门剔除。
+                    (
+                        6,
+                        "doc-6",
+                        "mark write",
+                        _canonical_list_metadata(
+                            create_time=600,
+                            session_id="session-a",
+                            gate_disposition="mark_write",
+                            source_provenance_complete=False,
+                        ),
+                        "k",
+                        "l",
+                    ),
+                ],
+            )
+            await db.commit()
+
+    @pytest.mark.asyncio
+    async def test_list_memories_reports_rows_dropped_by_canonical_gate(
+        self, tmp_path
+    ) -> None:
+        """被列表来源门剔除的行数按本次请求的其它筛选单独统计。"""
+
+        db_path = str(tmp_path / "memories-dropped.db")
+        await self._seed_dropped_source_db(db_path)
+
+        default = await self._list_with_db(db_path)
+        assert default["status"] == "ok"
+        assert default["data"]["total"] == 1
+        assert [item["id"] for item in default["data"]["items"]] == [1]
+        # 顶层计数与 total 同级；mark_write 行由既有筛选挡下，不计入来源门剔除。
+        assert default["data"]["dropped_source_count"] == 4
+        # 计数只报告标量：被剔除行的正文与 scope 取值都不回显。
+        serialized = json.dumps(default, ensure_ascii=False)
+        assert "recallable but unlisted" not in serialized
+        assert "scope:dropped" not in serialized
+
+        # 会话筛选：只统计该会话内被门剔除的行。
+        session_a = await self._list_with_db(db_path, session_id="session-a")
+        assert session_a["data"]["total"] == 1
+        assert session_a["data"]["dropped_source_count"] == 3
+
+        session_b = await self._list_with_db(db_path, session_id="session-b")
+        assert session_b["data"]["items"] == []
+        assert session_b["data"]["total"] == 0
+        assert session_b["data"]["dropped_source_count"] == 1
+
+        # 状态筛选：archived 的失效行只在显式状态查询下计数。
+        archived = await self._list_with_db(db_path, status="archived")
+        assert archived["data"]["total"] == 0
+        assert archived["data"]["dropped_source_count"] == 1
+
+        # 关键字同样参与计数口径。
+        keyword = await self._list_with_db(db_path, keyword="recallable but unlisted")
+        assert keyword["data"]["total"] == 0
+        assert keyword["data"]["dropped_source_count"] == 1
+
+        # 显式纳入 mark_write 后该行才进入来源门剔除计数。
+        marked = await self._list_with_db(
+            db_path, session_id="session-a", include_mark_write="true"
+        )
+        assert marked["data"]["total"] == 1
+        assert marked["data"]["dropped_source_count"] == 4
+
+    @pytest.mark.asyncio
+    async def test_list_memories_reports_zero_dropped_source_count(
+        self, tmp_path
+    ) -> None:
+        """全部行通过来源门时计数为 0，且响应 envelope 形状不变。"""
+
+        import aiosqlite
+
+        db_path = str(tmp_path / "memories-no-drop.db")
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE documents ("
+                "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT,"
+                " metadata TEXT, created_at TEXT, updated_at TEXT)"
+            )
+            await db.executemany(
+                "INSERT INTO documents"
+                " (id, doc_id, text, metadata, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        1,
+                        "doc-1",
+                        "first",
+                        _canonical_list_metadata(create_time=100),
+                        "a",
+                        "b",
+                    ),
+                    (
+                        2,
+                        "doc-2",
+                        "second",
+                        _canonical_list_metadata(create_time=200),
+                        "c",
+                        "d",
+                    ),
+                ],
+            )
+            await db.commit()
+
+        result = await self._list_with_db(db_path)
+        assert result["status"] == "ok"
+        data = result["data"]
+        assert [item["id"] for item in data["items"]] == [2, 1]
+        assert set(data) == {
+            "items",
+            "total",
+            "dropped_source_count",
+            "page",
+            "page_size",
+            "has_more",
+        }
+        assert data["total"] == 2
+        assert data["dropped_source_count"] == 0
+
     @pytest.mark.asyncio
     async def test_list_memories_keeps_explicit_status_filter_for_valid_sources(
         self, tmp_path

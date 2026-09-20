@@ -126,10 +126,11 @@ class MemoryReadApiMixin:
             "privacy_level": request_privacy_level,
         }
 
-        # COUNT 与分页读共用同一段过滤（canonical 读取门 + 请求筛选），
-        # 保证 total 与 items 口径一致。
-        where_sql = (
-            "WHERE ("
+        # 请求筛选与 canonical 读取门分开拼装：列表查询 = 请求筛选 AND 门，
+        # 被剔除计数 = 请求筛选 AND NOT 门，两者共用同一段请求筛选，保证
+        # total / items / dropped_source_count 口径一致。
+        filters_sql = (
+            "("
             "    :session_id IS NULL "
             "    OR CASE WHEN json_valid(metadata) "
             "       THEN json_extract(metadata, '$.session_id') END = :session_id"
@@ -146,7 +147,6 @@ class MemoryReadApiMixin:
             "        ''"
             "    ) <> 'mark_write'"
             ") "
-            f"AND ({_CANONICAL_LIST_GATE_SQL}) "
             f"AND (:scope_key IS NULL OR CASE WHEN json_valid(metadata) "
             f"    THEN {_SCOPE_KEY_SQL} END = :scope_key) "
             f"AND (:privacy_level IS NULL OR CASE WHEN json_valid(metadata) "
@@ -173,6 +173,13 @@ class MemoryReadApiMixin:
             "    )"
             ")"
         )
+        # COUNT 与分页读共用同一段过滤（canonical 读取门 + 请求筛选），
+        # 保证 total 与 items 口径一致。
+        where_sql = f"WHERE {filters_sql} AND ({_CANONICAL_LIST_GATE_SQL})"
+        # 列表门比召回门严（额外要求 provenance 完整与文本 scope_key），仍可召回的
+        # active 行因此可能不出现在管理列表。这里按同一组请求筛选单独聚合被该门
+        # 剔除的行数，只回传标量计数，不携带 scope/privacy/revision 取值或正文。
+        dropped_where_sql = f"WHERE {filters_sql} AND NOT ({_CANONICAL_LIST_GATE_SQL})"
 
         try:
             async with aiosqlite.connect(db_path) as db:
@@ -184,6 +191,13 @@ class MemoryReadApiMixin:
                 )
                 count_row = await count_cursor.fetchone()
                 total = int(count_row["total"]) if count_row else 0
+
+                dropped_cursor = await db.execute(
+                    f"SELECT COUNT(*) AS dropped FROM documents {dropped_where_sql}",
+                    params,
+                )
+                dropped_row = await dropped_cursor.fetchone()
+                dropped_source_count = int(dropped_row["dropped"]) if dropped_row else 0
 
                 cursor = await db.execute(
                     f"SELECT id, doc_id, text, metadata, created_at, updated_at "
@@ -237,6 +251,8 @@ class MemoryReadApiMixin:
             {
                 "items": items,
                 "total": total,
+                # 被列表 canonical 来源门剔除、但在同一组请求筛选下的行数（整数）。
+                "dropped_source_count": dropped_source_count,
                 "page": page,
                 "page_size": page_size,
                 "has_more": (offset + page_size) < total,
