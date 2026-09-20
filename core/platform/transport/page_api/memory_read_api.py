@@ -16,6 +16,7 @@ from ....shared.number_utils import clamp_float
 from ....shared.sql import MEMORY_STATUS_SQL
 from .graph_api import GraphApiMixin
 from .response_utils import error_response
+from .shared_helpers import CANONICAL_PRIVACY_LEVELS
 
 # 列表项 metadata 只投影已经提升到顶层的展示标量：
 # 原始 metadata、会话/人格身份、source mapping、scope/privacy/revision、
@@ -39,6 +40,34 @@ def _project_list_metadata(metadata: Any) -> dict[str, Any]:
     }
 
 
+_MAX_SCOPE_KEY_CHARS = 256
+_ASCII_WHITESPACE_SQL = "char(9) || char(10) || char(11) || char(12) || char(13) || ' '"
+
+
+# /memories 保留 canonical 直读 SQL（性能），但必须补齐与
+# canonical_source_validation / 目录来源校验等价的门：非 summary_source_orphan、
+# provenance 完整、scope/privacy 合法。取值统一走 json_extract()（与同文件既有的
+# session_id / gate_disposition / memory_type 筛选同一做法），避免逐行 json_each()
+# 全键扫描；整个门只做一次 json_valid()，损坏 metadata 的行按 fail-closed 排除而不
+# 让整页查询报错。写入路径统一以 json.dumps(dict) 序列化 metadata，不会产生重复
+# 顶层键，因此首值读取不与 Python json.loads() 的末值语义冲突。
+# 状态筛选仍由请求显式控制，不在本门内限制来源生命周期状态。
+_SCOPE_KEY_SQL = f"TRIM(json_extract(metadata, '$.scope_key'), {_ASCII_WHITESPACE_SQL})"
+# canonical 契约：privacy_level 缺失或为 null 的历史行按 "shared" 回退
+# （与 canonical_source_validation.load_canonical_source_states 同一口径）；
+# 键存在但值越界或非文本仍按非法排除，请求端筛选也沿用同一回退值。
+_PRIVACY_LEVEL_SQL = "COALESCE(json_extract(metadata, '$.privacy_level'), 'shared')"
+_CANONICAL_LIST_GATE_SQL = (
+    "CASE WHEN json_valid(metadata) THEN ("
+    "json_extract(metadata, '$.summary_source_orphan') IS NOT 1 "
+    "AND json_extract(metadata, '$.source_provenance_complete') IS 1 "
+    "AND typeof(json_extract(metadata, '$.scope_key')) = 'text' "
+    f"AND LENGTH({_SCOPE_KEY_SQL}) BETWEEN 1 AND {_MAX_SCOPE_KEY_CHARS} "
+    f"AND {_PRIVACY_LEVEL_SQL} IN ('public', 'shared', 'confidential')"
+    ") ELSE 0 END = 1"
+)
+
+
 class MemoryReadApiMixin:
     """混入类：记忆列表 / 详情"""
 
@@ -56,6 +85,23 @@ class MemoryReadApiMixin:
             str(query.get("include_mark_write", "false")).strip().lower()
         )
         include_mark_write = include_mark_write_raw in {"1", "true", "yes", "on"}
+
+        # 请求可按来源 scope/privacy 收窄；提供的取值必须与 canonical 行当前
+        # 门禁值一致，否则该行不进入响应（fail-closed，不放宽到其它来源）。
+        request_scope_key = str(query.get("scope_key", "")).strip() or None
+        request_privacy_level = (
+            str(query.get("privacy_level", "")).strip().lower() or None
+        )
+        if (
+            request_scope_key is not None
+            and len(request_scope_key) > _MAX_SCOPE_KEY_CHARS
+        ):
+            return self._error("scope_key 无效")
+        if (
+            request_privacy_level is not None
+            and request_privacy_level not in CANONICAL_PRIVACY_LEVELS
+        ):
+            return self._error("privacy_level 无效")
 
         try:
             page = max(1, int(query.get("page", 1)))
@@ -76,53 +122,64 @@ class MemoryReadApiMixin:
             "keyword_is_digit": int(bool(keyword_value and keyword.isdigit())),
             "keyword_like": f"%{keyword}%" if keyword_value else None,
             "include_mark_write": int(include_mark_write),
+            "scope_key": request_scope_key,
+            "privacy_level": request_privacy_level,
         }
+
+        # COUNT 与分页读共用同一段过滤（canonical 读取门 + 请求筛选），
+        # 保证 total 与 items 口径一致。
+        where_sql = (
+            "WHERE ("
+            "    :session_id IS NULL "
+            "    OR CASE WHEN json_valid(metadata) "
+            "       THEN json_extract(metadata, '$.session_id') END = :session_id"
+            ") "
+            "AND ("
+            "    :status IS NULL "
+            f"    OR ({MEMORY_STATUS_SQL}) = :status"
+            ") "
+            "AND ("
+            "    :include_mark_write = 1 "
+            "    OR COALESCE("
+            "        CASE WHEN json_valid(metadata) "
+            "        THEN json_extract(metadata, '$.gate_disposition') END,"
+            "        ''"
+            "    ) <> 'mark_write'"
+            ") "
+            f"AND ({_CANONICAL_LIST_GATE_SQL}) "
+            f"AND (:scope_key IS NULL OR CASE WHEN json_valid(metadata) "
+            f"    THEN {_SCOPE_KEY_SQL} END = :scope_key) "
+            f"AND (:privacy_level IS NULL OR CASE WHEN json_valid(metadata) "
+            f"    THEN {_PRIVACY_LEVEL_SQL} END = :privacy_level) "
+            "AND ("
+            "    :keyword IS NULL "
+            "    OR ("
+            "        :keyword_is_digit = 1 "
+            "        AND ("
+            "            CAST(id AS TEXT) = :keyword "
+            "            OR text LIKE :keyword_like COLLATE NOCASE"
+            "        )"
+            "    ) "
+            "    OR ("
+            "        :keyword_is_digit = 0 "
+            "        AND ("
+            "            text LIKE :keyword_like COLLATE NOCASE "
+            "            OR COALESCE("
+            "                CASE WHEN json_valid(metadata) "
+            "                THEN json_extract(metadata, '$.memory_type') END,"
+            "                ''"
+            "            ) LIKE :keyword_like COLLATE NOCASE"
+            "        )"
+            "    )"
+            ")"
+        )
 
         try:
             async with aiosqlite.connect(db_path) as db:
                 await apply_perf_pragmas(db)
                 db.row_factory = aiosqlite.Row
                 count_cursor = await db.execute(
-                    f"SELECT COUNT(*) AS total "
-                    f"FROM documents "
-                    f"WHERE ("
-                    f"    :session_id IS NULL "
-                    f"    OR CASE WHEN json_valid(metadata) "
-                    f"       THEN json_extract(metadata, '$.session_id') END = :session_id"
-                    f") "
-                    f"AND ("
-                    f"    :status IS NULL "
-                    f"    OR ({MEMORY_STATUS_SQL}) = :status"
-                    f") "
-                    f"AND ("
-                    f"    :include_mark_write = 1 "
-                    f"    OR COALESCE("
-                    f"        CASE WHEN json_valid(metadata) "
-                    f"        THEN json_extract(metadata, '$.gate_disposition') END,"
-                    f"        ''"
-                    f"    ) <> 'mark_write'"
-                    f") "
-                    f"AND ("
-                    f"    :keyword IS NULL "
-                    f"    OR ("
-                    f"        :keyword_is_digit = 1 "
-                    f"        AND ("
-                    f"            CAST(id AS TEXT) = :keyword "
-                    f"            OR text LIKE :keyword_like COLLATE NOCASE"
-                    f"        )"
-                    f"    ) "
-                    f"    OR ("
-                    f"        :keyword_is_digit = 0 "
-                    f"        AND ("
-                    f"            text LIKE :keyword_like COLLATE NOCASE "
-                    f"            OR COALESCE("
-                    f"                CASE WHEN json_valid(metadata) "
-                    f"                THEN json_extract(metadata, '$.memory_type') END,"
-                    f"                ''"
-                    f"            ) LIKE :keyword_like COLLATE NOCASE"
-                    f"        )"
-                    f"    )"
-                    f")",
+                    f"SELECT COUNT(*) AS total FROM documents {where_sql}",
                     params,
                 )
                 count_row = await count_cursor.fetchone()
@@ -130,45 +187,7 @@ class MemoryReadApiMixin:
 
                 cursor = await db.execute(
                     f"SELECT id, doc_id, text, metadata, created_at, updated_at "
-                    f"FROM documents "
-                    f"WHERE ("
-                    f"    :session_id IS NULL "
-                    f"    OR CASE WHEN json_valid(metadata) "
-                    f"       THEN json_extract(metadata, '$.session_id') END = :session_id"
-                    f") "
-                    f"AND ("
-                    f"    :status IS NULL "
-                    f"    OR ({MEMORY_STATUS_SQL}) = :status"
-                    f") "
-                    f"AND ("
-                    f"    :include_mark_write = 1 "
-                    f"    OR COALESCE("
-                    f"        CASE WHEN json_valid(metadata) "
-                    f"        THEN json_extract(metadata, '$.gate_disposition') END,"
-                    f"        ''"
-                    f"    ) <> 'mark_write'"
-                    f") "
-                    f"AND ("
-                    f"    :keyword IS NULL "
-                    f"    OR ("
-                    f"        :keyword_is_digit = 1 "
-                    f"        AND ("
-                    f"            CAST(id AS TEXT) = :keyword "
-                    f"            OR text LIKE :keyword_like COLLATE NOCASE"
-                    f"        )"
-                    f"    ) "
-                    f"    OR ("
-                    f"        :keyword_is_digit = 0 "
-                    f"        AND ("
-                    f"            text LIKE :keyword_like COLLATE NOCASE "
-                    f"            OR COALESCE("
-                    f"                CASE WHEN json_valid(metadata) "
-                    f"                THEN json_extract(metadata, '$.memory_type') END,"
-                    f"                ''"
-                    f"            ) LIKE :keyword_like COLLATE NOCASE"
-                    f"        )"
-                    f"    )"
-                    f") "
+                    f"FROM documents {where_sql} "
                     f"ORDER BY COALESCE("
                     f"    CASE WHEN json_valid(metadata) "
                     f"    THEN CAST(json_extract(metadata, '$.create_time') AS REAL) END,"

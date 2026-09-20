@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import Sequence
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
 import pytest
@@ -709,3 +709,146 @@ async def test_admin_canvas_ignores_foreign_edge_entry_time(tmp_db_path) -> None
 
     assert [edge["timestamp"] for edge in snapshot["edges"]] == [now - 3600]
     assert {node["label"] for node in snapshot["nodes"]} == {"甲一", "甲二"}
+
+
+# ---------------------------------------------------------------------------
+# 聚焦图 API：canonical 读取门（与管理员画布同一套来源条件）
+# ---------------------------------------------------------------------------
+
+_FOCUS_GRAPH_LABEL = "聚焦图派生节点"
+
+
+class _FocusGraphApi(GraphApiMixin):
+    """聚焦图查询的宿主替身：canonical 读取与图 Store 使用同一 SQLite 文件。"""
+
+    def __init__(self, store: GraphStore) -> None:
+        self._store = store
+        self._memory_engine = MagicMock()
+        self._memory_engine.get_statistics = AsyncMock(return_value={})
+        self._memory_engine.get_memory = AsyncMock(side_effect=self._get_memory)
+
+    async def _get_memory(self, memory_id: int) -> dict[str, Any] | None:
+        """按引擎的 canonical 读取语义返回 documents 当前行。"""
+
+        async with self._store._connect() as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT id, text, metadata, created_at, updated_at"
+                " FROM documents WHERE id = ?",
+                (memory_id,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]),
+            "text": row["text"],
+            "metadata": row["metadata"],
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def _ok(self, data: Any) -> dict[str, Any]:
+        from core.platform.transport.page_api.response_utils import ok_response
+
+        return ok_response(data)
+
+    def _error(self, message: str) -> dict[str, Any]:
+        from core.platform.transport.page_api.response_utils import error_response
+
+        return error_response(message)
+
+    async def _ensure_plugin_ready(self):
+        return {"memory_engine": self._memory_engine}, None
+
+    def _get_graph_store(self, _engine):
+        return self._store
+
+    def _build_graph_view_payload(self, snapshot, stats, **kwargs):
+        payload = {
+            "nodes": snapshot.get("nodes", []),
+            "edges": snapshot.get("edges", []),
+            "entries": snapshot.get("entries", []),
+        }
+        payload.update(kwargs)
+        return payload
+
+
+async def _seed_focus_graph_rows(store: GraphStore, memory_id: int) -> None:
+    """写入与 canonical 当前边界一致的派生图行（供聚焦门负测）。"""
+
+    await _write_graph_rows(
+        store,
+        memory_id,
+        nodes=[("fact:focus", _FOCUS_GRAPH_LABEL)],
+        scope="scope-a",
+        revision="rev-1",
+    )
+
+
+@pytest.mark.asyncio
+async def test_focused_graph_returns_derived_content_for_readable_source(
+    tmp_db_path,
+) -> None:
+    """canonical 当前可读时，聚焦查询按边界返回该来源的派生图内容。"""
+
+    store = GraphStore(tmp_db_path)
+    await store.initialize()
+    await _write_canonical(store, 1, scope="scope-a", revision="rev-1")
+    await _seed_focus_graph_rows(store, 1)
+
+    result = await _FocusGraphApi(store)._query_graph_impl({"memory_id": 1})
+
+    assert result["status"] == "ok"
+    assert [node["label"] for node in result["data"]["nodes"]] == [_FOCUS_GRAPH_LABEL]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "variant",
+    ["orphan", "mark_write", "assistant_evidence", "missing_evidence"],
+)
+async def test_focused_graph_fails_closed_for_unreadable_source(
+    tmp_db_path,
+    variant: str,
+) -> None:
+    """来源失效（orphan/mark_write/无用户证据）时聚焦图不返回派生图内容。"""
+
+    store = GraphStore(tmp_db_path)
+    await store.initialize()
+    await _seed_focus_graph_rows(store, 1)
+    await _seed_invalid_source(store, 1, variant, scope="scope-a")
+
+    result = await _FocusGraphApi(store)._query_graph_impl({"memory_id": 1})
+
+    assert result["status"] == "error"
+    assert result["code"] == "graph_boundary_required"
+    assert _FOCUS_GRAPH_LABEL not in json.dumps(result, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("variant", "expects_boundary_error"),
+    [("missing_canonical", True), ("stale_revision", False)],
+)
+async def test_focused_graph_hides_derived_graph_without_current_source(
+    tmp_db_path,
+    variant: str,
+    expects_boundary_error: bool,
+) -> None:
+    """canonical 行缺失或 revision 变化后，旧 revision 的派生图内容不可见。"""
+
+    store = GraphStore(tmp_db_path)
+    await store.initialize()
+    await _seed_focus_graph_rows(store, 1)
+    await _seed_invalid_source(store, 1, variant, scope="scope-a")
+
+    result = await _FocusGraphApi(store)._query_graph_impl({"memory_id": 1})
+
+    if expects_boundary_error:
+        assert result["status"] == "error"
+        assert result["code"] == "graph_boundary_required"
+    else:
+        assert result["status"] == "ok"
+        assert result["data"]["nodes"] == []
+    assert _FOCUS_GRAPH_LABEL not in json.dumps(result, ensure_ascii=False)

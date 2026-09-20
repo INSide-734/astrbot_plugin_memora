@@ -176,6 +176,12 @@ class RetrievalCacheMixin:
         self._cache.clear()
         self._session_cache.clear()
 
+    @property
+    def cache_generation(self) -> int:
+        """当前缓存代际：写入会使代际前进，供读取窗口的一致性比对。"""
+
+        return self._cache_generation
+
     # ---- 请求级会话缓存（消除 Bridge→RecallHandler 重复搜索）----
 
     @classmethod

@@ -240,3 +240,53 @@ class GraphDeleteMixin(BaseStore):
             except BaseException:
                 await db.rollback()
                 raise
+
+    async def list_residual_source_memory_ids(
+        self,
+        canonical_memory_ids: set[int] | list[int] | tuple[int, ...],
+    ) -> list[int]:
+        """列出图行仍引用、但 canonical 已不存在的源记忆 ID（升序、去重）。
+
+        重建只枚举当前 ``documents``，已物理删除的来源不会被枚举；本方法用
+        canonical 当前 ID 集合做差集，供 ``reap_source_graphs`` 定位遗留图行。
+        函数只读派生表，不触碰 canonical。
+        """
+
+        canonical_ids = {int(item) for item in canonical_memory_ids}
+        async with self._connect() as db:
+            cursor = await db.execute(
+                """
+                SELECT DISTINCT source_memory_id FROM graph_entries
+                WHERE source_memory_id IS NOT NULL
+                UNION
+                SELECT DISTINCT source_memory_id FROM graph_edges
+                WHERE source_memory_id IS NOT NULL
+                """
+            )
+            graph_ids = {int(row[0]) for row in await cursor.fetchall()}
+        return sorted(graph_ids - canonical_ids)
+
+    async def list_unreferenced_vector_doc_ids(
+        self, candidate_vector_doc_ids: list[int]
+    ) -> list[int]:
+        """返回候选中仍未被任何图条目引用的图向量文档 ID（升序、去重）。
+
+        用于孤儿向量清理前的重新核对：只有当前图表不引用的候选才允许删除。
+        """
+
+        candidates = sorted({int(item) for item in candidate_vector_doc_ids})
+        if not candidates:
+            return []
+        unreferenced: list[int] = []
+        async with self._connect() as db:
+            for batch in self._chunked(candidates, self._SQLITE_BATCH_SIZE):
+                cursor = await db.execute(
+                    """
+                    SELECT vector_doc_id FROM graph_entries
+                    WHERE vector_doc_id IN (SELECT value FROM json_each(:ids_json))
+                    """,
+                    {"ids_json": json.dumps(batch)},
+                )
+                referenced = {int(row[0]) for row in await cursor.fetchall()}
+                unreferenced.extend(item for item in batch if item not in referenced)
+        return sorted(unreferenced)

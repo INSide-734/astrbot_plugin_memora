@@ -3,6 +3,7 @@
 提供索引重建、图重建、清理和重置命令的处理方法。
 """
 
+import inspect
 import json
 import re
 from collections.abc import AsyncGenerator
@@ -45,6 +46,19 @@ class MaintenanceCommandMixin:
         """独立 Mixin 默认无维护写保护。"""
         return None
 
+    def _resolve_rebuild_coordinator(self) -> Any | None:
+        """解析统一重建入口，缺失时由调用方记录豁免原因并保留直连路径。
+
+        transport 不依赖组合根：协调器构造时把自身登记在验证器上（端口名
+        ``derived_rebuild_coordinator``），这里只做结构性检查——端口对象必须暴露
+        coroutine 入口 ``rebuild_stages``。
+        """
+
+        entry = getattr(self.index_validator, "derived_rebuild_coordinator", None)
+        if inspect.iscoroutinefunction(getattr(entry, "rebuild_stages", None)):
+            return entry
+        return None
+
     async def handle_rebuild_index(
         self, event: AstrMessageEvent
     ) -> AsyncGenerator[MessageEventResult, None]:
@@ -81,8 +95,19 @@ class MaintenanceCommandMixin:
             )
             yield event.plain_result(status_msg)
 
-            # 执行重建
-            result = await self.index_validator.rebuild_indexes(self.memory_engine)
+            # 执行重建：统一经 DerivedRebuildCoordinator 的阶段入口；入口不可用时
+            # 保留既有直连路径并记录豁免原因（reason_code=rebuild_coordinator_unavailable）。
+            coordinator = self._resolve_rebuild_coordinator()
+            if coordinator is not None:
+                report = await coordinator.rebuild_stages(
+                    ["indexes"], trigger_reason="indexes_inconsistent"
+                )
+                result = coordinator.stage_result(report, "indexes")
+            else:
+                logger.debug(
+                    "重建索引未走统一入口，reason_code=rebuild_coordinator_unavailable"
+                )
+                result = await self.index_validator.rebuild_indexes(self.memory_engine)
 
             if result["success"]:
                 partial_notice = ""
@@ -138,7 +163,15 @@ class MaintenanceCommandMixin:
 
         try:
             yield event.plain_result(t("rebuild_graph.starting"))
-            result = await self.memory_engine.rebuild_graph_index()
+            coordinator = self._resolve_rebuild_coordinator()
+            if coordinator is not None:
+                report = await coordinator.rebuild_stages(["graph"])
+                result = coordinator.stage_result(report, "graph")
+            else:
+                logger.debug(
+                    "重建图记忆未走统一入口，reason_code=rebuild_coordinator_unavailable"
+                )
+                result = await self.memory_engine.rebuild_graph_index()
             yield event.plain_result(
                 t(
                     "rebuild_graph.success",

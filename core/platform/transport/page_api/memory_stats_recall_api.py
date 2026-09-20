@@ -1,12 +1,35 @@
 """记忆统计与召回测试 Page API。"""
 
 import asyncio
+import json
 import time
+from typing import Any
 
 from astrbot.api import logger
 from quart import request
 
+from ....features.memory.domain.revision import revision_is_stale, revision_snapshot
 from ....shared.memory_status import effective_memory_status
+from .shared_helpers import (
+    canonical_source_violation,
+    load_canonical_records,
+)
+
+
+def _canonical_summary(record: dict[str, Any], fallback: str) -> str:
+    """读取 canonical 行自身的摘要；缺失或损坏时回落已校验的 canonical 正文。"""
+
+    metadata = record.get("metadata")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (TypeError, ValueError):
+            metadata = None
+    if isinstance(metadata, dict):
+        summary = metadata.get("canonical_summary")
+        if isinstance(summary, str) and summary.strip():
+            return summary
+    return fallback
 
 
 def _coerce_count(value, default: int = 0) -> int:
@@ -163,10 +186,15 @@ class MemoryStatsRecallApiMixin:
             stats["atom_count"] = 0
             stats["atom_breakdown"] = {}
             if atom_store is not None:
+                # C3 计数端口按父 canonical 当前有效性过滤，不把来源已失效的
+                # Atom 计入对外统计；端口尚未落地时保留 raw 计数口径，
+                # 该差异在交付报告中标注，不在 API 层自行过滤。
+                counter = getattr(atom_store, "count_current_atoms", None)
+                if not callable(counter):
+                    counter = getattr(atom_store, "count_atoms", None)
+                counter_reader: Any = counter
                 try:
-                    stats["atom_count"] = _coerce_count(
-                        await atom_store.count_atoms(), 0
-                    )
+                    stats["atom_count"] = _coerce_count(await counter_reader(), 0)
                 except Exception as e:
                     logger.debug(f"获取记忆原子统计失败: {e}")
                 try:
@@ -273,7 +301,29 @@ class MemoryStatsRecallApiMixin:
             return self._error(str(exc))
 
         results = _safe_result_list(results)
+
+        # 检索缓存与派生路由可能返回 canonical 已失效的旧候选；响应前按整数
+        # doc_id 批量回读 canonical（本地主键查询，无网络调用），剔除已无 canonical
+        # 行、不可召回、mark_write，或正文/revision 已不是当前 canonical 的失效项
+        # 并计数：响应只投影 canonical 行自己的正文与摘要，避免把旧正文当结果返回。
+        candidate_ids: list[int] = []
+        for result in results:
+            try:
+                candidate_ids.append(int(getattr(result, "doc_id", None)))
+            except (TypeError, ValueError):
+                continue
+        try:
+            canonical_records = await load_canonical_records(
+                memory_engine, candidate_ids
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.error("[PageAPI] 召回结果 canonical 回读失败")
+            return self._error("召回结果校验失败")
+
         formatted_results = []
+        dropped_stale_count = 0
         for result in results:
             try:
                 doc_id = int(getattr(result, "doc_id", None))
@@ -282,6 +332,27 @@ class MemoryStatsRecallApiMixin:
             score = _coerce_score(getattr(result, "final_score", None), None)
             metadata_source = getattr(result, "metadata", None)
             if score is None or not isinstance(metadata_source, dict):
+                continue
+            record = canonical_records.get(doc_id)
+            if record is None or (
+                canonical_source_violation(record.get("metadata")) is not None
+            ):
+                dropped_stale_count += 1
+                continue
+            # R2.4：候选自带的正文与 revision 必须与 canonical 行当前值一致；
+            # canonical 未提供可读正文时同样不可用（无法证明它仍是当前正文）。
+            canonical_text = record.get("text")
+            record_metadata = record.get("metadata")
+            if (
+                not isinstance(canonical_text, str)
+                or canonical_text != getattr(result, "content", None)
+                or revision_is_stale(
+                    metadata_source,
+                    record_metadata if isinstance(record_metadata, dict) else None,
+                    revision_snapshot(record),
+                )
+            ):
+                dropped_stale_count += 1
                 continue
             score_breakdown = {
                 key: round(float(value), 6)
@@ -307,8 +378,7 @@ class MemoryStatsRecallApiMixin:
                     "type": metadata_source.get("memory_type", "GENERAL"),
                     "importance": metadata_source.get("importance", 0.5),
                     "created_at": metadata_source.get("create_time"),
-                    "summary": metadata_source.get("canonical_summary")
-                    or result.content,
+                    "summary": _canonical_summary(record, canonical_text),
                     # 分数分解（前端扁平读取）
                     "doc_kw_score": score_breakdown.get("doc_kw"),
                     "doc_vec_score": score_breakdown.get("doc_vec"),
@@ -316,7 +386,7 @@ class MemoryStatsRecallApiMixin:
                     "graph_vec_score": score_breakdown.get("graph_vec"),
                     # 后端完整字段
                     "memory_id": doc_id,
-                    "content": getattr(result, "content", ""),
+                    "content": canonical_text,
                     "similarity_score": round(score, 4),
                     "score_percentage": round(score * 100, 2),
                     "metadata": metadata,
@@ -328,6 +398,7 @@ class MemoryStatsRecallApiMixin:
             {
                 "results": formatted_results,
                 "total": len(formatted_results),
+                "dropped_stale_count": dropped_stale_count,
                 "query": query_text,
                 "k": k,
                 "session_id_filter": session_id,

@@ -6,8 +6,10 @@ Covers rebuild, purge, compact, backup CRUD, restore, and export endpoints.
 from __future__ import annotations
 
 import os
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiosqlite
 import pytest
 
 from core.platform.transport.page_api.response_utils import error_response
@@ -39,8 +41,25 @@ def _make_mixin(
         )
         _coerce_result_int = MaintenanceApiMixin._coerce_result_int
         rebuild_graph_index = MaintenanceApiMixin.rebuild_graph_index
+        _resolve_rebuild_coordinator = staticmethod(
+            MaintenanceApiMixin._resolve_rebuild_coordinator
+        )
         get_persistence_health = MaintenanceApiMixin.get_persistence_health
         repair_persistence_health = MaintenanceApiMixin.repair_persistence_health
+        _persistence_health_validator = staticmethod(
+            MaintenanceApiMixin._persistence_health_validator
+        )
+        _coerce_orphan_ids = staticmethod(MaintenanceApiMixin._coerce_orphan_ids)
+        _purge_orphan_index_rows = MaintenanceApiMixin._purge_orphan_index_rows
+        _delete_orphan_bm25_rows = staticmethod(
+            MaintenanceApiMixin._delete_orphan_bm25_rows
+        )
+        _delete_orphan_main_vector_ids = staticmethod(
+            MaintenanceApiMixin._delete_orphan_main_vector_ids
+        )
+        _delete_orphan_graph_vector_ids = staticmethod(
+            MaintenanceApiMixin._delete_orphan_graph_vector_ids
+        )
         purge_deleted_memories = MaintenanceApiMixin.purge_deleted_memories
         compact_database = MaintenanceApiMixin.compact_database
         create_backup = MaintenanceApiMixin.create_backup
@@ -259,6 +278,322 @@ class TestMaintenanceHappyPath:
         assert result["status"] == "error"
         assert "targets" in result["message"]
 
+
+def _make_repair_mixin(
+    *,
+    db_path: str,
+    issues: dict,
+    faiss_db=None,
+    graph_faiss_db=None,
+    graph_store=None,
+):
+    """构造使用真实 canonical 库路径与固定孤儿报告的维护 API 替身。"""
+
+    mixin = _make_mixin()
+    engine = MagicMock()
+    engine.db_path = db_path
+    engine.faiss_db = faiss_db
+    engine.graph_vector_db = graph_faiss_db
+    engine.graph_store = graph_store
+    engine.graph_memory_manager = MagicMock()
+    engine.graph_memory_manager.faiss_db = graph_faiss_db
+    engine.graph_memory_manager.graph_store = graph_store
+    mixin._ensure_plugin_ready = AsyncMock(
+        return_value=({"memory_engine": engine}, None)
+    )
+    mixin.plugin.initializer.index_validator.db_path = db_path
+    mixin.plugin.initializer.index_validator.faiss_db = faiss_db
+    validator = MagicMock()
+    validator.check = AsyncMock(
+        return_value={
+            "ok": False,
+            "needs_repair": True,
+            "counts": {"bm25": 0, "main_vectors": 0, "graph_vectors": 0},
+            "issues": issues,
+        }
+    )
+    return mixin, validator
+
+
+async def _bm25_fixture(tmp_db_path: str) -> None:
+    """写入 canonical 行与 FTS 行（含孤儿）用于孤儿清理验证。"""
+
+    db = await aiosqlite.connect(tmp_db_path)
+    try:
+        await db.execute("CREATE TABLE documents (id INTEGER PRIMARY KEY, text TEXT)")
+        await db.execute("INSERT INTO documents (id, text) VALUES (1, 'kept')")
+        await db.execute(
+            "CREATE VIRTUAL TABLE memora_memories_fts USING fts5("
+            "content, doc_id UNINDEXED, tokenize='unicode61')"
+        )
+        for doc_id in (1, 2, 3):
+            await db.execute(
+                "INSERT INTO memora_memories_fts (content, doc_id) VALUES (?, ?)",
+                (f"memory-{doc_id}", doc_id),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def _bm25_doc_ids(tmp_db_path: str) -> list[int]:
+    """读取 FTS 中剩余的 doc_id，用于验证删除范围。"""
+
+    db = await aiosqlite.connect(tmp_db_path)
+    try:
+        cursor = await db.execute(
+            "SELECT doc_id FROM memora_memories_fts ORDER BY doc_id"
+        )
+        return [int(row[0]) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+class TestPersistenceHealthRepair:
+    """health repair 的孤儿清理入口：成功、重新核对与失败路径。"""
+
+    @pytest.mark.asyncio
+    async def test_repair_removes_bm25_orphans_and_keeps_live_rows(
+        self, tmp_db_path: str
+    ) -> None:
+        """BM25 孤儿按报告清理，仍存在于 canonical 的候选不得删除。"""
+
+        await _bm25_fixture(tmp_db_path)
+        mixin, validator = _make_repair_mixin(
+            db_path=tmp_db_path,
+            issues={"orphan_bm25_doc_ids": [1, 2, 3]},
+        )
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"targets": ["orphan_bm25_doc_ids"]})
+
+        with (
+            patch("quart.request", req),
+            patch(
+                "core.platform.transport.page_api.maintenance_api."
+                "PersistenceHealthValidator",
+                return_value=validator,
+            ),
+        ):
+            result = await mixin.repair_persistence_health()
+
+        assert result["status"] == "ok"
+        assert result["data"]["repaired"] == {"orphan_bm25_doc_ids": 2}
+        assert await _bm25_doc_ids(tmp_db_path) == [1]
+        validator.check.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    async def test_repair_reports_zero_without_orphans(self, tmp_db_path: str) -> None:
+        """没有孤儿时清理计数为零且不触碰索引。"""
+
+        await _bm25_fixture(tmp_db_path)
+        mixin, _validator = _make_repair_mixin(db_path=tmp_db_path, issues={})
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"targets": ["orphan_bm25_doc_ids"]})
+
+        with (
+            patch("quart.request", req),
+            patch(
+                "core.platform.transport.page_api.maintenance_api."
+                "PersistenceHealthValidator",
+                return_value=_validator,
+            ),
+        ):
+            result = await mixin.repair_persistence_health()
+
+        assert result["status"] == "ok"
+        assert result["data"]["repaired"] == {"orphan_bm25_doc_ids": 0}
+        assert await _bm25_doc_ids(tmp_db_path) == [1, 2, 3]
+
+    @pytest.mark.asyncio
+    async def test_repair_rejects_unsupported_target(self) -> None:
+        """不在报告闭集内的目标必须显式拒绝，不能静默忽略。"""
+
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"targets": ["atom_orphan_parent_ids"]})
+        with patch("quart.request", req):
+            mixin = _make_mixin()
+            result = await mixin.repair_persistence_health()
+
+        assert result["status"] == "error"
+        assert "孤儿索引清理" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_repair_returns_explicit_error_when_vector_store_missing(
+        self, tmp_db_path: str
+    ) -> None:
+        """向量库不可用时返回显式错误，而不是未实现占位。"""
+
+        mixin, validator = _make_repair_mixin(
+            db_path=tmp_db_path,
+            issues={"orphan_main_vector_ids": [7]},
+            faiss_db=None,
+        )
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"targets": ["orphan_main_vector_ids"]})
+
+        with (
+            patch("quart.request", req),
+            patch(
+                "core.platform.transport.page_api.maintenance_api."
+                "PersistenceHealthValidator",
+                return_value=validator,
+            ),
+        ):
+            result = await mixin.repair_persistence_health()
+
+        assert result["status"] == "error"
+        assert "未实现" not in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_repair_rejects_missing_vector_store_without_reported_orphans(
+        self, tmp_db_path: str
+    ) -> None:
+        """目标后端缺失时不能把无法检查误报成零修复。"""
+
+        mixin, validator = _make_repair_mixin(
+            db_path=tmp_db_path,
+            issues={},
+            faiss_db=None,
+        )
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"targets": ["orphan_main_vector_ids"]})
+
+        with (
+            patch("quart.request", req),
+            patch(
+                "core.platform.transport.page_api.maintenance_api."
+                "PersistenceHealthValidator",
+                return_value=validator,
+            ),
+        ):
+            result = await mixin.repair_persistence_health()
+
+        assert result["status"] == "error"
+        assert "未实现" not in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_repair_rejects_missing_graph_store(self, tmp_db_path: str) -> None:
+        """图孤儿删除没有图表复核端口时必须显式失败。"""
+
+        graph_faiss_db = MagicMock()
+        graph_faiss_db.delete = AsyncMock()
+        mixin, validator = _make_repair_mixin(
+            db_path=tmp_db_path,
+            issues={"orphan_graph_vector_ids": [42]},
+            graph_faiss_db=graph_faiss_db,
+            graph_store=None,
+        )
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"targets": ["orphan_graph_vector_ids"]})
+
+        with (
+            patch("quart.request", req),
+            patch(
+                "core.platform.transport.page_api.maintenance_api."
+                "PersistenceHealthValidator",
+                return_value=validator,
+            ),
+        ):
+            result = await mixin.repair_persistence_health()
+
+        assert result["status"] == "error"
+        graph_faiss_db.delete.assert_not_awaited()
+
+    @pytest.mark.parametrize("live_id", [5, "5"])
+    @pytest.mark.asyncio
+    async def test_orphan_main_vector_delete_skips_reused_ids(self, live_id) -> None:
+        """主向量孤儿清理跳过仍存在文档行的 ID，只删真正孤儿槽位。"""
+
+        mixin = _make_mixin()
+        faiss_db = MagicMock()
+        faiss_db.document_storage.get_documents = AsyncMock(
+            return_value=[{"id": live_id}]
+        )
+        faiss_db.embedding_storage.delete = AsyncMock()
+
+        deleted = await mixin._delete_orphan_main_vector_ids(faiss_db, [5, 6])
+
+        assert deleted == 1
+        faiss_db.embedding_storage.delete.assert_awaited_once_with([6])
+
+    @pytest.mark.asyncio
+    async def test_orphan_main_vector_skips_unparseable_live_batch(self) -> None:
+        """无法解析 live 行 ID 时整批跳过，避免误删任一候选。"""
+
+        mixin = _make_mixin()
+        faiss_db = MagicMock()
+        faiss_db.document_storage.get_documents = AsyncMock(
+            return_value=[{"id": "5"}, {"id": "not-an-id"}]
+        )
+        faiss_db.embedding_storage.delete = AsyncMock()
+
+        deleted = await mixin._delete_orphan_main_vector_ids(faiss_db, [5, 6])
+
+        assert deleted == 0
+        faiss_db.embedding_storage.delete.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_repair_removes_unreferenced_graph_vectors(self) -> None:
+        """图向量孤儿删除文档行与无文档槽位，并重新核对图表引用。"""
+
+        mixin = _make_mixin()
+        graph_faiss_db = MagicMock()
+        graph_faiss_db.document_storage.get_documents = AsyncMock(
+            return_value=[{"id": 42, "doc_id": "uuid-42"}]
+        )
+        graph_faiss_db.delete = AsyncMock()
+        graph_faiss_db.embedding_storage.delete = AsyncMock()
+        graph_store = MagicMock()
+        graph_store.list_unreferenced_vector_doc_ids = AsyncMock(return_value=[42, 43])
+
+        deleted = await mixin._delete_orphan_graph_vector_ids(
+            graph_faiss_db, graph_store, [41, 42, 43]
+        )
+
+        assert deleted == 2
+        graph_store.list_unreferenced_vector_doc_ids.assert_awaited_once_with(
+            [41, 42, 43]
+        )
+        graph_faiss_db.delete.assert_awaited_once_with("uuid-42")
+        graph_faiss_db.embedding_storage.delete.assert_awaited_once_with([43])
+
+    @pytest.mark.asyncio
+    async def test_repair_rejects_failed_health_scan(self, tmp_db_path: str) -> None:
+        """扫描失败不是零孤儿，API 必须拒绝成功修复。"""
+        mixin, validator = _make_repair_mixin(
+            db_path=tmp_db_path, issues={"check_failed": "OperationalError"}
+        )
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"targets": ["orphan_bm25_doc_ids"]})
+        with (
+            patch("quart.request", req),
+            patch(
+                "core.platform.transport.page_api.maintenance_api."
+                "PersistenceHealthValidator",
+                return_value=validator,
+            ),
+        ):
+            result = await mixin.repair_persistence_health()
+        assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_graph_orphan_delete_rejects_backend_false(self) -> None:
+        """图文档删除明确失败时，不得计为已清理。"""
+        mixin = _make_mixin()
+        graph_db = SimpleNamespace(
+            document_storage=SimpleNamespace(
+                get_documents=AsyncMock(return_value=[{"id": 42, "doc_id": "uuid"}])
+            ),
+            embedding_storage=SimpleNamespace(delete=AsyncMock()),
+            delete=AsyncMock(return_value=False),
+        )
+        store = SimpleNamespace(
+            list_unreferenced_vector_doc_ids=AsyncMock(return_value=[42])
+        )
+        with pytest.raises(RuntimeError, match="graph_vector_delete_failed"):
+            await mixin._delete_orphan_graph_vector_ids(graph_db, store, [42])
+        graph_db.embedding_storage.delete.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_purge_no_maint_returns_zero(self) -> None:
         mixin = _make_mixin()
@@ -291,6 +626,59 @@ class TestMaintenanceHappyPath:
         mixin = _make_mixin(has_backup=False)
         result = await mixin.create_backup()
         assert result["status"] == "error"
+
+
+class TestMaintenanceRebuildRouting:
+    """维护 API 必须经统一阶段入口执行单阶段重建。"""
+
+    @pytest.mark.asyncio
+    async def test_rebuild_index_routes_through_stage_entry(self) -> None:
+        """初始化器发布统一入口时，API 经 rebuild_stages 执行 indexes 阶段。"""
+
+        from core.platform.composition import DerivedRebuildCoordinator
+
+        mixin = _make_mixin()
+        validator = mixin.plugin.initializer.index_validator
+        validator._get_document_count = AsyncMock(return_value=3)
+        mixin.plugin.initializer.derived_rebuild_coordinator = (
+            DerivedRebuildCoordinator(validator, SimpleNamespace())
+        )
+
+        result = await mixin.rebuild_index()
+
+        assert result["status"] == "ok"
+        assert result["data"]["result"]["processed"] == 3
+        # 阶段入口会补充 status 字段；直连路径不会，因此它证明走了统一入口。
+        assert result["data"]["result"]["status"] == "completed"
+        validator.rebuild_indexes.assert_awaited_once()
+        observability = mixin.plugin._index_observability
+        assert observability["last_rebuild_success"] is True
+        assert observability["last_rebuild_total"] == 3
+
+    @pytest.mark.asyncio
+    async def test_rebuild_graph_routes_through_stage_entry(self) -> None:
+        """图重建 API 经 rebuild_stages 单阶段执行，保持既有响应结构。"""
+
+        from core.platform.composition import DerivedRebuildCoordinator
+
+        mixin = _make_mixin()
+        engines, _ = await mixin._ensure_plugin_ready()
+        engine = engines["memory_engine"]
+        mixin._ensure_plugin_ready = AsyncMock(
+            return_value=({"memory_engine": engine}, None)
+        )
+        validator = mixin.plugin.initializer.index_validator
+        validator._get_document_count = AsyncMock(return_value=1)
+        mixin.plugin.initializer.derived_rebuild_coordinator = (
+            DerivedRebuildCoordinator(validator, engine)
+        )
+
+        result = await mixin.rebuild_graph_index()
+
+        assert result["status"] == "ok"
+        # 阶段入口会补充 status 字段；直连路径返回的是引擎原始结果。
+        assert result["data"]["result"]["status"] == "completed"
+        engine.rebuild_graph_index.assert_awaited_once()
 
 
 class TestBackupCRUD:

@@ -15,9 +15,10 @@
 import asyncio
 import inspect
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, cast
 
 from astrbot.api import logger
 
@@ -430,6 +431,10 @@ class StatsOperationsMixin:
         逐来源隔离失败：确定不适用（legacy、mark_write、暂存/拒绝、缺逐事实证据）
         的来源计为 ``skipped`` 并继续处理同批后续合法来源；真实的存储/向量失败计为
         ``failed`` 且不伪装成跳过；``asyncio.CancelledError`` 继续传播。
+
+        重建只枚举当前 ``documents``，因此结束时还要对 skipped/不适用来源与已删除
+        来源执行源级残留回收（复用 ``graph_delete`` 的源级删除），清理计数并入本
+        阶段结果；清理失败只降级计入 ``residue_failed``，不掩盖重建本身的结果。
         """
 
         if self._graph_memory_manager is None:
@@ -445,6 +450,8 @@ class StatsOperationsMixin:
         failed = 0
         skipped_reasons: dict[str, int] = {}
         failed_reasons: dict[str, int] = {}
+        canonical_ids: set[int] = set()
+        ineligible_ids: set[int] = set()
 
         while offset < total_count:
             docs = await self._faiss_db.document_storage.get_documents(
@@ -456,6 +463,8 @@ class StatsOperationsMixin:
                 break
 
             for doc in docs:
+                memory_id = int(doc["id"])
+                canonical_ids.add(memory_id)
                 metadata = doc.get("metadata") or {}
                 if isinstance(metadata, str):
                     try:
@@ -470,6 +479,8 @@ class StatsOperationsMixin:
                     skipped_reasons[skip_reason] = (
                         skipped_reasons.get(skip_reason, 0) + 1
                     )
+                    # 不适用来源不得保留旧图行，统一进入源级残留回收。
+                    ineligible_ids.add(memory_id)
                     continue
                 content = str(doc.get("text") or "")
                 # revision_token 属于图派生快照；scope/privacy 等 canonical 边界
@@ -496,13 +507,81 @@ class StatsOperationsMixin:
 
             offset += len(docs)
 
+        residue_candidates = await self._collect_graph_residue_ids(
+            canonical_ids, ineligible_ids
+        )
+        residue_cleaned, residue_failed = await self._cleanup_graph_residue(
+            residue_candidates, skipped_reasons, failed_reasons
+        )
+
         if self._invalidate_cache:
             self._invalidate_cache()
         return {
             "rebuilt": rebuilt,
             "skipped": skipped,
             "failed": failed,
+            "residue_candidates": len(residue_candidates),
+            "residue_cleaned": residue_cleaned,
+            "residue_failed": residue_failed,
             "skipped_reasons": skipped_reasons,
             "failed_reasons": failed_reasons,
             "total": rebuilt + skipped + failed,
         }
+
+    async def _collect_graph_residue_ids(
+        self, canonical_ids: set[int], ineligible_ids: set[int]
+    ) -> list[int]:
+        """汇总需要回收的图源级残留：不适用来源与已从 canonical 删除的来源。"""
+
+        residue = set(ineligible_ids)
+        lister = getattr(self._graph_store, "list_residual_source_memory_ids", None)
+        if not callable(lister):
+            return sorted(residue)
+        list_residual = cast(Callable[[set[int]], Awaitable[list[int]]], lister)
+        try:
+            residual = await list_residual(canonical_ids)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning(
+                "[GraphRebuild] 已删除来源枚举失败，reason_code=graph_residue_scan_failed"
+            )
+            return sorted(residue)
+        for memory_id in residual or ():
+            try:
+                residue.add(int(memory_id))
+            except (TypeError, ValueError):
+                continue
+        return sorted(residue)
+
+    async def _cleanup_graph_residue(
+        self,
+        residue_ids: list[int],
+        skipped_reasons: dict[str, int],
+        failed_reasons: dict[str, int],
+    ) -> tuple[int, int]:
+        """按源级删除回收图残留；返回 (已回收数, 失败数)，失败只降级记录。"""
+
+        if not residue_ids:
+            return 0, 0
+        batch_delete = getattr(
+            self._graph_memory_manager, "batch_delete_memories", None
+        )
+        if not callable(batch_delete):
+            reason = "graph_residue_cleanup_unavailable"
+            skipped_reasons[reason] = skipped_reasons.get(reason, 0) + len(residue_ids)
+            return 0, 0
+        delete_residue = cast(Callable[[list[int]], Awaitable[None]], batch_delete)
+        try:
+            await delete_residue(residue_ids)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            reason = "graph_residue_cleanup_failed"
+            failed_reasons[reason] = failed_reasons.get(reason, 0) + len(residue_ids)
+            logger.warning(
+                "[GraphRebuild] 图源级残留回收失败，异常类型=%s",
+                error.__class__.__name__,
+            )
+            return 0, len(residue_ids)
+        return len(residue_ids), 0

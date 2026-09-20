@@ -28,6 +28,63 @@ def _mock_request(**args):
     return mock
 
 
+def _canonical_list_metadata(**overrides) -> str:
+    """构造能通过 canonical 读取门的 documents.metadata JSON 文本。"""
+
+    metadata = {
+        "create_time": 100,
+        "scope_key": "session:test",
+        "privacy_level": "public",
+        "source_provenance_complete": True,
+    }
+    metadata.update(overrides)
+    return json.dumps(metadata, ensure_ascii=False)
+
+
+def _recall_engine(
+    results,
+    *,
+    canonical: dict[int, dict | None] | None = None,
+) -> MagicMock:
+    """构造召回测试引擎：canonical 回读默认返回 active 行，可显式替换或置空。
+
+    回读走真实批量端口（``faiss_db.document_storage.get_documents``）；默认记录
+    带上与检索结果一致的 canonical 正文：``/recall/test`` 会比对候选与 canonical
+    行的正文，未提供正文的记录按无法校验处理。
+    """
+
+    records = canonical or {}
+    contents = {
+        int(getattr(result, "doc_id")): getattr(result, "content", "")
+        for result in results
+        if isinstance(getattr(result, "doc_id", None), int)
+    }
+
+    async def _get_documents(metadata_filters=None, ids=None, limit=None, offset=None):
+        documents = []
+        for memory_id in list(ids or []):
+            if memory_id in records:
+                record = records[memory_id]
+                if record is not None:
+                    documents.append(dict(record))
+                continue
+            documents.append(
+                {
+                    "id": memory_id,
+                    "text": contents.get(memory_id, ""),
+                    "metadata": {"memory_status": "active"},
+                }
+            )
+        return documents
+
+    engine = MagicMock()
+    engine.search_memories = AsyncMock(return_value=results)
+    engine.faiss_db = SimpleNamespace(
+        document_storage=SimpleNamespace(get_documents=_get_documents)
+    )
+    return engine
+
+
 # ---------------------------------------------------------------------------
 # MemoryBatchApiMixin tests
 # ---------------------------------------------------------------------------
@@ -1119,7 +1176,7 @@ class TestMemoryReadValidation:
         db_path = str(tmp_path / "memories.db")
 
         async def _seed() -> None:
-            """写入普通、mark_write 与 quarantine 三行 memory。"""
+            """写入通过来源门禁的普通行，以及 mark_write 与 quarantine 两行。"""
 
             async with aiosqlite.connect(db_path) as db:
                 await db.execute(
@@ -1132,12 +1189,21 @@ class TestMemoryReadValidation:
                     " (id, doc_id, text, metadata, created_at, updated_at)"
                     " VALUES (?, ?, ?, ?, ?, ?)",
                     [
-                        (1, "doc-1", "normal", '{"create_time": 100}', "a", "b"),
+                        (
+                            1,
+                            "doc-1",
+                            "normal",
+                            _canonical_list_metadata(create_time=100),
+                            "a",
+                            "b",
+                        ),
                         (
                             2,
                             "doc-2",
                             "low-confidence",
-                            '{"create_time": 200, "gate_disposition": "mark_write"}',
+                            _canonical_list_metadata(
+                                create_time=200, gate_disposition="mark_write"
+                            ),
                             "c",
                             "d",
                         ),
@@ -1145,7 +1211,9 @@ class TestMemoryReadValidation:
                             3,
                             "doc-3",
                             "quarantined",
-                            '{"create_time": 300, "gate_disposition": "quarantine"}',
+                            _canonical_list_metadata(
+                                create_time=300, gate_disposition="quarantine"
+                            ),
                             "e",
                             "f",
                         ),
@@ -1185,6 +1253,392 @@ class TestMemoryReadValidation:
         assert result["status"] == "ok"
         assert result["data"]["total"] == 3
         assert [item["id"] for item in result["data"]["items"]] == [3, 2, 1]
+
+    @pytest.mark.asyncio
+    async def test_list_memories_hides_sources_failing_canonical_gate(
+        self, tmp_path
+    ) -> None:
+        """来源失效或 provenance 不完整的行不返回，且 total 与 items 同口径。"""
+
+        import aiosqlite
+
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
+
+        db_path = str(tmp_path / "memories-gate.db")
+
+        async def _seed() -> None:
+            """写入一条合法来源与五种 canonical 读取门不通过的变体。"""
+
+            async with aiosqlite.connect(db_path) as db:
+                await db.execute(
+                    "CREATE TABLE documents ("
+                    "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT,"
+                    " metadata TEXT, created_at TEXT, updated_at TEXT)"
+                )
+                await db.executemany(
+                    "INSERT INTO documents"
+                    " (id, doc_id, text, metadata, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    [
+                        (
+                            1,
+                            "doc-1",
+                            "valid",
+                            _canonical_list_metadata(create_time=100),
+                            "a",
+                            "b",
+                        ),
+                        (
+                            2,
+                            "doc-2",
+                            "orphaned",
+                            _canonical_list_metadata(
+                                create_time=200, summary_source_orphan=True
+                            ),
+                            "c",
+                            "d",
+                        ),
+                        (
+                            3,
+                            "doc-3",
+                            "provenance-incomplete",
+                            _canonical_list_metadata(
+                                create_time=300, source_provenance_complete=False
+                            ),
+                            "e",
+                            "f",
+                        ),
+                        (4, "doc-4", "legacy", '{"create_time": 400}', "g", "h"),
+                        (
+                            5,
+                            "doc-5",
+                            "scope-missing",
+                            _canonical_list_metadata(create_time=500, scope_key=None),
+                            "i",
+                            "j",
+                        ),
+                        (
+                            6,
+                            "doc-6",
+                            "privacy-invalid",
+                            _canonical_list_metadata(
+                                create_time=600, privacy_level="secret"
+                            ),
+                            "k",
+                            "l",
+                        ),
+                        (
+                            7,
+                            "doc-7",
+                            "scope-not-text",
+                            _canonical_list_metadata(create_time=700, scope_key=12345),
+                            "m",
+                            "n",
+                        ),
+                    ],
+                )
+                await db.commit()
+
+        await _seed()
+
+        class Stub:
+            list_memories = MemoryReadApiMixin.list_memories
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.db_path = db_path
+                return {"memory_engine": engine}, None
+
+            def _normalize_metadata(self, md):
+                return md or {}
+
+        with patch(
+            "core.platform.transport.page_api.memory_read_api.request", _mock_request()
+        ):
+            result = await Stub().list_memories()
+        assert result["status"] == "ok"
+        assert result["data"]["total"] == 1
+        assert [item["id"] for item in result["data"]["items"]] == [1]
+
+    @pytest.mark.asyncio
+    async def test_list_memories_keeps_explicit_status_filter_for_valid_sources(
+        self, tmp_path
+    ) -> None:
+        """状态筛选仍是管理员显式能力：读取门只按来源/provenance 收敛，不按状态隐藏。"""
+
+        import aiosqlite
+
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
+        from core.platform.transport.page_api.shared_helpers import (
+            SharedPageApiHelpersMixin,
+        )
+
+        db_path = str(tmp_path / "memories-status.db")
+
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE documents ("
+                "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT,"
+                " metadata TEXT, created_at TEXT, updated_at TEXT)"
+            )
+            await db.executemany(
+                "INSERT INTO documents"
+                " (id, doc_id, text, metadata, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        1,
+                        "doc-1",
+                        "archived",
+                        _canonical_list_metadata(create_time=100, status="archived"),
+                        "a",
+                        "b",
+                    ),
+                    (
+                        2,
+                        "doc-2",
+                        "active",
+                        _canonical_list_metadata(create_time=200),
+                        "c",
+                        "d",
+                    ),
+                ],
+            )
+            await db.commit()
+
+        class Stub:
+            list_memories = MemoryReadApiMixin.list_memories
+            _normalize_metadata = staticmethod(
+                SharedPageApiHelpersMixin._normalize_metadata
+            )
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.db_path = db_path
+                return {"memory_engine": engine}, None
+
+        with patch(
+            "core.platform.transport.page_api.memory_read_api.request",
+            _mock_request(status="archived"),
+        ):
+            archived = await Stub().list_memories()
+        assert archived["status"] == "ok"
+        assert [item["id"] for item in archived["data"]["items"]] == [1]
+        assert archived["data"]["items"][0]["status"] == "archived"
+
+        with patch(
+            "core.platform.transport.page_api.memory_read_api.request", _mock_request()
+        ):
+            all_statuses = await Stub().list_memories()
+        assert all_statuses["data"]["total"] == 2
+
+    @pytest.mark.asyncio
+    async def test_list_memories_applies_requested_scope_and_privacy(
+        self, tmp_path
+    ) -> None:
+        """请求给出的 scope/privacy 必须与 canonical 行当前门禁值一致。"""
+
+        import aiosqlite
+
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
+
+        db_path = str(tmp_path / "memories-scope.db")
+
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE documents ("
+                "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT,"
+                " metadata TEXT, created_at TEXT, updated_at TEXT)"
+            )
+            await db.executemany(
+                "INSERT INTO documents"
+                " (id, doc_id, text, metadata, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        1,
+                        "doc-1",
+                        "scope-a public",
+                        _canonical_list_metadata(
+                            create_time=100,
+                            scope_key="scope-a",
+                            privacy_level="public",
+                        ),
+                        "a",
+                        "b",
+                    ),
+                    (
+                        2,
+                        "doc-2",
+                        "scope-b confidential",
+                        _canonical_list_metadata(
+                            create_time=200,
+                            scope_key="scope-b",
+                            privacy_level="confidential",
+                        ),
+                        "c",
+                        "d",
+                    ),
+                    (
+                        3,
+                        "doc-3",
+                        "scope-a confidential",
+                        _canonical_list_metadata(
+                            create_time=300,
+                            scope_key="scope-a",
+                            privacy_level="confidential",
+                        ),
+                        "e",
+                        "f",
+                    ),
+                ],
+            )
+            await db.commit()
+
+        class Stub:
+            list_memories = MemoryReadApiMixin.list_memories
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.db_path = db_path
+                return {"memory_engine": engine}, None
+
+            def _normalize_metadata(self, md):
+                return md or {}
+
+        async def _list(**args) -> dict:
+            with patch(
+                "core.platform.transport.page_api.memory_read_api.request",
+                _mock_request(**args),
+            ):
+                return await Stub().list_memories()
+
+        scoped = await _list(scope_key="scope-a", privacy_level="public")
+        assert [item["id"] for item in scoped["data"]["items"]] == [1]
+        assert scoped["data"]["total"] == 1
+
+        scope_only = await _list(scope_key="scope-a")
+        assert [item["id"] for item in scope_only["data"]["items"]] == [3, 1]
+
+        privacy_only = await _list(privacy_level="confidential")
+        assert [item["id"] for item in privacy_only["data"]["items"]] == [3, 2]
+
+        # 不匹配任何来源的 scope 返回空页，而不是回退到跨来源列表。
+        unmatched = await _list(scope_key="scope-other")
+        assert unmatched["data"]["items"] == []
+        assert unmatched["data"]["total"] == 0
+
+        invalid = await _list(privacy_level="secret")
+        assert invalid["status"] == "error"
+        assert "privacy_level" in invalid["message"]
+
+    @pytest.mark.asyncio
+    async def test_list_memories_treats_missing_privacy_as_shared(
+        self, tmp_path
+    ) -> None:
+        """缺失/null privacy_level 的合法历史行按 shared 口径可见，非法值仍排除。"""
+
+        import aiosqlite
+
+        from core.platform.transport.page_api.memory_read_api import MemoryReadApiMixin
+
+        db_path = str(tmp_path / "memories-legacy-privacy.db")
+        legacy_without_key = json.dumps(
+            {
+                "create_time": 200,
+                "scope_key": "session:legacy",
+                "source_provenance_complete": True,
+            },
+            ensure_ascii=False,
+        )
+
+        async with aiosqlite.connect(db_path) as db:
+            await db.execute(
+                "CREATE TABLE documents ("
+                "id INTEGER PRIMARY KEY, doc_id TEXT, text TEXT,"
+                " metadata TEXT, created_at TEXT, updated_at TEXT)"
+            )
+            await db.executemany(
+                "INSERT INTO documents"
+                " (id, doc_id, text, metadata, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                [
+                    (
+                        1,
+                        "doc-1",
+                        "null privacy",
+                        _canonical_list_metadata(create_time=100, privacy_level=None),
+                        "a",
+                        "b",
+                    ),
+                    (2, "doc-2", "missing privacy", legacy_without_key, "c", "d"),
+                    (
+                        3,
+                        "doc-3",
+                        "invalid privacy",
+                        _canonical_list_metadata(
+                            create_time=300, privacy_level="secret"
+                        ),
+                        "e",
+                        "f",
+                    ),
+                ],
+            )
+            await db.commit()
+
+        class Stub:
+            list_memories = MemoryReadApiMixin.list_memories
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.db_path = db_path
+                return {"memory_engine": engine}, None
+
+            def _normalize_metadata(self, md):
+                return md or {}
+
+        async def _list(**args) -> dict:
+            with patch(
+                "core.platform.transport.page_api.memory_read_api.request",
+                _mock_request(**args),
+            ):
+                return await Stub().list_memories()
+
+        listed = await _list()
+        assert listed["status"] == "ok"
+        assert [item["id"] for item in listed["data"]["items"]] == [2, 1]
+        assert listed["data"]["total"] == 2
+
+        # 请求按 shared 收窄时，回退为 shared 的历史行同样命中；非法值永不命中。
+        shared = await _list(privacy_level="shared")
+        assert [item["id"] for item in shared["data"]["items"]] == [2, 1]
+
+        confidential = await _list(privacy_level="confidential")
+        assert confidential["data"]["items"] == []
 
 
 class TestMemoryDetailSourceReplayability:
@@ -1858,10 +2312,9 @@ class TestMemoryStatsRecallValidation:
                         "importance_distribution": "bad-distribution",
                     }
                 )
-                engine.atom_store = MagicMock()
-                engine.atom_store.count_atoms = AsyncMock(return_value="7")
-                engine.atom_store.count_by_type = AsyncMock(
-                    return_value="bad-breakdown"
+                engine.atom_store = SimpleNamespace(
+                    count_atoms=AsyncMock(return_value="7"),
+                    count_by_type=AsyncMock(return_value="bad-breakdown"),
                 )
                 return {"memory_engine": engine}, None
 
@@ -1883,6 +2336,46 @@ class TestMemoryStatsRecallValidation:
         assert result["data"]["importance_distribution"] == {
             f"{i}-{i + 1}": 0 for i in range(0, 10)
         }
+
+    @pytest.mark.asyncio
+    async def test_stats_prefers_canonical_filtered_atom_count(self) -> None:
+        """Atom 计数使用按父 canonical 过滤的端口，不把失效来源计入对外统计。"""
+
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
+
+        class Stub:
+            get_stats = MemoryStatsRecallApiMixin.get_stats
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            def _get_graph_store(self, engine):
+                return None
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.get_statistics = AsyncMock(return_value={})
+                engine.atom_store = SimpleNamespace(
+                    # raw 口径 9 条里 4 条的父来源已失效，只看当前有效计数 5。
+                    count_atoms=AsyncMock(return_value=9),
+                    count_current_atoms=AsyncMock(return_value=5),
+                    count_by_type=AsyncMock(return_value={"FACT": 3}),
+                )
+                return {"memory_engine": engine}, None
+
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request",
+            _mock_request(),
+        ):
+            result = await Stub().get_stats()
+        assert result["status"] == "ok"
+        assert result["data"]["atom_count"] == 5
+        assert result["data"]["atom_breakdown"] == {"FACT": 3}
 
     @pytest.mark.asyncio
     async def test_stats_merges_partial_importance_distribution(self) -> None:
@@ -2115,9 +2608,8 @@ class TestMemoryStatsRecallValidation:
                 return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
-                engine = MagicMock()
-                engine.search_memories = AsyncMock(
-                    return_value=[
+                engine = _recall_engine(
+                    [
                         MockResult(1, "result 1", 0.9),
                         MockResult(2, "result 2", 0.7),
                     ]
@@ -2132,6 +2624,7 @@ class TestMemoryStatsRecallValidation:
             result = await Stub().test_recall()
         assert result["status"] == "ok"
         assert len(result["data"]["results"]) == 2
+        assert result["data"]["dropped_stale_count"] == 0
         assert result["data"]["query"] == "test query"
         assert result["data"]["k"] == 5
         assert "elapsed_time_ms" in result["data"]
@@ -2152,8 +2645,7 @@ class TestMemoryStatsRecallValidation:
                 return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
-                engine = MagicMock()
-                engine.search_memories = AsyncMock(return_value=[])
+                engine = _recall_engine([])
                 self.engine = engine
                 return {"memory_engine": engine}, None
 
@@ -2218,8 +2710,7 @@ class TestMemoryStatsRecallValidation:
                 return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
-                engine = MagicMock()
-                engine.search_memories = AsyncMock(return_value=[MockResult()])
+                engine = _recall_engine([MockResult()])
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
@@ -2264,9 +2755,8 @@ class TestMemoryStatsRecallValidation:
                 return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
-                engine = MagicMock()
-                engine.search_memories = AsyncMock(
-                    return_value=[
+                engine = _recall_engine(
+                    [
                         MockResult(
                             doc_id=5,
                             final_score=0.81234,
@@ -2416,8 +2906,7 @@ class TestMemoryStatsRecallValidation:
                 return {"status": "error", "message": m}
 
             async def _ensure_plugin_ready(self):
-                engine = MagicMock()
-                engine.search_memories = AsyncMock(return_value=[MockResult()])
+                engine = _recall_engine([MockResult()])
                 return {"memory_engine": engine}, None
 
         req = _mock_request()
@@ -2455,6 +2944,243 @@ class TestMemoryStatsRecallValidation:
                 "score_breakdown": {},
             }
         ]
+
+    @pytest.mark.asyncio
+    async def test_recall_drops_candidates_invalidated_in_canonical(self) -> None:
+        """归档/删除/来源失效后，召回测试不得返回缓存中的旧正文。"""
+
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
+
+        class MockResult:
+            def __init__(self, doc_id, content):
+                self.doc_id = doc_id
+                self.content = content
+                self.final_score = 0.9
+                self.metadata = {
+                    "memory_type": "GENERAL",
+                    "status": "active",
+                    "importance": 0.5,
+                    "session_id": "sess-1",
+                    "persona_id": None,
+                    "create_time": 111,
+                    "canonical_summary": content,
+                }
+                self.score_breakdown = {}
+
+        class Stub:
+            test_recall = MemoryStatsRecallApiMixin.test_recall
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = _recall_engine(
+                    [
+                        MockResult(1, "当前正文"),
+                        MockResult(2, "已归档正文"),
+                        MockResult(3, "已删除正文"),
+                        MockResult(4, "来源失效正文"),
+                    ],
+                    canonical={
+                        # 1 保持可召回；2 归档；3 已无 canonical 行；4 来源被标记失效。
+                        1: {
+                            "id": 1,
+                            "text": "当前正文",
+                            "metadata": {"memory_status": "active"},
+                        },
+                        2: {
+                            "id": 2,
+                            "text": "已归档正文",
+                            "metadata": {"memory_status": "archived"},
+                        },
+                        3: None,
+                        4: {
+                            "id": 4,
+                            "text": "来源失效正文",
+                            "metadata": {
+                                "memory_status": "active",
+                                "summary_source_orphan": True,
+                            },
+                        },
+                    },
+                )
+                return {"memory_engine": engine}, None
+
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"query": "edge", "k": 10})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
+            result = await Stub().test_recall()
+        assert result["status"] == "ok"
+        assert [item["memory_id"] for item in result["data"]["results"]] == [1]
+        assert [item["content"] for item in result["data"]["results"]] == ["当前正文"]
+        assert result["data"]["total"] == 1
+        assert result["data"]["dropped_stale_count"] == 3
+        serialized = json.dumps(result, ensure_ascii=False)
+        for stale in ("已归档正文", "已删除正文", "来源失效正文"):
+            assert stale not in serialized
+
+    @pytest.mark.asyncio
+    async def test_recall_fails_closed_without_canonical_reader(self) -> None:
+        """缺少 canonical 回读端口时返回稳定错误，不返回未校验的缓存候选。"""
+
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
+
+        class MockResult:
+            doc_id = 1
+            content = "未校验正文"
+            final_score = 0.9
+            metadata = {"memory_type": "GENERAL", "status": "active"}
+            score_breakdown = {}
+
+        class Stub:
+            test_recall = MemoryStatsRecallApiMixin.test_recall
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.search_memories = AsyncMock(return_value=[MockResult()])
+                engine.faiss_db = SimpleNamespace(document_storage=None)
+                return {"memory_engine": engine}, None
+
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"query": "edge", "k": 5})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
+            result = await Stub().test_recall()
+        assert result["status"] == "error"
+        assert result["message"] == "召回结果校验失败"
+        assert "未校验正文" not in json.dumps(result, ensure_ascii=False)
+
+    @pytest.mark.asyncio
+    async def test_recall_reads_canonical_records_in_one_batch(self) -> None:
+        """canonical 回读走单次批量查询（全部候选 ID 一次读完），不逐条读取。"""
+
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
+
+        class MockResult:
+            def __init__(self, doc_id: int) -> None:
+                self.doc_id = doc_id
+                self.content = "当前正文"
+                self.final_score = 0.9
+                self.metadata = {"memory_type": "GENERAL", "status": "active"}
+                self.score_breakdown = {}
+
+        calls: list[list[int]] = []
+
+        async def _get_documents(
+            metadata_filters=None, ids=None, limit=None, offset=None
+        ):
+            calls.append(list(ids or []))
+            return [
+                {
+                    "id": memory_id,
+                    "text": "当前正文",
+                    "metadata": {"memory_status": "active"},
+                }
+                for memory_id in list(ids or [])
+            ]
+
+        class Stub:
+            test_recall = MemoryStatsRecallApiMixin.test_recall
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.search_memories = AsyncMock(
+                    return_value=[MockResult(2), MockResult(1), MockResult(2)]
+                )
+                # 真实引擎的单行读取会把读取异常吞成 None：本用例证明回读确实走
+                # 批量端口，而不是逐条单行兜底。
+                engine.get_memory = AsyncMock(return_value=None)
+                engine.faiss_db = SimpleNamespace(
+                    document_storage=SimpleNamespace(get_documents=_get_documents)
+                )
+                return {"memory_engine": engine}, None
+
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"query": "edge", "k": 5})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
+            result = await Stub().test_recall()
+
+        assert result["status"] == "ok"
+        # 全部候选 ID 去重后在一次批量查询里读完（顺序按读取端口规范化）。
+        assert calls == [[1, 2]]
+        assert result["data"]["total"] == 3
+
+    @pytest.mark.asyncio
+    async def test_recall_fails_closed_when_canonical_batch_read_fails(self) -> None:
+        """批量回读异常时返回显式失败，不把读取故障伪装成「无行」。"""
+
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
+
+        class MockResult:
+            doc_id = 1
+            content = "未校验正文"
+            final_score = 0.9
+            metadata = {"memory_type": "GENERAL", "status": "active"}
+            score_breakdown = {}
+
+        async def _get_documents(
+            metadata_filters=None, ids=None, limit=None, offset=None
+        ):
+            raise RuntimeError("canonical read unavailable")
+
+        class Stub:
+            test_recall = MemoryStatsRecallApiMixin.test_recall
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.search_memories = AsyncMock(return_value=[MockResult()])
+                # 真实引擎的单行读取会把读取异常吞成 None；本用例证明批量端口的
+                # 读取故障不会被伪装成「无行」，也不会回流到单行兜底。
+                engine.get_memory = AsyncMock(return_value=None)
+                engine.faiss_db = SimpleNamespace(
+                    document_storage=SimpleNamespace(get_documents=_get_documents)
+                )
+                return {"memory_engine": engine}, None
+
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"query": "edge", "k": 5})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
+            result = await Stub().test_recall()
+
+        assert result["status"] == "error"
+        assert result["message"] == "召回结果校验失败"
+        assert "未校验正文" not in json.dumps(result, ensure_ascii=False)
 
 
 class TestRealtimeSSE:

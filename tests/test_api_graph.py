@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+from tests.fact_evidence_helpers import fact_evidence
 
 
 def _mock_request(**args):
@@ -24,11 +27,18 @@ def _canonical_graph_metadata() -> dict[str, str]:
     }
 
 
+def _canonical_graph_fact_metadata() -> dict[str, Any]:
+    """返回聚焦图读取门要求的事实用户证据（与边界字段分注入）。"""
+
+    fact = "匿名事实"
+    return {"key_facts": [fact], "fact_source_evidence": fact_evidence([fact])}
+
+
 def _make_mixin(
     plugin_ready: bool = True,
     graph_store=None,
     *,
-    canonical_metadata: dict[str, str] | None = None,
+    canonical_metadata: dict[str, Any] | None = None,
     memory_exists: bool = True,
 ):
     """创建带有 GraphApiMixin 方法和模拟依赖的测试替身。"""
@@ -41,11 +51,15 @@ def _make_mixin(
         return_value=(
             {
                 "id": 42,
-                "metadata": (
-                    canonical_metadata
-                    if canonical_metadata is not None
-                    else _canonical_graph_metadata()
-                ),
+                "metadata": {
+                    **(
+                        canonical_metadata
+                        if canonical_metadata is not None
+                        else _canonical_graph_metadata()
+                    ),
+                    # 聚焦图读取门与管理员画布同义：来源还必须有用户事实证据。
+                    **_canonical_graph_fact_metadata(),
+                },
             }
             if memory_exists
             else None

@@ -632,3 +632,138 @@ class TestRebuildGraphIndex:
         )
         ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=0)
         await ops.rebuild_graph_index()
+
+
+class _ResidualGraphStore:
+    """按 canonical 快照返回已删除来源的图存储替身。"""
+
+    def __init__(self, residual_ids: list[int], *, fail: bool = False) -> None:
+        self.residual_ids = residual_ids
+        self.fail = fail
+        self.canonical_snapshots: list[set[int]] = []
+
+    async def list_residual_source_memory_ids(self, canonical_memory_ids) -> list[int]:
+        """记录 canonical 快照并返回已删除来源。"""
+
+        if self.fail:
+            raise RuntimeError("graph_residue_scan_failed")
+        self.canonical_snapshots.append({int(item) for item in canonical_memory_ids})
+        return list(self.residual_ids)
+
+
+class TestRebuildGraphResidueCleanup:
+    """重建必须对 skipped 与已删来源做源级残留回收并计数。"""
+
+    def _make_ops(
+        self, *, store=None, cleanup_failure: BaseException | None = None
+    ) -> MaintenanceOperations:
+        """构造带可观察清理端口的维护操作。"""
+
+        faiss_db = MagicMock()
+        faiss_db.document_storage = MagicMock()
+        faiss_db.document_storage.count_documents = AsyncMock(return_value=0)
+        faiss_db.document_storage.get_documents = AsyncMock(return_value=[])
+        graph_mgr = MagicMock()
+        graph_mgr.index_memory = AsyncMock()
+
+        async def _cleanup(memory_ids):
+            if cleanup_failure is not None:
+                raise cleanup_failure
+            return None
+
+        graph_mgr.batch_delete_memories = AsyncMock(side_effect=_cleanup)
+        return MaintenanceOperations(
+            config={},
+            faiss_db=faiss_db,
+            graph_memory_manager=graph_mgr,
+            graph_store=store,
+            invalidate_cache_cb=MagicMock(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_skipped_sources_are_reaped(self) -> None:
+        """不适用来源的旧图行按源级删除回收并计入清理计数。"""
+
+        ops = self._make_ops()
+        docs = [
+            TestRebuildGraphIndex._derivable_doc(1, "valid"),
+            {"id": 2, "text": "", "metadata": {}},
+            TestRebuildGraphIndex._derivable_doc(3, "legacy-free"),
+        ]
+        docs[2]["metadata"] = {**docs[2]["metadata"], "gate_disposition": "mark_write"}
+        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=3)
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+
+        result = await ops.rebuild_graph_index()
+
+        assert result["rebuilt"] == 1
+        assert result["skipped"] == 2
+        assert result["residue_candidates"] == 2
+        assert result["residue_cleaned"] == 2
+        assert result["residue_failed"] == 0
+        ops._graph_memory_manager.batch_delete_memories.assert_awaited_once_with([2, 3])
+
+    @pytest.mark.asyncio
+    async def test_deleted_sources_are_reaped_with_canonical_snapshot(self) -> None:
+        """已从 canonical 删除的来源也进入源级回收，快照覆盖全部当前来源。"""
+
+        store = _ResidualGraphStore([9])
+        ops = self._make_ops(store=store)
+        docs = [TestRebuildGraphIndex._derivable_doc(1, "kept")]
+        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+
+        result = await ops.rebuild_graph_index()
+
+        assert store.canonical_snapshots == [{1}]
+        assert result["residue_candidates"] == 1
+        assert result["residue_cleaned"] == 1
+        ops._graph_memory_manager.batch_delete_memories.assert_awaited_once_with([9])
+
+    @pytest.mark.asyncio
+    async def test_residue_cleanup_failure_is_counted_and_does_not_fail_rebuild(
+        self,
+    ) -> None:
+        """清理失败只降级计入 residue_failed，不改变重建计数。"""
+
+        ops = self._make_ops(cleanup_failure=RuntimeError("cleanup unavailable"))
+        docs = [{"id": 1, "text": "", "metadata": {}}]
+        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+
+        result = await ops.rebuild_graph_index()
+
+        assert result["skipped"] == 1
+        assert result["failed"] == 0
+        assert result["residue_candidates"] == 1
+        assert result["residue_cleaned"] == 0
+        assert result["residue_failed"] == 1
+        assert result["failed_reasons"]["graph_residue_cleanup_failed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_residue_scan_failure_keeps_skipped_cleanup(self) -> None:
+        """已删来源枚举失败时仍回收 skipped 来源，不抛出异常。"""
+
+        store = _ResidualGraphStore([9], fail=True)
+        ops = self._make_ops(store=store)
+        docs = [{"id": 1, "text": "", "metadata": {}}]
+        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+
+        result = await ops.rebuild_graph_index()
+
+        assert result["residue_cleaned"] == 1
+        assert result["residue_failed"] == 0
+        ops._graph_memory_manager.batch_delete_memories.assert_awaited_once_with([1])
+
+    @pytest.mark.asyncio
+    async def test_residue_cleanup_cancellation_propagates(self) -> None:
+        """清理阶段的取消必须穿透重建循环。"""
+
+        ops = self._make_ops(cleanup_failure=asyncio.CancelledError())
+        docs = [{"id": 1, "text": "", "metadata": {}}]
+        ops._faiss_db.document_storage.count_documents = AsyncMock(return_value=1)
+        ops._faiss_db.document_storage.get_documents = AsyncMock(return_value=docs)
+
+        with pytest.raises(asyncio.CancelledError):
+            await ops.rebuild_graph_index()
