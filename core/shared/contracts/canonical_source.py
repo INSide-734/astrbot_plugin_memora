@@ -80,8 +80,12 @@ class MemorySourceRef:
             or self.memory_id <= 0
         ):
             raise ValueError("memory_id must be a positive integer")
-        _require_text(self.revision_token, "revision_token")
-        _require_text(self.scope_key, "scope_key")
+        object.__setattr__(
+            self, "revision_token", _require_text(self.revision_token, "revision_token")
+        )
+        object.__setattr__(
+            self, "scope_key", _require_text(self.scope_key, "scope_key")
+        )
         if self.privacy_level not in _PRIVACY_LEVELS:
             raise ValueError("privacy_level must be public, shared, or confidential")
         if self.source_role not in _SOURCE_ROLES:
@@ -89,10 +93,14 @@ class MemorySourceRef:
         if self.content is not None:
             if not isinstance(self.content, str):
                 raise ValueError("content must be a string or None")
-            if len(self.content) > _MAX_EVIDENCE_CHARS:
+            if len(self.content) > _MAX_READ_CHARS:
                 raise ValueError("content exceeds the evidence length limit")
         if self.stable_user_id is not None:
-            _require_text(self.stable_user_id, "stable_user_id")
+            object.__setattr__(
+                self,
+                "stable_user_id",
+                _require_text(self.stable_user_id, "stable_user_id"),
+            )
         occurred_at = normalize_datetime(self.occurred_at)
         if occurred_at is None:
             raise ValueError("occurred_at_required")

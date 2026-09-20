@@ -270,11 +270,30 @@ class NoteApiMixin:
         payload, error = _json_object_payload_or_error(payload)
         if error:
             return error
+        title = payload.get("title")
+        content = payload.get("content")
+        if not isinstance(title, str) or not isinstance(content, str):
+            return error_response(
+                "title 和 content 必须为字符串",
+                code="validation_error",
+                field_errors={"title": "必须为字符串", "content": "必须为字符串"},
+            )
+        raw_tags = payload.get("tags")
+        if raw_tags is None:
+            raw_tags = []
+        if not isinstance(raw_tags, list) or any(
+            not isinstance(tag, str) for tag in raw_tags
+        ):
+            return error_response(
+                "tags 必须为字符串数组",
+                code="validation_error",
+                field_errors={"tags": "必须为字符串数组"},
+            )
         note = Note(
-            title=str(payload.get("title", "")),
-            content=str(payload.get("content", "")),
-            tags=list(payload.get("tags", []) or []),
-            user_id=str(payload.get("user_id", "")),
+            title=title.strip(),
+            content=content.strip(),
+            tags=[tag.strip() for tag in raw_tags if tag.strip()],
+            user_id=str(payload.get("user_id", "") or "").strip(),
         )
         if not note.title or not note.content:
             return error_response("title 和 content 为必填项")
@@ -336,32 +355,22 @@ class NoteApiMixin:
                     "note version serialization failed: 笔记版本序列化失败"
                 )
             return ok_response({"note_id": note_id, "version": version})
-        # field/value 模式（前端兼容）：{note_id, field: "title"|"content"|"tags"|"status", value}
+        # field/value 与全对象模式（前端兼容）复用同一套归一化与校验，
+        # 避免空 title/content、非法状态与字符串 tags 直接写入。
         field = str(payload.get("field", "")).strip()
         if field and "value" in payload:
-            value = payload["value"]
-            if field == "title":
-                note.title = str(value)
-            elif field == "content":
-                note.content = str(value)
-            elif field == "tags":
-                note.tags = list(
-                    value if isinstance(value, list) else str(value).split(",")
-                )
-            elif field == "status":
-                note.status = NoteStatus(str(value).strip())
-            else:
-                return error_response(f"不支持的字段: {field}")
+            changes: dict[str, Any] = {field: payload["value"]}
         else:
-            # 全对象模式（原有兼容）
-            if "title" in payload:
-                note.title = str(payload["title"])
-            if "content" in payload:
-                note.content = str(payload["content"])
-            if "tags" in payload:
-                note.tags = list(payload["tags"] or [])
-            if "status" in payload:
-                note.status = NoteStatus(str(payload["status"]))
+            changes = {
+                key: payload[key]
+                for key in ("title", "content", "tags", "status")
+                if key in payload
+            }
+        if changes:
+            candidate, candidate_error = _note_changes_candidate(note, changes)
+            if candidate_error:
+                return candidate_error
+            note = candidate
         if manager:
             note = await manager.update_note(
                 note_id,

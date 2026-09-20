@@ -177,9 +177,13 @@ class MemoryBatchApiMixin:
                     except (TypeError, ValueError):
                         failed_ids.append(raw_id)
                         continue
-                    updates["importance"] = (
-                        parsed / 10.0 if 0.0 <= parsed <= 10.0 else parsed
-                    )
+                    if 0.0 <= parsed <= 1.0:
+                        updates["importance"] = parsed
+                    elif 0.0 <= parsed <= 10.0:
+                        updates["importance"] = parsed / 10.0
+                    else:
+                        failed_ids.append(raw_id)
+                        continue
                 elif field == "type":
                     type_value = str(value).strip()
                     if not type_value:

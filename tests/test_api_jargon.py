@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1091,7 +1092,7 @@ class TestJargonCrud:
         service.revision_for.assert_called_once_with(created)
         rendered_audit = repr(audit.call_args_list)
         assert (
-            "action=%s entity=jargon identity=%s result=%s error_code=%s"
+            "action=%s entity=jargon identity_ref=%s result=%s error_code=%s"
             in rendered_audit
         )
         assert "'success', 'none'" in rendered_audit
@@ -1292,7 +1293,7 @@ class TestJargonCrud:
         assert len(audits) == 1
         assert "action=create" in audits[0]
         assert "entity=jargon" in audits[0]
-        assert "identity=unavailable" in audits[0]
+        assert "identity_ref=unavailable" in audits[0]
         assert "result=failure" in audits[0]
         assert "error_code=validation_error" in audits[0]
         assert secret not in caplog.text
@@ -1348,7 +1349,7 @@ class TestJargonCrud:
         assert len(audits) == 1
         assert "action=create" in audits[0]
         assert "entity=jargon" in audits[0]
-        assert "identity=unavailable" in audits[0]
+        assert "identity_ref=unavailable" in audits[0]
         assert "result=failure" in audits[0]
         assert f"error_code={expected_code}" in audits[0]
         rendered = caplog.text + repr(result)
@@ -1868,6 +1869,32 @@ class TestJargonConfirm:
         assert result["data"]["action"] == "confirmed"
 
     @pytest.mark.asyncio
+    async def test_confirm_audit_hashes_term_and_group_id(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """审计日志只记不可逆短引用，原始词条与群标识不落日志。"""
+        caplog.set_level(logging.INFO)
+        stub = _make_stub()
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(
+            return_value={"term": "破防", "group_id": "g1", "confirmed": True}
+        )
+
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
+            result = await stub.confirm_jargon()
+
+        audits = [
+            record.getMessage()
+            for record in caplog.records
+            if "[黑话 AUDIT]" in record.getMessage()
+        ]
+        assert result["status"] == "ok"
+        assert len(audits) == 1
+        assert re.search(r"identity_ref=[0-9a-f]{12}\b", audits[0])
+        assert "破防" not in caplog.text
+        assert "g1" not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_reject_success(self) -> None:
         stub = _make_stub()
         mock_req = _make_mock_request()
@@ -1916,6 +1943,23 @@ class TestJargonConfirm:
             result = await stub.confirm_jargon()
         assert result["status"] == "error"
         assert "term" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("term", [123, 1.5, ["破防"], {"value": "破防"}])
+    async def test_confirm_rejects_non_string_term(self, term) -> None:
+        """非字符串 term 应返回校验错误 envelope，而不是抛出 AttributeError。"""
+        stub = _make_stub()
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(
+            return_value={"term": term, "group_id": "g1", "confirmed": True}
+        )
+
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
+            result = await stub.confirm_jargon()
+
+        assert result["status"] == "error"
+        assert result["code"] == "validation_error"
+        stub.plugin._jargon_store.confirm.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_invalid_json_returns_error(self) -> None:
@@ -1968,6 +2012,21 @@ class TestJargonMine:
             result = await stub.mine_jargon()
         assert result["status"] == "error"
         assert "group_id" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("group_id", [7, 2.5, ["g1"], {"value": "g1"}])
+    async def test_mine_rejects_non_string_group_id(self, group_id) -> None:
+        """非字符串 group_id 应返回校验错误 envelope，而不是抛出 AttributeError。"""
+        stub = _make_stub(has_miner=True, has_store=True)
+        mock_req = _make_mock_request()
+        mock_req.get_json = AsyncMock(return_value={"group_id": group_id})
+
+        with patch("core.platform.transport.page_api.jargon_api.request", mock_req):
+            result = await stub.mine_jargon()
+
+        assert result["status"] == "error"
+        assert result["code"] == "validation_error"
+        stub.plugin._jargon_miner.run_once.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_mine_success(self) -> None:

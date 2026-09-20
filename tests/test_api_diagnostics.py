@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -18,12 +19,19 @@ def diagnostics_data_dir(tmp_path: Path) -> Path:
     return tmp_path / "diagnostics-data"
 
 
-def _plugin(*, data_dir: Path | None = None, include_data_dir: bool = True):
+def _plugin(
+    *,
+    data_dir: Path | None = None,
+    include_data_dir: bool = True,
+    diagnostic_event_store: object | None = None,
+):
     """构造带最小 initializer 状态的插件替身。"""
     context = MagicMock()
     initializer_kwargs = {"memory_engine": object()}
     if include_data_dir:
         initializer_kwargs["data_dir"] = data_dir
+    if diagnostic_event_store is not None:
+        initializer_kwargs["diagnostic_event_store"] = diagnostic_event_store
     initializer = SimpleNamespace(**initializer_kwargs)
     return SimpleNamespace(context=context, initializer=initializer)
 
@@ -83,10 +91,11 @@ async def test_diagnostics_events_newest_first_and_detail_lookup(
     diagnostics_data_dir,
 ) -> None:
     """事件接口应按新到旧列出并支持关联码详情查询。"""
-    api = _api(diagnostics_data_dir)
     store = DiagnosticEventStore(diagnostics_data_dir / "diagnostics.sqlite3")
     await store.initialize()
-    api._diagnostic_event_store = store
+    api = PluginPageApi(
+        _plugin(data_dir=diagnostics_data_dir, diagnostic_event_store=store)
+    )
     older = await store.add_event(
         {
             "event_id": "older",
@@ -127,11 +136,11 @@ async def test_diagnostics_events_newest_first_and_detail_lookup(
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_events_missing_data_dir_fails_without_relative_db(
+async def test_diagnostics_events_without_published_store_fails_without_relative_db(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """缺少隔离数据目录时应返回稳定错误码且不创建相对数据库。"""
+    """组合根未发布 Store 时返回稳定错误码，且请求路径不得创建任何数据库。"""
     monkeypatch.chdir(tmp_path)
     api = PluginPageApi(_plugin(include_data_dir=False))
 
@@ -140,7 +149,33 @@ async def test_diagnostics_events_missing_data_dir_fails_without_relative_db(
     assert result["status"] == "error"
     assert result["message"] == "diagnostics_events_failed"
     assert not (tmp_path / "data" / "diagnostics_events.db").exists()
+    assert list(tmp_path.rglob("*.db")) == []
     assert not hasattr(api, "_diagnostic_event_store")
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_request_path_never_builds_event_store(
+    diagnostics_data_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """并发首访只消费已发布实例，请求路径不得再构造或初始化 Store。"""
+    store = DiagnosticEventStore(diagnostics_data_dir / "diagnostics.sqlite3")
+    await store.initialize()
+    api = PluginPageApi(
+        _plugin(data_dir=diagnostics_data_dir, diagnostic_event_store=store)
+    )
+    store_type = MagicMock(side_effect=AssertionError("request path built a store"))
+    monkeypatch.setattr(DiagnosticEventStore, "__init__", store_type)
+
+    first, second = await asyncio.gather(
+        api.get_diagnostics_events_payload({}),
+        api.get_diagnostics_events_payload({}),
+    )
+
+    assert first["status"] == "ok"
+    assert second["status"] == "ok"
+    store_type.assert_not_called()
+    assert api._get_diagnostic_event_store() is store
 
 
 @pytest.mark.asyncio

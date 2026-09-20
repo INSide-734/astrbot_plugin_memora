@@ -197,6 +197,24 @@ async def test_relation_lookup_handler_uses_event_identity() -> None:
 
 
 @pytest.mark.asyncio
+async def test_relation_lookup_rejects_session_origin_as_user_id() -> None:
+    """会话 origin 不能替代用户身份；解析不到发送者时必须稳定报错。"""
+
+    manager = MagicMock()
+    manager.get_user_relations_in_group = AsyncMock(return_value=[])
+    tool = RelationLookupTool(relation_manager=manager)
+    event = MagicMock()
+    event.unified_msg_origin = "group:42"
+    event.get_sender_id.return_value = ""
+
+    payload = json.loads(await call_text_handler(tool, event))
+
+    assert payload["found"] is False
+    assert payload["user_id"] == ""
+    manager.get_user_relations_in_group.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_relation_graph_handler_preserves_sort_and_summary() -> None:
     """群组关系图谱应保留强度排序和类型汇总语义。"""
 

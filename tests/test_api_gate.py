@@ -113,6 +113,19 @@ async def test_dry_run_resolves_profile_and_rules() -> None:
 
 
 @pytest.mark.asyncio
+async def test_dry_run_treats_null_importance_as_default() -> None:
+    """importance: null 由校验层放行，取值时必须回落默认值而不是抛 TypeError。"""
+    body = dict(_VALID_BODY)
+    body["importance"] = None
+    api = _make_api(body=body, runtime=GateRuntime(default_gate_snapshot()))
+
+    result = await api.dry_run_gate()
+
+    assert result["status"] == "ok"
+    assert result["data"]["profile"] == "private"
+
+
+@pytest.mark.asyncio
 async def test_dry_run_rejects_oversize_content() -> None:
     """content 超 2000 字符 → 稳定错误码 gate_dry_run_invalid。"""
     body = dict(_VALID_BODY)

@@ -97,6 +97,29 @@ class TestNoteValidation:
         assert result["status"] == "error"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"title": None, "content": "body"},
+            {"title": "title", "content": None},
+            {"title": "title", "content": "body", "tags": "one,two"},
+            {"title": "title", "content": "body", "tags": [1]},
+            {"title": "title", "content": "body", "tags": 0},
+            {"title": "title", "content": "body", "tags": False},
+            {"title": "title", "content": "body", "tags": ""},
+        ],
+    )
+    async def test_create_rejects_non_string_payload_fields(self, payload) -> None:
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value=payload)
+        with patch("core.platform.transport.page_api.note_api.request", req):
+            mixin = _make_mixin()
+            result = await mixin.create_note()
+        assert result["status"] == "error"
+        assert result["code"] == "validation_error"
+        mixin.engine.note_store.create.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_create_rejects_non_object_json_payload(self) -> None:
         req = _mock_request()
         req.get_json = AsyncMock(return_value=["bad-note"])
@@ -215,6 +238,28 @@ class TestNoteValidation:
             result = await mixin.update_note()
         assert result["status"] == "error"
         assert "note_id must be an integer" in result["message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"note_id": 1, "field": "title", "value": ""},
+            {"note_id": 1, "field": "status", "value": "bogus"},
+            {"note_id": 1, "tags": "one,two"},
+        ],
+    )
+    async def test_update_compat_payload_rejects_invalid_values_before_write(
+        self, payload
+    ) -> None:
+        note = _make_note(title="old", content="body", note_id_val=1)
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value=payload)
+        with patch("core.platform.transport.page_api.note_api.request", req):
+            mixin = _make_mixin(detail_note=note)
+            result = await mixin.update_note()
+        assert result["status"] == "error"
+        assert result["code"] == "validation_error"
+        mixin.engine.note_store.update.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_update_note_not_found(self) -> None:

@@ -148,6 +148,34 @@ class TestExtractJsonContent:
         assert result.startswith("{")
         assert result.endswith("}")
 
+    def test_extracts_top_level_object_array(self) -> None:
+        """顶层数组里的对象不能被切成分片。"""
+        text = 'LLM 输出: [{"a": 1}, {"b": 2}]'
+        result = extract_json_content(text)
+        assert result == '[{"a": 1}, {"b": 2}]'
+        assert safe_parse_llm_json(result) == [{"a": 1}, {"b": 2}]
+
+    def test_extracts_single_object_array_as_array(self) -> None:
+        """单个对象的数组仍应返回数组而不是内部对象。"""
+        assert extract_json_content('[{"a": 1}]') == '[{"a": 1}]'
+        assert extract_json_content('说明：[{"a": 1}]') == '[{"a": 1}]'
+
+    def test_falls_back_to_object_when_array_is_unclosed(self) -> None:
+        """损坏数组在前时仍应回退提取可解析对象。"""
+        text = 'prefix [ broken {"a": 1}'
+        result = extract_json_content(text)
+
+        assert result == '{"a": 1}'
+        assert safe_parse_llm_json(result) == {"a": 1}
+
+    def test_falls_back_to_array_when_object_is_unclosed(self) -> None:
+        """损坏对象在前时仍应回退提取可解析数组。"""
+        text = 'broken {"a": [1, 2]'
+        result = extract_json_content(text)
+
+        assert result == "[1, 2]"
+        assert safe_parse_llm_json(result) == [1, 2]
+
     def test_handles_no_json(self) -> None:
         text = "plain text"
         result = extract_json_content(text)

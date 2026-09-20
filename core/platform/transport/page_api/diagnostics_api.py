@@ -1,7 +1,6 @@
 """诊断健康、事件历史和有限恢复动作 API。"""
 
 import inspect
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
@@ -65,7 +64,7 @@ class DiagnosticsApiMixin:
     ) -> dict[str, Any]:
         """按安全筛选条件返回脱敏后的诊断事件列表。"""
         try:
-            store = await self._get_diagnostic_event_store()
+            store = self._get_diagnostic_event_store()
             limit = self._diagnostics_positive_int(
                 payload.get("limit"),
                 default=50,
@@ -100,7 +99,7 @@ class DiagnosticsApiMixin:
         if not event_id:
             return error_response("缺少必填参数 event_id")
         try:
-            store = await self._get_diagnostic_event_store()
+            store = self._get_diagnostic_event_store()
             event = await store.get_event(event_id)
             if event is None:
                 return error_response("诊断事件不存在")
@@ -219,28 +218,23 @@ class DiagnosticsApiMixin:
             self._diagnostics_health_scorer = scorer
         return scorer
 
-    async def _get_diagnostic_event_store(self) -> DiagnosticEventStore:
-        """懒加载绑定插件数据目录的诊断事件 Store。"""
-        store = getattr(self, "_diagnostic_event_store", None)
-        if store is None:
-            store = DiagnosticEventStore(self._diagnostics_event_db_path())
-            await store.initialize()
-            self._diagnostic_event_store = store
-        return store
+    def _get_diagnostic_event_store(self) -> DiagnosticEventStore:
+        """返回组合根发布的唯一诊断事件 Store。
 
-    def _diagnostics_event_db_path(self) -> Path:
-        """解析插件隔离的诊断事件数据库路径。"""
+        Returns:
+            初始化阶段由 `ComponentFactory` 发布、`PluginInitializer` 持有的
+            共享 Store 实例。
+
+        Raises:
+            RuntimeError: 组合根尚未发布 Store；请求路径不得自行建库。
+        """
+
         plugin = getattr(self, "plugin", None)
         initializer = getattr(plugin, "initializer", None)
-        for owner in (initializer, plugin):
-            if owner is None:
-                continue
-            data_dir = getattr(owner, "data_dir", None)
-            if data_dir:
-                return Path(data_dir) / "diagnostics_events.db"
-        raise RuntimeError(
-            "diagnostics event store requires plugin initializer data_dir"
-        )
+        store = getattr(initializer, "diagnostic_event_store", None)
+        if store is None:
+            raise RuntimeError("diagnostic event store is not published")
+        return cast(DiagnosticEventStore, store)
 
     async def _clear_completed_diagnostic_events(self) -> dict[str, Any]:
         """报告已解决事件数量；当前保持无删除的 noop 语义。"""

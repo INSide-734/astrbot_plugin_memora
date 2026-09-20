@@ -52,6 +52,7 @@ from .recall_trace_api import RecallTraceApiMixin
 from .reconsolidation_review_api import (
     ReconsolidationReviewApiMixin,
 )
+from .response_utils import error_response
 from .review_api import ReviewApiMixin
 from .route_registration import make_page_route_registrar
 from .shared_helpers import SharedPageApiHelpersMixin
@@ -117,11 +118,14 @@ class PluginPageApi(
 
     async def sse_stream(self):
         """D4：基于 AstrBot 公共流式响应的 SSE 实时记忆流端点。"""
-        initializer = getattr(self.plugin, "initializer", None)
-        engine = getattr(initializer, "memory_engine", None)
-        if engine is None or not hasattr(engine, "sse"):
-            return {"status": "error", "message": "SSE 服务不可用"}
-        return await engine.sse.stream()
+        engines, err = await self._ensure_plugin_ready()
+        if err:
+            return err
+        engine = engines["memory_engine"]
+        sse = getattr(engine, "sse", None)
+        if sse is None or not callable(getattr(sse, "stream", None)):
+            return error_response("SSE 服务不可用", code="sse_unavailable")
+        return await sse.stream()
 
     def register_routes(self) -> None:
         """注册主前缀及兼容前缀下的全部 Page API 路由。"""

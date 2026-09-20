@@ -327,16 +327,20 @@ class MaintenanceApiMixin:
             ) as tmp:
                 tmp_path = tmp.name
 
-            if export_format == "markdown":
-                count = await exporter.export_markdown(tmp_path)
-            else:
-                count = await exporter.export_jsonl(tmp_path)
-            count = MaintenanceApiMixin._coerce_result_int(count, 0)
+            try:
+                if export_format == "markdown":
+                    count = await exporter.export_markdown(tmp_path)
+                else:
+                    count = await exporter.export_jsonl(tmp_path)
+                count = MaintenanceApiMixin._coerce_result_int(count, 0)
 
-            with open(tmp_path, encoding="utf-8") as f:
-                content = f.read()
-
-            os.unlink(tmp_path)
+                with open(tmp_path, encoding="utf-8") as f:
+                    content = f.read()
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    logger.warning("清理记忆导出临时文件失败")
 
             return ok_response(
                 {
@@ -346,8 +350,8 @@ class MaintenanceApiMixin:
                 }
             )
         except Exception as e:
-            logger.error(f"导出记忆失败: {e}")
-            return error_response(f"导出记忆失败：{e}")
+            logger.error("导出记忆失败，异常类型=%s", e.__class__.__name__)
+            return error_response("导出记忆失败")
 
     # ---- Dashboard 管理（npm install / build） ----
 

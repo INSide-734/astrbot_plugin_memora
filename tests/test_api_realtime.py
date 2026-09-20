@@ -71,10 +71,11 @@ class TestRealtimeSSE:
 class TestPageApiSseStream:
     @pytest.mark.asyncio
     async def test_sse_stream_when_initializer_missing_returns_error(self) -> None:
+        """宿主未提供就绪检查时应返回稳定就绪错误 envelope。"""
         plugin = MagicMock(spec=[])
         api = PluginPageApi(plugin)
 
         result = await api.sse_stream()
 
         assert result["status"] == "error"
-        assert "SSE" in result["message"]
+        assert result["code"] == "plugin_readiness_error"

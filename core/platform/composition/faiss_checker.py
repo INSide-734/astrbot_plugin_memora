@@ -108,32 +108,18 @@ class FaissChecker:
             return
 
         try:
-            try:
-                import faiss
-            except (ImportError, ModuleNotFoundError, SystemError, OSError) as exc:
-                raise InitializationError(
-                    "FAISS 初始化失败，无法读取索引文件。"
-                    "请检查 faiss-cpu 安装状态和 CPU 指令集兼容性。"
-                ) from exc
+            import faiss
+        except (ImportError, ModuleNotFoundError, SystemError, OSError) as exc:
+            raise InitializationError(
+                "FAISS 初始化失败，无法读取索引文件。"
+                "请检查 faiss-cpu 安装状态和 CPU 指令集兼容性。"
+            ) from exc
 
+        # 只有真正读不出索引时才隔离坏文件；Provider 与删除失败都不代表
+        # 索引损坏，不能把它们误判成 .corrupt_* 隔离对象。
+        try:
             old_index = faiss.read_index(index_path)
-            old_dim = old_index.d
-            new_dim = embedding_provider.get_dim()
-
-            if old_dim != new_dim:
-                logger.warning(
-                    f"检测到 FAISS 索引维度不匹配: 索引维度={old_dim}, "
-                    f"当前 Embedding Provider 维度={new_dim}"
-                )
-                logger.warning(
-                    "这通常由 Embedding 模型切换导致。旧索引将被删除，系统会自动重建索引。"
-                )
-                os.remove(index_path)
-                logger.info(f"已删除不兼容的旧索引文件: {index_path}")
-
-        except Exception as e:
-            if isinstance(e, InitializationError):
-                raise
+        except Exception as read_error:
             quarantine_path = f"{index_path}.corrupt_{int(time.time())}"
             try:
                 os.replace(index_path, quarantine_path)
@@ -144,5 +130,34 @@ class FaissChecker:
                 )
             except Exception:
                 logger.error(
-                    f"检查索引维度时出错，且隔离坏索引失败: {e}", exc_info=True
+                    f"读取索引失败且隔离坏索引失败: {read_error}", exc_info=True
+                )
+            return
+
+        try:
+            new_dim = embedding_provider.get_dim()
+        except Exception:
+            logger.warning(
+                "无法获取当前 Embedding Provider 维度，保留现有派生索引文件",
+                exc_info=True,
+            )
+            return
+
+        old_dim = old_index.d
+        if old_dim != new_dim:
+            logger.warning(
+                f"检测到 FAISS 索引维度不匹配: 索引维度={old_dim}, "
+                f"当前 Embedding Provider 维度={new_dim}"
+            )
+            logger.warning(
+                "这通常由 Embedding 模型切换导致。旧索引将被删除，系统会自动重建索引。"
+            )
+            try:
+                os.remove(index_path)
+                logger.info(f"已删除不兼容的旧索引文件: {index_path}")
+            except OSError:
+                logger.error(
+                    f"删除维度不匹配的旧索引文件失败: {index_path}。"
+                    "派生索引将在初始化后重建。",
+                    exc_info=True,
                 )

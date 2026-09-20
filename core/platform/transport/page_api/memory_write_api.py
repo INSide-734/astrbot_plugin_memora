@@ -142,6 +142,10 @@ class MemoryWriteApiMixin:
                     importance=importance,
                     metadata=current_metadata,
                 )
+                # 与 changes 路径一致：替换项 ID 不可信时先失败，不能删掉唯一的
+                # canonical 记录（否则会造成不可恢复的数据丢失）。
+                if not _is_safe_replacement_id(new_memory_id):
+                    return _replacement_error("创建替换记忆失败", "replacement_failed")
                 delete_success = await memory_engine.delete_memory(memory_id)
                 if not delete_success:
                     await memory_engine.delete_memory(new_memory_id)

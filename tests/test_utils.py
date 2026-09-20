@@ -60,6 +60,42 @@ class TestSafeParseMetadata:
     def test_returns_empty_on_empty_string(self) -> None:
         assert safe_parse_metadata("") == {}
 
+    @pytest.mark.parametrize(
+        "metadata_raw",
+        ["[1, 2, 3]", "123", '"text"', "null", "true"],
+    )
+    def test_returns_empty_on_non_object_json(self, metadata_raw: str) -> None:
+        """解析成功但不是 JSON 对象的元数据必须回落为空字典。"""
+        assert safe_parse_metadata(metadata_raw) == {}
+
+    def test_parse_failure_log_omits_raw_metadata(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """解析失败日志不得写入原始 metadata 内容。"""
+        secret = "metadata-secret-canary-42"
+        with caplog.at_level("WARNING"):
+            assert safe_parse_metadata('{"token": "' + secret) == {}
+
+        assert secret not in caplog.text
+
+    def test_non_object_log_omits_raw_metadata(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """非对象 JSON 的告警同样不得写入原始内容。"""
+        with caplog.at_level("WARNING"):
+            assert safe_parse_metadata('["secret-canary-value"]') == {}
+
+        assert "secret-canary-value" not in caplog.text
+
+    def test_serialize_failure_log_omits_metadata(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """序列化失败日志不得写入 metadata 内容。"""
+        with caplog.at_level("ERROR"):
+            assert safe_serialize_metadata({"token": object()}) == "{}"  # type: ignore[dict-item]
+
+        assert "token" not in caplog.text
+
 
 class TestSafeSerializeMetadata:
     def test_serializes_simple_dict(self) -> None:
@@ -529,6 +565,22 @@ class TestStopwordsManager:
         assert isinstance(result, set)
         assert len(result) > 0
         assert "的" in result or len(result) > 0  # at least has some stopwords
+
+    @pytest.mark.asyncio
+    async def test_builtin_read_failure_falls_back_to_builtin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """内置文件存在但为空或读取失败时，不得静默采用空停用词表。"""
+
+        async def _empty_load(filepath: Path) -> set[str]:
+            return set()
+
+        monkeypatch.setattr(
+            StopwordsManager, "_load_from_file", staticmethod(_empty_load)
+        )
+        mgr = StopwordsManager()
+        result = await mgr.load_stopwords(source="hit")
+        assert len(result) > 0
 
     @pytest.mark.asyncio
     async def test_load_with_custom_words(self) -> None:

@@ -477,6 +477,7 @@ async def _initializer_scenarios(package: str, data_dir: Path) -> list[dict[str,
 
     factory = importlib.import_module(f"{package}{COMPOSITION_ROOT}.component_factory")
     order: list[str] = []
+    stopped_tasks: list[str] = []
 
     class Resource:
         """记录 stop/close 及可选回滚失败。"""
@@ -491,6 +492,11 @@ async def _initializer_scenarios(package: str, data_dir: Path) -> list[dict[str,
 
             await self.close()
 
+        async def stop_pending_tasks(self) -> None:
+            """记录待处理任务停止；关闭由后续 close 步骤单独记账。"""
+
+            stopped_tasks.append(self.name)
+
         async def close(self) -> None:
             """记录消费者关闭。"""
 
@@ -499,10 +505,12 @@ async def _initializer_scenarios(package: str, data_dir: Path) -> list[dict[str,
                 raise RuntimeError("injected_rollback_failure")
             self.closed = True
 
+    # 顺序必须与 ComponentFactory._rollback_build_components 的 cleanup_steps
+    # 一致，且只包含本次传入的组件子集。
     names = (
+        "scheduler",
         "evolution_manager",
         "evolution_store",
-        "scheduler",
         "identity",
         "conversation",
         "engine",
@@ -530,16 +538,19 @@ async def _initializer_scenarios(package: str, data_dir: Path) -> list[dict[str,
         preserved
         and order == list(names)
         and all(item.closed for item in resources.values())
+        and stopped_tasks == ["engine"]
     )
     results.append(
         {
             "name": "component_failure_rollback",
             "status": "passed" if rollback_ok else "failed",
             "closed_count": sum(item.closed for item in resources.values()),
+            "pending_tasks_stopped": list(stopped_tasks),
         }
     )
 
     order.clear()
+    stopped_tasks.clear()
     resources = {name: Resource(name, name == "evolution_store") for name in names}
     await factory.ComponentFactory._rollback_build_components(
         resources["scheduler"],
@@ -553,7 +564,10 @@ async def _initializer_scenarios(package: str, data_dir: Path) -> list[dict[str,
     )
     failure_count = sum(not item.closed for item in resources.values())
     containment_ok = (
-        order == list(names) and resources["db"].closed and failure_count == 1
+        order == list(names)
+        and stopped_tasks == ["engine"]
+        and resources["db"].closed
+        and failure_count == 1
     )
     results.append(
         {
@@ -561,6 +575,7 @@ async def _initializer_scenarios(package: str, data_dir: Path) -> list[dict[str,
             "status": "passed" if containment_ok else "failed",
             "failure_count": failure_count,
             "original_error_preserved": preserved,
+            "pending_tasks_stopped": list(stopped_tasks),
         }
     )
     return results

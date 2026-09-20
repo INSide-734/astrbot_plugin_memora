@@ -109,6 +109,31 @@ class TestTTLCache:
         assert "a" not in cache
         assert len(cache) == 3
 
+    def test_lru_eviction_clears_expiry_bookkeeping(self) -> None:
+        """容量淘汰必须同步清理过期表，否则 _expiry 会无界增长。"""
+        cache = _TTLCache(maxsize=2, ttl=60)
+        cache["a"], cache["b"], cache["c"] = 1, 2, 3
+
+        assert "a" not in cache
+        assert "a" not in cache._expiry
+
+    def test_expired_entry_after_unexpired_entry_expires(self) -> None:
+        """混合 TTL 下，扫描遇到未过期条目后仍须淘汰其后已过期的条目。"""
+        cache = _TTLCache(maxsize=100, ttl=0.01)
+        for index in range(11):
+            cache[f"stale-{index}"] = index
+        cache.ttl = 300
+        cache["fresh"] = "keep"
+        time.sleep(0.02)
+        cache.ttl = 0.01
+        cache["target"] = "stale"
+        time.sleep(0.02)
+
+        assert "target" not in cache
+        with pytest.raises(KeyError):
+            cache["target"]
+        assert cache["fresh"] == "keep"
+
     def test_delete(self) -> None:
         cache = _TTLCache(maxsize=10, ttl=60)
         cache["key"] = "val"

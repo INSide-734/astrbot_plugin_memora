@@ -118,17 +118,19 @@ def extract_json_content(text: str) -> str:
 
     s = text.strip()
 
-    # 对象优先
-    start = s.find("{")
-    end = s.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        return s[start : end + 1]
-
-    # 数组
-    start = s.find("[")
-    end = s.rfind("]")
-    if start != -1 and end != -1 and end > start:
-        return s[start : end + 1]
+    # 顶层容器由最先出现的 { 或 [ 决定，避免数组中的对象被误切成片段；
+    # 首选容器缺少闭合边界时回退到另一种容器，而不是直接返回原文。
+    obj_start, obj_end = s.find("{"), s.rfind("}")
+    arr_start, arr_end = s.find("["), s.rfind("]")
+    object_first = obj_start != -1 and (arr_start == -1 or obj_start < arr_start)
+    candidates = (
+        ((obj_start, obj_end), (arr_start, arr_end))
+        if object_first
+        else ((arr_start, arr_end), (obj_start, obj_end))
+    )
+    for start, end in candidates:
+        if start != -1 and end > start:
+            return s[start : end + 1]
 
     return s
 

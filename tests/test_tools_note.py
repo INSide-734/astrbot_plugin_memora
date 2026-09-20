@@ -379,3 +379,30 @@ class TestNoteWriteTool:
         assert "tags" in too_many.lower()
         assert "tag" in invalid.lower()
         mock_mgr.create_note.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_write_rejects_non_list_or_non_string_tags(self):
+        """模型传入非列表或含非字符串元素的标签时必须稳定报错，不能抛属性错误。"""
+
+        mock_mgr = MagicMock()
+        mock_mgr.create_note = AsyncMock(return_value=1)
+        tool = NoteWriteTool(note_manager=mock_mgr)
+
+        not_a_list = await _call_text(
+            tool,
+            _make_mock_event(),
+            title="Title",
+            content="content",
+            tags="abc",
+        )
+        non_string_element = await _call_text(
+            tool,
+            _make_mock_event(),
+            title="Title",
+            content="content",
+            tags=[1, 2],
+        )
+
+        assert "list" in not_a_list.lower()
+        assert "string" in non_string_element.lower()
+        mock_mgr.create_note.assert_not_called()

@@ -17,6 +17,7 @@ from ...features.conversation.infrastructure.conversation_store import (
     ConversationStore,
 )
 from ...features.decay.application import DecayScheduler
+from ...features.diagnostics import DiagnosticEventStore
 from ...features.evolution.application import (
     DerivedRelationExpander,
     MemoryConsolidator,
@@ -546,6 +547,9 @@ class ComponentFactory:
                 scope_key=scope_resolution.scope_key,
                 privacy_level=scope_resolution.privacy_level,
                 resolver_revision=scope_resolution.resolver_revision,
+                scope_subject_id=(
+                    scope_resolution.scope_id if scope_resolution.available else ""
+                ),
                 scope_reason_code=(
                     "scope_resolved"
                     if scope_resolution.available
@@ -558,6 +562,10 @@ class ComponentFactory:
 
         dedup_metrics_store = await self._build_dedup_metrics_store(data_dir_path)
         cleanup_state["dedup_metrics_store"] = dedup_metrics_store
+
+        # 诊断事件 Store 由组合根单点构造并发布，调度器与 Page API 只消费该实例。
+        diagnostic_event_store = await self._build_diagnostic_event_store(data_dir_path)
+        cleanup_state["diagnostic_event_store"] = diagnostic_event_store
 
         candidate_selector = TopicCandidateSelector(
             catalog_store=memory_engine.topic_catalog_store,
@@ -630,6 +638,7 @@ class ComponentFactory:
                 backup_manager=backup_manager,
                 backup_enabled=backup_enabled,
                 backup_keep_days=backup_keep_days,
+                diagnostic_event_store=diagnostic_event_store,
             )
             cleanup_state["decay_scheduler"] = scheduler
             await scheduler.start()
@@ -677,6 +686,7 @@ class ComponentFactory:
             "dedup_metrics_store": dedup_metrics_store,
             "catalog_maintenance_result": catalog_maintenance_result,
             "derived_rebuild_coordinator": derived_rebuild_coordinator,
+            "diagnostic_event_store": diagnostic_event_store,
             **injection_components,
         }
 
@@ -742,11 +752,16 @@ class ComponentFactory:
             ("DB", db, "close"),
         )
         cancellation: asyncio.CancelledError | None = None
-        closed_ids: set[int] = set()
+        executed_steps: set[tuple[int, str]] = set()
         for label, component, method_name in cleanup_steps:
-            if component is None or id(component) in closed_ids:
+            if component is None:
                 continue
-            closed_ids.add(id(component))
+            # 同一对象可能承担多个清理步骤（如 MemoryEngine 的
+            # stop_pending_tasks 与 close），只有完全相同的方法才算重复。
+            step_key = (id(component), method_name)
+            if step_key in executed_steps:
+                continue
+            executed_steps.add(step_key)
             try:
                 await getattr(component, method_name)()
             except asyncio.CancelledError as cleanup_error:
@@ -761,6 +776,25 @@ class ComponentFactory:
                 )
         if cancellation is not None:
             raise cancellation
+
+    async def _build_diagnostic_event_store(
+        self, data_dir_path: Path
+    ) -> DiagnosticEventStore | None:
+        """构造唯一的诊断事件存储；失败时降级为无诊断事件，不阻塞装配。
+
+        ``DiagnosticEventStore`` 每次操作自建连接、不持有生命周期资源，因此
+        这里只负责建表初始化与单点发布。
+        """
+
+        store = DiagnosticEventStore(data_dir_path / "diagnostics_events.db")
+        try:
+            await store.initialize()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning("诊断事件存储初始化失败，已停用诊断事件", exc_info=True)
+            return None
+        return store
 
     async def _build_dedup_metrics_store(
         self, data_dir_path: Path

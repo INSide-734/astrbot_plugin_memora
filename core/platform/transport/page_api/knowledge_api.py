@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import math
 from functools import wraps
@@ -152,7 +151,9 @@ def _knowledge_changes_candidate(entry: KnowledgeEntry, changes: Any):
             else:
                 try:
                     confidence = float(value)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
+                    # 超大整数（如 10**400）在 float() 时抛 OverflowError，
+                    # 必须转为字段校验错误而不是 internal_error。
                     errors[field] = "必须为数字"
                 else:
                     if not math.isfinite(confidence):
@@ -317,8 +318,18 @@ class KnowledgeApiMixin:
             category = KnowledgeType.FACT
         try:
             confidence = _coerce_confidence_value(payload.get("confidence", 0.5))
-        except (TypeError, ValueError):
-            confidence = 0.5
+        except (TypeError, ValueError, OverflowError):
+            return error_response(
+                "confidence 必须为数字",
+                code="validation_error",
+                field_errors={"confidence": "必须为数字"},
+            )
+        if not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0:
+            return error_response(
+                "confidence 必须在 0 到 1 之间",
+                code="validation_error",
+                field_errors={"confidence": "必须在 0 到 1 之间"},
+            )
         tags = _normalize_tags(payload.get("tags", []))
         entry = KnowledgeEntry(
             title=title,
@@ -366,42 +377,22 @@ class KnowledgeApiMixin:
             if not updated:
                 return error_response("not found: 条目不存在")
             return ok_response({"entry_id": entry_id})
-        # field/value 模式（前端兼容）：{entry_id, field: "title"|"content"|..., value}
+        # field/value 与全对象模式（前端兼容）统一走同一套归一化与校验，
+        # 不再用 contextlib.suppress 静默吞掉非法分类/置信度。
         field = str(payload.get("field", "")).strip()
         if field and "value" in payload:
-            value = payload["value"]
-            if field == "title":
-                entry.title = str(value)
-            elif field == "content":
-                entry.content = str(value)
-            elif field == "category":
-                with contextlib.suppress(ValueError):
-                    entry.category = KnowledgeType(str(value).strip().lower())
-            elif field == "confidence":
-                with contextlib.suppress(TypeError, ValueError):
-                    entry.confidence = _coerce_confidence_value(value)
-            elif field == "tags":
-                entry.tags = list(
-                    value if isinstance(value, list) else str(value).split(",")
-                )
-            else:
-                return error_response(f"不支持的字段: {field}")
+            changes: dict[str, Any] = {field: payload["value"]}
         else:
-            # 全对象模式（原有兼容）
-            if "title" in payload:
-                entry.title = str(payload["title"]).strip()
-            if "content" in payload:
-                entry.content = str(payload["content"]).strip()
-            if "category" in payload:
-                with contextlib.suppress(ValueError):
-                    entry.category = KnowledgeType(
-                        str(payload["category"]).strip().lower()
-                    )
-            if "confidence" in payload:
-                with contextlib.suppress(TypeError, ValueError):
-                    entry.confidence = _coerce_confidence_value(payload["confidence"])
-            if "tags" in payload:
-                entry.tags = _normalize_tags(payload["tags"])
+            changes = {
+                key: payload[key]
+                for key in ("title", "content", "category", "confidence", "tags")
+                if key in payload
+            }
+        if changes:
+            candidate, candidate_error = _knowledge_changes_candidate(entry, changes)
+            if candidate_error:
+                return candidate_error
+            entry = candidate
         if not entry.title or not entry.content:
             return error_response("title 和 content 为必填项")
         updated = await manager.update_entry(entry)

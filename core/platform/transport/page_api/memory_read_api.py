@@ -17,6 +17,27 @@ from ....shared.sql import MEMORY_STATUS_SQL
 from .graph_api import GraphApiMixin
 from .response_utils import error_response
 
+# 列表项 metadata 只投影已经提升到顶层的展示标量：
+# 原始 metadata、会话/人格身份、source mapping、scope/privacy/revision、
+# gate_disposition 与 update_history 不进入列表响应（与详情 allowlist 一致）。
+_LIST_METADATA_SAFE_FIELDS = (
+    "memory_type",
+    "canonical_summary",
+    "importance",
+)
+
+
+def _project_list_metadata(metadata: Any) -> dict[str, Any]:
+    """按白名单投影列表项 metadata，避免泄露身份与来源字段。"""
+
+    if not isinstance(metadata, dict):
+        return {}
+    return {
+        field: metadata[field]
+        for field in _LIST_METADATA_SAFE_FIELDS
+        if field in metadata
+    }
+
 
 class MemoryReadApiMixin:
     """混入类：记忆列表 / 详情"""
@@ -187,7 +208,7 @@ class MemoryReadApiMixin:
                     "type": metadata.get("memory_type", "GENERAL"),
                     "status": effective_memory_status(metadata),
                     "importance": clamp_float(metadata.get("importance"), default=0.5),
-                    "metadata": metadata,
+                    "metadata": _project_list_metadata(metadata),
                     "created_at": row_created_at,
                     "updated_at": row_updated_at,
                 }

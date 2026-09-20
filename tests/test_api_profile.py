@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from types import SimpleNamespace
 from typing import Any
@@ -787,6 +788,17 @@ def _profile_audit_messages(caplog: pytest.LogCaptureFixture) -> list[str]:
     ]
 
 
+def _audit_identity_ref(identity) -> str:
+    """按日志契约把测试身份折叠为不可逆短引用。"""
+
+    if not isinstance(identity, dict):
+        return str(identity)
+    user_id = str(identity.get("user_id") or "").strip()
+    if not user_id:
+        return "unavailable"
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:12]
+
+
 def _profile_audit(
     action: str,
     identity,
@@ -796,7 +808,8 @@ def _profile_audit(
     error_class: str = "none",
 ) -> str:
     return (
-        f"[画像 AUDIT] action={action} entity=profile identity={identity} "
+        f"[画像 AUDIT] action={action} entity=profile "
+        f"identity_ref={_audit_identity_ref(identity)} "
         f"result={result} error_code={error_code} error_class={error_class} count=1"
     )
 
@@ -810,7 +823,7 @@ def _profile_batch_audit(
     failed_count: int,
 ) -> str:
     return (
-        f"[画像 AUDIT] action={action} entity=profile identity=batch "
+        f"[画像 AUDIT] action={action} entity=profile identity_ref=batch "
         f"result={result} error_code={error_code} error_class=none "
         f"succeeded_count={succeeded_count} failed_count={failed_count}"
     )
@@ -839,7 +852,7 @@ class TestRevisionedProfileApi:
         )
         rendered_audit = repr(audit.call_args_list)
         assert (
-            "action=%s entity=profile identity=%s result=%s error_code=%s"
+            "action=%s entity=profile identity_ref=%s result=%s error_code=%s"
             in rendered_audit
         )
         assert "'success', 'none'" in rendered_audit
@@ -1195,7 +1208,7 @@ class TestRevisionedProfileApi:
         assert len(audits) == 1
         assert "action=create" in audits[0]
         assert "entity=profile" in audits[0]
-        assert "identity={'user_id': 'u1'}" in audits[0]
+        assert _audit_identity_ref({"user_id": "u1"}) in audits[0]
         assert "result=failure" in audits[0]
         assert "error_code=validation_error" in audits[0]
         assert secret not in caplog.text
@@ -1247,7 +1260,7 @@ class TestRevisionedProfileApi:
         assert len(audits) == 1
         assert "action=create" in audits[0]
         assert "entity=profile" in audits[0]
-        assert "identity={'user_id': 'u1'}" in audits[0]
+        assert _audit_identity_ref({"user_id": "u1"}) in audits[0]
         assert "result=failure" in audits[0]
         assert f"error_code={expected_code}" in audits[0]
         rendered = caplog.text + repr(result)
@@ -1534,7 +1547,7 @@ class TestProfileMutationAuditContract:
         mixin._ensure_plugin_ready.assert_not_awaited()
         audits = _profile_audit_messages(caplog)
         assert len(audits) == 1
-        assert "identity=unavailable" in audits[0]
+        assert "identity_ref=unavailable" in audits[0]
         rendered = caplog.text + repr(result)
         assert "AUDIT_LEAK_MARKER" not in rendered
 

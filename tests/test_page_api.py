@@ -360,6 +360,30 @@ class TestMemoryFullFormUpdate:
         engine.delete_memory.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("replacement_id", [0, -1, False, True, "8", None])
+    async def test_memory_legacy_content_rejects_invalid_replacement_ids(
+        self, replacement_id
+    ) -> None:
+        api, engine = self._api_and_engine()
+        engine.add_memory = AsyncMock(return_value=replacement_id)
+        request_mock = MagicMock()
+        request_mock.get_json = AsyncMock(
+            return_value={"memory_id": 7, "field": "content", "value": "New content"}
+        )
+
+        with patch(
+            "core.platform.transport.page_api.memory_write_api.request", request_mock
+        ):
+            result = await api.update_memory()
+
+        assert result == {
+            "status": "error",
+            "message": "创建替换记忆失败",
+            "code": "replacement_failed",
+        }
+        engine.delete_memory.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_memory_full_form_cleans_up_once_when_old_delete_raises(self) -> None:
         api, engine = self._api_and_engine()
         engine.delete_memory = AsyncMock(side_effect=[RuntimeError("old delete"), True])
@@ -1755,11 +1779,12 @@ class TestGetGroups:
                 ]
 
         engine = SimpleNamespace(
-            stats=AsyncMock(
+            get_statistics=AsyncMock(
                 return_value={
                     "sessions": {
+                        # 引擎返回计数映射；字典形态保留为兼容分支。
                         "shared-group": {"message_count": 7},
-                        "session-only": {"message_count": 2},
+                        "session-only": 2,
                     }
                 }
             )
@@ -1925,7 +1950,7 @@ class TestGetGroups:
             async def list_session_origins(self):
                 return [{"session_id": "group-conv", "message_count": 4}]
 
-        engine = SimpleNamespace(stats=AsyncMock(return_value="bad-stats"))
+        engine = SimpleNamespace(get_statistics=AsyncMock(return_value="bad-stats"))
         plugin = SimpleNamespace(
             initializer=SimpleNamespace(
                 jargon_store=None,
@@ -2341,51 +2366,78 @@ class TestMaintenanceWriteGuardCoverage:
 class TestSseStream:
     """测试 sse_stream 方法。"""
 
+    @staticmethod
+    def _ready_plugin(engine) -> MagicMock:
+        """构造就绪的插件替身，供 SSE handler 通过 readiness gate。"""
+        plugin = MagicMock()
+        plugin._ensure_plugin_ready = AsyncMock(return_value=(True, None))
+        plugin.initializer = MagicMock()
+        plugin.initializer.memory_engine = engine
+        return plugin
+
     @pytest.mark.asyncio
     async def test_sse_stream_when_available(self) -> None:
         """当 engine.sse.stream is available, returns it."""
-        plugin = MagicMock()
         engine = MagicMock()
         engine.sse = MagicMock()
         engine.sse.stream = AsyncMock(return_value="stream_response")
-        plugin.initializer = MagicMock()
-        plugin.initializer.memory_engine = engine
-        api = PluginPageApi(plugin)
+        api = PluginPageApi(self._ready_plugin(engine))
         result = await api.sse_stream()
         assert result == "stream_response"
 
     @pytest.mark.asyncio
+    async def test_sse_stream_requires_plugin_readiness(self) -> None:
+        """插件未就绪时不得建立 SSE 流，返回稳定未就绪 envelope。"""
+        engine = MagicMock()
+        engine.sse = MagicMock()
+        engine.sse.stream = AsyncMock(return_value="stream_response")
+        plugin = self._ready_plugin(engine)
+        plugin._ensure_plugin_ready = AsyncMock(return_value=(False, "初始化中"))
+        api = PluginPageApi(plugin)
+
+        result = await api.sse_stream()
+
+        assert result["status"] == "error"
+        assert result["code"] == "plugin_not_ready"
+        engine.sse.stream.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_sse_stream_when_engine_none(self) -> None:
-        """当 engine is None, returns error dict."""
-        plugin = MagicMock()
-        plugin.initializer = MagicMock()
-        plugin.initializer.memory_engine = None
+        """engine 未发布时应返回就绪/组件错误 envelope。"""
+        plugin = self._ready_plugin(None)
         api = PluginPageApi(plugin)
         result = await api.sse_stream()
         assert result["status"] == "error"
-        assert "SSE" in result["message"]
 
     @pytest.mark.asyncio
     async def test_sse_stream_when_no_sse_attr(self) -> None:
         """当 engine has no sse attribute, returns error dict."""
-        plugin = MagicMock()
         engine = MagicMock(spec=[])  # no sse attr
-        plugin.initializer = MagicMock()
-        plugin.initializer.memory_engine = engine
-        api = PluginPageApi(plugin)
+        api = PluginPageApi(self._ready_plugin(engine))
         result = await api.sse_stream()
         assert result["status"] == "error"
+        assert result["code"] == "sse_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_sse_stream_when_sse_is_none(self) -> None:
+        """组合根未注入 Hub 时 engine.sse 为 None，应返回能力缺失 envelope。"""
+        engine = MagicMock()
+        engine.sse = None
+        api = PluginPageApi(self._ready_plugin(engine))
+
+        result = await api.sse_stream()
+
+        assert result["status"] == "error"
+        assert result["code"] == "sse_unavailable"
+        assert "SSE" in result["message"]
 
     @pytest.mark.asyncio
     async def test_sse_stream_propagates_stream_exception(self) -> None:
         """当前 SSE behavior bubbles stream failures to the caller."""
-        plugin = MagicMock()
         engine = MagicMock()
         engine.sse = MagicMock()
         engine.sse.stream = AsyncMock(side_effect=RuntimeError("stream exploded"))
-        plugin.initializer = MagicMock()
-        plugin.initializer.memory_engine = engine
-        api = PluginPageApi(plugin)
+        api = PluginPageApi(self._ready_plugin(engine))
 
         with pytest.raises(RuntimeError, match="stream exploded"):
             await api.sse_stream()

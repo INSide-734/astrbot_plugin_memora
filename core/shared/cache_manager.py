@@ -39,25 +39,19 @@ class _TTLCache(MutableMapping):
         self.ttl = ttl
 
     def _evict_expired(self) -> None:
-        """惰性扫描：逐个检查 OrderedDict 中最旧的条目是否过期。"""
+        """惰性扫描：清理全部已过期条目，并同步移除对应过期时间。"""
         now = time.monotonic()
-        expired_keys: list[str] = []
-        for key in self._data:
-            if self._expiry.get(key, 0) < now:
-                expired_keys.append(key)
-            else:
-                # OrderedDict 保持插入序，但无关过期序；这里只扫描前半段
-                if len(expired_keys) > 10:
-                    break
+        expired_keys = [key for key, expiry in self._expiry.items() if expiry < now]
 
         for k in expired_keys:
-            del self._data[k]
+            self._data.pop(k, None)
             self._expiry.pop(k, None)
 
     def _ensure_capacity(self) -> None:
         """超过 maxsize 时淘汰最旧条目 (LRU)。"""
         while len(self._data) > self.maxsize:
-            self._data.popitem(last=False)
+            key, _ = self._data.popitem(last=False)
+            self._expiry.pop(key, None)
 
     def __getitem__(self, key: str) -> Any:
         self._evict_expired()

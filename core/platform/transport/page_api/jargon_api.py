@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+from collections.abc import Mapping
 from contextvars import ContextVar
 from functools import wraps
 from typing import Any
@@ -54,6 +56,21 @@ _AUDIT_EMITTED: ContextVar[bool] = ContextVar(
 )
 
 
+def _audit_identity_ref(identity: Any) -> str:
+    """把审计身份折叠为不可逆短引用；原始 term/group_id 不写入日志。"""
+
+    if not isinstance(identity, Mapping):
+        return str(identity)
+    parts: list[str] = []
+    for field in ("term", "group_id"):
+        value = identity.get(field)
+        if isinstance(value, str) and value:
+            parts.append(f"{field}={value}")
+    if not parts:
+        return "unavailable"
+    return hashlib.sha256("\0".join(parts).encode("utf-8")).hexdigest()[:12]
+
+
 def _audit_event(
     action: str,
     identity: Any,
@@ -66,11 +83,12 @@ def _audit_event(
     failed_count: int | None = None,
 ) -> None:
     _AUDIT_EMITTED.set(True)
+    identity_ref = _audit_identity_ref(identity)
     if succeeded_count is not None or failed_count is not None:
         logger.info(
-            "[黑话 AUDIT] action=%s entity=jargon identity=%s result=%s error_code=%s error_class=%s succeeded_count=%d failed_count=%d",
+            "[黑话 AUDIT] action=%s entity=jargon identity_ref=%s result=%s error_code=%s error_class=%s succeeded_count=%d failed_count=%d",
             action,
-            identity,
+            identity_ref,
             result,
             error_code,
             error_class,
@@ -79,9 +97,9 @@ def _audit_event(
         )
         return
     logger.info(
-        "[黑话 AUDIT] action=%s entity=jargon identity=%s result=%s error_code=%s error_class=%s count=%d",
+        "[黑话 AUDIT] action=%s entity=jargon identity_ref=%s result=%s error_code=%s error_class=%s count=%d",
         action,
-        identity,
+        identity_ref,
         result,
         error_code,
         error_class,
@@ -663,8 +681,14 @@ class JargonApiMixin(JargonRuntimeMixin):
         if not body or not isinstance(body, dict):
             return error_response("请求体必须为 JSON 对象")
 
-        term = (body.get("term", "") or "").strip()
-        group_id = (body.get("group_id", "") or "").strip()
+        term = body.get("term", "") or ""
+        group_id = body.get("group_id", "") or ""
+        if not isinstance(term, str) or not isinstance(group_id, str):
+            return error_response(
+                "term 与 group_id 必须为字符串", code="validation_error"
+            )
+        term = term.strip()
+        group_id = group_id.strip()
         confirmed = body.get("confirmed", True)
         if not isinstance(confirmed, bool):
             return error_response("confirmed 必须为布尔值", code="validation_error")
@@ -764,7 +788,10 @@ class JargonApiMixin(JargonRuntimeMixin):
         if not body or not isinstance(body, dict):
             return error_response("请求体必须为 JSON 对象")
 
-        group_id = (body.get("group_id", "") or "").strip()
+        group_id = body.get("group_id", "") or ""
+        if not isinstance(group_id, str):
+            return error_response("group_id 必须为字符串", code="validation_error")
+        group_id = group_id.strip()
         if not group_id:
             return error_response("缺少必填参数 group_id")
 

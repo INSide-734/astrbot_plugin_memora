@@ -646,6 +646,38 @@ class TestExportMemories:
         assert result["data"]["format"] == "jsonl"
         mock_unlink.assert_called_once_with("/tmp/export.jsonl")
 
+    @pytest.mark.asyncio
+    async def test_export_failure_still_removes_temp_file_and_hides_details(
+        self,
+    ) -> None:
+        """导出失败必须清理临时文件，且不把异常原文回显给页面。"""
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"format": "jsonl"})
+        with patch("quart.request", req):
+            mixin = _make_mixin(has_exporter=True)
+            engines, _ = await mixin._ensure_plugin_ready()
+            engine = engines["memory_engine"]
+            engine.memory_exporter.export_jsonl = AsyncMock(
+                side_effect=RuntimeError("export failed at /tmp/export.jsonl")
+            )
+            mixin._ensure_plugin_ready = AsyncMock(
+                return_value=({"memory_engine": engine}, None)
+            )
+            with (
+                patch("tempfile.NamedTemporaryFile") as mock_tmp,
+                patch("os.unlink") as mock_unlink,
+            ):
+                tmp = MagicMock()
+                tmp.__enter__.return_value.name = "/tmp/export.jsonl"
+                tmp.__exit__.return_value = False
+                mock_tmp.return_value = tmp
+                result = await mixin.export_memories()
+
+        assert result["status"] == "error"
+        assert result["message"] == "导出记忆失败"
+        assert "export failed" not in repr(result)
+        mock_unlink.assert_called_once_with("/tmp/export.jsonl")
+
 
 class TestDashboardMaintenance:
     """Dashboard runtime install/build safety controls."""

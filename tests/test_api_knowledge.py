@@ -332,7 +332,7 @@ class TestKnowledgeValidation:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "confidence", [True, float("nan"), float("inf"), -0.1, 1.1]
+        "confidence", [True, float("nan"), float("inf"), -0.1, 1.1, 10**400]
     )
     async def test_update_changes_rejects_invalid_confidence_without_mutating_entry(
         self, confidence
@@ -352,6 +352,7 @@ class TestKnowledgeValidation:
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
         assert result["status"] == "error"
+        assert result["code"] == "validation_error"
         assert entry.confidence == 0.8
         mixin.engine.knowledge_manager.update_entry.assert_not_awaited()
 
@@ -566,23 +567,27 @@ class TestKnowledgeHappyPath:
         assert result["data"]["entry_id"] == 42
 
     @pytest.mark.asyncio
-    async def test_create_treats_boolean_confidence_as_default(self) -> None:
+    @pytest.mark.parametrize("confidence", [True, "abc", float("nan"), 1.1, -0.1])
+    async def test_create_rejects_invalid_confidence_without_inserting(
+        self, confidence
+    ) -> None:
         mock_req = _make_mock_request()
         mock_req.get_json = AsyncMock(
             return_value={
                 "title": "New Knowledge",
                 "content": "Some content",
                 "category": "fact",
-                "confidence": True,
+                "confidence": confidence,
                 "tags": ["tag1"],
             }
         )
         with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(insert_id=42)
             result = await mixin.create_knowledge_entry()
-        assert result["status"] == "ok"
-        created_entry = mixin.engine.knowledge_manager.add_entry.await_args.args[0]
-        assert created_entry.confidence == 0.5
+        assert result["status"] == "error"
+        assert result["code"] == "validation_error"
+        assert "confidence" in result["field_errors"]
+        mixin.engine.knowledge_manager.add_entry.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_create_normalizes_string_tags_payload(self) -> None:
@@ -699,8 +704,9 @@ class TestKnowledgeHappyPath:
         assert result["data"]["failed_ids"] == [1, 2]
 
     @pytest.mark.asyncio
-    async def test_update_ignores_boolean_confidence_and_preserves_existing_value(
-        self,
+    @pytest.mark.parametrize("confidence", [True, float("nan"), 1.1, -0.1])
+    async def test_update_rejects_invalid_field_value_confidence_without_writing(
+        self, confidence
     ) -> None:
         entry = KnowledgeEntry(
             title="old",
@@ -714,15 +720,16 @@ class TestKnowledgeHappyPath:
             return_value={
                 "entry_id": 2,
                 "field": "confidence",
-                "value": True,
+                "value": confidence,
             }
         )
         with patch("core.platform.transport.page_api.knowledge_api.request", mock_req):
             mixin = _make_mixin(detail_entry=entry)
             result = await mixin.update_knowledge_entry()
-        assert result["status"] == "ok"
-        updated_entry = mixin.engine.knowledge_manager.update_entry.await_args.args[0]
-        assert updated_entry.confidence == 0.8
+        assert result["status"] == "error"
+        assert result["code"] == "validation_error"
+        assert entry.confidence == 0.8
+        mixin.engine.knowledge_manager.update_entry.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_update_normalizes_string_tags_payload(self) -> None:

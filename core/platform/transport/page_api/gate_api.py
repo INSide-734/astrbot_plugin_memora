@@ -135,13 +135,16 @@ class GateApiMixin:
             )
         if profile is None:
             return error_response("profile 不存在", code="gate_profile_not_found")
+        # _validate_payload 显式放行 importance: null，取默认值时必须先归一化，
+        # 否则 float(None) 会把请求变成 500。
+        raw_importance = payload.get("importance")
         view = CandidateView(
             content=str(payload.get("content") or ""),
             summary=str(payload.get("summary") or ""),
             key_facts=tuple(payload.get("key_facts") or ()),
             topics=tuple(payload.get("topics") or ()),
             participants=tuple(payload.get("participants") or ()),
-            importance=float(payload.get("importance", 0.5)),
+            importance=0.5 if raw_importance is None else float(raw_importance),
             chat_type=str(payload.get("chat_type") or "private"),
         )
         outcome = evaluate_rules(view, profile)

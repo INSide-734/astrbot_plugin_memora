@@ -208,17 +208,19 @@ class GroupListApiMixin:
         # 4. 来自会话数据（记忆引擎）
         try:
             engine = self.plugin.initializer.memory_engine
-            if engine and hasattr(engine, "stats"):
-                stats_data = await engine.stats()
+            if engine and hasattr(engine, "get_statistics"):
+                stats_data = await engine.get_statistics()
                 if not isinstance(stats_data, dict):
                     stats_data = {}
                 sessions = stats_data.get("sessions", {})
                 if not isinstance(sessions, dict):
                     sessions = {}
-                for sid, info in (sessions or {}).items():
-                    cnt = info.get("message_count", 0) if isinstance(info, dict) else 0
-                    add_group(sid, "session", cnt)
-                set_source_success("session", len(sessions or {}))
+                for sid, info in sessions.items():
+                    count = (
+                        info.get("message_count", 0) if isinstance(info, dict) else info
+                    )
+                    add_group(sid, "session", safe_float(count, 0.0))
+                set_source_success("session", len(sessions))
             else:
                 set_source_success("session", 0)
         except Exception as exc:

@@ -91,6 +91,13 @@ def test_finite_float_normalizes_numbers_and_rejects_non_finite_values() -> None
     assert infinite_error.value.field_errors == {"score": "必须为有限数字"}
 
 
+def test_finite_float_rejects_overflowing_integers() -> None:
+    """JSON 可携带任意精度整数，超出 float 范围时必须仍是校验错误而不是 500。"""
+    with pytest.raises(EntityValidationError) as overflow_error:
+        finite_float(10**400, field="score")
+    assert overflow_error.value.field_errors == {"score": "必须为数字"}
+
+
 def test_required_text_trims_and_enforces_length() -> None:
     assert required_text(" Alice ", field="name") == "Alice"
     with pytest.raises(EntityValidationError) as empty_error:

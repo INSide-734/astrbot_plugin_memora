@@ -173,7 +173,9 @@ class ExpressionApiMixin:
                     )
             except Exception as e:
                 logger.warning(
-                    f"[ExpressionApi] 调用 learner.get_patterns_for_injection 失败: {e}"
+                    "[ExpressionApi] 调用 learner.get_patterns_for_injection 失败 "
+                    "error_class=%s",
+                    type(e).__name__,
                 )
 
         store = self._get_expression_store()
@@ -213,8 +215,10 @@ class ExpressionApiMixin:
                 }
             )
         except Exception as e:
-            logger.error(f"[ExpressionApi] 获取表达模式失败: {e}", exc_info=True)
-            return error_response(f"获取表达模式失败: {e}")
+            logger.error(
+                "[ExpressionApi] 获取表达模式失败 error_class=%s", type(e).__name__
+            )
+            return error_response("获取表达模式失败，请稍后重试")
 
 
 __all__ = ["ExpressionApiMixin"]

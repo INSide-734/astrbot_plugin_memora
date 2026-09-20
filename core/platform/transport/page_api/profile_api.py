@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Mapping
 from contextvars import ContextVar
 from functools import wraps
@@ -70,6 +71,17 @@ def _select_audit(action: str, identity: Any = "unavailable") -> None:
     _AUDIT_IDENTITY.set(identity)
 
 
+def _audit_identity_ref(identity: Any) -> str:
+    """把审计身份折叠为不可逆短引用；原始 user_id 不写入日志。"""
+
+    if not isinstance(identity, Mapping):
+        return str(identity)
+    user_id = _coerce_user_id(identity.get("user_id"))
+    if not user_id:
+        return "unavailable"
+    return hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:12]
+
+
 def _audit_event(
     action: str,
     identity: Any,
@@ -82,11 +94,12 @@ def _audit_event(
     failed_count: int | None = None,
 ) -> None:
     _AUDIT_EMITTED.set(True)
+    identity_ref = _audit_identity_ref(identity)
     if succeeded_count is not None or failed_count is not None:
         logger.info(
-            "[画像 AUDIT] action=%s entity=profile identity=%s result=%s error_code=%s error_class=%s succeeded_count=%d failed_count=%d",
+            "[画像 AUDIT] action=%s entity=profile identity_ref=%s result=%s error_code=%s error_class=%s succeeded_count=%d failed_count=%d",
             action,
-            identity,
+            identity_ref,
             result,
             error_code,
             error_class,
@@ -95,9 +108,9 @@ def _audit_event(
         )
         return
     logger.info(
-        "[画像 AUDIT] action=%s entity=profile identity=%s result=%s error_code=%s error_class=%s count=%d",
+        "[画像 AUDIT] action=%s entity=profile identity_ref=%s result=%s error_code=%s error_class=%s count=%d",
         action,
-        identity,
+        identity_ref,
         result,
         error_code,
         error_class,

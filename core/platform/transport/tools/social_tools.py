@@ -135,13 +135,12 @@ class RelationLookupTool(AgentFunctionTool):
         user_id = (user_id or "").strip()
         group_id = (group_id or "").strip()
 
-        # 自动从事件上下文解析
+        # 自动从事件上下文解析：user_id 只信任发送者身份，
+        # 会话 origin 不能替代用户身份（见同目录 AGENTS.md 约定）。
         if not user_id:
             try:
                 if hasattr(event, "get_sender_id"):
                     user_id = str(event.get_sender_id() or "")
-                if not user_id:
-                    user_id = str(getattr(event, "unified_msg_origin", ""))
             except Exception:
                 pass
 

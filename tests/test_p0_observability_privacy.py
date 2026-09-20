@@ -305,7 +305,7 @@ async def test_diagnostics_api_returns_stable_codes_without_exception_text(
         initializer=SimpleNamespace(memory_engine=object(), data_dir=tmp_path),
     )
     api = PluginPageApi(plugin)
-    api._get_diagnostic_event_store = AsyncMock(side_effect=RuntimeError(_SENTINEL))
+    api._get_diagnostic_event_store = MagicMock(side_effect=RuntimeError(_SENTINEL))
 
     listed = await api.get_diagnostics_events_payload({})
     detail = await api.get_diagnostics_event_detail_payload({"event_id": "safe-event"})

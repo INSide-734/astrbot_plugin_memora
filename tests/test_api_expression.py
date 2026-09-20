@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -177,6 +178,73 @@ class TestExpressionPatterns:
         assert field in result["field_errors"]
         store.get_top_by_weight.assert_not_awaited()
         learner.get_patterns_for_injection.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_store_failure_returns_fixed_message_without_exception_text(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Store 读取失败只回固定文案，日志也不写异常原文或内部细节。"""
+        caplog.set_level(logging.ERROR)
+        secret = "expression-db-secret-path-3f19"
+        store = MagicMock()
+        store.get_top_by_weight = AsyncMock(side_effect=RuntimeError(secret))
+
+        class Stub:
+            get_expression_patterns = ExpressionApiMixin.get_expression_patterns
+            _get_expression_learner = ExpressionApiMixin._get_expression_learner
+            _get_expression_store = ExpressionApiMixin._get_expression_store
+
+        stub = Stub()
+        stub.plugin = SimpleNamespace(
+            _expression_learner=None,
+            _expression_store=store,
+            initializer=None,
+        )
+
+        mock_req = _make_mock_request(group_id="room-2", sort_by="usage_count")
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
+            result = await stub.get_expression_patterns()
+
+        assert result["status"] == "error"
+        assert result["message"] == "获取表达模式失败，请稍后重试"
+        assert secret not in repr(result)
+        assert "error_class=RuntimeError" in caplog.text
+        assert secret not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_learner_failure_logs_class_without_exception_text(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """learner 回退路径的日志只记异常类型，不回显异常原文。"""
+        caplog.set_level(logging.WARNING)
+        secret = "expression-learner-secret-88af"
+        learner = MagicMock()
+        learner.get_patterns_for_injection = AsyncMock(side_effect=RuntimeError(secret))
+        store = MagicMock()
+        store.get_top_by_weight = AsyncMock(return_value=[_make_pattern(pattern_id=31)])
+        store.count_by_scope = AsyncMock(return_value=1)
+
+        class Stub:
+            get_expression_patterns = ExpressionApiMixin.get_expression_patterns
+            _get_expression_learner = ExpressionApiMixin._get_expression_learner
+            _get_expression_store = ExpressionApiMixin._get_expression_store
+
+        stub = Stub()
+        stub.plugin = SimpleNamespace(
+            _expression_learner=learner,
+            _expression_store=store,
+            initializer=None,
+        )
+
+        mock_req = _make_mock_request(group_id="room-9")
+        with patch("core.platform.transport.page_api.expression_api.request", mock_req):
+            result = await stub.get_expression_patterns()
+
+        assert result["status"] == "ok"
+        assert "error_class=RuntimeError" in caplog.text
+        assert secret not in caplog.text
 
     @pytest.mark.asyncio
     async def test_learner_skips_malformed_pattern_items(self) -> None:

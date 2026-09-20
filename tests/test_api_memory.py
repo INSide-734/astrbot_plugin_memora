@@ -429,6 +429,54 @@ class TestMemoryBatchValidation:
         assert result["data"]["failed_ids"] == [3]
         assert result["data"]["failed_count"] == 1
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("value", "expected_updates"),
+        [
+            (0.5, {"importance": 0.5}),
+            (5, {"importance": 0.5}),
+            (float("nan"), None),
+            (-1, None),
+            (11, None),
+        ],
+    )
+    async def test_batch_update_impl_importance_matches_canonical_normalization(
+        self, value, expected_updates
+    ) -> None:
+        """批量实现路径的重要性归一化必须与单条更新一致（0-1 原值，1-10 除以 10，越界拒绝）。"""
+        from core.platform.transport.page_api.memory_batch_api import (
+            MemoryBatchApiMixin,
+        )
+
+        class Stub:
+            _batch_update_memories_impl = (
+                MemoryBatchApiMixin._batch_update_memories_impl
+            )
+            _coerce_memory_id = staticmethod(MemoryBatchApiMixin._coerce_memory_id)
+            _maintenance_write_guard = staticmethod(lambda: None)
+
+            def _ok(self, d):
+                return {"status": "ok", "data": d}
+
+            def _error(self, m):
+                return {"status": "error", "message": m}
+
+            async def _ensure_plugin_ready(self):
+                engine = MagicMock()
+                engine.update_memory = AsyncMock(return_value=True)
+                self.engine = engine
+                return {"memory_engine": engine}, None
+
+        stub = Stub()
+        result = await stub._batch_update_memories_impl([3], "importance", value)
+        assert result["status"] == "ok"
+        if expected_updates is None:
+            stub.engine.update_memory.assert_not_awaited()
+            assert result["data"]["failed_ids"] == [3]
+            return
+        stub.engine.update_memory.assert_awaited_once_with(3, expected_updates)
+        assert result["data"]["updated_count"] == 1
+
 
 # ---------------------------------------------------------------------------
 # MemoryReadApiMixin tests
@@ -993,7 +1041,17 @@ class TestMemoryReadValidation:
                                 "id": 3,
                                 "doc_id": "doc-3",
                                 "text": "mapping-row",
-                                "metadata": {"memory_type": "FACT"},
+                                # 身份/来源/修订字段必须被列表白名单投影过滤掉，
+                                # 只有已提升到顶层的展示标量可以保留。
+                                "metadata": {
+                                    "memory_type": "FACT",
+                                    "session_id": "sess-secret",
+                                    "revision": "rev-secret",
+                                    "scope_key": "session:test",
+                                    "privacy_level": "private",
+                                    "gate_disposition": "mark_write",
+                                    "source_evidence": {"message_id": "m-1"},
+                                },
                                 "created_at": "2024-01-05",
                                 "updated_at": "2024-01-06",
                             }

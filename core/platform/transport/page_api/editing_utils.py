@@ -41,7 +41,9 @@ def finite_float(value: Any, *, field: str) -> float:
         raise EntityValidationError({field: "必须为数字"})
     try:
         parsed = float(value)
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError, OverflowError) as exc:
+        # 超大整数（如 10**400）在 float() 时抛 OverflowError，必须转成校验错误，
+        # 否则会逃出 EntityValidationError 被上层降级为 internal_error。
         raise EntityValidationError({field: "必须为数字"}) from exc
     if not math.isfinite(parsed):
         raise EntityValidationError({field: "必须为有限数字"})

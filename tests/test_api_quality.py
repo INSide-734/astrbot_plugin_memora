@@ -7,6 +7,7 @@ Uses unittest.mock to mock scorer and quart.request.
 from __future__ import annotations
 
 from collections import deque
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -148,6 +149,27 @@ class TestQualityStats:
         with patch("core.platform.transport.page_api.quality_api.request", mock_req):
             result = await stub.get_quality_stats()
         assert result["status"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_missing_scorer_is_not_created_on_plugin(self) -> None:
+        """请求路径不得新建评分器：未发布实例时报不可用，且不写回插件属性。"""
+
+        class Stub:
+            get_quality_stats = QualityApiMixin.get_quality_stats
+            _get_quality_scorer = QualityApiMixin._get_quality_scorer
+
+        stub = Stub()
+        stub.plugin = SimpleNamespace(initializer=None)
+        mock_req = _make_mock_request()
+        with patch("core.platform.transport.page_api.quality_api.request", mock_req):
+            result = await stub.get_quality_stats()
+        assert result["status"] == "error"
+        assert stub._get_quality_scorer() is None
+        assert not hasattr(stub.plugin, "_quality_scorer")
+
+        published = MagicMock()
+        stub.plugin.initializer = SimpleNamespace(quality_scorer=published)
+        assert stub._get_quality_scorer() is published
 
 
 # ---------------------------------------------------------------------------

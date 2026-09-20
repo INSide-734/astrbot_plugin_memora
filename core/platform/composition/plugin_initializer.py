@@ -103,11 +103,11 @@ class PluginInitializer(InitializerReadinessMixin):
         self.injection_decision_store: InjectionDecisionStore | None = None
         self.injection_decision_recorder: InjectionDecisionRecorder | None = None
         self.dedup_metrics_store: Any | None = None
+        self.diagnostic_event_store: Any | None = None
         self.memory_evolution_store: Any | None = None
         self.memory_evolution_manager: Any | None = None
         self.summary_scheduler: Any | None = None
         self.summary_llm_limiter: Any | None = None
-        self.backup_manager: Any | None = None
         self.affection_store: Any | None = None
         self.affection_manager: Any | None = None
         self.expression_store: Any | None = None
@@ -334,6 +334,7 @@ class PluginInitializer(InitializerReadinessMixin):
             self.injection_decision_store = components["injection_decision_store"]
             self.injection_decision_recorder = components["injection_decision_recorder"]
             self.dedup_metrics_store = components.get("dedup_metrics_store")
+            self.diagnostic_event_store = components.get("diagnostic_event_store")
             self.memory_evolution_store = components.get("memory_evolution_store")
             self.memory_evolution_manager = components.get("memory_evolution_manager")
             self.realtime_hub = components.get("realtime_hub")
@@ -375,6 +376,7 @@ class PluginInitializer(InitializerReadinessMixin):
                 ("injection_store", self.injection_decision_store),
                 ("injection_recorder", self.injection_decision_recorder),
                 ("dedup_metrics_store", self.dedup_metrics_store),
+                ("diagnostic_event_store", self.diagnostic_event_store),
                 ("memory_evolution_store", self.memory_evolution_store),
                 ("memory_evolution_manager", self.memory_evolution_manager),
                 ("prompt_protection", self.prompt_protection),

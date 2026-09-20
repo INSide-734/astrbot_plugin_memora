@@ -25,10 +25,20 @@ def safe_parse_metadata(metadata_raw: Any) -> dict[str, Any]:
         return metadata_raw
     elif isinstance(metadata_raw, str):
         try:
-            return json.loads(metadata_raw)
+            parsed = json.loads(metadata_raw)
         except (json.JSONDecodeError, TypeError) as e:
-            logger.warning(f"解析元数据 JSON 失败: {e}, 原始数据: {metadata_raw}")
+            logger.warning(
+                f"解析元数据 JSON 失败: {type(e).__name__}, "
+                f"原始数据类型: {type(metadata_raw).__name__}, 长度: {len(metadata_raw)}"
+            )
             return {}
+        if not isinstance(parsed, dict):
+            logger.warning(
+                f"元数据不是 JSON 对象: {type(parsed).__name__}, "
+                f"原始数据类型: {type(metadata_raw).__name__}, 长度: {len(metadata_raw)}"
+            )
+            return {}
+        return parsed
     else:
         logger.warning(f"不支持的元数据类型: {type(metadata_raw)}")
         return {}
@@ -47,7 +57,10 @@ def safe_serialize_metadata(metadata: dict[str, Any]) -> str:
     try:
         return json.dumps(metadata, ensure_ascii=False)
     except (TypeError, ValueError) as e:
-        logger.error(f"序列化元数据失败: {e}, 数据: {metadata}")
+        logger.error(
+            f"序列化元数据失败: {type(e).__name__}, "
+            f"数据类型: {type(metadata).__name__}, 字段数: {len(metadata) if isinstance(metadata, dict) else 0}"
+        )
         return "{}"
 
 

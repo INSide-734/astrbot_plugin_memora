@@ -249,14 +249,35 @@ class NoteWriteTool(AgentFunctionTool):
             return "content is required"
         if len(content.strip()) > 20000:
             return "content must be 20000 characters or fewer"
-        normalized_tags = [tag.strip() for tag in (tags or [])]
-        if len(normalized_tags) > 10:
-            return "tags must contain at most 10 items"
-        tag_pattern = re.compile(r"^[\w\u4e00-\u9fff-]{1,40}$")
-        for tag in normalized_tags:
-            if not tag_pattern.fullmatch(tag):
-                return "each tag must be 1-40 characters and contain only letters, digits, underscore, hyphen, or CJK text"
+        normalized_tags = NoteWriteTool._validate_tags(tags)
+        if isinstance(normalized_tags, str):
+            return normalized_tags
         return None
+
+    @staticmethod
+    def _validate_tags(tags: Any) -> list[str] | str:
+        """校验不可信标签输入，返回规范化标签或稳定错误文本。
+
+        Returns:
+            规范化后的标签列表，或校验失败时的错误文本。
+        """
+
+        if tags is None:
+            return []
+        if not isinstance(tags, list):
+            return "tags must be a list of strings"
+        if len(tags) > 10:
+            return "tags must contain at most 10 items"
+        normalized_tags: list[str] = []
+        tag_pattern = re.compile(r"^[\w\u4e00-\u9fff-]{1,40}$")
+        for tag in tags:
+            if not isinstance(tag, str):
+                return "each tag must be a string"
+            normalized = tag.strip()
+            if not tag_pattern.fullmatch(normalized):
+                return "each tag must be 1-40 characters and contain only letters, digits, underscore, hyphen, or CJK text"
+            normalized_tags.append(normalized)
+        return normalized_tags
 
 
 __all__ = ["NoteSearchTool", "NoteReadTool", "NoteWriteTool"]

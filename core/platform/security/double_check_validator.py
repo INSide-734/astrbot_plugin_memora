@@ -6,6 +6,10 @@ import re
 from difflib import SequenceMatcher
 from typing import Any
 
+# 参与比较的文本上限：SequenceMatcher 两侧同规模；LCS 的窗口与 DP 规模上限。
+_SEQUENCE_COMPARE_CHARS = 2_000
+_LCS_COMPARE_CHARS = 500
+
 # ---------------------------------------------------------------------------
 # DoubleCheckValidator：四算法验证层
 # ---------------------------------------------------------------------------
@@ -140,16 +144,23 @@ class DoubleCheckValidator:
         return len(intersection) / len(union)
 
     def _sequence_ratio(self, text1: str, text2: str) -> float:
-        """基于 difflib.SequenceMatcher 的相似度（类似 Levenshtein）。"""
-        t1 = text1[:2000]
-        t2 = text2[:500]
+        """基于 difflib.SequenceMatcher 的相似度（类似 Levenshtein）。
+
+        两侧按同一上限裁剪，使分母与参与比较的文本同规模；否则固定截断
+        会让 `levenshtein_ratio_threshold` 在长输入下永远不可达。
+        """
+        t1 = text1[:_SEQUENCE_COMPARE_CHARS]
+        t2 = text2[:_SEQUENCE_COMPARE_CHARS]
         return SequenceMatcher(None, t1, t2).ratio()
 
     def _lcs_ratio_windowed(self, response: str, instruction: str) -> float:
         """滑动窗口 LCS — 1.5x 窗口扫描，找出与指令最相似的片段。
 
+        参与比较的指令前缀同时决定窗口与归一化分母，长度与 DP 规模上限一致，
+        避免长指令下 `lcs_ratio_threshold` 永远不可达。
         使用 2-row DP 实现 O(n) 空间复杂度。
         """
+        instruction = instruction[:_LCS_COMPARE_CHARS]
         inst_len = len(instruction)
         if inst_len == 0:
             return 0.0
@@ -173,8 +184,8 @@ class DoubleCheckValidator:
 
         空间 O(min(m, n))，时间 O(m * n)。
         """
-        t1 = text1[:500]
-        t2 = text2[:500]
+        t1 = text1[:_LCS_COMPARE_CHARS]
+        t2 = text2[:_LCS_COMPARE_CHARS]
         m, n = len(t1), len(t2)
         if m == 0 or n == 0:
             return 0

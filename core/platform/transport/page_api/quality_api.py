@@ -105,10 +105,12 @@ class QualityApiMixin:
     # ------------------------------------------------------------------
 
     def _get_quality_scorer(self) -> Any | None:
-        """从插件属性中惰性解析 ``MemoryQualityScorer`` 实例。
+        """只读解析组合根发布的 ``MemoryQualityScorer`` 实例。
 
         评分器可能挂载在插件的 ``_quality_scorer``、``quality_scorer``，
-        或 ``self.plugin.initializer`` 上。若尚未实例化，则按需创建默认实例。
+        或 ``self.plugin.initializer`` 上。请求路径内不得新建实例：
+        新建的评分器收不到写入侧样本（写入只认 ``memory_engine._quality_scorer``），
+        返回 None 由上层报“质量评分器不可用”，与 ``metrics_api`` 的只读查找一致。
         """
         plugin = getattr(self, "plugin", None)
         if plugin is None:
@@ -127,13 +129,7 @@ class QualityApiMixin:
             if scorer is not None:
                 return scorer
 
-        # 若不存在则惰性创建默认实例，并缓存到插件对象
-        from ....features.observability.application import MemoryQualityScorer
-
-        scorer = MemoryQualityScorer(window_size=100)
-        plugin._quality_scorer = scorer
-        logger.info("[质量接口] 已惰性创建 MemoryQualityScorer 实例")
-        return scorer
+        return None
 
     # ------------------------------------------------------------------
     # GET /stats

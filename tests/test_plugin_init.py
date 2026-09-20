@@ -1110,6 +1110,65 @@ class TestInjectionDecisionLifecycle:
         assert order[0] == "scheduler"
 
     @pytest.mark.asyncio
+    async def test_build_publishes_single_diagnostic_event_store(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """诊断事件 Store 由工厂单点构造，并把同一实例交给衰减调度器。"""
+
+        import core.platform.composition.component_factory as factory_module
+
+        async def fail_injection(_db_path):
+            raise RuntimeError("injection failed")
+
+        store = MagicMock()
+        store.initialize = AsyncMock()
+        store_type = MagicMock(return_value=store)
+        monkeypatch.setattr(factory_module, "DiagnosticEventStore", store_type)
+
+        factory, args, _order = self._build_factory_rollback_scenario(
+            monkeypatch, tmp_path, fail_injection
+        )
+
+        with pytest.raises(RuntimeError, match="injection failed"):
+            await factory.build_all(*args)
+
+        store_type.assert_called_once_with(tmp_path / "diagnostics_events.db")
+        store.initialize.assert_awaited_once()
+        scheduled = factory_module.DecayScheduler.call_args.kwargs
+        assert scheduled["diagnostic_event_store"] is store
+
+    @pytest.mark.asyncio
+    async def test_diagnostic_event_store_initializes_schema_once(
+        self, tmp_path
+    ) -> None:
+        """工厂构造诊断事件 Store 时完成一次建表初始化。"""
+        from core.platform.composition.component_factory import ComponentFactory
+
+        factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
+
+        store = await factory._build_diagnostic_event_store(tmp_path)
+
+        assert store is not None
+        assert (tmp_path / "diagnostics_events.db").exists()
+
+    @pytest.mark.asyncio
+    async def test_diagnostic_event_store_failure_degrades(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """诊断事件 Store 初始化失败时降级为 None，不阻塞装配。"""
+        import core.platform.composition.component_factory as factory_module
+        from core.platform.composition.component_factory import ComponentFactory
+
+        store = MagicMock()
+        store.initialize = AsyncMock(side_effect=RuntimeError("db unavailable"))
+        monkeypatch.setattr(
+            factory_module, "DiagnosticEventStore", MagicMock(return_value=store)
+        )
+        factory = ComponentFactory(MagicMock(), MagicMock(), str(tmp_path))
+
+        assert await factory._build_diagnostic_event_store(tmp_path) is None
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize("cancel_build", [False, True])
     async def test_build_all_rolls_back_owned_components_when_injection_build_fails(
         self, monkeypatch, tmp_path, cancel_build
@@ -1143,6 +1202,7 @@ class TestInjectionDecisionLifecycle:
         assert order == [
             "scheduler",
             "conversation_store",
+            "memory_engine",
             "graph_db",
             "db",
         ]
