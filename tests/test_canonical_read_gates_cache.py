@@ -1,121 +1,33 @@
-"""canonical 读取状态门：缓存命中重校验与删除路径缓存失效。
+"""canonical 读取状态门：缓存命中一律按当前 canonical 重校验。
 
-覆盖 09-20-canonical-read-gates 的 C2/R2.1（缓存命中不盲信缓存）与 C2/R2.2
-（``delete_memory`` 的任意返回路径先失效检索缓存）。断言的都是可观察行为：
+覆盖 09-20-canonical-read-gates 的 C2/R2.1：缓存命中不盲信缓存，按正文、状态、
+revision、mark_write、用户证据与请求可见性重新校验。断言的都是可观察行为：
 同缓存键是否还能取回旧正文、响应计数与走的是命中还是实时检索。
 """
 
 from __future__ import annotations
 
-import asyncio
-import inspect
-import json
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import aiosqlite
 import pytest
 
-from core.features.memory.application.memory_engine import MemoryEngine
-from core.features.memory.application.retrieval_optimizer import RetrievalOptimizer
 from core.features.memory.application.retrieval_timing import RetrievalTimingSink
 from core.features.memory.graph.domain.models import GraphQueryScope
-from core.features.retrieval.rrf_fusion import HybridResult
+from tests.canonical_read_gate_helpers import (
+    _ACTIVE,
+    _RAW_REVISION,
+    _cache_engine,
+    _delete_row,
+    _result,
+    _rewrite_row,
+)
 from tests.fact_evidence_helpers import source_evidence
 from tests.representation_migration_support import (
     _create_schema,
     _DocumentStorage,
     _seed,
 )
-
-_ACTIVE: dict[str, object] = {"memory_status": "active"}
-# 与 tests/test_managers_memory_crud.py 相同的 host 形状：SQLite 原始 revision。
-_RAW_REVISION = "2026-07-24 02:21:07.123456"
-
-
-def _close_background(coro):
-    """关闭测试中不需要实际调度的后台协程。"""
-
-    if inspect.iscoroutine(coro):
-        coro.close()
-
-
-def _result(doc_id: int, content: str, metadata: dict | None = None) -> HybridResult:
-    """构造与检索缓存同形的候选。"""
-
-    return HybridResult(
-        doc_id=doc_id,
-        final_score=0.9,
-        rrf_score=0.9,
-        bm25_score=None,
-        vector_score=None,
-        content=content,
-        metadata=dict(metadata or {}),
-    )
-
-
-def _cache_engine(storage) -> MemoryEngine:
-    """装配真实检索缓存、真实 canonical 行与受控检索结果的引擎边界。"""
-
-    engine = MemoryEngine(
-        db_path=":memory:",
-        faiss_db=SimpleNamespace(document_storage=storage),
-    )
-    engine.dual_route_retriever = None
-    engine.hybrid_retriever = MagicMock()
-    engine.hybrid_retriever.search = AsyncMock(return_value=[])
-    engine.hybrid_retriever.delete_memory = AsyncMock(return_value=True)
-    engine._retrieval = RetrievalOptimizer(
-        config={
-            "search_cache_enabled": True,
-            "search_cache_ttl_seconds": 60.0,
-            "session_cache_enabled": True,
-            "session_cache_ttl_seconds": 60.0,
-        }
-    )
-    engine._maintenance = MagicMock()
-    engine._maintenance.update_access_times_batch = AsyncMock(return_value=1)
-    engine._maintenance.migrate_session_if_needed = AsyncMock()
-    engine._write_journal.start_op = AsyncMock(return_value=1)
-    engine._write_journal.advance_op = AsyncMock()
-    engine._create_tracked_task = MagicMock(side_effect=_close_background)
-    return engine
-
-
-async def _rewrite_row(
-    db_path: str,
-    memory_id: int,
-    *,
-    text: str | None = None,
-    metadata: dict | None = None,
-) -> None:
-    """改写 canonical 行，模拟归档与正文更新后的当前状态。"""
-
-    assignments: list[str] = []
-    params: list[object] = []
-    if text is not None:
-        assignments.append("text = ?")
-        params.append(text)
-    if metadata is not None:
-        assignments.append("metadata = ?")
-        params.append(json.dumps(metadata, ensure_ascii=False))
-    if not assignments:
-        return
-    params.append(memory_id)
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute(
-            f"UPDATE documents SET {', '.join(assignments)} WHERE id = ?",
-            params,
-        )
-        await db.commit()
-
-
-async def _delete_row(db_path: str, memory_id: int) -> None:
-    """删除 canonical 行，模拟已提交的存储层删除。"""
-
-    async with aiosqlite.connect(db_path) as db:
-        await db.execute("DELETE FROM documents WHERE id = ?", (memory_id,))
-        await db.commit()
 
 
 @pytest.mark.asyncio
@@ -368,88 +280,6 @@ async def test_cache_hit_falls_back_to_search_when_canonical_unreadable(
     assert visible == []
     assert engine._last_search_timing["cache_hit"] is False
     engine.hybrid_retriever.search.assert_awaited()
-    await storage.close()
-
-
-@pytest.mark.asyncio
-async def test_delete_memory_clears_same_cache_key_on_success(tmp_path) -> None:
-    """删除成功后同缓存键不再返回旧正文，随后按实时检索取结果。"""
-
-    db_path = str(tmp_path / "delete-success.db")
-    await _create_schema(db_path)
-    await _seed(db_path, [(1, "旧正文", dict(_ACTIVE), "r1-created", "r1")])
-    storage = _DocumentStorage(db_path)
-    engine = _cache_engine(storage)
-
-    async def _delete_canonical_row(memory_id: int) -> bool:
-        """按存储层语义删除 canonical 行并返回成功。"""
-
-        await _delete_row(db_path, memory_id)
-        return True
-
-    engine.hybrid_retriever.delete_memory = AsyncMock(side_effect=_delete_canonical_row)
-    key = engine._retrieval.cache_key("删除查询", 5, None, None)
-    engine._retrieval.set_cached(key, [_result(1, "旧正文", {"revision_token": "r1"})])
-
-    assert [item.doc_id for item in await engine.search_memories("删除查询", k=5)] == [
-        1
-    ]
-    assert engine._last_search_timing["cache_hit"] is True
-
-    assert await engine.delete_memory(1) is True
-
-    assert engine._retrieval.get_cached(key) is None
-    assert await engine.search_memories("删除查询", k=5) == []
-    assert engine._last_search_timing["cache_hit"] is False
-    await storage.close()
-
-
-@pytest.mark.asyncio
-async def test_delete_memory_invalidates_cache_on_early_failures(tmp_path) -> None:
-    """缺少检索器与向量删除失败两条提前返回路径都必须先失效缓存。"""
-
-    for scenario in ("retriever_missing", "vector_delete_failed"):
-        db_path = str(tmp_path / f"delete-{scenario}.db")
-        await _create_schema(db_path)
-        await _seed(db_path, [(1, "旧正文", dict(_ACTIVE), "r1-created", "r1")])
-        storage = _DocumentStorage(db_path)
-        engine = _cache_engine(storage)
-        key = engine._retrieval.cache_key("删除失败查询", 5, None, None)
-        engine._retrieval.set_cached(
-            key, [_result(1, "旧正文", {"revision_token": "r1"})]
-        )
-        if scenario == "retriever_missing":
-            engine.hybrid_retriever = None
-        else:
-            engine.hybrid_retriever.delete_memory = AsyncMock(return_value=False)
-
-        assert await engine.delete_memory(1) is False
-
-        assert engine._retrieval.get_cached(key) is None
-        await storage.close()
-
-
-@pytest.mark.asyncio
-async def test_delete_memory_invalidates_cache_before_propagating_cancel(
-    tmp_path,
-) -> None:
-    """取消必须继续传播，但返回控制权前缓存已失效。"""
-
-    db_path = str(tmp_path / "delete-cancel.db")
-    await _create_schema(db_path)
-    await _seed(db_path, [(1, "旧正文", dict(_ACTIVE), "r1-created", "r1")])
-    storage = _DocumentStorage(db_path)
-    engine = _cache_engine(storage)
-    engine.hybrid_retriever.delete_memory = AsyncMock(
-        side_effect=asyncio.CancelledError()
-    )
-    key = engine._retrieval.cache_key("取消查询", 5, None, None)
-    engine._retrieval.set_cached(key, [_result(1, "旧正文", {"revision_token": "r1"})])
-
-    with pytest.raises(asyncio.CancelledError):
-        await engine.delete_memory(1)
-
-    assert engine._retrieval.get_cached(key) is None
     await storage.close()
 
 
