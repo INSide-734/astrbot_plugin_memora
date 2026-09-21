@@ -21,14 +21,14 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "astrbot==4.28.0",
+    "astrbot==4.28.1",
     "hypothesis>=6.163.0",
     "pre-commit>=4.6,<5",
     "pyright==1.1.414",
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=6.0",
-    "ruff==0.16.7",
+    "ruff==0.16.8",
 ]
 
 [tool.uv]
