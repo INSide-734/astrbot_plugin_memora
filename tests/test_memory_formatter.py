@@ -210,6 +210,44 @@ class TestFormatMemoriesForInjection:
         result = format_memories_for_injection([mem_obj])
         assert result == ""
 
+    def test_retained_indices_skip_format_failures_without_shifting_ids(self):
+        malformed = {"id": 202, "content": object(), "score": 1.0, "metadata": {}}
+        text, stats = format_memories_for_injection(
+            [
+                {"id": 101, "content": "first", "score": 1.0, "metadata": {}},
+                malformed,
+                {"id": 303, "content": "third", "score": 1.0, "metadata": {}},
+            ],
+            budget=_budget(ContentLevel.COMPACT, 1200),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert text
+        assert stats.memory_count == 2
+        assert stats.retained_indices == (0, 2)
+
+    def test_retained_indices_exclude_budget_dropped_tail(self):
+        first = _rich_memory(0)
+        first["id"] = 101
+        second = _rich_memory(1)
+        second["id"] = 202
+        first_only, _ = format_memories_for_injection(
+            [first],
+            budget=_budget(ContentLevel.COMPACT, 2400),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        text, stats = format_memories_for_injection(
+            [first, second],
+            budget=_budget(ContentLevel.COMPACT, len(first_only)),
+            content_level=ContentLevel.COMPACT,
+        )
+
+        assert text == first_only
+        assert stats.memory_count == 1
+        assert stats.retained_indices == (0,)
+        assert stats.dropped_by_budget == 1
+
     def test_projection_uses_allowlist_and_metadata_budget(self):
         text, stats = format_memories_for_injection(
             [

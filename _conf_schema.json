@@ -331,14 +331,14 @@
                 "default": true
             },
             "testing_effect_async": {
-                "description": "测试效应：异步模式",
-                "hint": "每次成功召回后异步强化记忆（reinforcement_count+1 + TTL×1.05）。开启后不阻塞检索热路径。",
+                "description": "成功注入后的测试效应维护：异步模式",
+                "hint": "每次成功 injected 后异步强化实际注入的记忆（reinforcement_count+1 + TTL×1.05）。开启后不阻塞注入后的维护调度。",
                 "type": "bool",
                 "default": true
             },
             "testing_effect_top_k": {
-                "description": "测试效应：强化条数上限",
-                "hint": "每次召回最多对前 N 条记忆应用测试效应强化。值越大强化范围越广但写压力也越大。",
+                "description": "成功注入后的测试效应：强化条数上限",
+                "hint": "每次成功 injected 后最多对前 N 条实际注入记忆应用测试效应强化。值越大强化范围越广但写压力也越大。",
                 "type": "int",
                 "default": 5,
                 "min": 1,

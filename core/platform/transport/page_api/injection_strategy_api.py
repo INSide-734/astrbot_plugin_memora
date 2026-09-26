@@ -395,6 +395,8 @@ class InjectionStrategyApiMixin:
         if not isinstance(summary, dict):
             return {
                 "window": "24h",
+                "retrieved_count": 0,
+                "injected_count": 0,
                 "decision_count": 0,
                 "payload_chars_p95": 0,
                 "provider_fallback_rate": 0.0,
@@ -424,6 +426,8 @@ class InjectionStrategyApiMixin:
         recent_events = summary.get("recent_events", [])
         return {
             "window": summary.get("window", "24h"),
+            "retrieved_count": summary.get("retrieved_count", 0),
+            "injected_count": summary.get("injected_count", 0),
             "decision_count": summary.get("decision_count", 0),
             "payload_chars_p95": summary.get("payload_chars_p95", 0),
             "provider_fallback_rate": summary.get("provider_fallback_rate", 0.0),

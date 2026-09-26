@@ -9,6 +9,7 @@ Memora 的所有重要变更都记录在此文件中。
 
 ### 变更
 
+- 注入策略摘要新增窗口内 `retrieved_count` 与 `injected_count`，Dashboard 概览分别展示检索到与实际注入的记忆数量；保留既有载荷/决策字段语义，不创建 `adopted` 字段。测试效应配置仍保留原键名和默认值，但维护说明改为仅在成功 injected 后生效。
 - 记忆正文更新改为两阶段收敛：新内容先落为不可召回的暂存记录，再在单个事务内切换可见性（赢家恢复原状态、输家隐藏），随后单独删除旧记录；删除未完成记 `replacement_cleanup_pending`，补偿成功/失败分别记 `replacement_rolled_back`/`replacement_rollback_failed`，失败只记录不回滚，由写修复收敛，保证任一时刻最多一条可召回记录（失败原因码 `content_replace_failed`），对同一记录重复发起替换会被安全拒绝。
 - 记忆写入在索引阶段失败时不再整体报错：canonical 已提交即返回该记忆 ID，并把派生索引标记为待修复（`index_stage_degraded`），调用方不会把派生失败当作写入失败重试而产生重复记忆。
 - 事实元数据（`key_facts` 与逐事实来源证据）不再与正文脱节：正文更新未提供对齐事实时在同一事务清除旧事实表示，提供但与新正文不一致时以 `fact_evidence_mismatch` 拒绝写入，避免「新正文 + 旧事实」进入图与注入；只提供 `key_facts`/`fact_source_evidence` 其中一侧不构成对齐表示，一律拒绝。正文更新后 `canonical_summary` 始终与正文保持一致，调用方传入与新正文冲突的摘要会被同步为新正文。

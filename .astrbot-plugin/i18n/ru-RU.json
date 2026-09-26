@@ -524,6 +524,8 @@
         "decisions": "Решения",
         "payloadP95": "Символы payload p95",
         "fallbackRate": "Доля резервного режима провайдера",
+        "retrieved": "Извлечённые записи",
+        "injected": "Внедрённые записи",
         "selectedTotal": "Всего выбрано",
         "payloadInjected": "Внедрённый payload",
         "memoryPresent": "С кандидатами памяти",
@@ -536,7 +538,8 @@
         "recent": "Последние решения",
         "recentFallbacks": "Последние резервные переходы",
         "recentErrors": "Последние ошибки",
-        "noEvents": "Нет подходящих последних событий"
+        "noEvents": "Нет подходящих последних событий",
+        "noDecisionEvents": "В этом окне нет решений о внедрении"
       },
       "config": {
         "routing": "Режим маршрутизации",

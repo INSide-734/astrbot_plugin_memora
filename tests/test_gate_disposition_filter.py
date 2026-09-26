@@ -191,6 +191,4 @@ async def test_search_memories_cache_hit_skips_mark_write_access_times() -> None
     results = await engine.search_memories("cached query")
 
     assert [r.doc_id for r in results] == [2]
-    engine._maintenance.update_access_times_batch.assert_called_once()
-    ids = engine._maintenance.update_access_times_batch.call_args.args[0]
-    assert ids == [2]
+    engine._maintenance.update_access_times_batch.assert_not_awaited()

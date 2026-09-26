@@ -42,8 +42,8 @@ pageClass: config-reference-page
 | `"recall_engine.stopwords_path"` | `"string"` | `""` | - | 自定义停用词文件路径<br><small>BM25 分词使用的自定义停用词列表文件路径。留空使用默认中文停用词表。一行一个停用词。</small> |
 | `"recall_engine.query_rewrite_enabled"` | `"bool"` | `true` | - | 启用语义查询改写 (R1)<br><small>使用 LLM few-shot 将模糊查询（如"上次那个事"）展开为多角度检索词。关闭后回退到硬编码关键词匹配。需要 LLM Provider 可用。</small> |
 | `"recall_engine.privacy_filter_enabled"` | `"bool"` | `true` | - | 启用隐私记忆过滤<br><small>群聊检索时自动过滤来自私聊的机密记忆（privacy_level=confidential），避免私聊秘密在群聊中暴露。</small> |
-| `"recall_engine.testing_effect_async"` | `"bool"` | `true` | - | 测试效应：异步模式<br><small>每次成功召回后异步强化记忆（reinforcement_count+1 + TTL×1.05）。开启后不阻塞检索热路径。</small> |
-| `"recall_engine.testing_effect_top_k"` | `"int"` | `5` | 最小值：`1`<br>最大值：`50` | 测试效应：强化条数上限<br><small>每次召回最多对前 N 条记忆应用测试效应强化。值越大强化范围越广但写压力也越大。</small> |
+| `"recall_engine.testing_effect_async"` | `"bool"` | `true` | - | 成功注入后的测试效应维护：异步模式<br><small>每次成功 injected 后异步强化实际注入的记忆（reinforcement_count+1 + TTL×1.05）。开启后不阻塞注入后的维护调度。</small> |
+| `"recall_engine.testing_effect_top_k"` | `"int"` | `5` | 最小值：`1`<br>最大值：`50` | 成功注入后的测试效应：强化条数上限<br><small>每次成功 injected 后最多对前 N 条实际注入记忆应用测试效应强化。值越大强化范围越广但写压力也越大。</small> |
 | `"recall_engine.injection_budget_chars"` | `"int"` | `0` | 最小值：`0`<br>最大值：`10000` | 注入预算：总字符数上限<br><small>普通记忆注入总字符数硬上限覆盖。0 表示使用已解析高级预设的默认值，不表示无限制。</small> |
 | `"recall_engine.injection_memory_max_chars"` | `"int"` | `0` | 最小值：`0`<br>最大值：`2000` | 注入预算：单条记忆最大字符数<br><small>单条记忆 content 的硬上限覆盖。0 表示使用已解析高级预设的默认值，不表示无限制。</small> |
 | `"recall_engine.injection_metadata_max_chars"` | `"int"` | `0` | 最小值：`0`<br>最大值：`500` | 注入预算：单条记忆元数据最大字符数<br><small>单条记忆元数据的硬上限覆盖。0 表示使用已解析高级预设的默认值，不表示无限制。</small> |

@@ -16,6 +16,8 @@ function deferred<T>() {
 function summary(windowValue: "1h" | "24h" | "7d" | "30d", count = 1): InjectionStrategySummary {
   return {
     window: windowValue,
+    retrieved_count: 0,
+    injected_count: 0,
     decision_count: count,
     payload_chars_p95: 100,
     provider_fallback_rate: 0,

@@ -12,7 +12,7 @@ import type {
   InjectionSummaryWindow,
 } from "@/types/injection";
 
-import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_MOCK_NOW_MS, MOCK_GATE_CONFIG } from "./data";
+import { MEMORIES, GRAPH_NODES, GRAPH_EDGES, PROFILES, KNOWLEDGE_ENTRIES, NOTES, JARGON_CANDIDATES, JARGON_MEANINGS, AFFECTION_DATA, MOOD_TYPES, SOCIAL_RELATIONS, QUALITY_SCORES, QUALITY_ALERTS, DELEGATION_STATUS, EXPRESSION_PATTERNS, EVALUATION_REPORTS, RECALL_TRACE_SAMPLE, DIAGNOSTIC_HEALTH, DIAGNOSTIC_EVENTS, REVIEW_ITEMS, REVIEW_ACTIONS, INJECTION_DECISIONS, INJECTION_LIFECYCLE_COUNTS, INJECTION_MOCK_NOW_MS, MOCK_GATE_CONFIG } from "./data";
 import { createMockConfigServer } from "./configServer";
 import {
   handleEvaluationDatasetImport,
@@ -1500,8 +1500,22 @@ function handleInjectionSummary(params: Record<string, string>): ApiResponse {
     (row) => row.created_at_ms >= INJECTION_MOCK_NOW_MS - INJECTION_WINDOWS_MS[window],
   );
   const utilization = budgetUtilizationPerMille(rows);
+  const lifecycleCutoff = INJECTION_MOCK_NOW_MS - INJECTION_WINDOWS_MS[window];
+  const lifecycleLatestCompleteBucket = INJECTION_MOCK_NOW_MS - 60 * 60 * 1_000;
+  const lifecycleRows = INJECTION_LIFECYCLE_COUNTS.filter((row) => {
+    const bucketMs = Math.floor(row.created_at_ms / (60 * 60 * 1_000)) * (60 * 60 * 1_000);
+    return bucketMs >= lifecycleCutoff && bucketMs <= lifecycleLatestCompleteBucket;
+  });
+  const retrieved_count = lifecycleRows
+    .filter((row) => row.event_kind === "retrieved")
+    .reduce((total, row) => total + row.event_count, 0);
+  const injected_count = lifecycleRows
+    .filter((row) => row.event_kind === "injected")
+    .reduce((total, row) => total + row.event_count, 0);
   return ok({
     window,
+    retrieved_count,
+    injected_count,
     decision_count: rows.length,
     payload_chars_p95: p95(rows.map((row) => row.actual_payload_chars)),
     provider_fallback_rate: rows.length

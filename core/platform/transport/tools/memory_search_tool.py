@@ -3,12 +3,13 @@
 import asyncio
 import json
 from dataclasses import field
-from typing import Any
+from typing import Any, cast
 
 from astrbot.api import logger
 from astrbot.api.event import AstrMessageEvent
 from pydantic.dataclasses import dataclass
 
+from ....features.memory.application.retrieval_timing import RetrievalTimingSink
 from ....features.recall.processors.human_like_formatter import HumanLikeMemoryFormatter
 from ....platform.context_helpers import get_persona_id
 from ...config.manager import ConfigManager
@@ -154,6 +155,7 @@ class MemorySearchTool(AgentFunctionTool):
 
             limited_k = max(1, min(requested_k_int, max_k))
 
+            timing_sink = RetrievalTimingSink()
             memories = await self.memory_engine.search_memories(
                 query=cleaned_query,
                 k=limited_k,
@@ -165,6 +167,8 @@ class MemorySearchTool(AgentFunctionTool):
                 # 工具自身不猜 session/persona 为 canonical graph scope；
                 # 无可信 scope 时图路显式跳过，但文档路仍受用户证据门约束。
                 require_user_evidence=True,
+                lifecycle_source="agent",
+                timing_sink=timing_sink,
             )
 
             serialized_results = []
@@ -195,7 +199,7 @@ class MemorySearchTool(AgentFunctionTool):
                 else []
             )
 
-            return _json_result(
+            result_text = _json_result(
                 {
                     "query": cleaned_query,
                     "applied_filters": {
@@ -207,6 +211,41 @@ class MemorySearchTool(AgentFunctionTool):
                     "formatted_recall": formatted_recall,
                 }
             )
+            successful_ids = tuple(
+                dict.fromkeys(
+                    item["id"]
+                    for item in serialized_results
+                    if type(item.get("id")) is int and item["id"] > 0
+                )
+            )
+            if successful_ids:
+                timing = timing_sink.snapshot()
+                origin = (
+                    "cache"
+                    if timing.get("cache_hit") is True
+                    else "fresh"
+                    if "retrieval_total_ms" in timing
+                    else "none"
+                )
+                maintain = cast(
+                    Any,
+                    getattr(self.memory_engine, "record_successful_injection", None),
+                )
+                if callable(maintain):
+                    try:
+                        await cast(
+                            Any,
+                            maintain(
+                                successful_ids,
+                                source="agent",
+                                origin=origin,
+                            ),
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.debug("记忆工具成功注入维护失败")
+            return result_text
         except asyncio.CancelledError:
             raise
         except Exception as e:

@@ -217,6 +217,142 @@ class TestMemoryEngineDelegation:
         assert result == expected
 
 
+class TestSuccessfulInjectionMaintenance:
+    """Successful injected IDs drive maintenance, not retrieval candidates."""
+
+    @staticmethod
+    def _make_engine() -> tuple[MemoryEngine, AsyncMock, AsyncMock, MagicMock]:
+        engine = MemoryEngine(
+            db_path=":memory:",
+            faiss_db=MagicMock(),
+            config={
+                "testing_effect_async": False,
+                "testing_effect_top_k": 2,
+            },
+        )
+        update_access = AsyncMock(return_value=3)
+        reinforce = AsyncMock(return_value=True)
+        recorder = MagicMock()
+        engine._maintenance.update_access_times_batch = update_access
+        engine.reinforce_recall_state = reinforce
+        engine.set_lifecycle_recorder(recorder)
+        return engine, update_access, reinforce, recorder
+
+    @pytest.mark.asyncio
+    async def test_successful_injection_deduplicates_access_and_limits_reinforcement(
+        self,
+    ) -> None:
+        engine, update_access, reinforce, recorder = self._make_engine()
+
+        assert (
+            await engine.record_successful_injection(
+                (3, 3, 4, 5), source="passive", origin="fresh"
+            )
+            == 3
+        )
+
+        update_access.assert_awaited_once_with([3, 4, 5], "passive")
+        assert [call.args for call in reinforce.await_args_list] == [(3,), (4,)]
+        recorder.record_injected.assert_called_once_with(
+            3, source="passive", origin="fresh"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ordinary_maintenance_failures_do_not_hide_successful_injection(
+        self,
+    ) -> None:
+        engine, update_access, reinforce, recorder = self._make_engine()
+        update_access.side_effect = RuntimeError("maintenance unavailable")
+        reinforce.side_effect = RuntimeError("reinforcement unavailable")
+
+        assert (
+            await engine.record_successful_injection(
+                (7, 8), source="passive", origin="fresh"
+            )
+            == 2
+        )
+
+        update_access.assert_awaited_once_with([7, 8], "passive")
+        assert [call.args for call in reinforce.await_args_list] == [(7,), (8,)]
+        recorder.record_injected.assert_called_once_with(
+            2, source="passive", origin="fresh"
+        )
+
+    @pytest.mark.asyncio
+    async def test_access_maintenance_cancellation_propagates(self) -> None:
+        engine, update_access, reinforce, recorder = self._make_engine()
+        update_access.side_effect = asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await engine.record_successful_injection((3, 3, 4, 5))
+
+        update_access.assert_awaited_once_with([3, 4, 5], "passive")
+        reinforce.assert_not_awaited()
+        recorder.record_injected.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("memory_ids", "source", "origin"),
+        [
+            ((), "passive", "fresh"),
+            ((3,), "invalid", "fresh"),
+            ((3,), "passive", "rollback"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_empty_invalid_or_rollback_input_is_ignored(
+        self, memory_ids: tuple[int, ...], source: str, origin: str
+    ) -> None:
+        engine, update_access, reinforce, recorder = self._make_engine()
+
+        assert (
+            await engine.record_successful_injection(
+                memory_ids, source=source, origin=origin
+            )
+            == 0
+        )
+
+        update_access.assert_not_awaited()
+        reinforce.assert_not_awaited()
+        recorder.record_injected.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_async_testing_effect_uses_tracked_task_without_changing_count(
+        self,
+    ) -> None:
+        engine = MemoryEngine(
+            db_path=":memory:",
+            faiss_db=MagicMock(),
+            config={"testing_effect_async": True, "testing_effect_top_k": 2},
+        )
+        engine._maintenance.update_access_times_batch = AsyncMock(return_value=3)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def reinforce(memory_id: int) -> bool:
+            started.set()
+            await release.wait()
+            return memory_id > 0
+
+        engine.reinforce_recall_state = reinforce
+        recorder = MagicMock()
+        engine.set_lifecycle_recorder(recorder)
+
+        assert (
+            await engine.record_successful_injection(
+                (3, 4, 5), source="agent", origin="cache"
+            )
+            == 3
+        )
+        recorder.record_injected.assert_called_once_with(
+            3, source="agent", origin="cache"
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert len(engine._pending_tasks) == 1
+        release.set()
+        await asyncio.gather(*tuple(engine._pending_tasks))
+        assert len(engine._pending_tasks) == 0
+
+
 class TestMemoryEngineClose:
     """Tests for close() lifecycle method."""
 

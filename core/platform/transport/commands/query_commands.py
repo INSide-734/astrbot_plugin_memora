@@ -33,10 +33,25 @@ class _QueryMemoryEngine(Protocol):
         query: str,
         k: int = 5,
         session_id: str | None = None,
-        *,
+        persona_id: str | None = None,
+        emotion_context: list[str] | None = None,
+        recall_type: str = "passive",
+        chain_depth: int = 0,
+        recall_strategy: Any | None = None,
+        memory_types: list[str] | None = None,
         chat_type: str = "private",
+        query_intent: Any | None = None,
         user_id: str | None = None,
+        trace_debug: bool = False,
+        debug_trace: list[dict[str, Any]] | None = None,
+        reference_time: datetime | None = None,
+        query_plan: Any | None = None,
+        timing_sink: Any | None = None,
+        deadline_monotonic: float | None = None,
         include_mark_write: bool = False,
+        query_scope: Any | None = None,
+        require_user_evidence: bool = False,
+        lifecycle_source: str | None = None,
     ) -> Sequence[Any]:
         """按已校验作用域检索记忆。"""
 
@@ -244,14 +259,16 @@ class QueryCommandMixin:
             if user_id is None:
                 yield event.plain_result(t("search.no_results", query=query))
                 return
-            results = await self.memory_engine.search_memories(
-                query=query.strip(),
-                k=k,
-                session_id=session_id,
-                chat_type=chat_type,
-                user_id=user_id,
-                include_mark_write=include_mark_write,
-            )
+            search_kwargs = {
+                "query": query.strip(),
+                "k": k,
+                "session_id": session_id,
+                "chat_type": chat_type,
+                "user_id": user_id,
+                "include_mark_write": include_mark_write,
+                "lifecycle_source": "debug",
+            }
+            results = await self.memory_engine.search_memories(**search_kwargs)
 
             if not results:
                 yield event.plain_result(t("search.no_results", query=query))

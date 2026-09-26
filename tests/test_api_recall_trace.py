@@ -668,6 +668,7 @@ async def test_capture_explainable_recall_requests_optimizer_debug_trace():
     )
 
     assert engine.calls[-1]["trace_debug"] is True
+    assert engine.calls[-1]["lifecycle_source"] == "debug"
     assert engine.optimizer.received_debug_trace is not None
     assert trace["metadata"]["debug_trace_available"] is True
     assert trace["results"][0]["score_contributions"][0] == {

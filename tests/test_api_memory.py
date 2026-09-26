@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from tests.fact_evidence_helpers import candidate_evidence_metadata
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -2856,6 +2858,101 @@ class TestMemoryStatsRecallValidation:
         assert result["data"]["query"] == "test query"
         assert result["data"]["k"] == 5
         assert "elapsed_time_ms" in result["data"]
+
+    @pytest.mark.asyncio
+    async def test_recall_records_one_evidence_qualified_lifecycle_event(self) -> None:
+        from core.platform.transport.page_api.memory_stats_recall_api import (
+            MemoryStatsRecallApiMixin,
+        )
+
+        class Result:
+            def __init__(self, doc_id, content, metadata):
+                self.doc_id = doc_id
+                self.content = content
+                self.final_score = 0.9
+                self.metadata = metadata
+                self.score_breakdown = {}
+
+        def metadata_with_evidence(content: str) -> dict:
+            return {
+                **candidate_evidence_metadata(content),
+                "memory_status": "active",
+                "scope_key": "session:test",
+                "privacy_level": "public",
+                "source_provenance_complete": True,
+            }
+
+        results = [
+            Result(1, "trusted fact", metadata_with_evidence("trusted fact")),
+            Result(2, "stale candidate", metadata_with_evidence("stale candidate")),
+            Result(3, "unverified display result", {"memory_status": "active"}),
+            Result(4, "mark write", metadata_with_evidence("mark write")),
+        ]
+        canonical: dict[int, dict | None] = {
+            1: {
+                "id": 1,
+                "text": "trusted fact",
+                "metadata": metadata_with_evidence("trusted fact"),
+            },
+            2: {
+                "id": 2,
+                "text": "current fact",
+                "metadata": metadata_with_evidence("stale candidate"),
+            },
+            3: {
+                "id": 3,
+                "text": "unverified display result",
+                "metadata": {
+                    "memory_status": "active",
+                    "scope_key": "session:test",
+                    "privacy_level": "public",
+                    "source_provenance_complete": True,
+                },
+            },
+            4: {
+                "id": 4,
+                "text": "mark write",
+                "metadata": {
+                    **metadata_with_evidence("mark write"),
+                    "gate_disposition": "mark_write",
+                },
+            },
+        }
+
+        class Stub:
+            test_recall = MemoryStatsRecallApiMixin.test_recall
+
+            def _ok(self, data):
+                return {"status": "ok", "data": data}
+
+            def _error(self, message):
+                return {"status": "error", "message": message}
+
+            async def _ensure_plugin_ready(self):
+                self.engine = _recall_engine(results, canonical=canonical)
+                return {"memory_engine": self.engine}, None
+
+        stub = Stub()
+        req = _mock_request()
+        req.get_json = AsyncMock(return_value={"query": "debug query", "k": 5})
+        with patch(
+            "core.platform.transport.page_api.memory_stats_recall_api.request", req
+        ):
+            response = await stub.test_recall()
+
+        assert response["status"] == "ok"
+        assert [item["memory_id"] for item in response["data"]["results"]] == [1, 3]
+        assert response["data"]["dropped_stale_count"] == 2
+        stub.engine.search_memories.assert_awaited_once_with(
+            query="debug query", k=5, session_id=None, persona_id=None
+        )
+        stub.engine.record_retrieved_candidates.assert_called_once()
+        lifecycle_results = stub.engine.record_retrieved_candidates.call_args.args[0]
+        assert [item["memory_id"] for item in lifecycle_results] == [1]
+        assert stub.engine.record_retrieved_candidates.call_args.kwargs == {
+            "source": "debug",
+            "origin": "none",
+        }
 
     @pytest.mark.asyncio
     async def test_recall_clamps_k_and_preserves_session_filter(self) -> None:

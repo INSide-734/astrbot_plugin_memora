@@ -97,6 +97,8 @@ class MemoryEngine(
         self.memory_evolution_store = None
         self.memory_evolution_manager = None
         self._last_write_reason_code = None
+        # 生命周期观测器由组合根在注入组件就绪后绑定；引擎不拥有其存储生命周期。
+        self.lifecycle_recorder: Any | None = None
         # ponytail: 单实例替换串行化；仅在吞吐瓶颈实测后再按 source 分锁。
         self._replacement_write_lock = asyncio.Lock()
         self._last_debug_trace: list[dict[str, Any]] = []
@@ -107,8 +109,6 @@ class MemoryEngine(
             search_memories_cb=self.search_memories,
             get_memory_cb=self.get_memory,
             update_memory_cb=self.update_memory,
-            create_tracked_task_cb=self._create_tracked_task,
-            reinforce_recall_state_cb=self.reinforce_recall_state,
             apply_interference_decay_cb=self.apply_interference_decay,
         )
         self.topic_catalog_store = TopicCatalogStore(db_connection=None)
@@ -145,6 +145,50 @@ class MemoryEngine(
         """返回最近一次同步 canonical 写入的稳定原因码。"""
 
         return self._last_write_reason_code
+
+    def set_lifecycle_recorder(self, recorder: Any | None) -> None:
+        """绑定可选生命周期观测端口，不在引擎内创建或关闭观测存储。"""
+
+        self.lifecycle_recorder = recorder
+
+    def record_retrieved_candidates(
+        self,
+        results: Any,
+        source: str = "passive",
+        origin: str = "none",
+    ) -> int:
+        source_value = getattr(source, "value", source)
+        origin_value = getattr(origin, "value", origin)
+        if source_value not in {"passive", "agent", "debug"}:
+            return 0
+        if origin_value not in {"fresh", "cache", "none"}:
+            return 0
+        try:
+            unique_ids = {
+                value
+                for result in results
+                for value in (
+                    result.get("id", result.get("doc_id"))
+                    if isinstance(result, dict)
+                    else getattr(result, "doc_id", None),
+                )
+                if type(value) is int and value > 0
+            }
+        except TypeError:
+            return 0
+        if not unique_ids:
+            return 0
+        recorder = getattr(self, "lifecycle_recorder", None)
+        record = getattr(recorder, "record_retrieved", None)
+        if not callable(record):
+            return 0
+        try:
+            record(len(unique_ids), source=source_value, origin=origin_value)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return 0
+        return len(unique_ids)
 
     async def find_replacement_memory_id(self, old_id: int) -> int | None:
         """按替换账本确认当前新 owner；未收敛、已删或无法证明时不返回 ID。"""
@@ -189,6 +233,88 @@ class MemoryEngine(
         return await self._maintenance.update_access_times_batch(
             memory_ids, recall_type
         )
+
+    async def record_successful_injection(
+        self,
+        memory_ids: Any,
+        source: str = "passive",
+        origin: str = "none",
+    ) -> int:
+        source_value = getattr(source, "value", source)
+        origin_value = getattr(origin, "value", origin)
+        if source_value not in {"passive", "agent"}:
+            return 0
+        if origin_value not in {"fresh", "cache", "none"}:
+            return 0
+        try:
+            unique_ids = tuple(
+                dict.fromkeys(
+                    value for value in memory_ids if type(value) is int and value > 0
+                )
+            )
+        except TypeError:
+            return 0
+        if not unique_ids:
+            return 0
+
+        recorder = getattr(self, "lifecycle_recorder", None)
+        record = getattr(recorder, "record_injected", None)
+        try:
+            await self.update_access_times_batch(list(unique_ids), "passive")
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+
+        try:
+            top_k = max(
+                0,
+                int(
+                    self.config.get(
+                        "testing_effect_top_k",
+                        self.config.get("recall_engine.testing_effect_top_k", 5),
+                    )
+                ),
+            )
+        except (TypeError, ValueError):
+            top_k = 5
+        use_async = bool(
+            self.config.get(
+                "testing_effect_async",
+                self.config.get("recall_engine.testing_effect_async", True),
+            )
+        )
+
+        async def reinforce() -> None:
+            for memory_id in unique_ids[:top_k]:
+                try:
+                    await self.reinforce_recall_state(memory_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pass
+
+        if top_k:
+            if use_async:
+                task = reinforce()
+                try:
+                    self._create_tracked_task(task)
+                except asyncio.CancelledError:
+                    task.close()
+                    raise
+                except Exception:
+                    task.close()
+            else:
+                await reinforce()
+
+        if callable(record):
+            try:
+                record(len(unique_ids), source=source_value, origin=origin_value)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+        return len(unique_ids)
 
     async def get_session_memories(
         self, session_id: str, limit: int = 50

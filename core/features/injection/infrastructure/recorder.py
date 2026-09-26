@@ -7,8 +7,9 @@ import math
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
+from ...memory.application.write_coordinator import is_connection_fatal
 from ...observability.infrastructure.metrics import (
     INJECTION_BUDGET_DROP_RATIO,
     INJECTION_CANDIDATE_RETENTION_RATIO,
@@ -24,7 +25,14 @@ from ...observability.infrastructure.metrics import (
     INJECTION_STAGE_SECONDS,
     INJECTION_TRUNCATION_RATIO,
 )
-from ..domain.models import InjectionDecisionRecord
+from ..domain.models import (
+    InjectionDecisionRecord,
+    InjectionLifecycleRecord,
+    LifecycleEventKind,
+    LifecycleOrigin,
+    LifecycleSource,
+)
+from .injection_decision_store import LifecycleCommitOutcomeUnknown
 
 if TYPE_CHECKING:
     from .injection_decision_store import InjectionDecisionStore
@@ -36,7 +44,7 @@ _PRESET_RANKS = {"tool_first": 0, "low_cost": 1, "balanced": 2, "quality": 3}
 
 @dataclass(slots=True)
 class RecorderWorkerState:
-    retained: list[InjectionDecisionRecord]
+    retained: list[InjectionDecisionRecord | InjectionLifecycleRecord]
     flush_at: float | None
     batch_retry_at: float
     batch_attempt: int
@@ -88,9 +96,9 @@ class InjectionDecisionRecorder:
         if flush_interval <= 0 or retry_base_delay <= 0:
             raise ValueError("intervals must be positive")
         self.store = store
-        self._queue: asyncio.Queue[InjectionDecisionRecord] = asyncio.Queue(
-            queue_capacity
-        )
+        self._queue: asyncio.Queue[
+            InjectionDecisionRecord | InjectionLifecycleRecord
+        ] = asyncio.Queue(queue_capacity)
         self._queue_capacity = queue_capacity
         self._batch_size = batch_size
         self._flush_interval = flush_interval
@@ -105,7 +113,9 @@ class InjectionDecisionRecorder:
         self._wake_generation = 0
         self._idle = asyncio.Event()
         self._idle.set()
-        self._retained_batch: list[InjectionDecisionRecord] = []
+        self._retained_batch: list[
+            InjectionDecisionRecord | InjectionLifecycleRecord
+        ] = []
         self._cleanup_generation = 0
         self._cleanup_completed_generation = 0
         self._dropped_total = 0
@@ -133,16 +143,7 @@ class InjectionDecisionRecorder:
                 self._failures_total += 1
                 self._safe_failure("closed")
                 return
-            if len(self._retained_batch) + self._queue.qsize() >= self._queue_capacity:
-                if self._retained_batch:
-                    self._retained_batch.pop(0)
-                else:
-                    self._queue.get_nowait()
-                self._queue.task_done()
-                self._count_dropped()
-            self._queue.put_nowait(record)
-            self._idle.clear()
-            self._signal_wake()
+            self._enqueue_record(record)
             self._observe_record(record)
         except Exception:
             # 可观测性故障和有界队列竞争不得影响聊天调用方。
@@ -153,6 +154,79 @@ class InjectionDecisionRecorder:
                 INJECTION_DECISION_QUEUE_SECONDS,
                 max(0.0, self._monotonic() - started),
             )
+
+    def _enqueue_record(
+        self, record: InjectionDecisionRecord | InjectionLifecycleRecord
+    ) -> None:
+        if len(self._retained_batch) + self._queue.qsize() >= self._queue_capacity:
+            if self._retained_batch:
+                self._retained_batch.pop(0)
+            else:
+                self._queue.get_nowait()
+            self._queue.task_done()
+            self._count_dropped()
+        self._queue.put_nowait(record)
+        self._idle.clear()
+        self._signal_wake()
+
+    def record_retrieved(
+        self,
+        count: int,
+        *,
+        source: LifecycleSource | str = LifecycleSource.PASSIVE,
+        origin: LifecycleOrigin | str = LifecycleOrigin.NONE,
+    ) -> None:
+        """非阻塞地记录 retrieved 聚合数量，不接受记忆标识。"""
+        self.record_lifecycle(LifecycleEventKind.RETRIEVED, source, origin, count)
+
+    def record_injected(
+        self,
+        count: int,
+        *,
+        source: LifecycleSource | str = LifecycleSource.PASSIVE,
+        origin: LifecycleOrigin | str = LifecycleOrigin.NONE,
+    ) -> None:
+        """非阻塞地记录 injected 聚合数量，不接受记忆标识。"""
+        self.record_lifecycle(LifecycleEventKind.INJECTED, source, origin, count)
+
+    def record_lifecycle(
+        self,
+        event_kind: LifecycleEventKind | str,
+        source: LifecycleSource | str,
+        origin: LifecycleOrigin | str,
+        count: int,
+    ) -> None:
+        """校验闭集字段后，把纯计数事件加入共享有界队列。"""
+        try:
+            if type(count) is not int or not 1 <= count <= 2**63 - 1:
+                raise ValueError
+            record = InjectionLifecycleRecord(
+                created_at_ms=int(time.time() * 1000),
+                event_kind=LifecycleEventKind(event_kind),
+                source=LifecycleSource(source),
+                origin=LifecycleOrigin(origin),
+                count=count,
+            )
+            if (
+                record.event_kind is LifecycleEventKind.INJECTED
+                and record.source is LifecycleSource.DEBUG
+            ):
+                raise ValueError
+        except (TypeError, ValueError):
+            self._failures_total += 1
+            self._safe_failure("lifecycle_invalid")
+            return
+        if self._closing:
+            self._failures_total += 1
+            self._safe_failure("closed")
+            return
+        try:
+            self._enqueue_record(record)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._failures_total += 1
+            self._safe_failure("enqueue")
 
     def schedule_cleanup(
         self,
@@ -200,12 +274,15 @@ class InjectionDecisionRecorder:
         }
 
     def queued_decision_ids(self) -> list[str]:
-        """返回按处理顺序排列的脱敏决策标识，供确定性测试使用。"""
+        """返回待写入决策的脱敏标识，仅供确定性测试使用。"""
         queued = list(
-            self._queue._queue  # noqa: SLF001 - asyncio.Queue 没有只读快照接口
+            cast(Any, self._queue)._queue
+            # noqa: SLF001 - asyncio.Queue 没有只读快照接口
         )
-        return [row.decision_id for row in self._retained_batch] + [
-            row.decision_id for row in queued
+        return [
+            record.decision_id
+            for record in (*self._retained_batch, *queued)
+            if isinstance(record, InjectionDecisionRecord)
         ]
 
     async def wait_until_idle(self, timeout: float = 5.0) -> None:
@@ -228,13 +305,28 @@ class InjectionDecisionRecorder:
         Raises:
             asyncio.CancelledError: 当前关闭任务被外部取消。
         """
-        if self._closing and self._worker is None:
+        worker = self._worker
+        if (
+            self._closing
+            and worker is None
+            and not self._retained_batch
+            and self._queue.empty()
+            and not self._cleanup_pending()
+        ):
             return
         self._closing = True
         self._signal_wake()
-        worker = self._worker
-        if worker is None:
-            return
+        if worker is None or worker.done():
+            if (
+                not self._retained_batch
+                and self._queue.empty()
+                and not self._cleanup_pending()
+            ):
+                return
+            worker = asyncio.create_task(
+                self._run(), name="memora-injection-decision-recorder"
+            )
+            self._worker = worker
         try:
             await asyncio.wait_for(asyncio.shield(worker), timeout=timeout)
         except asyncio.TimeoutError:
@@ -323,19 +415,29 @@ class InjectionDecisionRecorder:
             return False
         attempted = list(state.retained)
         del state.retained[: len(attempted)]
+        persist_task = asyncio.create_task(self.store.insert_many(attempted))
         try:
-            await self.store.insert_many(attempted)
+            await asyncio.shield(persist_task)
         except asyncio.CancelledError:
-            self._restore_failed_batch(state, attempted)
+            if self._closing:
+                persist_task.cancel()
+                await asyncio.gather(persist_task, return_exceptions=True)
+                # The SQLite operation may have crossed its commit boundary;
+                # replay only decision rows, whose IDs make INSERT OR IGNORE safe.
+                self._restore_failed_batch(state, attempted, retry_lifecycle=False)
+                raise
+            try:
+                await persist_task
+            except asyncio.CancelledError:
+                self._restore_failed_batch(state, attempted, retry_lifecycle=False)
+                raise
+            except Exception as exc:
+                self._handle_persist_failure(state, attempted, exc)
+            else:
+                self._complete_persist(state, attempted)
             raise
-        except Exception:
-            self._restore_failed_batch(state, attempted)
-            self._failures_total += 1
-            self._safe_failure("persist")
-            state.batch_retry_at = self._monotonic() + self._retry_delay(
-                state.batch_attempt
-            )
-            state.batch_attempt += 1
+        except Exception as exc:
+            self._handle_persist_failure(state, attempted, exc)
             return False
         self._complete_persist(state, attempted)
         return True
@@ -348,18 +450,56 @@ class InjectionDecisionRecorder:
             or (state.flush_at is not None and now >= state.flush_at)
         )
 
+    def _handle_persist_failure(
+        self,
+        state: RecorderWorkerState,
+        attempted: list[InjectionDecisionRecord | InjectionLifecycleRecord],
+        exc: Exception,
+    ) -> None:
+        # Only a known pre-commit lock failure may replay aggregate counts;
+        # an ambiguous lifecycle commit must never be replayed.
+        retry_lifecycle = (
+            not isinstance(exc, LifecycleCommitOutcomeUnknown)
+            and "locked" in str(exc).lower()
+            and not is_connection_fatal(exc)
+        )
+        self._restore_failed_batch(state, attempted, retry_lifecycle=retry_lifecycle)
+        self._failures_total += 1
+        self._safe_failure("persist")
+        if state.retained:
+            state.batch_retry_at = self._monotonic() + self._retry_delay(
+                state.batch_attempt
+            )
+            state.batch_attempt += 1
+        else:
+            state.flush_at = None
+            state.batch_attempt = 0
+            state.batch_retry_at = 0.0
+
     def _restore_failed_batch(
         self,
         state: RecorderWorkerState,
-        attempted: list[InjectionDecisionRecord],
+        attempted: list[InjectionDecisionRecord | InjectionLifecycleRecord],
+        *,
+        retry_lifecycle: bool = True,
     ) -> None:
+        if not retry_lifecycle:
+            for record in attempted:
+                if isinstance(record, InjectionLifecycleRecord):
+                    self._queue.task_done()
+                    self._count_dropped()
+            attempted = [
+                record
+                for record in attempted
+                if isinstance(record, InjectionDecisionRecord)
+            ]
         state.retained[:0] = attempted
         self._trim_pending_after_failed_attempt()
 
     def _complete_persist(
         self,
         state: RecorderWorkerState,
-        attempted: list[InjectionDecisionRecord],
+        attempted: list[InjectionDecisionRecord | InjectionLifecycleRecord],
     ) -> None:
         for _ in attempted:
             self._queue.task_done()
@@ -431,7 +571,7 @@ class InjectionDecisionRecorder:
         if self._wake_generation != observed_generation:
             return
         wake_task = asyncio.create_task(self._wake.wait())
-        sleep_task = asyncio.create_task(self._sleep(delay))
+        sleep_task = asyncio.create_task(cast(Any, self._sleep(delay)))
         try:
             done, pending = await asyncio.wait(
                 {wake_task, sleep_task}, return_when=asyncio.FIRST_COMPLETED

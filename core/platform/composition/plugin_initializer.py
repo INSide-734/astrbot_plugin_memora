@@ -333,6 +333,9 @@ class PluginInitializer(InitializerReadinessMixin):
             )
             self.injection_decision_store = components["injection_decision_store"]
             self.injection_decision_recorder = components["injection_decision_recorder"]
+            cast(Any, self.memory_engine).set_lifecycle_recorder(
+                self.injection_decision_recorder
+            )
             self.dedup_metrics_store = components.get("dedup_metrics_store")
             self.diagnostic_event_store = components.get("diagnostic_event_store")
             self.memory_evolution_store = components.get("memory_evolution_store")

@@ -528,6 +528,8 @@
         "decisions": "决策次数",
         "payloadP95": "Payload 字符数 p95",
         "fallbackRate": "Provider 降级率",
+        "retrieved": "已检索记忆",
+        "injected": "已注入记忆",
         "selectedTotal": "选择条数合计",
         "payloadInjected": "已注入载荷",
         "memoryPresent": "含记忆候选",
@@ -540,7 +542,8 @@
         "recent": "最近决策",
         "recentFallbacks": "最近降级",
         "recentErrors": "最近错误",
-        "noEvents": "没有符合条件的最近事件"
+        "noEvents": "没有符合条件的最近事件",
+        "noDecisionEvents": "此窗口暂无注入决策"
       },
       "config": {
         "routing": "路由模式",

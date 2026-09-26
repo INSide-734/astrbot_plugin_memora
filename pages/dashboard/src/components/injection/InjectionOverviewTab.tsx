@@ -247,6 +247,14 @@ export function InjectionOverviewTab({
       value: formatDashboardNumber(data.payload_injected_count, locale),
     },
     {
+      label: t("injection.overview.retrieved"),
+      value: formatDashboardNumber(data.retrieved_count, locale),
+    },
+    {
+      label: t("injection.overview.injected"),
+      value: formatDashboardNumber(data.injected_count, locale),
+    },
+    {
       label: t("injection.overview.memoryPresent"),
       value: formatDashboardNumber(data.memory_present_count, locale),
     },
@@ -359,7 +367,14 @@ export function InjectionOverviewTab({
       </MetricGrid>
 
       {data.decision_count === 0 ? (
-        <StatePanel state="empty" title={t("injection.overview.noEvents")} />
+        <StatePanel
+          state="empty"
+          title={
+            data.retrieved_count === 0 && data.injected_count === 0
+              ? t("injection.overview.noEvents")
+              : t("injection.overview.noDecisionEvents")
+          }
+        />
       ) : (
         <>
           <div className="grid min-w-0 gap-4 xl:grid-cols-2">

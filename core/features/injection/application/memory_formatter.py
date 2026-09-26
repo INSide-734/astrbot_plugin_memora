@@ -204,6 +204,8 @@ def format_memories_for_injection(
 
     未传预算时保留旧字符串返回格式；传入预算时返回文本与统计，并把
     ``total_chars`` 作为包装、metadata、分隔符和换行在内的完整硬上限。
+    预算模式下 ``InjectionStats.retained_indices`` 保留原始候选位置，供执行器
+    在格式过滤和尾部预算裁剪后精确传播成功交付的 canonical ID。
     生产调用必须先经过 ``select_candidates`` 的逐事实来源门与字段清理；
     此处只负责可见字段格式化，不从旧候选或聚合分数推断来源可信度。
     """
@@ -249,8 +251,8 @@ def format_memories_for_injection(
         f"[format_memories_for_injection] 记忆注入标记: 头部='{MEMORY_INJECTION_HEADER}', 尾部='{MEMORY_INJECTION_FOOTER}'"
     )
 
-    formatted_entries: list[tuple[str, bool]] = []
-    for idx, mem in enumerate(memories, 1):
+    formatted_entries: list[tuple[str, bool, int]] = []
+    for memory_index, mem in enumerate(memories):
         try:
             if isinstance(mem, dict):
                 content = mem.get("content", "Content missing")
@@ -296,7 +298,8 @@ def format_memories_for_injection(
                 f", Memory write time: {time_str}" if include_time and time_str else ""
             )
             entry_parts = [
-                f"记忆 #{idx} / Memory #{idx} (Importance: {importance:.2f}){time_part}"
+                f"记忆 #{memory_index + 1} / Memory #{memory_index + 1} "
+                f"(Importance: {importance:.2f}){time_part}"
             ]
 
             metadata_parts: list[str] = []
@@ -379,15 +382,15 @@ def format_memories_for_injection(
                 max_chars=max(0, projection_cap - metadata_chars),
             ):
                 append_metadata(projection_line)
-
             if metadata_parts:
                 entry_parts.insert(1, " | ".join(metadata_parts))
 
             entry = "\n".join(entry_parts)
-            formatted_entries.append((entry, was_truncated))
+            formatted_entries.append((entry, was_truncated, memory_index))
             logger.debug(
-                f"[format_memories_for_injection] 格式化记忆 #{idx}: 重要性={importance:.2f}, "
-                f"得分={score:.2f}, 类型={interaction_type}, 内容长度={len(content)}"
+                f"[format_memories_for_injection] 格式化记忆 #{memory_index + 1}: "
+                f"重要性={importance:.2f}, 得分={score:.2f}, 类型={interaction_type}, "
+                f"内容长度={len(content)}"
             )
         except Exception as e:
             logger.warning(
@@ -404,7 +407,7 @@ def format_memories_for_injection(
         payload_chars = (
             len(header)
             + len(footer)
-            + sum(len(entry) for entry, _ in formatted_entries)
+            + sum(len(entry) for entry, _, _ in formatted_entries)
             + 2 * max(0, retained_count - 1)
         )
         while retained_count and payload_chars > budget.total_chars:
@@ -420,6 +423,9 @@ def format_memories_for_injection(
             result = f"{header}{body}{footer}"
             stats.chars = len(result)
             stats.memory_count = retained_count
+            stats.retained_indices = tuple(
+                formatted_entries[index][2] for index in range(retained_count)
+            )
             stats.truncated_count = sum(
                 formatted_entries[index][1] for index in range(retained_count)
             )
@@ -431,11 +437,12 @@ def format_memories_for_injection(
         stats.dropped_by_budget = len(formatted_entries)
         return ("", stats)
 
-    body = "\n\n".join(entry for entry, _ in formatted_entries)
+    body = "\n\n".join(entry for entry, _, _ in formatted_entries)
     result = f"{header}{body}{footer}"
     stats.chars = len(result)
     stats.memory_count = len(formatted_entries)
-    stats.truncated_count = sum(truncated for _, truncated in formatted_entries)
+    stats.retained_indices = tuple(item[2] for item in formatted_entries)
+    stats.truncated_count = sum(item[1] for item in formatted_entries)
     stats.header_chars = len(header)
     stats.footer_chars = len(footer)
     logger.info(
