@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -51,6 +51,40 @@ class InjectionOutcome(StrEnum):
     EMPTY = "empty"
     FALLBACK = "fallback"
     ERROR = "error"
+
+
+class LifecycleEventKind(StrEnum):
+    """生命周期观测事件类型。"""
+
+    RETRIEVED = "retrieved"
+    INJECTED = "injected"
+
+
+class LifecycleSource(StrEnum):
+    """生命周期观测来源。"""
+
+    PASSIVE = "passive"
+    AGENT = "agent"
+    DEBUG = "debug"
+
+
+class LifecycleOrigin(StrEnum):
+    """生命周期观测的候选来源。"""
+
+    FRESH = "fresh"
+    CACHE = "cache"
+    NONE = "none"
+
+
+@dataclass(frozen=True, slots=True)
+class InjectionLifecycleRecord:
+    """只包含低基数生命周期计数的运行时记录。"""
+
+    created_at_ms: int
+    event_kind: LifecycleEventKind
+    source: LifecycleSource
+    origin: LifecycleOrigin
+    count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +170,7 @@ class InjectionExecutionResult:
     decision_ms: float = 0.0
     format_ms: float = 0.0
     inject_ms: float = 0.0
+    injected_memory_ids: tuple[int, ...] = field(default=(), repr=False, compare=False)
 
 
 @dataclass(frozen=True, slots=True)

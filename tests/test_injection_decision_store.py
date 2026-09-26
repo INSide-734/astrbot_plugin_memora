@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import time
 from dataclasses import FrozenInstanceError
 
 import pytest
 
-from core.features.injection.domain.models import InjectionDecisionRecord
+from core.features.injection.domain.models import (
+    InjectionDecisionRecord,
+    InjectionLifecycleRecord,
+    LifecycleEventKind,
+    LifecycleOrigin,
+    LifecycleSource,
+)
 from core.features.injection.infrastructure.injection_decision_store import (
     INJECTION_DECISION_SORT_COLUMNS,
     DecisionQuery,
@@ -35,6 +42,23 @@ def record(
     }
     values.update(overrides)
     return InjectionDecisionRecord(**values)
+
+
+def lifecycle_record(
+    created_at_ms: int,
+    *,
+    event_kind: LifecycleEventKind = LifecycleEventKind.RETRIEVED,
+    source: LifecycleSource = LifecycleSource.PASSIVE,
+    origin: LifecycleOrigin = LifecycleOrigin.FRESH,
+    count: int = 1,
+) -> InjectionLifecycleRecord:
+    return InjectionLifecycleRecord(
+        created_at_ms=created_at_ms,
+        event_kind=event_kind,
+        source=source,
+        origin=origin,
+        count=count,
+    )
 
 
 SAFE_COLUMNS = {
@@ -365,6 +389,8 @@ async def test_empty_summary_has_complete_zero_shape(tmp_path) -> None:
         summary = await store.summary(window="24h", now_ms=1_000)
         assert summary == {
             "window": "24h",
+            "retrieved_count": 0,
+            "injected_count": 0,
             "decision_count": 0,
             "payload_chars_p95": 0,
             "provider_fallback_rate": 0.0,
@@ -583,5 +609,259 @@ async def test_row_cap_uses_stable_created_at_and_id_order(tmp_path) -> None:
         assert result.deleted_overflow == 1
         page = await store.list_decisions(DecisionQuery())
         assert [item["decision_id"] for item in page.items] == ["b", "c"]
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_counts_upsert_summarize_and_survive_restart(tmp_path) -> None:
+    db_path = tmp_path / "memora.db"
+    now = 40 * 86_400_000
+    store = InjectionDecisionStore(db_path)
+    await store.initialize()
+    await store.insert_lifecycle_many(
+        [
+            lifecycle_record(now - 1_000, count=3),
+            lifecycle_record(now - 500, count=4),
+            lifecycle_record(
+                now - 250,
+                source=LifecycleSource.AGENT,
+                origin=LifecycleOrigin.CACHE,
+                count=2,
+            ),
+            lifecycle_record(
+                now - 100,
+                event_kind=LifecycleEventKind.INJECTED,
+                origin=LifecycleOrigin.NONE,
+                count=5,
+            ),
+        ]
+    )
+    try:
+        summary = await store.summary(window="24h", now_ms=now)
+        assert summary["retrieved_count"] == 9
+        assert summary["injected_count"] == 5
+        assert "adopted" not in summary
+        assert "source" not in summary and "origin" not in summary
+        with sqlite3.connect(db_path) as connection:
+            columns = {
+                row[1]
+                for row in connection.execute(
+                    "PRAGMA table_info(injection_lifecycle_counts)"
+                )
+            }
+        assert columns == {
+            "bucket_ms",
+            "event_kind",
+            "source",
+            "origin",
+            "event_count",
+        }
+    finally:
+        await store.close()
+
+    reopened = InjectionDecisionStore(db_path)
+    await reopened.initialize()
+    try:
+        assert await reopened.lifecycle_summary(window="24h", now_ms=now) == {
+            "retrieved_count": 9,
+            "injected_count": 5,
+        }
+        assert (await reopened.summary(window="24h", now_ms=now))["decision_count"] == 0
+    finally:
+        await reopened.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_lifecycle_upserts_do_not_lose_counts(tmp_path) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    now = 40 * 86_400_000
+    try:
+        await asyncio.gather(
+            *(
+                store.insert_lifecycle_many([lifecycle_record(now, count=2)])
+                for _ in range(40)
+            )
+        )
+        assert await store.lifecycle_summary(window="24h", now_ms=now + 3_600_000) == {
+            "retrieved_count": 80,
+            "injected_count": 0,
+        }
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_validation_and_retention_are_fail_closed(tmp_path) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    now = 40 * 86_400_000
+    try:
+        for invalid in (
+            lifecycle_record(now, count=0),
+            lifecycle_record(now, count=-1),
+            lifecycle_record(now, count=True),
+            lifecycle_record(now, count=2**63),
+        ):
+            with pytest.raises(ValueError):
+                await store.insert_lifecycle_many([invalid])
+        with pytest.raises(ValueError, match="debug source cannot record injected"):
+            await store.insert_many(
+                [
+                    record("must-not-persist", now),
+                    lifecycle_record(
+                        now,
+                        event_kind=LifecycleEventKind.INJECTED,
+                        source=LifecycleSource.DEBUG,
+                    ),
+                ]
+            )
+        assert (await store.list_decisions(DecisionQuery())).total == 0
+        await store.insert_lifecycle_many(
+            [
+                lifecycle_record(now - 31 * 86_400_000, count=3),
+                lifecycle_record(now - 29 * 86_400_000, count=7),
+                lifecycle_record(
+                    now - 28 * 86_400_000,
+                    source=LifecycleSource.AGENT,
+                    origin=LifecycleOrigin.CACHE,
+                    count=2,
+                ),
+            ]
+        )
+        result = await store.cleanup(retention_days=30, max_rows=0, now_ms=now)
+        assert result.deleted_expired == 0
+        assert result.deleted_overflow == 0
+        assert result.deleted_lifecycle == 1
+        assert await store.lifecycle_summary(window="30d", now_ms=now) == {
+            "retrieved_count": 9,
+            "injected_count": 0,
+        }
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_summary_only_counts_complete_hourly_buckets(tmp_path) -> None:
+    hour = 3_600_000
+    day = 86_400_000
+    now = 40 * day + hour // 2
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        await store.insert_lifecycle_many(
+            [
+                lifecycle_record(now - day + 1, count=100),  # 起始小时只覆盖一半。
+                lifecycle_record(now - day + hour, count=2),
+                lifecycle_record(now - hour, count=3),
+                lifecycle_record(now - 1, count=200),  # 当前小时尚未结束。
+            ]
+        )
+        assert await store.lifecycle_summary(window="24h", now_ms=now) == {
+            "retrieved_count": 5,
+            "injected_count": 0,
+        }
+        assert await store.lifecycle_summary(window="1h", now_ms=now) == {
+            "retrieved_count": 0,
+            "injected_count": 0,
+        }
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_retention_preserves_overlapping_bucket(tmp_path) -> None:
+    hour = 3_600_000
+    day = 86_400_000
+    now = 40 * day + hour // 2
+    cutoff = now - 30 * day
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        await store.insert_lifecycle_many(
+            [
+                lifecycle_record(cutoff - hour, count=1),
+                lifecycle_record(cutoff + 1, count=2),
+                lifecycle_record(cutoff + hour, count=3),
+            ]
+        )
+        result = await store.cleanup(retention_days=30, max_rows=0, now_ms=now)
+        assert result.deleted_lifecycle == 1
+        rows = await store._fetch_all(
+            "SELECT bucket_ms, event_count FROM injection_lifecycle_counts "
+            "ORDER BY bucket_ms"
+        )
+        assert rows == [
+            {"bucket_ms": (cutoff // hour) * hour, "event_count": 2},
+            {"bucket_ms": (cutoff // hour + 1) * hour, "event_count": 3},
+        ]
+        assert (await store.lifecycle_summary(window="30d", now_ms=now))[
+            "retrieved_count"
+        ] == 3
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_summary_includes_only_exactly_closed_boundary_buckets(
+    tmp_path,
+) -> None:
+    hour = 3_600_000
+    day = 86_400_000
+    now = 40 * day
+    cutoff = now - day
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        await store.insert_lifecycle_many(
+            [
+                lifecycle_record(cutoff - hour, count=100),
+                lifecycle_record(cutoff, count=11),
+                lifecycle_record(now - hour, count=3),
+                lifecycle_record(now, count=200),
+                lifecycle_record(now + hour, count=300),
+            ]
+        )
+        assert await store.lifecycle_summary(window="24h", now_ms=now) == {
+            "retrieved_count": 14,
+            "injected_count": 0,
+        }
+        assert await store.lifecycle_summary(window="1h", now_ms=now) == {
+            "retrieved_count": 3,
+            "injected_count": 0,
+        }
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_retention_deletes_bucket_ending_at_exact_cutoff(
+    tmp_path,
+) -> None:
+    hour = 3_600_000
+    day = 86_400_000
+    now = 40 * day
+    cutoff = now - 30 * day
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        await store.insert_lifecycle_many(
+            [
+                lifecycle_record(cutoff - hour, count=1),
+                lifecycle_record(cutoff, count=2),
+                lifecycle_record(cutoff + hour, count=3),
+            ]
+        )
+        result = await store.cleanup(retention_days=30, max_rows=0, now_ms=now)
+        assert result.deleted_lifecycle == 1
+        rows = await store._fetch_all(
+            "SELECT bucket_ms, event_count FROM injection_lifecycle_counts "
+            "ORDER BY bucket_ms"
+        )
+        assert rows == [
+            {"bucket_ms": cutoff, "event_count": 2},
+            {"bucket_ms": cutoff + hour, "event_count": 3},
+        ]
     finally:
         await store.close()

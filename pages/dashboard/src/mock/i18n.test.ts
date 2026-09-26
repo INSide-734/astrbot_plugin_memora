@@ -161,13 +161,14 @@ const INJECTION_REQUIRED_KEYS = [
   "injection.overview.currentMode", "injection.overview.currentPreset",
   "injection.overview.effectiveDelivery", "injection.overview.decisions",
   "injection.overview.payloadP95", "injection.overview.fallbackRate",
+  "injection.overview.retrieved", "injection.overview.injected",
   "injection.overview.selectedTotal", "injection.overview.droppedTotal",
   "injection.overview.payloadInjected", "injection.overview.memoryPresent",
   "injection.overview.budgetUtilization",
   "injection.overview.presetDistribution", "injection.overview.presetChartSummary",
   "injection.overview.costTrend", "injection.overview.costChartSummary",
   "injection.overview.recent", "injection.overview.recentFallbacks",
-  "injection.overview.recentErrors", "injection.overview.noEvents",
+  "injection.overview.recentErrors", "injection.overview.noEvents", "injection.overview.noDecisionEvents",
   "injection.config.routing", "injection.config.presetComparison",
   "injection.config.delivery", "injection.config.advanced",
   "injection.config.retention", "injection.preset.name",
@@ -260,6 +261,8 @@ const INJECTION_EXACT_COPY = [
   ["injection.reason.INVALID_CONFIG_FALLBACK", "非法配置安全回退", "Invalid configuration fallback", "Резерв из-за неверной конфигурации"],
   ["injection.reason.NO_USEFUL_CANDIDATES", "没有有效候选", "No useful candidates", "Нет полезных кандидатов"],
   ["injection.reason.BUDGET_EXHAUSTED", "注入预算耗尽", "Injection budget exhausted", "Бюджет внедрения исчерпан"],
+  ["injection.overview.retrieved", "已检索记忆", "Retrieved memories", "Извлечённые записи"],
+  ["injection.overview.injected", "已注入记忆", "Injected memories", "Внедрённые записи"],
 ] as const;
 
 const KNOWN_RELATION_TYPES = [

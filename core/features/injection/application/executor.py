@@ -238,6 +238,7 @@ class InjectionExecutor:
                     inject_ms=(time.perf_counter() - inject_started) * 1000.0,
                 )
 
+        successful_ids = self._successful_memory_ids(selected, stats)
         return self._result(
             InjectionOutcome.FALLBACK
             if fallback_applied
@@ -252,6 +253,7 @@ class InjectionExecutor:
             actual_resolved_delivery=delivery,
             format_ms=format_ms,
             inject_ms=(time.perf_counter() - inject_started) * 1000.0,
+            injected_memory_ids=successful_ids,
         )
 
     @staticmethod
@@ -280,6 +282,42 @@ class InjectionExecutor:
             effective_budget_chars=effective_budget,
             **values,
         )
+
+    @staticmethod
+    def _successful_memory_ids(
+        selected: list[dict[str, Any]], stats: InjectionStats
+    ) -> tuple[int, ...]:
+        """只解析 formatter 明确保留的原始候选位置，缺少映射时拒绝维护 ID。"""
+        retained_indices = stats.retained_indices
+        if (
+            type(stats.memory_count) is not int
+            or stats.memory_count <= 0
+            or not retained_indices
+            or len(retained_indices) != stats.memory_count
+        ):
+            return ()
+        if any(
+            type(index) is not int or index < 0 or index >= len(selected)
+            for index in retained_indices
+        ) or len(set(retained_indices)) != len(retained_indices):
+            return ()
+
+        ids: list[int] = []
+        for index in retained_indices:
+            candidate = selected[index]
+            if not isinstance(candidate, dict):
+                continue
+            value = next(
+                (
+                    candidate.get(key)
+                    for key in ("id", "doc_id", "memory_id")
+                    if key in candidate
+                ),
+                None,
+            )
+            if type(value) is int and value > 0:
+                ids.append(value)
+        return tuple(dict.fromkeys(ids))
 
     def _build_verified_payload(
         self,
@@ -363,7 +401,10 @@ class InjectionExecutor:
                 ),
                 content_level=decision.content_level,
             )
-            memory_payload, stats = formatted
+            if isinstance(formatted, tuple):
+                memory_payload, stats = formatted
+            else:
+                memory_payload, stats = formatted, InjectionStats()
             if memory_payload:
                 append_layer(memory_payload)
 

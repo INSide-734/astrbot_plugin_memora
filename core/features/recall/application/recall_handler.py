@@ -431,7 +431,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                             event=event,
                         )
                     )
-                    injected_count = result.selected_count
+                    injected_count = len(result.injected_memory_ids)
                     injection_format_ms = result.format_ms
                     injection_inject_ms = result.inject_ms
                     injection_chars = result.actual_payload_chars
@@ -481,6 +481,14 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                     deadline_monotonic=timing_context.deadline_monotonic,
                     query_scope=graph_query_scope,
                 )
+
+                retrieval_timing = timing_context.retrieval.snapshot()
+                lifecycle_origin = "none"
+                if not spontaneous:
+                    if retrieval_timing.get("cache_hit") is True:
+                        lifecycle_origin = "cache"
+                    elif "retrieval_total_ms" in retrieval_timing:
+                        lifecycle_origin = "fresh"
                 observability.report_debug_event(
                     "recall_stage",
                     component="recall",
@@ -517,6 +525,20 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                     count=len(prospective or []),
                 )
                 memories = self._safe_candidates(ordinary_candidates)
+                record_retrieved = getattr(
+                    self._memory_engine, "record_retrieved_candidates", None
+                )
+                if callable(record_retrieved):
+                    try:
+                        record_retrieved(
+                            memories,
+                            source="passive",
+                            origin=lifecycle_origin,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.debug("[召回流程] retrieved 生命周期观测失败")
                 if self._identity_enricher is not None:
                     memories = await self._identity_enricher.enrich(
                         memories,
@@ -574,10 +596,12 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                         event=event,
                         required_facets=query_plan.required_facets,
                         cognitive_format_ms=format_ms,
+                        lifecycle_source="passive",
+                        lifecycle_origin=lifecycle_origin,
                     )
                 )
                 await self._maybe_propose_reconsolidation(memories, actual_query)
-                injected_count = result.selected_count
+                injected_count = len(result.injected_memory_ids)
                 injection_format_ms = result.format_ms
                 injection_inject_ms = result.inject_ms
                 injection_chars = result.actual_payload_chars

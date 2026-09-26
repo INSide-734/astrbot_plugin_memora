@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import json
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from ...memory.infrastructure.base_store import BaseStore
-from ..domain.models import InjectionDecisionRecord
+from ..domain.models import (
+    InjectionDecisionRecord,
+    InjectionLifecycleRecord,
+    LifecycleEventKind,
+    LifecycleOrigin,
+    LifecycleSource,
+)
 
 _DAY_MS = 86_400_000
 _HOUR_MS = 3_600_000
@@ -22,6 +29,13 @@ _WINDOW_MS = {
     "7d": 7 * _DAY_MS,
     "30d": 30 * _DAY_MS,
 }
+
+_MAX_SQLITE_INTEGER = 2**63 - 1
+
+
+class LifecycleCommitOutcomeUnknown(RuntimeError):
+    """A lifecycle-containing commit may have succeeded despite its error."""
+
 
 _COLUMNS = (
     "decision_id",
@@ -55,6 +69,13 @@ _COLUMNS = (
 _SELECT_COLUMNS = ", ".join(_COLUMNS)
 _LIST_COLUMNS = tuple(column for column in _COLUMNS if column != "reason_codes_json")
 _SELECT_LIST_COLUMNS = ", ".join(_LIST_COLUMNS)
+_LIFECYCLE_UPSERT_SQL = """
+    INSERT INTO injection_lifecycle_counts
+        (bucket_ms, event_kind, source, origin, event_count)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(bucket_ms, event_kind, source, origin)
+    DO UPDATE SET event_count = event_count + excluded.event_count
+"""
 _BUCKET_SUMMARY_SQL = (
     "SELECT (created_at_ms / ?) * ? AS bucket_ms, "
     "COUNT(*) AS decision_count, "
@@ -135,6 +156,7 @@ class CleanupResult:
 
     deleted_expired: int
     deleted_overflow: int
+    deleted_lifecycle: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +218,17 @@ class InjectionDecisionStore(BaseStore):
                 inject_ms REAL NOT NULL
             )
         """)
+        await self._execute("""
+            CREATE TABLE IF NOT EXISTS injection_lifecycle_counts (
+                bucket_ms INTEGER NOT NULL CHECK(bucket_ms >= 0),
+                event_kind TEXT NOT NULL CHECK(event_kind IN ('retrieved', 'injected')),
+                source TEXT NOT NULL CHECK(source IN ('passive', 'agent', 'debug')),
+                origin TEXT NOT NULL CHECK(origin IN ('fresh', 'cache', 'none')),
+                event_count INTEGER NOT NULL
+                    CHECK(event_count > 0 AND typeof(event_count) = 'integer'),
+                PRIMARY KEY (bucket_ms, event_kind, source, origin)
+            )
+        """)
         for sql in (
             "CREATE INDEX IF NOT EXISTS idx_injection_decisions_created ON injection_decisions(created_at_ms DESC, decision_id DESC)",
             "CREATE INDEX IF NOT EXISTS idx_injection_decisions_preset ON injection_decisions(resolved_preset, created_at_ms DESC)",
@@ -237,21 +270,80 @@ class InjectionDecisionStore(BaseStore):
             record.inject_ms,
         )
 
-    async def insert_many(self, records: list[InjectionDecisionRecord]) -> int:
-        """Insert a batch atomically, ignoring already-persisted decision IDs."""
+    @staticmethod
+    def _lifecycle_values(
+        record: InjectionLifecycleRecord,
+    ) -> tuple[int, str, str, str, int]:
+        if type(record) is not InjectionLifecycleRecord:
+            raise ValueError("record must be an InjectionLifecycleRecord")
+        if (
+            type(record.created_at_ms) is not int
+            or not 0 <= record.created_at_ms <= _MAX_SQLITE_INTEGER
+        ):
+            raise ValueError("created_at_ms must be a non-negative SQLite integer")
+        if (
+            type(record.count) is not int
+            or not 1 <= record.count <= _MAX_SQLITE_INTEGER
+        ):
+            raise ValueError("count must be a positive SQLite integer")
+        if not isinstance(record.event_kind, LifecycleEventKind):
+            raise ValueError("event_kind must be a LifecycleEventKind")
+        if not isinstance(record.source, LifecycleSource):
+            raise ValueError("source must be a LifecycleSource")
+        if not isinstance(record.origin, LifecycleOrigin):
+            raise ValueError("origin must be a LifecycleOrigin")
+        if (
+            record.event_kind is LifecycleEventKind.INJECTED
+            and record.source is LifecycleSource.DEBUG
+        ):
+            raise ValueError("debug source cannot record injected lifecycle")
+        return (
+            (record.created_at_ms // _HOUR_MS) * _HOUR_MS,
+            record.event_kind.value,
+            record.source.value,
+            record.origin.value,
+            record.count,
+        )
+
+    async def insert_many(
+        self,
+        records: Sequence[InjectionDecisionRecord | InjectionLifecycleRecord],
+    ) -> int:
+        """Persist a decision/lifecycle batch in one retryable transaction."""
         if not records:
             return 0
 
-        values = [self._record_values(record) for record in records]
+        decision_values: list[tuple[Any, ...]] = []
+        lifecycle_values: list[tuple[int, str, str, str, int]] = []
+        for record in records:
+            if type(record) is InjectionDecisionRecord:
+                decision_values.append(self._record_values(record))
+            elif type(record) is InjectionLifecycleRecord:
+                lifecycle_values.append(self._lifecycle_values(record))
+            else:
+                raise ValueError("unsupported injection telemetry record")
 
         async def operation() -> int:
             if self.connection is None:
                 raise RuntimeError("InjectionDecisionStore is not initialized")
             before = self.connection.total_changes
             try:
-                await self.connection.executemany(self._INSERT_SQL, values)
-                await self.connection.commit()
-            except Exception:
+                if decision_values:
+                    await self.connection.executemany(self._INSERT_SQL, decision_values)
+                if lifecycle_values:
+                    await self.connection.executemany(
+                        _LIFECYCLE_UPSERT_SQL, lifecycle_values
+                    )
+                try:
+                    await self.connection.commit()
+                except Exception as exc:
+                    if lifecycle_values:
+                        # commit 后结果可能未知，阻止写协调器按 locked 重放聚合。
+                        raise LifecycleCommitOutcomeUnknown(
+                            "lifecycle commit outcome unknown"
+                        ) from exc
+                    raise
+            except BaseException:
                 await self.connection.rollback()
                 raise
             return self.connection.total_changes - before
@@ -259,6 +351,13 @@ class InjectionDecisionStore(BaseStore):
         from ...memory.application.write_coordinator import write_transaction
 
         return await write_transaction(operation)
+
+    async def insert_lifecycle_many(
+        self, records: list[InjectionLifecycleRecord]
+    ) -> int:
+        """Persist only lifecycle counts through the shared SQLite transaction."""
+        batch: list[InjectionDecisionRecord | InjectionLifecycleRecord] = list(records)
+        return await self.insert_many(batch)
 
     @staticmethod
     def _where(query: DecisionQuery) -> tuple[str, tuple[Any, ...]]:
@@ -351,6 +450,8 @@ class InjectionDecisionStore(BaseStore):
     def _empty_summary(window: str) -> dict[str, Any]:
         return {
             "window": window,
+            "retrieved_count": 0,
+            "injected_count": 0,
             "decision_count": 0,
             "payload_chars_p95": 0,
             "provider_fallback_rate": 0.0,
@@ -366,6 +467,42 @@ class InjectionDecisionStore(BaseStore):
             "cost_trend": [],
             "recent_events": [],
         }
+
+    async def lifecycle_summary(
+        self, window: str = "24h", now_ms: int | None = None
+    ) -> dict[str, int]:
+        """Sum only whole hourly buckets in the closed window.
+
+        A bucket is counted when its start is at or after the window cutoff
+        and its end is at or before ``now_ms``. Thus a bucket that merely
+        overlaps either boundary is excluded, while a bucket ending exactly
+        at ``now_ms`` or starting exactly at the cutoff is included.
+        """
+        if window not in _WINDOW_MS:
+            raise ValueError("window must be one of 1h, 24h, 7d, 30d")
+        if now_ms is None:
+            import time
+
+            now_ms = int(time.time() * 1000)
+        cutoff_ms = now_ms - _WINDOW_MS[window]
+        rows = await self._fetch_all(
+            "SELECT event_kind, SUM(event_count) AS event_count "
+            "FROM injection_lifecycle_counts "
+            "WHERE bucket_ms >= ? AND bucket_ms <= ? "
+            "GROUP BY event_kind",
+            (cutoff_ms, now_ms - _HOUR_MS),
+        )
+        result = {"retrieved_count": 0, "injected_count": 0}
+        for row in rows:
+            event_kind = row.get("event_kind")
+            value = row.get("event_count")
+            if (
+                event_kind in {"retrieved", "injected"}
+                and type(value) is int
+                and value > 0
+            ):
+                result[f"{event_kind}_count"] = value
+        return result
 
     @classmethod
     def _summarize_buckets(cls, bucket_rows: list[dict[str, Any]]) -> _BucketAggregate:
@@ -440,8 +577,9 @@ class InjectionDecisionStore(BaseStore):
             _BUCKET_SUMMARY_SQL,
             (_HOUR_MS, _HOUR_MS, cutoff_ms),
         )
+        lifecycle = await self.lifecycle_summary(window=window, now_ms=now_ms)
         if not bucket_rows:
-            return self._empty_summary(window)
+            return {**self._empty_summary(window), **lifecycle}
         aggregate = self._summarize_buckets(bucket_rows)
 
         preset_rows = await self._fetch_all(
@@ -460,6 +598,7 @@ class InjectionDecisionStore(BaseStore):
         count = len(aggregate.payload_values)
         return {
             "window": window,
+            **lifecycle,
             "decision_count": count,
             "payload_chars_p95": self._p95(aggregate.payload_values),
             "provider_fallback_rate": aggregate.fallback_count / count,
@@ -491,7 +630,12 @@ class InjectionDecisionStore(BaseStore):
         max_rows: int,
         now_ms: int | None = None,
     ) -> CleanupResult:
-        """Delete expired decisions first, then rows outside the stable newest cap."""
+        """Delete old decisions and lifecycle buckets without partial loss.
+
+        A lifecycle bucket is retained while it intersects the retention
+        cutoff; a bucket ending exactly at the cutoff is eligible for deletion.
+        ``max_rows`` applies only to detailed decision rows, never buckets.
+        """
         if retention_days < 0:
             raise ValueError("retention_days must be non-negative")
         if max_rows < 0:
@@ -506,12 +650,21 @@ class InjectionDecisionStore(BaseStore):
                 raise RuntimeError("InjectionDecisionStore is not initialized")
             try:
                 deleted_expired = 0
+                deleted_lifecycle = 0
                 if retention_days:
+                    cutoff_ms = now_ms - retention_days * _DAY_MS
                     cursor = await self.connection.execute(
                         "DELETE FROM injection_decisions WHERE created_at_ms < ?",
-                        (now_ms - retention_days * _DAY_MS,),
+                        (cutoff_ms,),
                     )
                     deleted_expired = cursor.rowcount
+                    # Delete only buckets whose end is at or before cutoff;
+                    # a bucket intersecting the cutoff remains intact.
+                    cursor = await self.connection.execute(
+                        "DELETE FROM injection_lifecycle_counts WHERE bucket_ms <= ?",
+                        (cutoff_ms - _HOUR_MS,),
+                    )
+                    deleted_lifecycle = cursor.rowcount
                 cursor = await self.connection.execute(
                     "DELETE FROM injection_decisions WHERE decision_id IN ("
                     "SELECT decision_id FROM injection_decisions "
@@ -521,10 +674,10 @@ class InjectionDecisionStore(BaseStore):
                 )
                 deleted_overflow = cursor.rowcount
                 await self.connection.commit()
-            except Exception:
+            except BaseException:
                 await self.connection.rollback()
                 raise
-            return CleanupResult(deleted_expired, deleted_overflow)
+            return CleanupResult(deleted_expired, deleted_overflow, deleted_lifecycle)
 
         from ...memory.application.write_coordinator import write_transaction
 

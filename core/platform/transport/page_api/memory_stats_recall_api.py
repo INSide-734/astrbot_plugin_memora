@@ -8,6 +8,7 @@ from typing import Any
 from astrbot.api import logger
 from quart import request
 
+from ....features.injection.application.selection import metadata_has_user_evidence
 from ....features.memory.domain.revision import revision_is_stale, revision_snapshot
 from ....shared.memory_status import effective_memory_status
 from .shared_helpers import (
@@ -30,6 +31,17 @@ def _canonical_summary(record: dict[str, Any], fallback: str) -> str:
         if isinstance(summary, str) and summary.strip():
             return summary
     return fallback
+
+
+def _has_lifecycle_user_evidence(record: dict[str, Any]) -> bool:
+    """检查最终 canonical 行是否满足召回使用的用户来源证据门。"""
+    metadata = record.get("metadata")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except (TypeError, ValueError):
+            return False
+    return metadata_has_user_evidence(metadata)
 
 
 def _coerce_count(value, default: int = 0) -> int:
@@ -393,6 +405,19 @@ class MemoryStatsRecallApiMixin:
                     "score_breakdown": score_breakdown,
                 }
             )
+        record_retrieved = getattr(memory_engine, "record_retrieved_candidates", None)
+        if callable(record_retrieved):
+            lifecycle_results = [
+                item
+                for item in formatted_results
+                if _has_lifecycle_user_evidence(canonical_records[item["memory_id"]])
+            ]
+            try:
+                record_retrieved(lifecycle_results, source="debug", origin="none")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.debug("[PageAPI] debug retrieved 生命周期观测失败")
 
         return self._ok(
             {

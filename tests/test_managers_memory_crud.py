@@ -6,7 +6,7 @@ import asyncio
 import inspect
 import json
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import aiosqlite
@@ -21,6 +21,7 @@ from core.features.retrieval.rrf_fusion import RRFFusion
 from core.features.retrieval.vector_retriever import VectorRetriever
 from core.shared.recall_strategy import RecallStrategy
 from core.shared.sql import MEMORY_FTS_CREATE_SQL
+from tests.fact_evidence_helpers import candidate_evidence_metadata
 
 
 def _metric_sample_value(
@@ -386,8 +387,11 @@ class TestMemoryEngineSearchMemories:
         """空查询应直接返回空结果。"""
         mock_faiss = MagicMock()
         engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
+        engine.lifecycle_recorder = MagicMock()
         result = await engine.search_memories("")
         assert result == []
+
+        engine.lifecycle_recorder.record_retrieved.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_whitespace_query_returns_empty(self) -> None:
@@ -407,6 +411,55 @@ class TestMemoryEngineSearchMemories:
 
         with pytest.raises(RuntimeError, match="混合检索器未初始化"):
             await engine.search_memories("test query")
+
+    @pytest.mark.asyncio
+    async def test_explicit_retrieved_observation_counts_unique_final_candidates(
+        self,
+    ) -> None:
+        """显式标记的检索只统计最终可见候选的唯一 canonical ID。"""
+        from core.features.retrieval.rrf_fusion import HybridResult
+
+        engine = MemoryEngine(db_path=":memory:", faiss_db=MagicMock())
+        engine.dual_route_retriever = MagicMock()
+        engine.dual_route_retriever.search = AsyncMock(
+            return_value=[
+                HybridResult(
+                    1, 0.9, 0.9, None, None, "one", {"memory_status": "active"}
+                ),
+                HybridResult(
+                    1, 0.8, 0.8, None, None, "one", {"memory_status": "active"}
+                ),
+                HybridResult(
+                    2,
+                    0.7,
+                    0.7,
+                    None,
+                    None,
+                    "hidden",
+                    {"gate_disposition": "mark_write"},
+                ),
+            ]
+        )
+        engine._retrieval = MagicMock()
+        engine._retrieval.cache_key.return_value = "cache-key"
+        engine._retrieval.cache_generation = 0
+        engine._snapshot_candidates_for_cache = AsyncMock(return_value=[])
+        engine._retrieval.get_cached.return_value = None
+        engine._retrieval.get_session_cached.return_value = None
+        engine._retrieval.apply_trigger_boost = AsyncMock(side_effect=lambda _q, r: r)
+        engine._retrieval.apply_boosts = AsyncMock(side_effect=lambda r, _e: r)
+        engine._retrieval.set_cached = MagicMock()
+        engine._retrieval.set_session_cached = MagicMock()
+        engine.lifecycle_recorder = MagicMock()
+
+        results = await engine.search_memories("query", lifecycle_source="passive")
+
+        assert [result.doc_id for result in results] == [1, 1]
+        engine.lifecycle_recorder.record_retrieved.assert_called_once_with(
+            1,
+            source="passive",
+            origin="fresh",
+        )
 
     @pytest.mark.asyncio
     async def test_cache_hits_report_retrieval_total_timing(self) -> None:
@@ -434,6 +487,7 @@ class TestMemoryEngineSearchMemories:
         engine._retrieval.get_cached.side_effect = [cached, None]
         engine._retrieval.get_session_cached.return_value = cached
         engine._maintenance = MagicMock()
+        engine.lifecycle_recorder = MagicMock()
         engine._maintenance.update_access_times_batch = AsyncMock(return_value=1)
 
         def _close_background(coro):
@@ -444,16 +498,27 @@ class TestMemoryEngineSearchMemories:
 
         engine._create_tracked_task = MagicMock(side_effect=_close_background)
 
-        assert await engine.search_memories("result cache") == cached
-        assert engine._last_search_timing["cache_hit"] is True
-        assert engine._last_search_timing["retrieval_total_ms"] >= 0.0
-
         assert (
-            await engine.search_memories("session cache", session_id="session")
+            await engine.search_memories("result cache", lifecycle_source="passive")
             == cached
         )
         assert engine._last_search_timing["cache_hit"] is True
         assert engine._last_search_timing["retrieval_total_ms"] >= 0.0
+
+        assert (
+            await engine.search_memories(
+                "session cache", session_id="session", lifecycle_source="passive"
+            )
+            == cached
+        )
+        assert engine._last_search_timing["cache_hit"] is True
+        assert engine._last_search_timing["retrieval_total_ms"] >= 0.0
+        engine._maintenance.update_access_times_batch.assert_not_awaited()
+        assert engine.lifecycle_recorder.record_retrieved.call_count == 2
+        assert all(
+            call.kwargs["origin"] == "cache"
+            for call in engine.lifecycle_recorder.record_retrieved.call_args_list
+        )
 
     @pytest.mark.asyncio
     async def test_search_forwards_memory_types_and_user_id_to_dual_route(self) -> None:
@@ -485,6 +550,7 @@ class TestMemoryEngineSearchMemories:
         engine._retrieval.set_cached = MagicMock()
         engine._retrieval.set_session_cached = MagicMock()
         engine._maintenance = MagicMock()
+        engine.lifecycle_recorder = MagicMock()
         engine._maintenance.update_access_times_batch = AsyncMock(return_value=1)
         engine._maintenance.migrate_session_if_needed = AsyncMock()
 
@@ -512,6 +578,8 @@ class TestMemoryEngineSearchMemories:
         assert kwargs["query_plan"] is query_plan
         session_kwargs = engine._retrieval.set_session_cached.call_args.kwargs
         assert session_kwargs["query_intent"] is query_plan
+        engine._maintenance.update_access_times_batch.assert_not_awaited()
+        engine.lifecycle_recorder.record_retrieved.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_forwards_strategy_and_debug_trace_to_retrieval_path(
@@ -532,8 +600,29 @@ class TestMemoryEngineSearchMemories:
                     bm25_score=None,
                     vector_score=None,
                     content="memory",
+                    metadata=candidate_evidence_metadata("memory"),
+                ),
+                HybridResult(
+                    doc_id=8,
+                    final_score=0.8,
+                    rrf_score=0.8,
+                    bm25_score=None,
+                    vector_score=None,
+                    content="mark-write memory",
+                    metadata={
+                        **candidate_evidence_metadata("mark-write memory"),
+                        "gate_disposition": "mark_write",
+                    },
+                ),
+                HybridResult(
+                    doc_id=9,
+                    final_score=0.7,
+                    rrf_score=0.7,
+                    bm25_score=None,
+                    vector_score=None,
+                    content="assistant-only memory",
                     metadata={},
-                )
+                ),
             ]
         )
         engine._retrieval = MagicMock()
@@ -559,6 +648,7 @@ class TestMemoryEngineSearchMemories:
         engine._retrieval.set_session_cached = MagicMock()
         engine._maintenance = MagicMock()
         engine._maintenance.update_access_times_batch = AsyncMock(return_value=1)
+        engine.lifecycle_recorder = MagicMock()
         engine._maintenance.migrate_session_if_needed = AsyncMock()
 
         def _close_background(coro):
@@ -568,17 +658,29 @@ class TestMemoryEngineSearchMemories:
         engine._create_tracked_task = MagicMock(side_effect=_close_background)
         debug_trace: list[dict] = []
 
-        await engine.search_memories(
+        results = await engine.search_memories(
             "test query",
             k=3,
+            include_mark_write=True,
+            session_id="platform:private:session",
             recall_strategy=RecallStrategy.RELATIONSHIP_REVIEW,
             debug_trace=debug_trace,
+            lifecycle_source="debug",
         )
+        assert [result.doc_id for result in results] == [7, 8, 9]
 
-        search_kwargs = engine.dual_route_retriever.search.await_args.kwargs
+        search_call = cast(Any, engine).dual_route_retriever.search.await_args
+        assert search_call is not None
+        search_kwargs = search_call.kwargs
         assert search_kwargs["strategy"] is RecallStrategy.RELATIONSHIP_REVIEW
         assert debug_trace == engine._last_debug_trace
-        assert debug_trace[0]["doc_id"] == 7
+        engine._maintenance.update_access_times_batch.assert_not_awaited()
+        engine._maintenance.migrate_session_if_needed.assert_not_awaited()
+        engine.lifecycle_recorder.record_retrieved.assert_called_once_with(
+            1,
+            source="debug",
+            origin="fresh",
+        )
 
 
 class TestMemoryEngineDeleteSubResources:

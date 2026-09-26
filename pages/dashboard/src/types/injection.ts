@@ -71,6 +71,8 @@ export interface InjectionCostPoint {
 
 export interface InjectionStrategySummary {
   window: InjectionSummaryWindow;
+  retrieved_count: number;
+  injected_count: number;
   decision_count: number;
   payload_chars_p95: number;
   provider_fallback_rate: number;

@@ -7,7 +7,7 @@ injection_budget.py - 记忆注入 token 预算管理
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from astrbot.api import logger
@@ -45,6 +45,7 @@ class InjectionStats:
     memory_count: int = 0
     truncated_count: int = 0
     dropped_by_budget: int = 0
+    retained_indices: tuple[int, ...] = field(default=(), repr=False, compare=False)
     header_chars: int = 0
     footer_chars: int = 0
     cognitive_chars: int = 0

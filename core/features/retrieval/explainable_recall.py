@@ -59,7 +59,7 @@ async def capture_explainable_recall(
     }
     search_params["query"] = query
     search_params["trace_debug"] = True
-
+    search_params["lifecycle_source"] = "debug"
     started = time.perf_counter()
     results = await engine.search_memories(**search_params)
     total_ms = (time.perf_counter() - started) * 1000

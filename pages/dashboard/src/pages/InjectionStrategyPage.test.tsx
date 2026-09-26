@@ -123,6 +123,8 @@ function summaryFixture(
 ): InjectionStrategySummary {
   return {
     window: "24h",
+    retrieved_count: 9,
+    injected_count: 6,
     decision_count: 1,
     payload_chars_p95: 600,
     provider_fallback_rate: 0,
@@ -452,6 +454,10 @@ describe("InjectionStrategyPage", () => {
     expect(screen.getByText("42")).toBeTruthy();
     expect(screen.getByText("1,180")).toBeTruthy();
     expect(screen.getByText("12.5%")).toBeTruthy();
+    expect(screen.getByText("injection.overview.retrieved").parentElement?.textContent)
+      .toContain("9");
+    expect(screen.getByText("injection.overview.injected").parentElement?.textContent)
+      .toContain("6");
     expect(screen.getByText("12")).toBeTruthy();
     expect(screen.getByText("5")).toBeTruthy();
     expect(screen.getByText("37.5%")).toBeTruthy();
@@ -506,6 +512,8 @@ describe("InjectionStrategyPage", () => {
 
   it("uses an empty StatePanel when the selected window has no decisions", () => {
     hooks.summary.data = summaryFixture({
+      retrieved_count: 0,
+      injected_count: 0,
       decision_count: 0,
       payload_chars_p95: 0,
       provider_fallback_rate: 0,
@@ -525,6 +533,33 @@ describe("InjectionStrategyPage", () => {
     const empty = screen.getByRole("status");
     expect(empty.getAttribute("data-state")).toBe("empty");
     expect(empty.textContent).toContain("injection.overview.noEvents");
+  });
+
+  it("keeps lifecycle activity visible without decision rows", () => {
+    hooks.summary.data = summaryFixture({
+      retrieved_count: 2,
+      injected_count: 1,
+      decision_count: 0,
+      payload_chars_p95: 0,
+      provider_fallback_rate: 0,
+      selected_count_total: 0,
+      dropped_count_total: 0,
+      truncated_count_total: 0,
+      effective_budget_chars_avg: 0,
+      budget_utilization_avg: 0,
+      budget_utilization_p95: 0,
+      preset_distribution: {},
+      cost_trend: [],
+      recent_events: [],
+    });
+
+    renderPage();
+
+    expect(screen.getByText("injection.overview.retrieved")).toBeTruthy();
+    expect(screen.getByText("injection.overview.injected")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain(
+      "injection.overview.noDecisionEvents",
+    );
   });
 
   it("provides text summaries for preset distribution and cost trend charts", () => {

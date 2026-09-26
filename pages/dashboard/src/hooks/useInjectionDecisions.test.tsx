@@ -271,8 +271,9 @@ describe("mock injection strategy API", () => {
     });
     expect(summary).toMatchObject({
       status: "ok",
-      data: { window: "24h" },
+      data: { window: "24h", retrieved_count: 5, injected_count: 4 },
     });
+    expect(summary.data).not.toHaveProperty("adopted");
 
     const pageResponse = await handleApiGet(
       "page/injection-strategy/decisions",
@@ -305,6 +306,9 @@ describe("mock injection strategy API", () => {
     // 1h 窗口含 3 条决策：tool_first 分母为 0 不参与利用率，
     // 另外两条千分比整数除法为 416 与 288。
     expect(hourly.data).toMatchObject({
+      window: "1h",
+      retrieved_count: 3,
+      injected_count: 2,
       decision_count: 3,
       selected_count_total: 3,
       dropped_count_total: 3,
@@ -317,6 +321,9 @@ describe("mock injection strategy API", () => {
     const daily = (await handleApiGet("page/injection-strategy/summary", {
       window: "24h",
     })).data as InjectionStrategySummary;
+    expect(daily.window).toBe("24h");
+    expect(daily.retrieved_count).toBe(5);
+    expect(daily.injected_count).toBe(4);
     expect(daily.decision_count).toBe(49);
     expect(daily.selected_count_total).toBe(69);
     expect(daily.dropped_count_total).toBe(48);

@@ -109,12 +109,12 @@ class RecallEngineConfig(BaseModel):
     chain_topic_expansion_enabled: bool = Field(
         default=True, description="是否启用话题关联多跳扩展"
     )
-    # 测试效应在召回成功后强化记忆访问时间。
+    # 测试效应只在完整 injected 成功后强化实际交付记忆。
     testing_effect_async: bool = Field(
-        default=True, description="测试效应是否异步执行（不阻塞检索热路径）"
+        default=True, description="成功注入后的测试效应是否异步执行"
     )
     testing_effect_top_k: int = Field(
-        default=5, ge=1, le=50, description="测试效应处理的 Top-K 记忆数"
+        default=5, ge=1, le=50, description="成功注入后测试效应处理的 Top-K 记忆数"
     )
     # 注入预算控制每轮请求中注入的记忆上下文总量。
     injection_budget_chars: int = Field(

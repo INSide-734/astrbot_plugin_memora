@@ -60,6 +60,8 @@ class _RecallExecutionInput:
     preflight_short_circuit: bool
     required_facets: tuple[str, ...] = ()
     cognitive_format_ms: float = 0.0
+    lifecycle_source: str | None = None
+    lifecycle_origin: str = "none"
 
 
 class RecallRoutingMixin:
@@ -378,6 +380,31 @@ class RecallRoutingMixin:
                 decision_ms=execution.decision_ms,
                 format_ms=result.format_ms + execution.cognitive_format_ms,
             )
+            if (
+                execution.lifecycle_source in {"passive", "agent"}
+                and result.outcome
+                in {
+                    InjectionOutcome.INJECTED,
+                    InjectionOutcome.FALLBACK,
+                }
+                and result.injected_memory_ids
+            ):
+                maintain = getattr(
+                    self._memory_engine,
+                    "record_successful_injection",
+                    None,
+                )
+                if callable(maintain):
+                    try:
+                        await cast(Any, maintain)(
+                            result.injected_memory_ids,
+                            source=execution.lifecycle_source,
+                            origin=execution.lifecycle_origin,
+                        )
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.debug("[召回流程] 成功注入维护失败")
         self._record_injection_decision(decision, signals, result)
         self._report_injection_result(decision, signals, result)
         return result
@@ -632,6 +659,7 @@ class RecallRoutingMixin:
         return sender_id or None
 
     _config_manager: Any
+    _memory_engine: Any
     _injection_adapter: Any
     _memory_tool_available: bool
     _prompt_protection: Any

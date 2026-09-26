@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable
 from typing import Any
 
 from astrbot.api import logger
@@ -49,7 +48,7 @@ class RetrievalBoostsMixin:
         emotion_context: list[str] | None,
         debug_trace: list[dict[str, Any]] | None = None,
     ) -> list[HybridResult]:
-        """过滤不可见记忆并依次应用测试效应、情感和季节增强。"""
+        """过滤不可见记忆并依次应用情感和季节增强。"""
 
         if not results:
             self._last_mood_delta = 0.0
@@ -69,9 +68,6 @@ class RetrievalBoostsMixin:
 
         # 记忆驱动情绪回路 — 聚合并保存 mood delta
         self._collect_mood_delta(filtered)
-
-        # 测试效应 — 每次成功召回强化记忆
-        await self._apply_testing_effect(filtered)
 
         before_scores = self._score_snapshot(filtered)
         filtered = self._apply_emotion_boost(
@@ -200,29 +196,6 @@ class RetrievalBoostsMixin:
             self._last_mood_delta = 0.0
             self._last_dominant_emotion = "neutral"
 
-    async def _apply_testing_effect(self, results: list[HybridResult]) -> None:
-        """对成功召回的记忆施加测试效应强化。"""
-        reinforce = self._reinforce_recall_state
-        if reinforce is None:
-            return
-
-        top_results = results[: self._testing_effect_top_k]
-        use_async = self._testing_effect_async and self._create_tracked_task is not None
-
-        for r in top_results:
-            try:
-                coro = reinforce(r.doc_id)
-                if use_async:
-                    tracked_task = self._create_tracked_task
-                    assert tracked_task is not None
-                    tracked_task(coro)
-                else:
-                    await coro
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.debug(f"[TestingEffect] 更新 doc={r.doc_id} 失败", exc_info=True)
-
     @property
     def last_mood_delta(self) -> float:
         """最近一次 ``apply_boosts()`` 产生的情感价偏移量。"""
@@ -332,11 +305,7 @@ class RetrievalBoostsMixin:
     _db: Any
     _search_memories: Any
     _get_memory: Any
-    _reinforce_recall_state: Any
     _apply_interference_decay: Any
-    _create_tracked_task: Callable[[Any], Any] | None
-    _testing_effect_async: bool
-    _testing_effect_top_k: int
     _emotion_scoring_mode: str
     _seasonal_recall_enabled: bool
     _last_mood_delta: float

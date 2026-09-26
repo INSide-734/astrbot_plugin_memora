@@ -161,9 +161,13 @@ async def test_catalog_uses_adapter_for_effective_provider_delivery() -> None:
 async def test_summary_validates_window_and_returns_allowlisted_store_result() -> None:
     summary = {
         "window": "24h",
+        "retrieved_count": 8,
+        "injected_count": 5,
         "decision_count": 1,
         "payload_chars_p95": 640,
         "provider_fallback_rate": 0.0,
+        "memory_present_count": 1,
+        "payload_injected_count": 1,
         "selected_count_total": 3,
         "dropped_count_total": 2,
         "truncated_count_total": 1,
@@ -198,6 +202,7 @@ async def test_summary_validates_window_and_returns_allowlisted_store_result() -
             }
         ],
         "raw_rows": ["must be removed"],
+        "adopted": 99,
     }
     store = SimpleNamespace(summary=AsyncMock(return_value=summary))
     api = _make_api(store=store)
@@ -212,6 +217,8 @@ async def test_summary_validates_window_and_returns_allowlisted_store_result() -
     assert valid["status"] == "ok"
     assert set(valid["data"]) == {
         "window",
+        "retrieved_count",
+        "injected_count",
         "decision_count",
         "payload_chars_p95",
         "provider_fallback_rate",
@@ -227,6 +234,9 @@ async def test_summary_validates_window_and_returns_allowlisted_store_result() -
         "cost_trend",
         "recent_events",
     }
+    assert valid["data"]["retrieved_count"] == 8
+    assert valid["data"]["injected_count"] == 5
+    assert "adopted" not in valid["data"]
     assert valid["data"]["selected_count_total"] == 3
     assert valid["data"]["dropped_count_total"] == 2
     assert valid["data"]["truncated_count_total"] == 1
@@ -249,6 +259,8 @@ def test_safe_summary_fallback_keeps_the_stable_zero_contract() -> None:
 
     assert InjectionStrategyApiMixin._safe_summary(None) == {
         "window": "24h",
+        "retrieved_count": 0,
+        "injected_count": 0,
         "decision_count": 0,
         "payload_chars_p95": 0,
         "provider_fallback_rate": 0.0,

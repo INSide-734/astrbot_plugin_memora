@@ -178,6 +178,66 @@ class TestMemorySearchTool:
         assert call_kwargs["user_id"] == "user-001"
 
     @pytest.mark.asyncio
+    async def test_search_success_maintains_only_non_empty_canonical_ids(self):
+        """非空安全工具结果只维护实际返回的正整数 canonical ID。"""
+        mock_engine = MagicMock()
+        mock_engine.search_memories = AsyncMock(
+            return_value=[
+                _make_mock_memory_item(7, "Memory one"),
+                _make_mock_memory_item(7, "Duplicate"),
+                _make_mock_memory_item(0, "Invalid"),
+            ]
+        )
+        mock_engine.record_successful_injection = AsyncMock(return_value=1)
+        tool = MemorySearchTool(
+            context=MagicMock(),
+            config_manager=_make_test_config_manager(
+                use_persona_filtering=False,
+                use_session_filtering=False,
+            ),
+            memory_engine=mock_engine,
+        )
+
+        with patch(
+            "core.platform.transport.tools.memory_search_tool.get_persona_id",
+            new_callable=AsyncMock,
+        ):
+            await _call_text(tool, _make_mock_event(), query="test")
+
+        assert (
+            mock_engine.search_memories.call_args.kwargs["lifecycle_source"] == "agent"
+        )
+        mock_engine.record_successful_injection.assert_awaited_once()
+        assert mock_engine.record_successful_injection.await_args.args == ((7,),)
+        assert (
+            mock_engine.record_successful_injection.await_args.kwargs["source"]
+            == "agent"
+        )
+
+    @pytest.mark.asyncio
+    async def test_search_empty_result_does_not_maintain(self):
+        """空工具结果不发出 injected 维护。"""
+        mock_engine = MagicMock()
+        mock_engine.search_memories = AsyncMock(return_value=[])
+        mock_engine.record_successful_injection = AsyncMock()
+        tool = MemorySearchTool(
+            context=MagicMock(),
+            config_manager=_make_test_config_manager(
+                use_persona_filtering=False,
+                use_session_filtering=False,
+            ),
+            memory_engine=mock_engine,
+        )
+
+        with patch(
+            "core.platform.transport.tools.memory_search_tool.get_persona_id",
+            new_callable=AsyncMock,
+        ):
+            await _call_text(tool, _make_mock_event(), query="nothing")
+
+        mock_engine.record_successful_injection.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_group_recall_passes_privacy_scope_to_engine(self):
         """群聊回忆必须把群聊和发送者作用域传给引擎，交由隐私过滤器拒绝机密记忆。"""
         mock_engine = MagicMock()

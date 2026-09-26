@@ -528,6 +528,8 @@
         "decisions": "Decisions",
         "payloadP95": "Payload characters p95",
         "fallbackRate": "Provider fallback rate",
+        "retrieved": "Retrieved memories",
+        "injected": "Injected memories",
         "selectedTotal": "Selected total",
         "payloadInjected": "Payload injected",
         "memoryPresent": "Memories present",
@@ -540,7 +542,8 @@
         "recent": "Recent decisions",
         "recentFallbacks": "Recent fallbacks",
         "recentErrors": "Recent errors",
-        "noEvents": "No matching recent events"
+        "noEvents": "No matching recent events",
+        "noDecisionEvents": "No injection decisions in this window"
       },
       "config": {
         "routing": "Routing mode",

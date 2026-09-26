@@ -329,6 +329,7 @@ async def test_format_failure_leaves_request_unchanged(monkeypatch) -> None:
     result = await build_executor_case(req)
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
     assert result.error_code == "FORMAT_FAILED"
+    assert result.injected_memory_ids == ()
 
 
 @pytest.mark.asyncio
@@ -352,6 +353,7 @@ async def test_format_failure_reports_global_budgets(monkeypatch) -> None:
     assert result.error_code == "FORMAT_FAILED"
     assert result.configured_budget_chars == 1_270
     assert result.effective_budget_chars == 500
+    assert result.injected_memory_ids == ()
 
 
 @pytest.mark.asyncio
@@ -416,13 +418,14 @@ async def test_assignment_failure_rolls_back_all_request_fields() -> None:
         req,
         _decision(DeliveryMode.FAKE_TOOL_CALL),
         _context(
-            [{"content": "memory", "score": 1.0, "metadata": {}}],
+            [{"id": 404, "content": "memory", "score": 1.0, "metadata": {}}],
             provider=provider,
         ),
     )
     assert result.outcome is InjectionOutcome.ERROR
     assert result.error_code == "MUTATION_FAILED"
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
+    assert result.injected_memory_ids == ()
     assert req.prompt is original_prompt
     assert req.contexts is original_contexts
     assert req.extra_user_content_parts is original_extra_user_content_parts
@@ -515,7 +518,9 @@ async def test_no_provider_fake_tool_falls_back_to_extra_content_with_budgets() 
     result = await InjectionExecutor(InjectionAdapter()).execute(
         req,
         _decision(DeliveryMode.FAKE_TOOL_CALL),
-        _context([{"content": "FALLBACK_PAYLOAD", "score": 1.0, "metadata": {}}]),
+        _context(
+            [{"id": 303, "content": "FALLBACK_PAYLOAD", "score": 1.0, "metadata": {}}]
+        ),
     )
     assert result.outcome is InjectionOutcome.FALLBACK
     assert result.fallback_applied is True
@@ -527,6 +532,7 @@ async def test_no_provider_fake_tool_falls_back_to_extra_content_with_budgets() 
     assert "FALLBACK_PAYLOAD" in _part_payload()
     assert len(req.extra_user_content_parts) == 1
     assert req.contexts == [{"role": "user", "content": "older turn"}]
+    assert result.injected_memory_ids == (303,)
 
 
 @pytest.mark.asyncio
@@ -611,7 +617,7 @@ async def test_formatter_receives_full_ordinary_budget_before_cognitive_allocati
         _request(),
         _decision(),
         _context(
-            [{"content": "raw", "score": 1.0, "metadata": {}}],
+            [{"id": 909, "content": "raw", "score": 1.0, "metadata": {}}],
             cognitive_context="COGNITIVE_AFTER_MEMORY",
             cognitive_budget_chars=300,
             prospective_budget_chars=240,
@@ -621,6 +627,67 @@ async def test_formatter_receives_full_ordinary_budget_before_cognitive_allocati
     assert observed_budgets == [1_200]
     payload = _part_payload()
     assert payload.index("ORDINARY_FROM_SPY") < payload.index("COGNITIVE_AFTER_MEMORY")
+    assert result.injected_memory_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_successful_ids_follow_reordered_and_dropped_formatter_candidates(
+    monkeypatch,
+) -> None:
+    def formatter(memories, *, budget, content_level):
+        return (
+            "REORDERED_RETAINED",
+            InjectionStats(
+                chars=19,
+                memory_count=2,
+                retained_indices=(2, 0),
+            ),
+        )
+
+    monkeypatch.setattr(
+        "core.features.injection.application.executor.format_memories_for_injection",
+        formatter,
+    )
+    context = _context(
+        [
+            {"id": 101, "content": "FIRST", "score": 1.0, "metadata": {}},
+            {"id": 202, "content": "DROPPED", "score": 0.95, "metadata": {}},
+            {"id": 303, "content": "THIRD", "score": 0.9, "metadata": {}},
+        ]
+    )
+    monkeypatch.setattr(
+        "core.features.injection.application.executor.select_candidates",
+        lambda *_args, **_kwargs: (list(context.memories), []),
+    )
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        _request(),
+        _decision(),
+        context,
+    )
+
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert result.injected_memory_ids == (303, 101)
+
+
+@pytest.mark.asyncio
+async def test_successful_ids_are_empty_when_formatter_omits_identity_mapping(
+    monkeypatch,
+) -> None:
+    def formatter(memories, *, budget, content_level):
+        return "PAYLOAD_WITHOUT_ID_MAPPING", InjectionStats(chars=25, memory_count=1)
+
+    monkeypatch.setattr(
+        "core.features.injection.application.executor.format_memories_for_injection",
+        formatter,
+    )
+    result = await InjectionExecutor(InjectionAdapter()).execute(
+        _request(),
+        _decision(),
+        _context([{"id": 404, "content": "MEMORY", "score": 1.0, "metadata": {}}]),
+    )
+
+    assert result.outcome is InjectionOutcome.INJECTED
+    assert result.injected_memory_ids == ()
 
 
 @pytest.mark.asyncio
@@ -666,6 +733,7 @@ async def test_tool_first_allows_prospective_but_zero_ordinary_memory() -> None:
     assert "PROSPECTIVE_ALLOWED" in payload
     assert "MUST_NOT_AUTO_INJECT" not in payload
     assert result.configured_budget_chars == 240
+    assert result.injected_memory_ids == ()
 
 
 @pytest.mark.asyncio
@@ -924,6 +992,7 @@ async def test_protection_failure_is_atomic() -> None:
     )
     assert result.error_code == "PROTECTION_FAILED"
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
+    assert result.injected_memory_ids == ()
 
 
 @pytest.mark.asyncio
@@ -1151,6 +1220,7 @@ async def test_empty_execution_does_not_register_scope() -> None:
     )
     assert result.outcome is InjectionOutcome.EMPTY
     protection.wrap_prompt.assert_not_called()
+    assert result.injected_memory_ids == ()
 
 
 @pytest.mark.asyncio
@@ -1186,3 +1256,4 @@ async def test_protected_execution_without_scope_fails_before_mutation() -> None
     assert result.error_code == "PROTECTION_SCOPE_FAILED"
     assert (req.prompt, req.contexts, req.extra_user_content_parts) == snapshot
     protection.wrap_prompt.assert_not_called()
+    assert result.injected_memory_ids == ()

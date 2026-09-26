@@ -33,6 +33,84 @@ const INJECTION_OUTCOMES: InjectionOutcome[] = [
   "error",
 ];
 
+export type InjectionLifecycleEventKind = "retrieved" | "injected";
+export type InjectionLifecycleSource = "passive" | "agent" | "debug";
+export type InjectionLifecycleOrigin = "fresh" | "cache" | "none";
+
+export interface InjectionLifecycleCount {
+  created_at_ms: number;
+  event_kind: InjectionLifecycleEventKind;
+  source: InjectionLifecycleSource;
+  origin: InjectionLifecycleOrigin;
+  event_count: number;
+}
+
+export const INJECTION_LIFECYCLE_COUNTS: InjectionLifecycleCount[] = [
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS,
+    event_kind: "retrieved",
+    source: "passive",
+    origin: "fresh",
+    event_count: 6,
+  },
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS,
+    event_kind: "injected",
+    source: "passive",
+    origin: "none",
+    event_count: 4,
+  },
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS - 30 * 60 * 1_000,
+    event_kind: "retrieved",
+    source: "passive",
+    origin: "cache",
+    event_count: 3,
+  },
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS - 30 * 60 * 1_000,
+    event_kind: "injected",
+    source: "passive",
+    origin: "none",
+    event_count: 2,
+  },
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS - 2 * 60 * 60 * 1_000,
+    event_kind: "retrieved",
+    source: "agent",
+    origin: "fresh",
+    event_count: 2,
+  },
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS - 2 * 60 * 60 * 1_000,
+    event_kind: "injected",
+    source: "agent",
+    origin: "none",
+    event_count: 2,
+  },
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS - 2 * 24 * 60 * 60 * 1_000,
+    event_kind: "retrieved",
+    source: "debug",
+    origin: "cache",
+    event_count: 7,
+  },
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS - 2 * 24 * 60 * 60 * 1_000,
+    event_kind: "injected",
+    source: "passive",
+    origin: "none",
+    event_count: 5,
+  },
+  {
+    created_at_ms: INJECTION_MOCK_NOW_MS - 8 * 24 * 60 * 60 * 1_000,
+    event_kind: "retrieved",
+    source: "agent",
+    origin: "fresh",
+    event_count: 9,
+  },
+];
+
 export const INJECTION_DECISIONS: InjectionDecisionDetail[] = Array.from(
   { length: 72 },
   (_, index) => {

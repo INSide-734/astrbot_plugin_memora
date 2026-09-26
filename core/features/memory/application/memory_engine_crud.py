@@ -449,6 +449,41 @@ class MemoryEngineCRUDMixin(
             return results
         return [stamped.get(item.doc_id, item) for item in results]
 
+    def _record_retrieved(
+        self,
+        results: list[HybridResult],
+        *,
+        lifecycle_source: str | None,
+        origin: str,
+    ) -> None:
+        if lifecycle_source is None:
+            return
+        record = getattr(self, "record_retrieved_candidates", None)
+        if not callable(record):
+            return
+        recordable_results = results
+        if lifecycle_source == "debug":
+            # Debug callers may request mark_write rows for display, but those rows
+            # never qualify for lifecycle feedback.
+            recordable_results = [
+                item
+                for item in _user_evidence_filter(results)
+                if not (
+                    isinstance(getattr(item, "metadata", None), dict)
+                    and is_mark_write(getattr(item, "metadata"))
+                )
+            ]
+        try:
+            record(
+                recordable_results,
+                source=lifecycle_source,
+                origin=origin,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("[检索] retrieved 生命周期观测失败")
+
     async def search_memories(
         self,
         query: str,
@@ -472,6 +507,7 @@ class MemoryEngineCRUDMixin(
         include_mark_write: bool = False,
         query_scope: GraphQueryScope | None = None,
         require_user_evidence: bool = False,
+        lifecycle_source: str | None = None,
     ) -> list[HybridResult]:
         """执行受 scope、privacy、参考时间与可选软截止时间约束的召回。
 
@@ -532,13 +568,11 @@ class MemoryEngineCRUDMixin(
             )
             if revalidated is not None:
                 visible, stale_dropped = revalidated
-                ids = [
-                    r.doc_id for r in visible if getattr(r, "doc_id", None) is not None
-                ]
-                if ids:
-                    self._create_tracked_task(
-                        self._maintenance.update_access_times_batch(ids, recall_type)
-                    )
+                self._record_retrieved(
+                    visible,
+                    lifecycle_source=lifecycle_source,
+                    origin="cache",
+                )
                 self._last_search_timing = {
                     "cache_hit": True,
                     "cache_lookup_ms": (_t_cache_end - _t_cache) * 1000.0,
@@ -584,16 +618,11 @@ class MemoryEngineCRUDMixin(
             if revalidated is not None:
                 truncated, stale_dropped = revalidated
                 truncated = truncated[:k]
-                # 仍更新 access time
-                ids = [
-                    r.doc_id
-                    for r in truncated
-                    if getattr(r, "doc_id", None) is not None
-                ]
-                if ids:
-                    self._create_tracked_task(
-                        self._maintenance.update_access_times_batch(ids, recall_type)
-                    )
+                self._record_retrieved(
+                    truncated,
+                    lifecycle_source=lifecycle_source,
+                    origin="cache",
+                )
                 self._retrieval.set_cached(cache_key, truncated)
                 self._last_search_timing = {
                     "cache_hit": True,
@@ -604,7 +633,7 @@ class MemoryEngineCRUDMixin(
                 if timing_sink is not None:
                     timing_sink.update(self._last_search_timing)
                 return truncated
-        if session_id and ":" in session_id:
+        if lifecycle_source != "debug" and session_id and ":" in session_id:
             self._create_tracked_task(
                 self._maintenance.migrate_session_if_needed(session_id)
             )
@@ -726,11 +755,6 @@ class MemoryEngineCRUDMixin(
         if require_user_evidence:
             # 链式扩展可能引入无用户证据的候选，进入缓存与返回前再过滤一次。
             results = _user_evidence_filter(results)
-        ids = [r.doc_id for r in results if getattr(r, "doc_id", None) is not None]
-        if ids:
-            self._create_tracked_task(
-                self._maintenance.update_access_times_batch(ids, recall_type)
-            )
         window_stable = self._retrieval.cache_generation == publish_generation
         if not window_stable:
             # R2.1：读取窗口内发生过推进 revision 的写入，本次候选与其派生注解
@@ -779,7 +803,15 @@ class MemoryEngineCRUDMixin(
         self._last_search_timing.update(route_timing)
         if timing_sink is not None:
             timing_sink.update(self._last_search_timing)
-        return filter_mark_write(results, include_mark_write=include_mark_write)
+        final_results = filter_mark_write(
+            results, include_mark_write=include_mark_write
+        )
+        self._record_retrieved(
+            final_results,
+            lifecycle_source=lifecycle_source,
+            origin="fresh",
+        )
+        return final_results
 
     async def get_memory(self, memory_id: int) -> dict[str, Any] | None:
         """按 canonical 整数 ID 读取记忆详情。"""

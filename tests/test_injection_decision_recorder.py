@@ -6,7 +6,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from core.features.injection.domain.models import InjectionDecisionRecord
+from core.features.injection.domain.models import (
+    InjectionDecisionRecord,
+    LifecycleOrigin,
+    LifecycleSource,
+)
+from core.features.injection.infrastructure.injection_decision_store import (
+    LifecycleCommitOutcomeUnknown,
+)
 from core.features.injection.infrastructure.recorder import InjectionDecisionRecorder
 
 
@@ -147,6 +154,104 @@ async def test_thousand_persisted_rows_schedule_rate_limited_cleanup(
     await recorder.wait_until_idle(timeout=1.0)
     assert store.cleanup.await_count == 1
     await recorder.close(timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_records_share_flush_barrier_and_never_carry_ids(store) -> None:
+    recorder = InjectionDecisionRecorder(store, flush_interval=0.001)
+    recorder.record_retrieved(3, source="debug", origin="cache")
+    recorder.record_injected(
+        2, source=LifecycleSource.AGENT, origin=LifecycleOrigin.NONE
+    )
+    recorder.record_lifecycle("adopted", "agent", "none", 1)
+    recorder.record_lifecycle("retrieved", "unknown", "fresh", 1)
+    recorder.record_lifecycle("retrieved", "passive", "unknown", 1)
+    recorder.record_retrieved(0)
+    recorder.record_injected(-1)
+    recorder.record_retrieved(True)
+    recorder.record_injected(1, source="debug")
+    await recorder.start()
+    await recorder.wait_until_idle(timeout=1.0)
+    await recorder.close(timeout=1.0)
+    rows = store.insert_many.await_args.args[0]
+    assert [row.count for row in rows] == [3, 2]
+    assert all(not hasattr(row, "memory_ids") for row in rows)
+    assert recorder.snapshot()["failures_total"] == 7
+
+
+@pytest.mark.asyncio
+async def test_precommit_lock_retry_persists_lifecycle_record_once(store) -> None:
+    calls = 0
+    persisted = []
+
+    async def insert_many(rows):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("locked")
+        persisted.extend(rows)
+        return len(rows)
+
+    store.insert_many = AsyncMock(side_effect=insert_many)
+    recorder = InjectionDecisionRecorder(
+        store, batch_size=1, flush_interval=0.001, retry_base_delay=0.001
+    )
+    recorder.record_retrieved(4)
+    await recorder.start()
+    await recorder.wait_until_idle(timeout=1.0)
+    await recorder.close(timeout=1.0)
+    assert calls == 2
+    assert [row.count for row in persisted] == [4]
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_commit_drops_lifecycle_but_retries_decision(
+    store, make_record
+) -> None:
+    calls: list[list[str]] = []
+    persisted_lifecycle_count = 0
+    persisted_decisions: set[str] = set()
+
+    async def insert_many(rows):
+        nonlocal persisted_lifecycle_count
+        calls.append([type(row).__name__ for row in rows])
+        persisted_decisions.update(
+            row.decision_id for row in rows if isinstance(row, InjectionDecisionRecord)
+        )
+        persisted_lifecycle_count += sum(
+            row.count for row in rows if not isinstance(row, InjectionDecisionRecord)
+        )
+        if len(calls) == 1:
+            raise LifecycleCommitOutcomeUnknown("lifecycle commit outcome unknown")
+        return len(rows)
+
+    store.insert_many = AsyncMock(side_effect=insert_many)
+    recorder = InjectionDecisionRecorder(
+        store, batch_size=2, flush_interval=0.001, retry_base_delay=0.001
+    )
+    recorder.record(make_record("decision"))
+    recorder.record_retrieved(4)
+    await recorder.start()
+    await recorder.wait_until_idle(timeout=1.0)
+    await recorder.close(timeout=1.0)
+    await asyncio.wait_for(recorder._queue.join(), timeout=1.0)
+
+    assert calls == [
+        ["InjectionDecisionRecord", "InjectionLifecycleRecord"],
+        ["InjectionDecisionRecord"],
+    ]
+    assert persisted_decisions == {"decision"}
+    assert persisted_lifecycle_count == 4
+    assert recorder.snapshot()["dropped_total"] == 1
+
+
+@pytest.mark.asyncio
+async def test_close_flushes_lifecycle_records_before_worker_start(store) -> None:
+    recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
+    recorder.record_injected(2, source="agent", origin="none")
+    await recorder.close(timeout=1.0)
+    rows = store.insert_many.await_args.args[0]
+    assert [(row.event_kind.value, row.count) for row in rows] == [("injected", 2)]
 
 
 @pytest.mark.asyncio
@@ -329,6 +434,30 @@ async def test_close_timeout_cancels_stuck_worker(store, make_record) -> None:
     await asyncio.sleep(0)
     await recorder.close(timeout=0.01)
     assert recorder._worker is None
+
+
+@pytest.mark.asyncio
+async def test_close_timeout_drops_ambiguous_lifecycle_batch_without_replay(
+    store,
+) -> None:
+    started = asyncio.Event()
+    blocker = asyncio.Event()
+
+    async def stuck(rows):
+        started.set()
+        await blocker.wait()
+
+    store.insert_many = AsyncMock(side_effect=stuck)
+    recorder = InjectionDecisionRecorder(store, batch_size=1)
+    await recorder.start()
+    recorder.record_retrieved(4)
+    await asyncio.wait_for(started.wait(), timeout=1.0)
+    await recorder.close(timeout=0.01)
+
+    assert store.insert_many.await_count == 1
+    assert recorder.snapshot()["dropped_total"] == 1
+    assert recorder.snapshot()["queue_size"] == 0
+    assert recorder.snapshot()["retained_size"] == 0
 
 
 @pytest.mark.asyncio

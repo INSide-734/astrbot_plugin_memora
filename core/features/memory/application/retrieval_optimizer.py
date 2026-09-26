@@ -1,7 +1,6 @@
 """
 检索优化器
 搜索缓存 + 检索后增强 + 干扰衰减 + 链式扩展 + 梦境整合 + 触发词注册
-+ 记忆驱动情绪回路 + 测试效应
 """
 
 from __future__ import annotations
@@ -38,8 +37,6 @@ class RetrievalOptimizer(
         search_memories_cb: Callable | None = None,
         get_memory_cb: Callable | None = None,
         update_memory_cb: Callable | None = None,
-        create_tracked_task_cb: Callable | None = None,
-        reinforce_recall_state_cb: Callable | None = None,
         apply_interference_decay_cb: Callable | None = None,
     ) -> None:
         """保存召回协作对象，并冻结本次引擎生命周期内的增强配置。"""
@@ -50,9 +47,6 @@ class RetrievalOptimizer(
         self._search_memories = search_memories_cb
         self._get_memory = get_memory_cb
         self._update_memory = update_memory_cb
-        self._create_tracked_task = create_tracked_task_cb
-        # 运行态维护端口：强化计数与干扰衰减都必须经引擎的 revision 中性写入口。
-        self._reinforce_recall_state = reinforce_recall_state_cb
         self._apply_interference_decay = apply_interference_decay_cb
 
         self._cache_enabled = bool(config.get("search_cache_enabled", True))
@@ -73,9 +67,6 @@ class RetrievalOptimizer(
 
         self._trigger_registry: dict[str, int] = {}
 
-        # 测试效应配置：后台异步 + top-K 限制，避免阻塞检索热点路径
-        self._testing_effect_async = bool(config.get("testing_effect_async", True))
-        self._testing_effect_top_k = int(config.get("testing_effect_top_k", 5))
         self._emotion_scoring_mode = str(
             config.get("human_like_memory.emotion_scoring_mode", "enhanced")
         ).casefold()

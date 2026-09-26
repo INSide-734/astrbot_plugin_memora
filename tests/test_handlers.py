@@ -326,6 +326,49 @@ class TestRecallHandlerSearchParameters:
         assert sample["query_count"] == 1
 
 
+@pytest.mark.asyncio
+async def test_passive_retrieved_records_once_after_spontaneous_merge(
+    handler_case,
+) -> None:
+    """被动召回只在最终合并候选上观测一次，且覆盖仅自发结果。"""
+    primary = high_confidence_memories()[:1]
+    spontaneous = high_confidence_memories()[:2]
+    for candidate in spontaneous:
+        candidate.metadata["recall_source"] = "spontaneous"
+
+    case = handler_case(config=strategy_config(), memories=primary)
+    case.handler._maybe_spontaneous_recall.return_value = spontaneous
+    case.handler._execute_and_record = AsyncMock(
+        return_value=InjectionExecutionResult(outcome=InjectionOutcome.EMPTY)
+    )
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    case.memory_engine.record_retrieved_candidates.assert_called_once()
+    observed = case.memory_engine.record_retrieved_candidates.call_args
+    assert len(observed.args[0]) == 2
+    assert {candidate["id"] for candidate in observed.args[0]} == {1, 2}
+    assert observed.kwargs == {"source": "passive", "origin": "none"}
+    assert (
+        "lifecycle_source" not in case.memory_engine.search_memories.await_args.kwargs
+    )
+
+    spontaneous_only = handler_case(config=strategy_config(), memories=[])
+    spontaneous_only.handler._maybe_spontaneous_recall.return_value = spontaneous
+    spontaneous_only.handler._execute_and_record = AsyncMock(
+        return_value=InjectionExecutionResult(outcome=InjectionOutcome.EMPTY)
+    )
+
+    await spontaneous_only.handler.handle_memory_recall(
+        spontaneous_only.event,
+        spontaneous_only.request,
+    )
+
+    spontaneous_only.memory_engine.record_retrieved_candidates.assert_called_once()
+    observed_only = spontaneous_only.memory_engine.record_retrieved_candidates.call_args
+    assert {candidate["id"] for candidate in observed_only.args[0]} == {1, 2}
+
+
 class TestRecallHandlerFinalizeCandidates:
     """Tests for final recall candidate de-duplication and budget enforcement."""
 
@@ -1147,6 +1190,45 @@ async def test_provider_delivery_fallback_is_recorded(handler_case) -> None:
     assert record.resolved_delivery == DeliveryMode.EXTRA_USER_CONTENT.value
     assert record.primary_reason == "MANUAL_SELECTED"
     assert record.reason_codes.count("PROVIDER_DELIVERY_DOWNGRADED") == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_injection_maintains_only_executor_ids(handler_case) -> None:
+    """成功注入只把执行器确认的 canonical ID交给维护入口。"""
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    case.memory_engine.record_successful_injection = AsyncMock(return_value=1)
+    case.handler._executor.execute = AsyncMock(
+        return_value=InjectionExecutionResult(
+            outcome=InjectionOutcome.INJECTED,
+            selected_count=2,
+            injected_memory_ids=(2,),
+        )
+    )
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    case.memory_engine.record_successful_injection.assert_awaited_once_with(
+        (2,),
+        source="passive",
+        origin="none",
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_injection_does_not_maintain_candidates(handler_case) -> None:
+    """格式/传输失败即使带有异常 ID 也不得触发维护。"""
+    case = handler_case(config=strategy_config(), memories=high_confidence_memories())
+    case.memory_engine.record_successful_injection = AsyncMock(return_value=1)
+    case.handler._executor.execute = AsyncMock(
+        return_value=InjectionExecutionResult(
+            outcome=InjectionOutcome.ERROR,
+            injected_memory_ids=(2,),
+        )
+    )
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    case.memory_engine.record_successful_injection.assert_not_awaited()
 
 
 @pytest.mark.asyncio
