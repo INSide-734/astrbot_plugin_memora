@@ -1153,6 +1153,7 @@
       "diagnostics": {
         "noMessage": "No diagnostic message.",
         "untitledEvent": "Untitled diagnostic event",
+        "unknownDomain": "No diagnostic signal is available for this domain.",
         "noActiveSignal": "No active diagnostic signal.",
         "level": {
           "healthy": "Healthy",
@@ -1190,7 +1191,9 @@
           "write": "Write",
           "scheduler": "Scheduler",
           "index": "Index",
-          "prometheus": "Prometheus"
+          "prometheus": "Prometheus",
+          "restore": "Restore",
+          "quality": "Quality"
         },
         "health": "Health",
         "signals": "Diagnostic Signals",
@@ -1419,7 +1422,10 @@
         "filterReason": {
           "low_score": "Low score",
           "topic_mismatch": "Topic mismatch",
-          "missing_fields": "Missing fields"
+          "missing_fields": "Missing fields",
+          "privacy": "Privacy filter",
+          "mark_write": "Marked for write",
+          "stale": "Stale candidate"
         },
         "stage": {
           "search_memories": "Memory search",
@@ -1429,7 +1435,32 @@
           "graph": "Graph",
           "merge": "Merge",
           "boost": "Boost",
-          "rerank": "Rerank"
+          "rerank": "Rerank",
+          "request": "Request",
+          "retrieval": "Retrieval",
+          "query": "Query",
+          "recall": "Recall"
+        },
+        "stageStatus": {
+          "started": "Started",
+          "completed": "Completed",
+          "degraded": "Degraded",
+          "skipped": "Skipped",
+          "failed": "Failed",
+          "cancelled": "Cancelled"
+        },
+        "factAlignment": {
+          "aligned": "Facts aligned",
+          "misaligned": "Facts misaligned",
+          "undeterminable": "Cannot determine"
+        },
+        "sourceStatus": {
+          "title": "Source status",
+          "not_assessed": "Not assessed",
+          "unknown": "Unknown"
+        },
+        "evidence": {
+          "title": "Fact and source evidence"
         },
         "source": {
           "bm25": "BM25",
@@ -1478,7 +1509,29 @@
           "doc": "Doc",
           "reason": "Reason",
           "stage": "Stage",
-          "score": "Score"
+          "score": "Score",
+          "count": "Count"
+        },
+        "origin": {
+          "production": "Production snapshot",
+          "preview": "Manual preview"
+        },
+        "detailLoading": "Loading aggregated trace...",
+        "detailUnavailable": "No trace is available for this correlation code",
+        "detailUnavailableHint": "This recall wrote no safe snapshot, or the record was trimmed by retention. This does not mean the trace was empty.",
+        "detailFailed": "Failed to load trace detail",
+        "detailFailedHint": "Please retry later; failures never echo server-side details.",
+        "injection": {
+          "title": "Injection result for this request",
+          "candidate_count": "Candidates",
+          "selected_count": "Selected by executor",
+          "injected_count": "Successfully injected",
+          "configured_budget_chars": "Configured budget characters",
+          "effective_budget_chars": "Effective budget characters",
+          "routing_mode": "Actual route",
+          "resolved_preset": "Resolved preset",
+          "resolved_delivery": "Resolved delivery",
+          "outcome": "Injection outcome"
         },
         "noContributions": "No score contributions",
         "contributionScore": "score {0} / weight {1}"

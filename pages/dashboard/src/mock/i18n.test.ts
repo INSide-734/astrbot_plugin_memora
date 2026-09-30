@@ -14,6 +14,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MOOD_TYPES, RELATION_CATEGORIES } from "../lib/constants";
 import { EN_MAP, I18N_MAP, RU_MAP } from "./index";
+const PRODUCTION_I18N_DIRECTORY = path.resolve(process.cwd(), "../../.astrbot-plugin/i18n");
+const PRODUCTION_DASHBOARD_LOCALES = Object.fromEntries(
+  ["zh-CN", "en-US", "ru-RU"].map((locale) => [
+    locale,
+    JSON.parse(fs.readFileSync(path.join(PRODUCTION_I18N_DIRECTORY, `${locale}.json`), "utf8")) as {
+      dashboard: Record<string, unknown>;
+    },
+  ]),
+) as Record<string, { dashboard: Record<string, unknown> }>;
+
+function productionDashboardValue(locale: string, key: string): unknown {
+  let current: unknown = PRODUCTION_DASHBOARD_LOCALES[locale]?.dashboard;
+  for (const segment of key.split(".")) {
+    if (!current || typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[segment];
+  }
+  return current;
+}
 
 const SOURCE_ROOT = path.resolve(process.cwd(), "src");
 
@@ -380,13 +398,17 @@ const DYNAMIC_KEYS = [
     .map((status) => `learning.status.${status}`),
   ...["candidate", "insufficient_evidence", "published", "invalid_state"]
     .map((reason) => `learning.reason.${reason}`),
-  ...["low_score", "topic_mismatch", "missing_fields"]
+  ...["low_score", "topic_mismatch", "missing_fields", "privacy", "mark_write", "stale"]
     .map((reason) => `intelligence.trace.filterReason.${reason}`),
-  ...["search_memories", "query_parse", "bm25", "vector", "graph", "merge", "boost", "rerank"]
+  ...["search_memories", "query_parse", "bm25", "vector", "graph", "merge", "boost", "rerank", "request", "retrieval", "query", "recall"]
     .map((stage) => `intelligence.trace.stage.${stage}`),
-  ...["bm25", "vector", "emotion_boost", "graph", "optimizer"]
-    .map((source) => `intelligence.trace.source.${source}`),
-  ...["provider", "recall", "write", "scheduler", "index", "prometheus"]
+  ...["started", "completed", "degraded", "skipped", "failed", "cancelled"]
+    .map((status) => `intelligence.trace.stageStatus.${status}`),
+  ...["aligned", "misaligned", "undeterminable"]
+    .map((status) => `intelligence.trace.factAlignment.${status}`),
+  ...["not_assessed", "unknown"]
+    .map((status) => `intelligence.trace.sourceStatus.${status}`),
+  ...["provider", "recall", "write", "scheduler", "index", "prometheus", "restore", "quality"]
     .map((domain) => `intelligence.diagnostics.domain.${domain}`),
   ...["manual", "auto", "hybrid"].map((mode) => `injection.mode.${mode}`),
   ...["tool_first", "low_cost", "balanced", "quality"]
@@ -586,6 +608,43 @@ describe("dashboard i18n dictionaries", () => {
       const expected = placeholders(I18N_MAP[key]);
       expect(placeholders(EN_MAP[key]), `en placeholders differ for ${key}`).toEqual(expected);
       expect(placeholders(RU_MAP[key]), `ru placeholders differ for ${key}`).toEqual(expected);
+    }
+  });
+});
+
+describe("Issue 89 production dashboard i18n contract", () => {
+  it("keeps trace evidence and diagnostic domain keys non-blank in all locales", () => {
+    const keys = [
+      "intelligence.diagnostics.untitledEvent",
+      "intelligence.diagnostics.unknownDomain",
+      "intelligence.diagnostics.domain.restore",
+      "intelligence.diagnostics.domain.quality",
+      "intelligence.trace.evidence.title",
+      "intelligence.trace.factAlignment.aligned",
+      "intelligence.trace.factAlignment.misaligned",
+      "intelligence.trace.factAlignment.undeterminable",
+      "intelligence.trace.sourceStatus.title",
+      "intelligence.trace.sourceStatus.not_assessed",
+      "intelligence.trace.sourceStatus.unknown",
+      "intelligence.trace.filterReason.missing_fields",
+      "intelligence.trace.filterReason.mark_write",
+      "intelligence.trace.filterReason.stale",
+      "intelligence.trace.stage.request",
+      "intelligence.trace.stage.retrieval",
+      "intelligence.trace.stage.query",
+      "intelligence.trace.stage.recall",
+      "intelligence.trace.stageStatus.skipped",
+      "intelligence.trace.stageStatus.completed",
+    ];
+    for (const locale of ["zh-CN", "en-US", "ru-RU"]) {
+      for (const key of keys) {
+        const value = productionDashboardValue(locale, key);
+        expect(typeof value, `${locale} missing ${key}`).toBe("string");
+        expect(String(value).trim(), `${locale} blank ${key}`).not.toBe("");
+      }
+      expect(
+        productionDashboardValue(locale, "intelligence.trace.sourceStatus.not_assessed"),
+      ).not.toBe(productionDashboardValue(locale, "intelligence.trace.sourceStatus.unknown"));
     }
   });
 });

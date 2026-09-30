@@ -32,6 +32,7 @@ from ...injection.domain.models import (
     RequestSignals,
     RoutingMode,
 )
+from ...memory.application.fact_text_alignment import FactTextAlignment, facts_aligned
 from ...memory.domain.memory_atom import has_user_source_evidence
 from ...observability.application import runtime as observability
 from ...observability.domain import recall_timing as rt
@@ -62,6 +63,9 @@ class _RecallExecutionInput:
     cognitive_format_ms: float = 0.0
     lifecycle_source: str | None = None
     lifecycle_origin: str = "none"
+    timing_context: RecallTimingContext | None = None
+    trace_id: str | None = None
+    trace_state: dict[str, bool] | None = None
 
 
 class RecallRoutingMixin:
@@ -348,7 +352,15 @@ class RecallRoutingMixin:
                         ),
                         error_code="PROTECTION_SCOPE_FAILED",
                     )
-                    self._record_injection_decision(decision, signals, result)
+                    self._record_injection_decision(
+                        decision,
+                        signals,
+                        result,
+                        execution.timing_context,
+                        execution.trace_id,
+                        execution.trace_state,
+                        execution.memories,
+                    )
                     self._report_injection_result(decision, signals, result)
                     return result
             context = InjectionExecutionContext(
@@ -405,7 +417,15 @@ class RecallRoutingMixin:
                         raise
                     except Exception:
                         logger.debug("[召回流程] 成功注入维护失败")
-        self._record_injection_decision(decision, signals, result)
+        self._record_injection_decision(
+            decision,
+            signals,
+            result,
+            execution.timing_context,
+            execution.trace_id,
+            execution.trace_state,
+            execution.memories,
+        )
         self._report_injection_result(decision, signals, result)
         return result
 
@@ -450,6 +470,10 @@ class RecallRoutingMixin:
         decision: InjectionDecision,
         signals: RequestSignals,
         result: InjectionExecutionResult,
+        timing_context: RecallTimingContext | None = None,
+        trace_id: str | None = None,
+        trace_state: dict[str, bool] | None = None,
+        candidate_memories: list[dict[str, Any]] | None = None,
     ) -> None:
         if self._injection_recorder is None:
             return
@@ -477,7 +501,7 @@ class RecallRoutingMixin:
                 else "NO_USEFUL_CANDIDATES"
             ),
             reason_codes=reason_codes,
-            trace_id=None,
+            trace_id=trace_id,
             error_code=result.error_code,
             provider_type=signals.provider_type,
             provider_model=signals.provider_model,
@@ -494,11 +518,132 @@ class RecallRoutingMixin:
             inject_ms=result.inject_ms,
         )
         try:
-            self._injection_recorder.record(record)
+            admitted = self._injection_recorder.record(
+                record,
+                trace_payload=self._production_trace_payload(
+                    decision,
+                    signals,
+                    result,
+                    timing_context,
+                    trace_id,
+                    candidate_memories,
+                ),
+                trace_id=trace_id,
+                return_admitted=True,
+            )
+            if (
+                trace_state is not None
+                and admitted is not False
+                and admitted is not None
+            ):
+                trace_state["decision_recorded"] = True
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.warning("[召回流程] 注入决策记录失败", exc_info=True)
+
+    @staticmethod
+    def _production_trace_payload(
+        decision: InjectionDecision,
+        signals: RequestSignals,
+        result: InjectionExecutionResult,
+        timing_context: RecallTimingContext | None,
+        trace_id: str | None = None,
+        candidate_memories: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """由本次真实决策、候选和执行结果构造安全生产 Trace。"""
+        timing = timing_context.snapshot() if timing_context is not None else {}
+        elapsed_ms = (
+            max(0.0, (time.perf_counter() - timing_context.started_monotonic) * 1000.0)
+            if timing_context is not None
+            else 0.0
+        )
+        actual_delivery = result.actual_resolved_delivery or decision.resolved_delivery
+        stages: list[dict[str, Any]] = []
+        if "retrieval_total_ms" in timing:
+            stages.append(
+                {
+                    "name": "search_memories",
+                    "status": "completed",
+                    "duration_ms": timing["retrieval_total_ms"],
+                    "candidate_count": signals.candidate_count,
+                }
+            )
+        stages.append(
+            {
+                "name": "injection_decision",
+                "status": "failed"
+                if result.outcome is InjectionOutcome.ERROR
+                else "completed",
+                "duration_ms": result.decision_ms,
+                "candidate_count": signals.candidate_count,
+                "metadata": {
+                    "routing_mode": decision.routing_mode.value,
+                    "configured_preset": decision.configured_preset.value,
+                    "recommended_preset": decision.recommended_preset.value,
+                    "resolved_preset": decision.resolved_preset.value,
+                    "budget_chars": result.configured_budget_chars,
+                    "effective_budget_chars": result.effective_budget_chars,
+                    "selected_count": result.selected_count,
+                    "reason_codes": list(decision.reason_codes),
+                },
+            }
+        )
+        filter_summary = []
+        stale_count = timing.get("dropped_stale_count")
+        if isinstance(stale_count, int) and stale_count > 0:
+            filter_summary.append(
+                {"stage": "search_memories", "reason": "stale", "count": stale_count}
+            )
+        results: list[dict[str, Any]] = []
+        alignment_counts = {state.value: 0 for state in FactTextAlignment}
+        if candidate_memories is not None:
+            for rank, candidate in enumerate(candidate_memories[:100], start=1):
+                metadata = candidate.get("metadata")
+                metadata = metadata if isinstance(metadata, dict) else {}
+                score = candidate.get("score", 0.0)
+                results.append(
+                    {
+                        "rank": rank,
+                        "initial_score": 0.0,
+                        "final_score": score,
+                        "metadata": {
+                            key: metadata[key]
+                            for key in ("memory_type", "status", "importance")
+                            if key in metadata
+                        },
+                    }
+                )
+                alignment = facts_aligned(
+                    candidate.get("content"),
+                    metadata.get("key_facts"),
+                    metadata.get("fact_source_evidence"),
+                )
+                alignment_counts[alignment.value] += 1
+        payload = {
+            "trace_id": trace_id,
+            "total_ms": elapsed_ms,
+            "stages": stages,
+            "results": results,
+            "filtered": [],
+            "metadata": {"debug_trace_available": False, "trace_kind": "production"},
+            "injection": {
+                "candidate_count": signals.candidate_count,
+                "selected_count": result.selected_count,
+                "injected_count": len(result.injected_memory_ids),
+                "configured_budget_chars": result.configured_budget_chars,
+                "effective_budget_chars": result.effective_budget_chars,
+                "routing_mode": decision.routing_mode.value,
+                "resolved_preset": decision.resolved_preset.value,
+                "resolved_delivery": actual_delivery.value,
+                "outcome": result.outcome.value,
+            },
+            "filter_summary": filter_summary,
+        }
+        if candidate_memories is not None:
+            payload["fact_alignment"] = alignment_counts
+            payload["source_status"] = "not_assessed"
+        return payload
 
     def _record_recall_observability(
         self,

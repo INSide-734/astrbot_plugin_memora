@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sqlite3
 import time
 from dataclasses import FrozenInstanceError
@@ -10,11 +11,13 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from core.features.injection.domain.models import (
+    InjectionDecisionBundle,
     InjectionDecisionRecord,
     InjectionLifecycleRecord,
     LifecycleEventKind,
     LifecycleOrigin,
     LifecycleSource,
+    RecallTraceSnapshot,
 )
 from core.features.injection.infrastructure.injection_decision_store import (
     INJECTION_DECISION_SORT_COLUMNS,
@@ -863,5 +866,199 @@ async def test_lifecycle_retention_deletes_bucket_ending_at_exact_cutoff(
             {"bucket_ms": cutoff, "event_count": 2},
             {"bucket_ms": cutoff + hour, "event_count": 3},
         ]
+    finally:
+        await store.close()
+
+
+def trace_snapshot(trace_id: str, created_at_ms: int, **payload) -> RecallTraceSnapshot:
+    return RecallTraceSnapshot(
+        trace_id=trace_id,
+        created_at_ms=created_at_ms,
+        payload_json=json.dumps(
+            {
+                "trace_id": trace_id,
+                "total_ms": 3.0,
+                "created_at": 1.0,
+                "metadata": {"trace_kind": "production"},
+                **payload,
+            }
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_decision_bundle_commits_decision_and_sanitized_snapshot_together(
+    tmp_path,
+) -> None:
+    sentinel = "PRIVATE_SNAPSHOT_SENTINEL"
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        bundle = InjectionDecisionBundle(
+            decision=record("decision-bundle", 10, trace_id="trace-bundle"),
+            snapshot=trace_snapshot(
+                "trace-bundle",
+                10,
+                query=sentinel,
+                injection={"injected_count": 1, "memory_ids": [101]},
+            ),
+        )
+        assert await store.insert_many([bundle]) == 2
+        assert await store.insert_many([bundle]) == 0
+        detail = await store.get_decision("decision-bundle")
+        snapshot = await store.get_recall_trace_snapshot("trace-bundle")
+        assert detail is not None and detail["trace_id"] == "trace-bundle"
+        assert snapshot is not None
+        assert snapshot["injection"] == {"injected_count": 1}
+        assert snapshot["metadata"]["trace_kind"] == "production"
+        assert sentinel not in json.dumps(snapshot)
+
+        mismatched = InjectionDecisionBundle(
+            decision=record("decision-mismatch", 11, trace_id="trace-a"),
+            snapshot=trace_snapshot("trace-b", 11),
+        )
+        with pytest.raises(ValueError, match="bundle trace_id mismatch"):
+            await store.insert_many([mismatched])
+        assert await store.get_decision("decision-mismatch") is None
+        assert await store.get_recall_trace_snapshot("trace-b") is None
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_trace_only_snapshot_persists_without_a_decision(tmp_path) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        snapshot = trace_snapshot("trace-only", 10)
+        assert await store.insert_many([snapshot]) == 1
+        loaded = await store.get_recall_trace_snapshot("trace-only")
+        assert loaded is not None
+        assert loaded["trace_id"] == "trace-only"
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_keeps_trace_only_snapshot_under_independent_limits(
+    tmp_path,
+) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        await store.insert_many([trace_snapshot("trace-only", 10)])
+        await store.cleanup(retention_days=30, max_rows=1, now_ms=20)
+        assert await store.get_recall_trace_snapshot("trace-only") is not None
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_old_database_initializes_snapshot_table_and_invalid_rows_are_unavailable(
+    tmp_path,
+) -> None:
+    db_path = tmp_path / "memora.db"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE injection_decisions (decision_id TEXT PRIMARY KEY, "
+            "created_at_ms INTEGER NOT NULL, trace_id TEXT, routing_mode TEXT NOT NULL, "
+            "configured_preset TEXT NOT NULL, recommended_preset TEXT NOT NULL, "
+            "resolved_preset TEXT NOT NULL, preferred_delivery TEXT NOT NULL, "
+            "resolved_delivery TEXT NOT NULL, fallback_applied INTEGER NOT NULL, "
+            "outcome TEXT NOT NULL, error_code TEXT, primary_reason TEXT NOT NULL, "
+            "reason_codes_json TEXT NOT NULL, provider_type TEXT NOT NULL, "
+            "provider_model TEXT NOT NULL, candidate_count INTEGER NOT NULL, "
+            "selected_count INTEGER NOT NULL, dropped_count INTEGER NOT NULL, "
+            "truncated_count INTEGER NOT NULL, configured_budget_chars INTEGER NOT NULL, "
+            "effective_budget_chars INTEGER NOT NULL, actual_payload_chars INTEGER NOT NULL, "
+            "context_headroom_chars INTEGER NOT NULL, decision_ms REAL NOT NULL, "
+            "format_ms REAL NOT NULL, inject_ms REAL NOT NULL)"
+        )
+    store = InjectionDecisionStore(db_path)
+    await store.initialize()
+    try:
+        await store._execute(
+            "INSERT INTO recall_trace_snapshots (trace_id, created_at_ms, payload_json) "
+            "VALUES (?, ?, ?)",
+            ("trace-invalid", 1, "not-json"),
+        )
+        await store._commit()
+        assert await store.get_recall_trace_snapshot("trace-invalid") is None
+        assert await store.get_recall_trace_snapshot("trace/invalid") is None
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_historical_snapshot_nonfinite_counts_are_sanitized_without_errors(
+    tmp_path,
+) -> None:
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        payload = json.dumps(
+            {
+                "trace_id": "trace-infinity",
+                "total_ms": float("inf"),
+                "stages": [
+                    {
+                        "name": "request",
+                        "candidate_count": float("inf"),
+                        "metadata": {"reason_code": "empty_request"},
+                    }
+                ],
+                "injection": {
+                    "candidate_count": float("inf"),
+                    "selected_count": 1.5,
+                },
+            }
+        )
+        await store._execute(
+            "INSERT INTO recall_trace_snapshots (trace_id, created_at_ms, payload_json) "
+            "VALUES (?, ?, ?)",
+            ("trace-infinity", 1, payload),
+        )
+        await store._commit()
+
+        loaded = await store.get_recall_trace_snapshot("trace-infinity")
+        assert loaded is not None
+        assert loaded["total_ms"] == 0.0
+        assert loaded["stages"][0]["candidate_count"] == 0
+        assert loaded["stages"][0]["metadata"]["reason_code"] == "empty_request"
+        assert "injection" not in loaded
+    finally:
+        await store.close()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_applies_independent_snapshot_retention(tmp_path) -> None:
+    day = 86_400_000
+    now = 40 * day
+    store = InjectionDecisionStore(tmp_path / "memora.db")
+    await store.initialize()
+    try:
+        await store.insert_many(
+            [
+                InjectionDecisionBundle(
+                    decision=record("expired", now - 31 * day, trace_id="trace-old"),
+                    snapshot=trace_snapshot("trace-old", now - 31 * day),
+                ),
+                InjectionDecisionBundle(
+                    decision=record("overflow", now - 2, trace_id="trace-overflow"),
+                    snapshot=trace_snapshot("trace-overflow", now - 2),
+                ),
+                InjectionDecisionBundle(
+                    decision=record("newest", now - 1, trace_id="trace-new"),
+                    snapshot=trace_snapshot("trace-new", now - 1),
+                ),
+            ]
+        )
+        result = await store.cleanup(retention_days=30, max_rows=1, now_ms=now)
+        assert result.deleted_expired == 1
+        assert result.deleted_overflow == 1
+        assert result.deleted_trace_snapshots == 2
+        assert await store.get_recall_trace_snapshot("trace-old") is None
+        assert await store.get_recall_trace_snapshot("trace-overflow") is None
+        assert await store.get_recall_trace_snapshot("trace-new") is not None
     finally:
         await store.close()

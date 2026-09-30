@@ -83,6 +83,8 @@ Gemini 的伪工具方式降级为 `user_message_before`；未知或不支持工
 
 `InjectionDecisionRecorder.record()` 是非阻塞、无 I/O 的请求路径：默认容量 10000，满时丢最旧并计数；单 worker 默认 50 条或 250ms 批写。失败批次恢复到 retained 列表并指数重试（5 秒封顶），同时继续保持总待处理量有界。清理按保留天数/最大行数执行，另有每日清理和每持久化 1000 行、每小时至多一次的轻量清理。`close(timeout)` 尽量冲刷，超时取消 worker。
 
+生产召回可向同一 `record(record, trace_payload=..., trace_id=...)` 调用提供安全 Trace 候选载荷。请求 owner 提供的 opaque `trace_id` 会贯穿 decision 与 snapshot；未提供时 recorder 保留兼容的 UUID 生成。Recorder 在同一个有界队列项内脱敏并校验快照，再以 `InjectionDecisionBundle` 入队；快照校验失败则仍写无关联决策。`record_trace()` 使用同一有界队列保存没有 decision 的 trace-only 快照。`InjectionDecisionStore.insert_many()` 在同一事务中写 decision 与 `recall_trace_snapshots`，读取时再次 sanitizer；清理按各自 retention/max-row 同事务收敛。
+
 Page API 只能返回 allowlist 后的脱敏字段；详见 [Page API AGENTS.md](../../platform/transport/page_api/AGENTS.md)。
 
 ## 依赖方向

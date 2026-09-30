@@ -21,7 +21,7 @@ import {
   handleEvaluationReports,
   handleEvaluationRun,
 } from "./evaluationServer";
-import { createSafeRecallTraceResponse } from "./recallTrace";
+import { createSafeRecallTraceResponse, findRecallTraceDetail } from "./recallTrace";
 import {
   handleReconsolidationGet,
   handleReconsolidationPost,
@@ -1985,7 +1985,12 @@ export async function handleApiGet(path: string, params: Record<string, string> 
   if (p === "backup/list" || p.startsWith("backup/list")) return handleBackupList();
   if (p === "backup/status" || p.startsWith("backup/status?")) return handleBackupStatus(params);
   if (p === "learning/status" || p.startsWith("learning/status")) return handleLearningStatus();
-  if (p === "recall/trace/detail" || p.startsWith("recall/trace/detail")) return ok(RECALL_TRACE_SAMPLE);
+  if (p === "recall/trace/detail" || p.startsWith("recall/trace/detail")) {
+    const traceId = (params.trace_id ?? "").trim();
+    if (!traceId) return err("trace_id_required");
+    const trace = findRecallTraceDetail(traceId);
+    return trace ? ok(trace) : err("trace_unavailable", "trace_unavailable");
+  }
   if (p === "evaluation/datasets" || p.startsWith("evaluation/datasets")) return handleEvaluationDatasets();
   if (p === "evaluation/reports/detail" || p.startsWith("evaluation/reports/detail")) return handleEvaluationReportDetail(params);
   if (p === "evaluation/reports" || p.startsWith("evaluation/reports?")) return handleEvaluationReports(params);

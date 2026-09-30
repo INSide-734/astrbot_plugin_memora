@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from astrbot.api import logger
 from quart import request
@@ -17,8 +18,10 @@ from ....features.observability.infrastructure.debug_reporter import (
     report_debug_exception,
 )
 from ....features.retrieval.explainable_recall import capture_explainable_recall
+from ....features.retrieval.trace_privacy import normalize_trace_id
 from ....features.retrieval.trace_store import RecallTraceStore
 from ....shared.recall_strategy import RecallStrategy
+from .response_utils import error_response
 
 
 class RecallTraceApiMixin:
@@ -99,13 +102,18 @@ class RecallTraceApiMixin:
         return await self.get_recall_trace_detail_payload(dict(request.args or {}))
 
     async def get_recall_trace_detail_payload(self, payload: dict[str, Any]):
-        """按观测关联码读取安全 trace 详情。"""
-        trace_id = str(payload.get("trace_id", "") or "").strip()
-        if not trace_id:
+        """按观测关联码读取安全 trace 详情：先手动预览，再生产快照。"""
+        raw_trace_id = str(payload.get("trace_id", "") or "").strip()
+        if not raw_trace_id:
             return self._error("trace_id_required")
+        trace_id = normalize_trace_id(raw_trace_id)
+        if trace_id is None:
+            return error_response("trace_unavailable", code="trace_unavailable")
         try:
             store = await self._get_recall_trace_store()
             trace = await store.get_trace(trace_id)
+            if trace is None:
+                trace = await self._get_production_trace_snapshot(trace_id)
         except Exception as exc:
             logger.error(
                 "[召回追踪接口] 获取详情失败，异常类型=%s",
@@ -113,8 +121,23 @@ class RecallTraceApiMixin:
             )
             return self._error("recall_trace_detail_failed")
         if trace is None:
-            return self._error("recall_trace_not_found")
+            return error_response("trace_unavailable", code="trace_unavailable")
         return self._ok(trace)
+
+    async def _get_production_trace_snapshot(
+        self, trace_id: str
+    ) -> dict[str, Any] | None:
+        """读取初始化器发布的注入决策 Store 中已脱敏的生产 trace 快照。"""
+        initializer = getattr(self.plugin, "initializer", None)
+        store = getattr(initializer, "injection_decision_store", None)
+        reader = getattr(store, "get_recall_trace_snapshot", None)
+        if not callable(reader):
+            return None
+        typed_reader = cast(
+            Callable[[str], Awaitable[dict[str, Any] | None]],
+            reader,
+        )
+        return await typed_reader(trace_id)
 
     def _get_trace_memory_engine(self):
         """从插件初始化器读取当前 MemoryEngine。"""

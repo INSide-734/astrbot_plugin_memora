@@ -7,9 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from core.features.injection.domain.models import (
+    InjectionDecisionBundle,
     InjectionDecisionRecord,
     LifecycleOrigin,
     LifecycleSource,
+    RecallTraceSnapshot,
 )
 from core.features.injection.infrastructure.injection_decision_store import (
     LifecycleCommitOutcomeUnknown,
@@ -806,3 +808,127 @@ async def test_retry_deadline_is_sampled_after_slow_failed_io(
     await asyncio.wait_for(retry_waiting.wait(), timeout=1.0)
     assert observed_delays[0] == pytest.approx(0.05)
     await recorder.close(timeout=0.01)
+
+
+_TRACE_SENTINEL = "PRIVATE_RECORDER_TRACE_SENTINEL"
+
+
+def _trace_payload() -> dict[str, object]:
+    return {
+        "trace_id": "caller-chosen-id",
+        "query": _TRACE_SENTINEL,
+        "metadata": {"trace_kind": "production"},
+        "injection": {"injected_count": 1, "memory_ids": [101]},
+    }
+
+
+@pytest.mark.asyncio
+async def test_trace_payload_is_admitted_as_one_bundle_with_generated_link(
+    store, make_record
+) -> None:
+    recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
+    recorder.record(make_record("linked"), trace_payload=_trace_payload())
+
+    assert recorder.snapshot()["queue_size"] == 1
+    assert recorder.queued_decision_ids() == ["linked"]
+    await recorder.close(timeout=1.0)
+
+    rows = store.insert_many.await_args.args[0]
+    assert len(rows) == 1
+    bundle = rows[0]
+    assert isinstance(bundle, InjectionDecisionBundle)
+    assert bundle.decision.trace_id == bundle.snapshot.trace_id
+    assert bundle.decision.trace_id != "caller-chosen-id"
+    assert _TRACE_SENTINEL not in bundle.snapshot.payload_json
+    assert "memory_ids" not in bundle.snapshot.payload_json
+
+
+@pytest.mark.asyncio
+async def test_explicit_request_trace_id_is_reused_by_decision_bundle(
+    store, make_record
+) -> None:
+    recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
+    admitted = recorder.record(
+        make_record("request-linked"),
+        trace_payload=_trace_payload(),
+        trace_id="request-trace-id",
+        return_admitted=True,
+    )
+    assert admitted is True
+
+    await recorder.close(timeout=1.0)
+
+    [bundle] = store.insert_many.await_args.args[0]
+    assert isinstance(bundle, InjectionDecisionBundle)
+    assert bundle.decision.trace_id == "request-trace-id"
+    assert bundle.snapshot.trace_id == "request-trace-id"
+
+
+@pytest.mark.asyncio
+async def test_trace_only_snapshot_uses_shared_bounded_queue(store) -> None:
+    recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
+    recorder.record_trace(_trace_payload(), trace_id="trace-only-id")
+
+    await recorder.close(timeout=1.0)
+
+    [snapshot] = store.insert_many.await_args.args[0]
+    assert isinstance(snapshot, RecallTraceSnapshot)
+    assert snapshot.trace_id == "trace-only-id"
+
+
+@pytest.mark.asyncio
+async def test_rejected_or_invalid_trace_never_links_decision(
+    store, make_record, monkeypatch
+) -> None:
+    recorder = InjectionDecisionRecorder(store, flush_interval=60.0)
+    monkeypatch.setattr(
+        "core.features.injection.infrastructure.recorder.sanitize_trace_payload",
+        MagicMock(side_effect=ValueError(_TRACE_SENTINEL)),
+    )
+    admitted = recorder.record(
+        make_record("unlinked"),
+        trace_payload=_trace_payload(),
+        trace_id="request-trace-id",
+        return_admitted=True,
+    )
+    assert admitted is False
+    await recorder.close(timeout=1.0)
+
+    [row] = store.insert_many.await_args.args[0]
+    assert isinstance(row, InjectionDecisionRecord)
+    assert row.trace_id is None
+    assert recorder.snapshot()["failures_total"] == 1
+
+    closed = InjectionDecisionRecorder(store)
+    await closed.close(timeout=1.0)
+    closed.record(make_record("closed"), trace_payload=_trace_payload())
+    assert closed.queued_decision_ids() == []
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_lifecycle_commit_replays_bundle_without_lifecycle(
+    store, make_record
+) -> None:
+    calls: list[list[str]] = []
+
+    async def insert_many(rows):
+        calls.append([type(row).__name__ for row in rows])
+        if len(calls) == 1:
+            raise LifecycleCommitOutcomeUnknown("lifecycle commit outcome unknown")
+        return len(rows)
+
+    store.insert_many = AsyncMock(side_effect=insert_many)
+    recorder = InjectionDecisionRecorder(
+        store, batch_size=2, flush_interval=0.001, retry_base_delay=0.001
+    )
+    recorder.record(make_record("bundle"), trace_payload=_trace_payload())
+    recorder.record_retrieved(2)
+    await recorder.start()
+    await recorder.wait_until_idle(timeout=1.0)
+    await recorder.close(timeout=1.0)
+
+    assert calls == [
+        ["InjectionDecisionBundle", "InjectionLifecycleRecord"],
+        ["InjectionDecisionBundle"],
+    ]
+    assert recorder.snapshot()["dropped_total"] == 1

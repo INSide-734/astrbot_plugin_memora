@@ -7,6 +7,33 @@ from copy import deepcopy
 from typing import Any
 
 _MAX_SAFE_COUNT = 2**63 - 1
+_HEALTH_DOMAINS = (
+    "provider",
+    "recall",
+    "write",
+    "scheduler",
+    "index",
+    "anomaly",
+    "prometheus",
+    "summary_tasks",
+    "quality",
+    "restore",
+)
+_RESTORE_TERMINAL_STATUSES = frozenset({"succeeded", "rolled_back", "cancelled"})
+_RESTORE_STATUSES = frozenset(
+    {
+        "staged",
+        "reload_scheduled",
+        "applying",
+        "validating",
+        "succeeded",
+        "failed_before_apply",
+        "rollback_pending",
+        "rolling_back",
+        "rolled_back",
+        "cancelled",
+    }
+)
 
 
 class HealthScorer:
@@ -73,6 +100,15 @@ class HealthScorer:
             )
             recommended_actions.append(
                 "Monitor provider startup and verify upstream availability."
+            )
+        elif provider_status == "unknown" or not provider:
+            domains.append(
+                self._domain(
+                    "provider",
+                    0,
+                    "unknown",
+                    "Domain evidence is unavailable.",
+                )
             )
 
         recall = self._as_dict(data.get("recall"))
@@ -297,6 +333,124 @@ class HealthScorer:
                         100,
                         "info",
                         "Quarantined candidates are awaiting safety review; this is not an infrastructure failure.",
+                    )
+                )
+
+        quality_value = data.get("quality")
+        if quality_value is None:
+            domains.append(
+                self._domain(
+                    "quality",
+                    0,
+                    "unknown",
+                    "Quality evidence is not assembled in this runtime.",
+                )
+            )
+        else:
+            quality = self._as_dict(quality_value)
+            quality_status = str(quality.get("status", "")).lower()
+            if quality_status == "ok":
+                domains.append(
+                    self._domain(
+                        "quality", 100, "healthy", "Quality scoring is available."
+                    )
+                )
+            elif quality_status == "no_samples":
+                domains.append(
+                    self._domain(
+                        "quality", 100, "info", "Quality scoring has no samples yet."
+                    )
+                )
+            elif quality_status == "error":
+                score -= 10
+                domains.append(
+                    self._domain(
+                        "quality", 55, "degraded", "Quality scoring is unavailable."
+                    )
+                )
+            else:
+                domains.append(
+                    self._domain(
+                        "quality",
+                        0,
+                        "unknown",
+                        "Quality evidence is not assembled in this runtime.",
+                    )
+                )
+
+        restore_value = data.get("restore")
+        if restore_value is None:
+            domains.append(
+                self._domain(
+                    "restore",
+                    0,
+                    "unknown",
+                    "Restore maintenance state is unavailable.",
+                )
+            )
+        else:
+            restore = self._as_dict(restore_value)
+            restore_status = restore.get("status")
+            blocked = restore.get("blocked") is True
+            if (
+                not isinstance(restore_status, str)
+                or restore_status not in _RESTORE_STATUSES
+            ):
+                restore_status = None
+            if blocked:
+                domains.append(
+                    self._domain(
+                        "restore",
+                        55,
+                        "watch",
+                        "Restore maintenance is blocking writes.",
+                    )
+                )
+            elif restore_status in _RESTORE_TERMINAL_STATUSES:
+                domains.append(
+                    self._domain(
+                        "restore",
+                        100,
+                        "info",
+                        "Restore maintenance completed.",
+                    )
+                )
+            else:
+                domains.append(
+                    self._domain(
+                        "restore",
+                        100,
+                        "healthy",
+                        "Restore maintenance is clear.",
+                    )
+                )
+
+        input_names = {
+            "provider": "provider",
+            "recall": "recall",
+            "write": "write_coordinator",
+            "scheduler": "background_tasks",
+            "index": "index",
+            "anomaly": "anomaly",
+            "prometheus": "prometheus",
+            "summary_tasks": "summary_tasks",
+            "quality": "quality",
+            "restore": "restore",
+        }
+        projected_names = {item["name"] for item in domains}
+        for domain_name in _HEALTH_DOMAINS:
+            if domain_name in projected_names:
+                continue
+            if (
+                input_names[domain_name] not in data
+                or data[input_names[domain_name]] is None
+            ):
+                domains.append(
+                    self._domain(
+                        domain_name,
+                        0,
+                        "unknown",
+                        "Domain evidence is unavailable.",
                     )
                 )
 

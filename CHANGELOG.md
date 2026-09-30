@@ -7,6 +7,11 @@ Memora 的所有重要变更都记录在此文件中。
 
 ## [Unreleased]
 
+### 新增
+
+- 完成生产召回诊断闭环：每次请求生成 opaque `trace_id`，脱敏快照记录检索阶段、候选结果、实际注入摘要、路由与预算、事实对齐和来源状态；空请求、跳过、失败与取消路径保留 trace-only 诊断，不伪造注入决策（#89）。
+- 诊断 API、`/memora health`、`/memora diagnostics`、`/memora trace` 与 Dashboard 智能诊断/召回 Trace 面板统一展示闭集状态、过滤原因计数、健康域和生产 Trace 的空态/不可用态，并同步中英俄文案。
+
 ### 变更
 
 - 注入策略摘要新增窗口内 `retrieved_count` 与 `injected_count`，Dashboard 概览分别展示检索到与实际注入的记忆数量；保留既有载荷/决策字段语义，不创建 `adopted` 字段。测试效应配置仍保留原键名和默认值，但维护说明改为仅在成功 injected 后生效。

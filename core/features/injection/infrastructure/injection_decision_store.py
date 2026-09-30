@@ -10,12 +10,15 @@ from pathlib import Path
 from typing import Any
 
 from ...memory.infrastructure.base_store import BaseStore
+from ...retrieval.trace_privacy import normalize_trace_id, sanitize_trace_payload
 from ..domain.models import (
+    InjectionDecisionBundle,
     InjectionDecisionRecord,
     InjectionLifecycleRecord,
     LifecycleEventKind,
     LifecycleOrigin,
     LifecycleSource,
+    RecallTraceSnapshot,
 )
 
 _DAY_MS = 86_400_000
@@ -31,10 +34,39 @@ _WINDOW_MS = {
 }
 
 _MAX_SQLITE_INTEGER = 2**63 - 1
+_MAX_TRACE_PAYLOAD_BYTES = 64 * 1024
 
 
 class LifecycleCommitOutcomeUnknown(RuntimeError):
     """A lifecycle-containing commit may have succeeded despite its error."""
+
+
+def trace_snapshot_values(snapshot: RecallTraceSnapshot) -> tuple[str, int, str]:
+    """Validate a fixed snapshot envelope and return its re-sanitized row values."""
+    if type(snapshot) is not RecallTraceSnapshot:
+        raise ValueError("snapshot must be a RecallTraceSnapshot")
+    trace_id = normalize_trace_id(snapshot.trace_id)
+    if trace_id is None:
+        raise ValueError("snapshot trace_id is invalid")
+    if (
+        type(snapshot.created_at_ms) is not int
+        or not 0 <= snapshot.created_at_ms <= _MAX_SQLITE_INTEGER
+    ):
+        raise ValueError("snapshot created_at_ms must be a non-negative SQLite integer")
+    if not isinstance(snapshot.payload_json, str):
+        raise ValueError("snapshot payload_json must be text")
+    if len(snapshot.payload_json.encode("utf-8")) > _MAX_TRACE_PAYLOAD_BYTES:
+        raise ValueError("snapshot payload_json is too large")
+    try:
+        payload = sanitize_trace_payload(json.loads(snapshot.payload_json))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("snapshot payload_json is invalid") from exc
+    if payload["trace_id"] != trace_id:
+        raise ValueError("snapshot trace_id does not match payload")
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    if len(encoded.encode("utf-8")) > _MAX_TRACE_PAYLOAD_BYTES:
+        raise ValueError("sanitized snapshot payload_json is too large")
+    return trace_id, snapshot.created_at_ms, encoded
 
 
 _COLUMNS = (
@@ -157,6 +189,7 @@ class CleanupResult:
     deleted_expired: int
     deleted_overflow: int
     deleted_lifecycle: int = 0
+    deleted_trace_snapshots: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,7 +209,7 @@ class _BucketAggregate:
 
 
 class InjectionDecisionStore(BaseStore):
-    """Store injection decisions using an explicit safe schema."""
+    """Store injection decisions and sanitized production trace snapshots."""
 
     _INSERT_SQL = f"""
         INSERT OR IGNORE INTO injection_decisions ({_SELECT_COLUMNS})
@@ -229,14 +262,39 @@ class InjectionDecisionStore(BaseStore):
                 PRIMARY KEY (bucket_ms, event_kind, source, origin)
             )
         """)
+        await self._execute("""
+            CREATE TABLE IF NOT EXISTS recall_trace_snapshots (
+                trace_id TEXT PRIMARY KEY,
+                created_at_ms INTEGER NOT NULL,
+                payload_json TEXT NOT NULL
+            )
+        """)
         for sql in (
             "CREATE INDEX IF NOT EXISTS idx_injection_decisions_created ON injection_decisions(created_at_ms DESC, decision_id DESC)",
             "CREATE INDEX IF NOT EXISTS idx_injection_decisions_preset ON injection_decisions(resolved_preset, created_at_ms DESC)",
             "CREATE INDEX IF NOT EXISTS idx_injection_decisions_provider ON injection_decisions(provider_type, created_at_ms DESC)",
             "CREATE INDEX IF NOT EXISTS idx_injection_decisions_outcome ON injection_decisions(outcome, created_at_ms DESC)",
+            "CREATE INDEX IF NOT EXISTS idx_recall_trace_snapshots_created ON recall_trace_snapshots(created_at_ms DESC, trace_id DESC)",
         ):
             await self._execute(sql)
         await self._commit()
+
+    async def get_recall_trace_snapshot(self, trace_id: str) -> dict[str, Any] | None:
+        """Return one sanitized production snapshot; malformed historical rows are unavailable."""
+        normalized = normalize_trace_id(trace_id)
+        if normalized is None:
+            return None
+        row = await self._fetch_one(
+            "SELECT trace_id, payload_json FROM recall_trace_snapshots WHERE trace_id = ?",
+            (normalized,),
+        )
+        if row is None:
+            return None
+        try:
+            payload = sanitize_trace_payload(json.loads(row["payload_json"]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+        return payload if payload.get("trace_id") == normalized else None
 
     @staticmethod
     def _record_values(record: InjectionDecisionRecord) -> tuple[Any, ...]:
@@ -307,16 +365,30 @@ class InjectionDecisionStore(BaseStore):
 
     async def insert_many(
         self,
-        records: Sequence[InjectionDecisionRecord | InjectionLifecycleRecord],
+        records: Sequence[
+            InjectionDecisionRecord
+            | InjectionLifecycleRecord
+            | InjectionDecisionBundle
+            | RecallTraceSnapshot
+        ],
     ) -> int:
-        """Persist a decision/lifecycle batch in one retryable transaction."""
+        """Persist decisions, trace snapshots, and lifecycle records in one transaction."""
         if not records:
             return 0
 
         decision_values: list[tuple[Any, ...]] = []
         lifecycle_values: list[tuple[int, str, str, str, int]] = []
+        snapshot_values: list[tuple[str, int, str]] = []
         for record in records:
-            if type(record) is InjectionDecisionRecord:
+            if type(record) is InjectionDecisionBundle:
+                decision = record.decision
+                if decision.trace_id != record.snapshot.trace_id:
+                    raise ValueError("bundle trace_id mismatch")
+                decision_values.append(self._record_values(decision))
+                snapshot_values.append(trace_snapshot_values(record.snapshot))
+            elif type(record) is RecallTraceSnapshot:
+                snapshot_values.append(trace_snapshot_values(record))
+            elif type(record) is InjectionDecisionRecord:
                 decision_values.append(self._record_values(record))
             elif type(record) is InjectionLifecycleRecord:
                 lifecycle_values.append(self._lifecycle_values(record))
@@ -330,6 +402,12 @@ class InjectionDecisionStore(BaseStore):
             try:
                 if decision_values:
                     await self.connection.executemany(self._INSERT_SQL, decision_values)
+                if snapshot_values:
+                    await self.connection.executemany(
+                        "INSERT OR IGNORE INTO recall_trace_snapshots "
+                        "(trace_id, created_at_ms, payload_json) VALUES (?, ?, ?)",
+                        snapshot_values,
+                    )
                 if lifecycle_values:
                     await self.connection.executemany(
                         _LIFECYCLE_UPSERT_SQL, lifecycle_values
@@ -338,7 +416,6 @@ class InjectionDecisionStore(BaseStore):
                     await self.connection.commit()
                 except Exception as exc:
                     if lifecycle_values:
-                        # commit 后结果可能未知，阻止写协调器按 locked 重放聚合。
                         raise LifecycleCommitOutcomeUnknown(
                             "lifecycle commit outcome unknown"
                         ) from exc
@@ -630,12 +707,14 @@ class InjectionDecisionStore(BaseStore):
         max_rows: int,
         now_ms: int | None = None,
     ) -> CleanupResult:
-        """Delete old decisions and lifecycle buckets without partial loss.
+        """Delete old decisions, snapshots, and lifecycle buckets atomically.
 
         A lifecycle bucket is retained while it intersects the retention
         cutoff; a bucket ending exactly at the cutoff is eligible for deletion.
-        ``max_rows`` applies only to detailed decision rows, never buckets.
+        ``max_rows`` applies independently to decision rows and snapshots,
+        including trace-only snapshots without a decision row.
         """
+
         if retention_days < 0:
             raise ValueError("retention_days must be non-negative")
         if max_rows < 0:
@@ -651,6 +730,7 @@ class InjectionDecisionStore(BaseStore):
             try:
                 deleted_expired = 0
                 deleted_lifecycle = 0
+                deleted_trace_snapshots = 0
                 if retention_days:
                     cutoff_ms = now_ms - retention_days * _DAY_MS
                     cursor = await self.connection.execute(
@@ -658,6 +738,11 @@ class InjectionDecisionStore(BaseStore):
                         (cutoff_ms,),
                     )
                     deleted_expired = cursor.rowcount
+                    cursor = await self.connection.execute(
+                        "DELETE FROM recall_trace_snapshots WHERE created_at_ms < ?",
+                        (cutoff_ms,),
+                    )
+                    deleted_trace_snapshots += cursor.rowcount
                     # Delete only buckets whose end is at or before cutoff;
                     # a bucket intersecting the cutoff remains intact.
                     cursor = await self.connection.execute(
@@ -673,11 +758,24 @@ class InjectionDecisionStore(BaseStore):
                     (max_rows,),
                 )
                 deleted_overflow = cursor.rowcount
+                cursor = await self.connection.execute(
+                    "DELETE FROM recall_trace_snapshots WHERE trace_id IN ("
+                    "SELECT trace_id FROM recall_trace_snapshots "
+                    "ORDER BY created_at_ms DESC, trace_id DESC LIMIT -1 OFFSET ?"
+                    ")",
+                    (max_rows,),
+                )
+                deleted_trace_snapshots += cursor.rowcount
                 await self.connection.commit()
             except BaseException:
                 await self.connection.rollback()
                 raise
-            return CleanupResult(deleted_expired, deleted_overflow, deleted_lifecycle)
+            return CleanupResult(
+                deleted_expired,
+                deleted_overflow,
+                deleted_lifecycle,
+                deleted_trace_snapshots,
+            )
 
         from ...memory.application.write_coordinator import write_transaction
 
@@ -690,4 +788,5 @@ __all__ = [
     "DecisionQuery",
     "INJECTION_DECISION_SORT_COLUMNS",
     "InjectionDecisionStore",
+    "trace_snapshot_values",
 ]

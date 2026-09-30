@@ -110,6 +110,45 @@ describe("DiagnosticCenter", () => {
     expect(screen.getByText(/resolved/i)).toBeTruthy();
   });
 
+  it("renders absent health domains as unknown without fabricating a healthy score", async () => {
+    bridge.t.mockImplementation((key: string) => {
+      const labels: Record<string, string> = {
+        "intelligence.diagnostics.status.unknown": "Unknown",
+        "intelligence.diagnostics.unknownDomain": "No diagnostic signal is available for this domain.",
+        "intelligence.diagnostics.domain.restore": "Restore",
+        "intelligence.diagnostics.domain.quality": "Quality",
+      };
+      return labels[key] ?? key;
+    });
+    bridge.apiGet.mockImplementation((path: string) => {
+      if (path === "page/diagnostics/health") {
+        return Promise.resolve(ok({
+          score: 82,
+          level: "watch",
+          domains: [{ name: "provider", score: 90, status: "healthy", message: "Provider ready" }],
+          recommended_actions: [],
+        }));
+      }
+      return Promise.resolve(ok({ events: [], total: 0 }));
+    });
+
+    render(<DiagnosticCenter showToast={() => undefined} />);
+
+    const unknownStatuses = await screen.findAllByText("Unknown");
+    expect(unknownStatuses.length).toBeGreaterThanOrEqual(7);
+    expect(screen.getAllByText("No diagnostic signal is available for this domain.")).toHaveLength(7);
+    for (const domain of ["Recall", "Write", "Scheduler", "Index", "Prometheus", "Restore", "Quality"]) {
+      const label = screen.getByText(domain);
+      const card = label.closest("div.rounded-lg");
+      const unknownBadge = Array.from(card?.querySelectorAll("span") ?? []).find(
+        (badge) => badge.textContent?.trim() === "Unknown",
+      );
+      expect(unknownBadge?.className).toContain("text-[var(--text-secondary)]");
+      expect(card?.textContent).toContain("--");
+      expect(card?.textContent).not.toContain("100");
+    }
+  });
+
   it("updates cached fallbacks and diagnostic enums after a language change", async () => {
     let locale = "en-US";
     const translations = {
@@ -117,8 +156,10 @@ describe("DiagnosticCenter", () => {
         "intelligence.diagnostics.noMessage": "No diagnostic message.",
         "intelligence.diagnostics.untitledEvent": "Untitled diagnostic event",
         "intelligence.diagnostics.noActiveSignal": "No active diagnostic signal.",
+        "intelligence.diagnostics.unknownDomain": "No diagnostic signal is available for this domain.",
         "intelligence.diagnostics.level.watch": "Watch",
         "intelligence.diagnostics.status.healthy": "Healthy",
+        "intelligence.diagnostics.status.unknown": "Unknown",
         "intelligence.diagnostics.severity.warning": "Warning",
         "intelligence.diagnostics.severity.info": "Info",
         "intelligence.diagnostics.state.open": "Open",
@@ -128,8 +169,10 @@ describe("DiagnosticCenter", () => {
         "intelligence.diagnostics.noMessage": "暂无诊断消息。",
         "intelligence.diagnostics.untitledEvent": "未命名诊断事件",
         "intelligence.diagnostics.noActiveSignal": "暂无活跃诊断信号。",
+        "intelligence.diagnostics.unknownDomain": "暂无该诊断域的可用信号。",
         "intelligence.diagnostics.level.watch": "需关注",
         "intelligence.diagnostics.status.healthy": "正常",
+        "intelligence.diagnostics.status.unknown": "未知",
         "intelligence.diagnostics.severity.warning": "警告",
         "intelligence.diagnostics.severity.info": "信息",
         "intelligence.diagnostics.state.open": "未解决",
@@ -186,7 +229,8 @@ describe("DiagnosticCenter", () => {
 
     expect(await screen.findByText("No diagnostic message.")).toBeTruthy();
     expect(screen.getByText("Untitled diagnostic event")).toBeTruthy();
-    expect(screen.getAllByText("No active diagnostic signal.").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("No diagnostic signal is available for this domain.")).toHaveLength(7);
+    expect(screen.getAllByText("Unknown").length).toBeGreaterThanOrEqual(7);
     expect(screen.getByText("Watch")).toBeTruthy();
     expect(screen.getAllByText("Healthy").length).toBeGreaterThan(0);
     expect(screen.getByText("Warning")).toBeTruthy();
@@ -199,7 +243,8 @@ describe("DiagnosticCenter", () => {
 
     expect(await screen.findByText("暂无诊断消息。")).toBeTruthy();
     expect(screen.getByText("未命名诊断事件")).toBeTruthy();
-    expect(screen.getAllByText("暂无活跃诊断信号。").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("暂无该诊断域的可用信号。")).toHaveLength(7);
+    expect(screen.getAllByText("未知").length).toBeGreaterThanOrEqual(7);
     expect(screen.getByText("需关注")).toBeTruthy();
     expect(screen.getAllByText("正常").length).toBeGreaterThan(0);
     expect(screen.getByText("警告")).toBeTruthy();

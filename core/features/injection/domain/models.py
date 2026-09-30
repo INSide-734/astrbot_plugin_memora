@@ -204,3 +204,20 @@ class InjectionDecisionRecord:
     decision_ms: float = 0.0
     format_ms: float = 0.0
     inject_ms: float = 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class RecallTraceSnapshot:
+    """已经脱敏、可与决策同事务写入的生产 Trace 快照。"""
+
+    trace_id: str
+    created_at_ms: int
+    payload_json: str
+
+
+@dataclass(frozen=True, slots=True)
+class InjectionDecisionBundle:
+    """一个有界队列项中的决策与其生产 Trace 快照。"""
+
+    decision: InjectionDecisionRecord
+    snapshot: RecallTraceSnapshot

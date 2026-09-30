@@ -20,9 +20,23 @@ from ....platform.resources.i18n_backend import t
 DiagnosticProvider = Callable[..., Awaitable[Mapping[str, Any]]]
 
 _TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,64}$")
-_HEALTH_LEVELS = frozenset({"healthy", "watch", "degraded", "critical", "info"})
+_HEALTH_LEVELS = frozenset(
+    {"healthy", "watch", "degraded", "critical", "info", "unknown"}
+)
 _HEALTH_DOMAINS = frozenset(
-    {"provider", "recall", "write", "scheduler", "index", "prometheus"}
+    {
+        "provider",
+        "recall",
+        "write",
+        "scheduler",
+        "index",
+        "anomaly",
+        "prometheus",
+        "summary_tasks",
+        "write_availability",
+        "quality",
+        "restore",
+    }
 )
 _PROVIDER_STATUSES = frozenset({"ready", "waiting", "failed", "unknown"})
 _TRACE_STAGES = frozenset({"search_memories", "injection_decision"})
@@ -81,7 +95,7 @@ class DiagnosticCommandMixin:
             raise
         except Exception as exc:
             logger.error(
-                "[诊断命令] 获取健康摘要失败，异常类型=%s",
+                "[诊断命令] operation=handle_health exception_type=%s",
                 exc.__class__.__name__,
             )
             yield event.plain_result(t("command_diagnostics.health.failed"))
@@ -108,7 +122,7 @@ class DiagnosticCommandMixin:
             raise
         except Exception as exc:
             logger.error(
-                "[诊断命令] 获取实时诊断快照失败，异常类型=%s",
+                "[诊断命令] operation=handle_diagnostics exception_type=%s",
                 exc.__class__.__name__,
             )
             yield event.plain_result(t("command_diagnostics.snapshot.failed"))
@@ -151,7 +165,7 @@ class DiagnosticCommandMixin:
             raise
         except Exception as exc:
             logger.error(
-                "[诊断命令] 执行召回追踪失败，异常类型=%s",
+                "[诊断命令] operation=handle_trace exception_type=%s",
                 exc.__class__.__name__,
             )
             yield event.plain_result(t("command_diagnostics.trace.failed"))
@@ -246,7 +260,7 @@ class DiagnosticCommandMixin:
         write = cls._safe_mapping(payload.get("write_coordinator"))
         prometheus = cls._safe_mapping(payload.get("prometheus"))
         summary_value = payload.get("summary_tasks")
-        summary_tasks: dict[str, int] | None = None
+        summary_tasks: Mapping[str, Any] | None = None
         if summary_value is not None:
             try:
                 summary_tasks = sanitize_summary_task_snapshot(summary_value).to_dict()

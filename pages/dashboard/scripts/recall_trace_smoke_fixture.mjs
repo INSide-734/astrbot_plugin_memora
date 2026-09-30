@@ -10,6 +10,70 @@ export function recallTracePayload(traceId = "trace-smoke-coffee") {
     total_ms: 84.2,
     stages: [
       {
+        name: "retrieval",
+        duration_ms: 82.7,
+        candidate_count: 7,
+        metadata: {},
+        status: "completed",
+      },
+      {
+        name: "query",
+        duration_ms: 1.5,
+        candidate_count: 7,
+        metadata: {
+          routing_mode: "hybrid",
+          resolved_preset: "balanced",
+          reason_code: "AUTO_FALLBACK",
+        },
+        status: "completed",
+      },
+      {
+        name: "recall",
+        duration_ms: 0,
+        candidate_count: 7,
+        metadata: {},
+        status: "completed",
+      },
+    ],
+    results: [
+      {
+        rank: 1,
+        initial_score: 0.71,
+        final_score: 0.93,
+        score_contributions: [
+          { source: "bm25", score: 0.62, weight: 0.35 },
+        ],
+        metadata: { memory_type: "preference", status: "active" },
+      },
+    ],
+    filtered: [],
+    filter_summary: [
+      { stage: "retrieval", reason: "privacy", count: 1 },
+      { stage: "query", reason: "mark_write", count: 1 },
+      { stage: "recall", reason: "stale", count: 1 },
+    ],
+    created_at: 1_782_000_000,
+    metadata: { debug_trace_available: false, trace_kind: "production" },
+    injection: {
+      candidate_count: 7,
+      selected_count: 3,
+      injected_count: 2,
+      routing_mode: "hybrid",
+      resolved_preset: "balanced",
+      outcome: "injected",
+    },
+    fact_alignment: { aligned: 1, misaligned: 0, undeterminable: 0 },
+    source_status: "not_assessed",
+  };
+}
+
+/** 构造显式手动预览；注入决策详情仍使用 production payload。 */
+export function recallTracePreviewPayload(traceId = "trace-smoke-coffee") {
+  return {
+    trace_id: traceId,
+    total_ms: 84.2,
+    stages: [
+      {
         name: "search_memories",
         duration_ms: 82.7,
         candidate_count: 7,

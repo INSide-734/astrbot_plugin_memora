@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import time
-from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+import uuid
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
 from ...memory.application.write_coordinator import is_connection_fatal
@@ -25,14 +27,20 @@ from ...observability.infrastructure.metrics import (
     INJECTION_STAGE_SECONDS,
     INJECTION_TRUNCATION_RATIO,
 )
+from ...retrieval.trace_privacy import sanitize_trace_payload
 from ..domain.models import (
+    InjectionDecisionBundle,
     InjectionDecisionRecord,
     InjectionLifecycleRecord,
     LifecycleEventKind,
     LifecycleOrigin,
     LifecycleSource,
+    RecallTraceSnapshot,
 )
-from .injection_decision_store import LifecycleCommitOutcomeUnknown
+from .injection_decision_store import (
+    LifecycleCommitOutcomeUnknown,
+    trace_snapshot_values,
+)
 
 if TYPE_CHECKING:
     from .injection_decision_store import InjectionDecisionStore
@@ -40,11 +48,17 @@ if TYPE_CHECKING:
 __all__ = ["InjectionDecisionRecorder"]
 
 _PRESET_RANKS = {"tool_first": 0, "low_cost": 1, "balanced": 2, "quality": 3}
+_RecorderItem = (
+    InjectionDecisionRecord
+    | InjectionLifecycleRecord
+    | InjectionDecisionBundle
+    | RecallTraceSnapshot
+)
 
 
 @dataclass(slots=True)
 class RecorderWorkerState:
-    retained: list[InjectionDecisionRecord | InjectionLifecycleRecord]
+    retained: list[_RecorderItem]
     flush_at: float | None
     batch_retry_at: float
     batch_attempt: int
@@ -96,9 +110,7 @@ class InjectionDecisionRecorder:
         if flush_interval <= 0 or retry_base_delay <= 0:
             raise ValueError("intervals must be positive")
         self.store = store
-        self._queue: asyncio.Queue[
-            InjectionDecisionRecord | InjectionLifecycleRecord
-        ] = asyncio.Queue(queue_capacity)
+        self._queue: asyncio.Queue[_RecorderItem] = asyncio.Queue(queue_capacity)
         self._queue_capacity = queue_capacity
         self._batch_size = batch_size
         self._flush_interval = flush_interval
@@ -113,9 +125,7 @@ class InjectionDecisionRecorder:
         self._wake_generation = 0
         self._idle = asyncio.Event()
         self._idle.set()
-        self._retained_batch: list[
-            InjectionDecisionRecord | InjectionLifecycleRecord
-        ] = []
+        self._retained_batch: list[_RecorderItem] = []
         self._cleanup_generation = 0
         self._cleanup_completed_generation = 0
         self._dropped_total = 0
@@ -131,20 +141,33 @@ class InjectionDecisionRecorder:
                 self._run(), name="memora-injection-decision-recorder"
             )
 
-    def record(self, record: InjectionDecisionRecord) -> None:
+    def record(
+        self,
+        record: InjectionDecisionRecord,
+        trace_payload: Mapping[str, Any] | None = None,
+        *,
+        trace_id: str | None = None,
+        return_admitted: bool = False,
+    ) -> bool | None:
         """将一条已脱敏记录无阻塞地加入有界队列。
 
-        Args:
-            record: 已完成脱敏的注入决策记录。
+        ``trace_id`` 由召回请求 owner 提供时，决策和快照复用该请求关联码；
+        未提供时保留旧调用方的 recorder-side UUID 兼容行为。调用方可显式
+        请求返回值，以区分带快照的 bundle 是否真正进入队列。
         """
         started = self._monotonic()
+        admitted = False
         try:
             if self._closing:
                 self._failures_total += 1
                 self._safe_failure("closed")
-                return
-            self._enqueue_record(record)
+                return False if return_admitted else None
+            item: _RecorderItem = record
+            if trace_payload is not None:
+                item = self._trace_bundle(record, trace_payload, trace_id)
+            self._enqueue_record(item)
             self._observe_record(record)
+            admitted = isinstance(item, InjectionDecisionBundle)
         except Exception:
             # 可观测性故障和有界队列竞争不得影响聊天调用方。
             self._failures_total += 1
@@ -154,10 +177,70 @@ class InjectionDecisionRecorder:
                 INJECTION_DECISION_QUEUE_SECONDS,
                 max(0.0, self._monotonic() - started),
             )
+        return admitted if return_admitted else None
 
-    def _enqueue_record(
-        self, record: InjectionDecisionRecord | InjectionLifecycleRecord
-    ) -> None:
+    def record_trace(
+        self,
+        trace_payload: Mapping[str, Any],
+        *,
+        trace_id: str | None = None,
+    ) -> bool:
+        """无阻塞地排队一条没有注入决策的生产 Trace 快照。"""
+        started = self._monotonic()
+        try:
+            if self._closing:
+                self._failures_total += 1
+                self._safe_failure("closed")
+                return False
+            snapshot = self._trace_snapshot(trace_payload, trace_id)
+            self._enqueue_record(snapshot)
+            return True
+        except Exception:
+            self._failures_total += 1
+            self._safe_failure("trace_snapshot_invalid")
+            return False
+        finally:
+            self._safe_observe(
+                INJECTION_DECISION_QUEUE_SECONDS,
+                max(0.0, self._monotonic() - started),
+            )
+
+    def _trace_bundle(
+        self,
+        record: InjectionDecisionRecord,
+        trace_payload: Mapping[str, Any],
+        trace_id: str | None,
+    ) -> _RecorderItem:
+        """构造决策与快照的原子队列项；失败时退回无关联决策。"""
+        try:
+            snapshot = self._trace_snapshot(trace_payload, trace_id)
+        except Exception:
+            self._failures_total += 1
+            self._safe_failure("trace_snapshot_invalid")
+            return replace(record, trace_id=None)
+        return InjectionDecisionBundle(
+            decision=replace(record, trace_id=snapshot.trace_id),
+            snapshot=snapshot,
+        )
+
+    def _trace_snapshot(
+        self,
+        trace_payload: Mapping[str, Any],
+        trace_id: str | None,
+    ) -> RecallTraceSnapshot:
+        resolved_trace_id = trace_id or str(uuid.uuid4())
+        safe_payload = sanitize_trace_payload(
+            {**trace_payload, "trace_id": resolved_trace_id}
+        )
+        snapshot = RecallTraceSnapshot(
+            trace_id=resolved_trace_id,
+            created_at_ms=time.time_ns() // 1_000_000,
+            payload_json=json.dumps(safe_payload, ensure_ascii=False, sort_keys=True),
+        )
+        trace_snapshot_values(snapshot)
+        return snapshot
+
+    def _enqueue_record(self, record: _RecorderItem) -> None:
         if len(self._retained_batch) + self._queue.qsize() >= self._queue_capacity:
             if self._retained_batch:
                 self._retained_batch.pop(0)
@@ -280,9 +363,11 @@ class InjectionDecisionRecorder:
             # noqa: SLF001 - asyncio.Queue 没有只读快照接口
         )
         return [
-            record.decision_id
+            record.decision.decision_id
+            if isinstance(record, InjectionDecisionBundle)
+            else record.decision_id
             for record in (*self._retained_batch, *queued)
-            if isinstance(record, InjectionDecisionRecord)
+            if isinstance(record, InjectionDecisionRecord | InjectionDecisionBundle)
         ]
 
     async def wait_until_idle(self, timeout: float = 5.0) -> None:
@@ -453,7 +538,7 @@ class InjectionDecisionRecorder:
     def _handle_persist_failure(
         self,
         state: RecorderWorkerState,
-        attempted: list[InjectionDecisionRecord | InjectionLifecycleRecord],
+        attempted: list[_RecorderItem],
         exc: Exception,
     ) -> None:
         # Only a known pre-commit lock failure may replay aggregate counts;
@@ -479,7 +564,7 @@ class InjectionDecisionRecorder:
     def _restore_failed_batch(
         self,
         state: RecorderWorkerState,
-        attempted: list[InjectionDecisionRecord | InjectionLifecycleRecord],
+        attempted: list[_RecorderItem],
         *,
         retry_lifecycle: bool = True,
     ) -> None:
@@ -491,7 +576,12 @@ class InjectionDecisionRecorder:
             attempted = [
                 record
                 for record in attempted
-                if isinstance(record, InjectionDecisionRecord)
+                if isinstance(
+                    record,
+                    InjectionDecisionRecord
+                    | InjectionDecisionBundle
+                    | RecallTraceSnapshot,
+                )
             ]
         state.retained[:0] = attempted
         self._trim_pending_after_failed_attempt()
@@ -499,7 +589,7 @@ class InjectionDecisionRecorder:
     def _complete_persist(
         self,
         state: RecorderWorkerState,
-        attempted: list[InjectionDecisionRecord | InjectionLifecycleRecord],
+        attempted: list[_RecorderItem],
     ) -> None:
         for _ in attempted:
             self._queue.task_done()

@@ -10,6 +10,7 @@ import {
   RotateCw,
   ServerCog,
   ShieldAlert,
+  ShieldCheck,
   Stethoscope,
 } from "lucide-react";
 
@@ -30,7 +31,7 @@ interface DiagnosticCenterProps {
 
 type LoadingAction = "idle" | "refresh" | "rebuild";
 
-const REQUIRED_DOMAINS = ["provider", "recall", "write", "scheduler", "index", "prometheus"] as const;
+const REQUIRED_DOMAINS = ["provider", "recall", "write", "scheduler", "index", "prometheus", "restore", "quality"] as const;
 
 const DOMAIN_ICONS: Record<string, ReactNode> = {
   provider: <ServerCog size={16} />,
@@ -39,6 +40,8 @@ const DOMAIN_ICONS: Record<string, ReactNode> = {
   scheduler: <Clock3 size={16} />,
   index: <Gauge size={16} />,
   prometheus: <Stethoscope size={16} />,
+  restore: <RotateCw size={16} />,
+  quality: <ShieldCheck size={16} />,
 };
 
 const EMPTY_HEALTH: DiagnosticHealthResponse = {
@@ -51,7 +54,7 @@ const EMPTY_HEALTH: DiagnosticHealthResponse = {
 function normalizeDomain(domain: DiagnosticHealthDomain): DiagnosticHealthDomain {
   return {
     name: String(domain.name || "unknown"),
-    score: Number.isFinite(domain.score) ? domain.score : 0,
+    score: Number.isFinite(domain.score) ? domain.score : undefined,
     status: String(domain.status || "unknown"),
     message: String(domain.message || ""),
   };
@@ -153,9 +156,9 @@ export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
     const byName = new Map((health?.domains ?? []).map((domain) => [domain.name.toLowerCase(), domain]));
     return REQUIRED_DOMAINS.map((name) => byName.get(name) ?? {
       name,
-      score: 100,
-      status: "healthy",
-      message: t("intelligence.diagnostics.noActiveSignal"),
+      score: undefined,
+      status: "unknown",
+      message: t("intelligence.diagnostics.unknownDomain"),
     });
   }, [health, t]);
 
@@ -283,7 +286,7 @@ export function DiagnosticCenter({ showToast }: DiagnosticCenterProps) {
                   <p className="text-xs leading-5 text-[var(--text-secondary)]">
                     {domain.message || t("intelligence.diagnostics.noMessage")}
                   </p>
-                  <span className="text-lg font-semibold tabular-nums text-[var(--text-primary)]">{domain.score}</span>
+                  <span className="text-lg font-semibold tabular-nums text-[var(--text-primary)]">{typeof domain.score === "number" && Number.isFinite(domain.score) ? domain.score : "--"}</span>
                 </div>
               </div>
             ))}
