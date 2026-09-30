@@ -1149,6 +1149,7 @@
       "diagnostics": {
         "noMessage": "Нет диагностического сообщения.",
         "untitledEvent": "Диагностическое событие без названия",
+        "unknownDomain": "Для этого домена нет доступного диагностического сигнала.",
         "noActiveSignal": "Нет активных диагностических сигналов.",
         "level": {
           "healthy": "Норма",
@@ -1186,7 +1187,9 @@
           "write": "Запись",
           "scheduler": "Планировщик",
           "index": "Индекс",
-          "prometheus": "Prometheus"
+          "prometheus": "Prometheus",
+          "restore": "Восстановление",
+          "quality": "Качество"
         },
         "health": "Здоровье",
         "signals": "Диагностические сигналы",
@@ -1415,7 +1418,10 @@
         "filterReason": {
           "low_score": "Низкий балл",
           "topic_mismatch": "Несоответствие теме",
-          "missing_fields": "Не хватает полей"
+          "missing_fields": "Не хватает полей",
+          "privacy": "Фильтр приватности",
+          "mark_write": "Помечено для записи",
+          "stale": "Устаревший кандидат"
         },
         "stage": {
           "search_memories": "Поиск в памяти",
@@ -1425,7 +1431,32 @@
           "graph": "Поиск по графу",
           "merge": "Объединение",
           "boost": "Усиление",
-          "rerank": "Переранжирование"
+          "rerank": "Переранжирование",
+          "request": "Запрос",
+          "retrieval": "Извлечение",
+          "query": "Поиск",
+          "recall": "Recall"
+        },
+        "stageStatus": {
+          "started": "Начато",
+          "completed": "Завершено",
+          "degraded": "Деградация",
+          "skipped": "Пропущено",
+          "failed": "Ошибка",
+          "cancelled": "Отменено"
+        },
+        "factAlignment": {
+          "aligned": "Факты совпадают",
+          "misaligned": "Факты не совпадают",
+          "undeterminable": "Невозможно определить"
+        },
+        "sourceStatus": {
+          "title": "Статус источника",
+          "not_assessed": "Не оценено",
+          "unknown": "Неизвестно"
+        },
+        "evidence": {
+          "title": "Доказательства фактов и источников"
         },
         "source": {
           "bm25": "BM25",
@@ -1474,7 +1505,29 @@
           "doc": "Док.",
           "reason": "Причина",
           "stage": "Этап",
-          "score": "Оценка"
+          "score": "Оценка",
+          "count": "Количество"
+        },
+        "origin": {
+          "production": "Снимок продакшена",
+          "preview": "Ручной предпросмотр"
+        },
+        "detailLoading": "Загрузка агрегированной трассы...",
+        "detailUnavailable": "Для этого кода корреляции нет доступной трассы",
+        "detailUnavailableHint": "Этот запрос не записал безопасный снимок, или запись удалена по сроку хранения. Это не означает, что трасса пуста.",
+        "detailFailed": "Не удалось загрузить детали трассы",
+        "detailFailedHint": "Повторите позже; ошибки не показывают детали сервера.",
+        "injection": {
+          "title": "Результат внедрения для этого запроса",
+          "candidate_count": "Кандидаты",
+          "selected_count": "Выбрано исполнителем",
+          "injected_count": "Успешно внедрено",
+          "configured_budget_chars": "Символы настроенного бюджета",
+          "effective_budget_chars": "Символы эффективного бюджета",
+          "routing_mode": "Фактический маршрут",
+          "resolved_preset": "Итоговый пресет",
+          "resolved_delivery": "Итоговая доставка",
+          "outcome": "Результат внедрения"
         },
         "noContributions": "Нет вкладов оценки",
         "contributionScore": "оценка {0} / вес {1}"

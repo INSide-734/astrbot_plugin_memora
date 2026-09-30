@@ -254,6 +254,18 @@ def test_health_scorer_handles_missing_and_malformed_inputs_defensively():
     assert isinstance(result["recommended_actions"], list)
 
 
+def test_health_scorer_projects_absent_and_none_domains_as_unknown() -> None:
+    """未装配或 None 的领域不得伪装为 healthy/100。"""
+    result = HealthScorer().score(
+        {"provider": None, "recall": None, "quality": None, "restore": None}
+    )
+
+    domains = {item["name"]: item for item in result["domains"]}
+    for name in ("provider", "recall", "quality", "restore"):
+        assert domains[name]["status"] == "unknown"
+        assert domains[name]["score"] == 0
+
+
 def test_health_scorer_degrades_on_non_finite_counters():
     """NaN/Inf 计数必须按缺失字段降级，不能让评分整体抛异常。"""
 

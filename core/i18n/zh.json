@@ -160,7 +160,8 @@
         "watch": "关注",
         "degraded": "降级",
         "critical": "严重",
-        "info": "信息"
+        "info": "信息",
+        "unknown": "未知"
       },
       "domains": {
         "provider": "Provider",
@@ -168,7 +169,12 @@
         "write": "写入",
         "scheduler": "后台任务",
         "index": "索引",
-        "prometheus": "Prometheus"
+        "anomaly": "异常检测",
+        "prometheus": "Prometheus",
+        "summary_tasks": "总结任务",
+        "write_availability": "写入可用性",
+        "quality": "质量",
+        "restore": "恢复"
       },
       "actions": {
         "provider_critical": "恢复或重新配置 Provider，然后重试初始化。",

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import math
+import re
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -14,6 +17,7 @@ from ....features.injection.application.presets import PRESETS
 from ....features.injection.domain.models import (
     DeliveryMode,
     InjectionOutcome,
+    PresetName,
     RoutingMode,
 )
 from ....features.injection.infrastructure.injection_decision_store import (
@@ -21,6 +25,7 @@ from ....features.injection.infrastructure.injection_decision_store import (
     DecisionQuery,
     InjectionDecisionStore,
 )
+from ....features.retrieval.trace_privacy import normalize_trace_id
 from .response_utils import error_response, ok_response
 
 _WINDOWS = frozenset({"1h", "24h", "7d", "30d"})
@@ -71,15 +76,231 @@ _LIST_ITEM_FIELDS = _RECENT_EVENT_FIELDS + (
     "format_ms",
     "inject_ms",
 )
-_COST_POINT_FIELDS = (
-    "bucket_ms",
-    "decision_count",
-    "payload_chars_p95",
-    "provider_fallback_rate",
-    "selected_count_total",
-    "dropped_count_total",
-    "budget_utilization_avg",
+
+# 值级校验闭集：只允许生产代码当前会写入的取值；其它历史/自由文本值投影为 None。
+_ROUTING_MODE_VALUES = frozenset(mode.value for mode in RoutingMode)
+_PRESET_VALUES = frozenset(name.value for name in PresetName)
+_DELIVERY_VALUES = frozenset(mode.value for mode in DeliveryMode)
+_OUTCOME_VALUES = frozenset(item.value for item in InjectionOutcome)
+# 与生产路由一致：router 产出的原因码、recall_routing 追加的降级码与缺省主因。
+_DECISION_REASON_CODES = frozenset(
+    {
+        "AUTO_FALLBACK",
+        "AUTO_HISTORY_INTENT",
+        "AUTO_LOW_CONTEXT_HEADROOM",
+        "AUTO_MEMORY_UNCERTAIN",
+        "HYBRID_CLAMPED_MAX",
+        "HYBRID_CLAMPED_MIN",
+        "INVALID_CONFIG_FALLBACK",
+        "MANUAL_SELECTED",
+        "NO_USEFUL_CANDIDATES",
+        "PROVIDER_DELIVERY_DOWNGRADED",
+        "PROVIDER_TOOL_UNAVAILABLE",
+    }
 )
+# InjectionExecutor / recall_routing 写入的固定错误码。
+_DECISION_ERROR_CODES = frozenset(
+    {
+        "FORMAT_FAILED",
+        "MUTATION_FAILED",
+        "PROTECTION_FAILED",
+        "PROTECTION_SCOPE_FAILED",
+    }
+)
+# Provider 类型是配置标识符；模型名只允许常见的 vendor/model:tag 字符集。
+_PROVIDER_TYPE_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_PROVIDER_MODEL_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,95}$")
+_MAX_COUNT = 10**12
+_MAX_TIMESTAMP_MS = 2**53 - 1
+_MAX_DURATION_MS = 10**9
+_MAX_RATIO = 1_000.0
+_MAX_REASON_CODES = len(_DECISION_REASON_CODES)
+
+
+def _safe_decision_id(value: Any) -> str | None:
+    """仅保留规范小写 UUID；其它形式无法用于详情查询，也不应回显。"""
+    if not isinstance(value, str):
+        return None
+    try:
+        canonical = str(UUID(value))
+    except ValueError:
+        return None
+    return value if value == canonical else None
+
+
+def _safe_trace_id(value: Any) -> str | None:
+    return normalize_trace_id(value) if isinstance(value, str) else None
+
+
+def _closed(choices: frozenset[str]) -> Callable[[Any], str | None]:
+    def validate(value: Any) -> str | None:
+        return value if isinstance(value, str) and value in choices else None
+
+    return validate
+
+
+def _pattern(pattern: re.Pattern[str]) -> Callable[[Any], str | None]:
+    def validate(value: Any) -> str | None:
+        if not isinstance(value, str) or not pattern.fullmatch(value):
+            return None
+        return None if ".." in value or "//" in value else value
+
+    return validate
+
+
+def _safe_bool(value: Any) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if type(value) is int and value in (0, 1):
+        return bool(value)
+    return None
+
+
+def _bounded_int(maximum: int) -> Callable[[Any], int | None]:
+    def validate(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+            value = int(value)
+        if type(value) is not int or not 0 <= value <= maximum:
+            return None
+        return value
+
+    return validate
+
+
+def _safe_duration_ms(value: Any) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    parsed = float(value)
+    if not math.isfinite(parsed) or not 0.0 <= parsed <= _MAX_DURATION_MS:
+        return None
+    return parsed
+
+
+_COUNT = _bounded_int(_MAX_COUNT)
+_DECISION_FIELD_VALIDATORS: dict[str, Callable[[Any], Any]] = {
+    "decision_id": _safe_decision_id,
+    "created_at_ms": _bounded_int(_MAX_TIMESTAMP_MS),
+    "trace_id": _safe_trace_id,
+    "routing_mode": _closed(_ROUTING_MODE_VALUES),
+    "configured_preset": _closed(_PRESET_VALUES),
+    "recommended_preset": _closed(_PRESET_VALUES),
+    "resolved_preset": _closed(_PRESET_VALUES),
+    "preferred_delivery": _closed(_DELIVERY_VALUES),
+    "resolved_delivery": _closed(_DELIVERY_VALUES),
+    "outcome": _closed(_OUTCOME_VALUES),
+    "primary_reason": _closed(_DECISION_REASON_CODES),
+    "error_code": _closed(_DECISION_ERROR_CODES),
+    "fallback_applied": _safe_bool,
+    "provider_type": _pattern(_PROVIDER_TYPE_PATTERN),
+    "provider_model": _pattern(_PROVIDER_MODEL_PATTERN),
+    "candidate_count": _COUNT,
+    "selected_count": _COUNT,
+    "dropped_count": _COUNT,
+    "truncated_count": _COUNT,
+    "configured_budget_chars": _COUNT,
+    "effective_budget_chars": _COUNT,
+    "actual_payload_chars": _COUNT,
+    "context_headroom_chars": _COUNT,
+    "decision_ms": _safe_duration_ms,
+    "format_ms": _safe_duration_ms,
+    "inject_ms": _safe_duration_ms,
+}
+
+
+def _project_decision(value: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+    """字段 allowlist + 值级复核；缺失字段保持缺失，非法值投影为 None。
+
+    模块级函数，避免 PluginPageApi 多 mixin 组合时私有方法被 MRO 遮蔽。
+    """
+    if not isinstance(value, dict):
+        return {}
+    return {
+        field: _DECISION_FIELD_VALIDATORS[field](value[field])
+        for field in fields
+        if field in value
+    }
+
+
+def _project_listed_decisions(
+    items: Any, fields: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """列表/近期事件：丢弃 decision_id 无法复核的行，保持前端非空行键契约。"""
+    if not isinstance(items, (list, tuple)):
+        return []
+    projected = (_project_decision(item, fields) for item in items)
+    return [item for item in projected if item.get("decision_id") is not None]
+
+
+def _safe_reason_codes(value: Any) -> list[str]:
+    """只保留生产路由闭集内的原因码，按首次出现去重。"""
+    if not isinstance(value, (list, tuple)):
+        return []
+    codes: list[str] = []
+    for code in value:
+        if (
+            isinstance(code, str)
+            and code in _DECISION_REASON_CODES
+            and code not in codes
+        ):
+            codes.append(code)
+    return codes[:_MAX_REASON_CODES]
+
+
+def _bounded_ratio(maximum: float) -> Callable[[Any], float | None]:
+    def validate(value: Any) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        parsed = float(value)
+        if not math.isfinite(parsed) or not 0.0 <= parsed <= maximum:
+            return None
+        return parsed
+
+    return validate
+
+
+# 回退率是 [0,1] 概率；预算利用率由 payload/budget 得出，截断误差可略超 1，
+# 因此只设宽松上界，拒绝 NaN/inf/负值与明显损坏的旧聚合。
+_FALLBACK_RATE = _bounded_ratio(1.0)
+_UTILIZATION = _bounded_ratio(_MAX_RATIO)
+_SUMMARY_SCALAR_FIELDS: dict[str, tuple[Callable[[Any], Any], Any]] = {
+    "retrieved_count": (_COUNT, 0),
+    "injected_count": (_COUNT, 0),
+    "decision_count": (_COUNT, 0),
+    "payload_chars_p95": (_COUNT, 0),
+    "provider_fallback_rate": (_FALLBACK_RATE, 0.0),
+    "memory_present_count": (_COUNT, 0),
+    "payload_injected_count": (_COUNT, 0),
+    "selected_count_total": (_COUNT, 0),
+    "dropped_count_total": (_COUNT, 0),
+    "truncated_count_total": (_COUNT, 0),
+    "effective_budget_chars_avg": (_COUNT, 0),
+    "budget_utilization_avg": (_UTILIZATION, 0.0),
+    "budget_utilization_p95": (_UTILIZATION, 0.0),
+}
+_COST_POINT_VALIDATORS: dict[str, tuple[Callable[[Any], Any], Any]] = {
+    "decision_count": (_COUNT, 0),
+    "payload_chars_p95": (_COUNT, 0),
+    "provider_fallback_rate": (_FALLBACK_RATE, 0.0),
+    "selected_count_total": (_COUNT, 0),
+    "dropped_count_total": (_COUNT, 0),
+    "budget_utilization_avg": (_UTILIZATION, 0.0),
+}
+
+
+def _safe_cost_point(value: Any) -> dict[str, Any] | None:
+    """趋势点以 bucket_ms 为横轴键：键非法则丢弃整点；其余非法值回落为 0。"""
+    if not isinstance(value, dict):
+        return None
+    bucket_ms = _bounded_int(_MAX_TIMESTAMP_MS)(value.get("bucket_ms"))
+    if bucket_ms is None:
+        return None
+    point: dict[str, Any] = {"bucket_ms": bucket_ms}
+    for field, (validate, default) in _COST_POINT_VALIDATORS.items():
+        parsed = validate(value.get(field, default))
+        point[field] = default if parsed is None else parsed
+    return point
 
 
 class InjectionStrategyApiMixin:
@@ -161,10 +382,11 @@ class InjectionStrategyApiMixin:
             return error_response("Injection decision store unavailable")
         try:
             summary = await store.summary(window)
-        except Exception:
+        except Exception as exc:
             logger.error(
-                "[InjectionStrategyApi] failed to load decision summary",
-                exc_info=True,
+                "[InjectionStrategyApi] operation=%s failed error_type=%s",
+                "summary",
+                type(exc).__name__,
             )
             return error_response("Unable to load injection strategy summary")
         return ok_response(self._safe_summary(summary))
@@ -182,10 +404,11 @@ class InjectionStrategyApiMixin:
             return error_response(str(exc))
         try:
             page = await store.list_decisions(query)
-        except Exception:
+        except Exception as exc:
             logger.error(
-                "[InjectionStrategyApi] failed to list injection decisions",
-                exc_info=True,
+                "[InjectionStrategyApi] operation=%s failed error_type=%s",
+                "list_decisions",
+                type(exc).__name__,
             )
             return error_response("Unable to load injection decisions")
         return ok_response(self._safe_page(page))
@@ -203,21 +426,19 @@ class InjectionStrategyApiMixin:
             return error_response("decision_id must be a valid UUID")
         try:
             detail = await store.get_decision(decision_id)
-        except Exception:
+        except Exception as exc:
             logger.error(
-                "[InjectionStrategyApi] failed to load injection decision detail",
-                exc_info=True,
+                "[InjectionStrategyApi] operation=%s failed error_type=%s",
+                "get_decision",
+                type(exc).__name__,
             )
             return error_response("Unable to load injection decision detail")
         if detail is None:
             return error_response("Injection decision not found")
-        safe = self._allowlisted(detail, _LIST_ITEM_FIELDS)
-        reason_codes = detail.get("reason_codes", [])
-        safe["reason_codes"] = (
-            [str(code) for code in reason_codes]
-            if isinstance(reason_codes, (list, tuple))
-            else []
-        )
+        safe = self._decision_projection(detail, _LIST_ITEM_FIELDS)
+        # 详情以请求中已校验的 UUID 为身份，而不是回显存储行里的值。
+        safe["decision_id"] = decision_id
+        safe["reason_codes"] = _safe_reason_codes(detail.get("reason_codes", []))
         return ok_response(safe)
 
     def _injection_store(self) -> InjectionDecisionStore | None:
@@ -372,19 +593,19 @@ class InjectionStrategyApiMixin:
                 return False
         raise ValueError(f"{field} must be true or false")
 
-    @staticmethod
-    def _allowlisted(
+    @classmethod
+    def _decision_projection(
+        cls,
         value: Any,
         fields: tuple[str, ...],
     ) -> dict[str, Any]:
-        if not isinstance(value, dict):
-            return {}
-        return {field: value[field] for field in fields if field in value}
+        """Allowlist a decision row and revalidate every value."""
+        return _project_decision(value, fields)
 
     @classmethod
     def _safe_page(cls, page: DecisionPage) -> dict[str, Any]:
         return {
-            "items": [cls._allowlisted(item, _LIST_ITEM_FIELDS) for item in page.items],
+            "items": _project_listed_decisions(page.items, _LIST_ITEM_FIELDS),
             "total": page.total,
             "offset": page.offset,
             "limit": page.limit,
@@ -413,44 +634,36 @@ class InjectionStrategyApiMixin:
                 "recent_events": [],
             }
         distribution = summary.get("preset_distribution", {})
-        safe_distribution = (
-            {
-                name.value: distribution[name.value]
-                for name in PRESETS
-                if name.value in distribution
-            }
-            if isinstance(distribution, dict)
-            else {}
-        )
-        cost_trend = summary.get("cost_trend", [])
-        recent_events = summary.get("recent_events", [])
-        return {
-            "window": summary.get("window", "24h"),
-            "retrieved_count": summary.get("retrieved_count", 0),
-            "injected_count": summary.get("injected_count", 0),
-            "decision_count": summary.get("decision_count", 0),
-            "payload_chars_p95": summary.get("payload_chars_p95", 0),
-            "provider_fallback_rate": summary.get("provider_fallback_rate", 0.0),
-            "memory_present_count": summary.get("memory_present_count", 0),
-            "payload_injected_count": summary.get("payload_injected_count", 0),
-            "selected_count_total": summary.get("selected_count_total", 0),
-            "dropped_count_total": summary.get("dropped_count_total", 0),
-            "truncated_count_total": summary.get("truncated_count_total", 0),
-            "effective_budget_chars_avg": summary.get("effective_budget_chars_avg", 0),
-            "budget_utilization_avg": summary.get("budget_utilization_avg", 0.0),
-            "budget_utilization_p95": summary.get("budget_utilization_p95", 0.0),
-            "preset_distribution": safe_distribution,
-            "cost_trend": [
-                cls._allowlisted(item, _COST_POINT_FIELDS)
-                for item in cost_trend
-                if isinstance(item, dict)
-            ],
-            "recent_events": [
-                cls._allowlisted(item, _RECENT_EVENT_FIELDS)
-                for item in recent_events
-                if isinstance(item, dict)
-            ],
+        safe_distribution: dict[str, int] = {}
+        if isinstance(distribution, dict):
+            for name in PRESETS:
+                count = _COUNT(distribution.get(name.value))
+                if count is not None:
+                    safe_distribution[name.value] = count
+        window = summary.get("window", "24h")
+        safe: dict[str, Any] = {
+            "window": window
+            if isinstance(window, str) and window in _WINDOWS
+            else "24h",
         }
+        for field, (validate, default) in _SUMMARY_SCALAR_FIELDS.items():
+            value = validate(summary.get(field, default))
+            safe[field] = default if value is None else value
+        cost_trend = summary.get("cost_trend", [])
+        safe["preset_distribution"] = safe_distribution
+        safe["cost_trend"] = (
+            [
+                point
+                for point in (_safe_cost_point(item) for item in cost_trend)
+                if point is not None
+            ]
+            if isinstance(cost_trend, (list, tuple))
+            else []
+        )
+        safe["recent_events"] = _project_listed_decisions(
+            summary.get("recent_events", []), _RECENT_EVENT_FIELDS
+        )
+        return safe
 
 
 __all__ = ["InjectionStrategyApiMixin"]

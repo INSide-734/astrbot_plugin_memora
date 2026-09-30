@@ -119,6 +119,61 @@ class TestHealthCommand:
         assert len(results) == 1
         assert "/memora health" in results[0]
 
+    @pytest.mark.asyncio
+    async def test_error_envelope_uses_stable_failure_text_without_raw_message(
+        self,
+    ) -> None:
+        """命令收到错误 envelope 时不得回显 Provider 的自由文本。"""
+        provider = AsyncMock(return_value={"status": "error", "message": _SENTINEL})
+        handler = _Handler(health_provider=provider)
+
+        results = await _collect(handler.handle_health(_event()))
+
+        assert len(results) == 1
+        assert _SENTINEL not in results[0]
+        provider.assert_awaited_once_with()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("language", "unknown_label", "quality_label", "restore_label"),
+        (
+            ("zh", "未知", "质量", "恢复"),
+            ("en", "Unknown", "Quality", "Restore"),
+            ("ru", "Неизвестно", "Качество", "Восстановление"),
+        ),
+    )
+    async def test_renders_closed_set_unknown_quality_and_restore_statuses(
+        self,
+        language: str,
+        unknown_label: str,
+        quality_label: str,
+        restore_label: str,
+    ) -> None:
+        i18n_init(language)
+        provider = AsyncMock(
+            return_value={
+                "status": "ok",
+                "data": {
+                    "score": 100,
+                    "level": "healthy",
+                    "domains": [
+                        {"name": "quality", "score": 0, "status": "unknown"},
+                        {"name": "restore", "score": 55, "status": "watch"},
+                    ],
+                },
+            }
+        )
+        results = await _collect(
+            _Handler(health_provider=provider).handle_health(_event())
+        )
+
+        assert len(results) == 1
+        assert unknown_label in results[0]
+        assert quality_label in results[0]
+        assert restore_label in results[0]
+        assert "unknown" not in results[0]
+        assert "watch" not in results[0]
+
 
 class TestDiagnosticsCommand:
     @pytest.mark.asyncio

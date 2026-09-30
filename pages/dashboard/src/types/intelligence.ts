@@ -33,6 +33,7 @@ export interface RecallTraceStage {
   duration_ms: number;
   candidate_count: number;
   metadata: Record<string, unknown>;
+  status?: string;
 }
 
 export interface RecallTraceScoreContribution {
@@ -55,6 +56,35 @@ export interface RecallTraceFilteredCandidate {
   score?: number;
 }
 
+export interface RecallTraceFactAlignment {
+  aligned: number;
+  misaligned: number;
+  undeterminable: number;
+}
+
+/** 生产快照的来源证据状态；未评估与无法判断保持可区分。 */
+export type RecallTraceSourceStatus = "not_assessed" | "unknown";
+
+/** 生产快照按 (stage, reason) 聚合的过滤计数，不含被滤候选 ID。 */
+export interface RecallTraceFilterCount {
+  stage: string;
+  reason: string;
+  count: number;
+}
+
+/** 生产快照附带的同请求注入摘要；全部来自已执行阶段。 */
+export interface RecallTraceInjectionSummary {
+  routing_mode?: string;
+  resolved_preset?: string;
+  resolved_delivery?: string;
+  outcome?: string;
+  candidate_count?: number;
+  selected_count?: number;
+  injected_count?: number;
+  configured_budget_chars?: number;
+  effective_budget_chars?: number;
+}
+
 export interface RecallTraceResponse {
   trace_id: string;
   total_ms: number;
@@ -63,6 +93,10 @@ export interface RecallTraceResponse {
   filtered: RecallTraceFilteredCandidate[];
   created_at: number;
   metadata: Record<string, unknown>;
+  filter_summary?: RecallTraceFilterCount[];
+  injection?: RecallTraceInjectionSummary;
+  fact_alignment?: RecallTraceFactAlignment;
+  source_status?: RecallTraceSourceStatus;
 }
 
 export interface RecallTraceRequest {
@@ -76,7 +110,7 @@ export interface RecallTraceRequest {
 
 export interface DiagnosticHealthDomain {
   name: string;
-  score: number;
+  score?: number;
   status: string;
   message: string;
 }

@@ -625,6 +625,143 @@ async def test_recall_trace_detail_missing_trace_id_returns_error(
     assert "trace_id" in response["message"]
 
 
+_SNAPSHOT_TRACE_ID = "0f8fad5b-d9cb-469f-a165-70867728950e"
+
+
+def _production_snapshot() -> dict[str, object]:
+    """构造 Store 已脱敏后的生产 trace 快照。"""
+    return sanitize_trace_payload(
+        {
+            "trace_id": _SNAPSHOT_TRACE_ID,
+            "total_ms": 12.5,
+            "stages": [
+                {"name": "search_memories", "duration_ms": 10.0, "candidate_count": 2}
+            ],
+            "results": [{"rank": 1, "final_score": 0.7}],
+            "metadata": {"debug_trace_available": False},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_recall_trace_detail_falls_back_to_production_snapshot(
+    page_api_with_fake_engine,
+):
+    """手动预览未命中时读取生产快照，且不得触发第二次检索。"""
+    snapshot = _production_snapshot()
+    decision_store = SimpleNamespace(
+        get_recall_trace_snapshot=AsyncMock(return_value=snapshot)
+    )
+    page_api_with_fake_engine.plugin.initializer.injection_decision_store = (
+        decision_store
+    )
+    engine = page_api_with_fake_engine.plugin.initializer.memory_engine
+
+    response = await page_api_with_fake_engine.get_recall_trace_detail_payload(
+        {"trace_id": f"  {_SNAPSHOT_TRACE_ID}  "}
+    )
+
+    assert response == {"status": "ok", "data": snapshot}
+    decision_store.get_recall_trace_snapshot.assert_awaited_once_with(
+        _SNAPSHOT_TRACE_ID
+    )
+    assert engine.calls == []
+
+
+@pytest.mark.asyncio
+async def test_recall_trace_detail_prefers_manual_preview_over_snapshot(
+    page_api_with_fake_engine,
+):
+    """手动预览命中时不得读取生产快照 Store。"""
+    trace_response = await page_api_with_fake_engine.test_recall_with_trace_payload(
+        {"query": "coffee"}
+    )
+    trace_id = trace_response["data"]["trace_id"]
+    decision_store = SimpleNamespace(get_recall_trace_snapshot=AsyncMock())
+    page_api_with_fake_engine.plugin.initializer.injection_decision_store = (
+        decision_store
+    )
+
+    response = await page_api_with_fake_engine.get_recall_trace_detail_payload(
+        {"trace_id": trace_id}
+    )
+
+    assert response["status"] == "ok"
+    assert response["data"]["trace_id"] == trace_id
+    decision_store.get_recall_trace_snapshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "decision_store",
+    [
+        None,
+        SimpleNamespace(),
+        SimpleNamespace(get_recall_trace_snapshot=AsyncMock(return_value=None)),
+    ],
+    ids=["store_unassembled", "store_without_snapshots", "snapshot_missing"],
+)
+async def test_recall_trace_detail_reports_unavailable_without_fake_trace(
+    page_api_with_fake_engine,
+    decision_store,
+):
+    """两处都无记录时返回稳定 unavailable，而不是伪造空 trace。"""
+    page_api_with_fake_engine.plugin.initializer.injection_decision_store = (
+        decision_store
+    )
+
+    response = await page_api_with_fake_engine.get_recall_trace_detail_payload(
+        {"trace_id": _SNAPSHOT_TRACE_ID}
+    )
+
+    assert response == {
+        "status": "error",
+        "message": "trace_unavailable",
+        "code": "trace_unavailable",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trace_id", ["trace&id=unsafe", "../x", "a" * 65])
+async def test_recall_trace_detail_rejects_malformed_trace_id_before_store(
+    page_api_with_fake_engine,
+    trace_id,
+):
+    """非法关联码不得进入任何 Store 查询。"""
+    decision_store = SimpleNamespace(get_recall_trace_snapshot=AsyncMock())
+    page_api_with_fake_engine.plugin.initializer.injection_decision_store = (
+        decision_store
+    )
+
+    response = await page_api_with_fake_engine.get_recall_trace_detail_payload(
+        {"trace_id": trace_id}
+    )
+
+    assert response["code"] == "trace_unavailable"
+    decision_store.get_recall_trace_snapshot.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_recall_trace_detail_snapshot_failure_hides_exception_text(
+    page_api_with_fake_engine,
+):
+    """快照读取失败只返回稳定错误码，不回显异常正文。"""
+    secret = "PRIVATE_SQLITE_PATH_CANARY"
+    decision_store = SimpleNamespace(
+        get_recall_trace_snapshot=AsyncMock(side_effect=aiosqlite.Error(secret))
+    )
+    page_api_with_fake_engine.plugin.initializer.injection_decision_store = (
+        decision_store
+    )
+
+    response = await page_api_with_fake_engine.get_recall_trace_detail_payload(
+        {"trace_id": _SNAPSHOT_TRACE_ID}
+    )
+
+    assert response == {"status": "error", "message": "recall_trace_detail_failed"}
+    assert secret not in json.dumps(response)
+
+
 @pytest.mark.asyncio
 async def test_recall_trace_invalid_k_uses_default(page_api_with_fake_engine):
     """非法 k 应只影响搜索参数，不能被写入 trace metadata。"""

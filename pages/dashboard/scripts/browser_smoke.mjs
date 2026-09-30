@@ -29,7 +29,7 @@ import {
   assertEvaluationVariantGrid,
   openEvaluationReportForSmoke,
 } from "./evaluation_smoke_helpers.mjs";
-import { recallTracePayload } from "./recall_trace_smoke_fixture.mjs";
+import { recallTracePayload, recallTracePreviewPayload } from "./recall_trace_smoke_fixture.mjs";
 import { reconsolidationSmokePayload } from "./reconsolidation_smoke_fixture.mjs";
 
 const dashboardRoot = process.cwd();
@@ -888,7 +888,7 @@ function bridgePayload(endpoint, params = {}, method = "GET") {
     };
   }
   if (pathOnly === "recall/trace" || pathOnly === "recall/traces") {
-    return recallTracePayload();
+    return recallTracePreviewPayload();
   }
   if (pathOnly === "diagnostics/health") {
     return {
@@ -2471,9 +2471,10 @@ async function runInjectionStrategySmoke(page, screenshotsDir) {
       `Injection Trace navigation issued ${traceCalls.length} detail calls; expected 1`,
     );
   }
+  // 决策关联码加载的是同请求生产快照（非手动预览），须展示来源与成功注入数。
   await waitForRootText(
     page,
-    ["召回链路", "trace-mock-coffee"],
+    ["召回链路", "生产快照", "成功注入数"],
     "#/intelligence:injection-trace",
   );
 

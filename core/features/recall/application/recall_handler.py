@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -130,6 +131,8 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
     ) -> None:
         """在 LLM 请求前查询并注入长期记忆，可使用已解析协议身份。"""
         recall_started = time.perf_counter()
+        trace_id = str(uuid.uuid4())
+        trace_state: dict[str, bool] = {"decision_recorded": False}
         if timing_context is None:
             timing_context = RecallTimingContext.start(
                 self._config_manager.get(
@@ -156,14 +159,12 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
         )
         try:
             session_id = event.unified_msg_origin
-            logger.debug(f"[召回流程] 获取到 unified_msg_origin: {session_id}")
+            logger.debug("[召回流程] 收到记忆召回请求")
 
             if session_id and (
                 "Error:" in session_id or "error:" in session_id.lower()
             ):
-                logger.warning(
-                    f"[{session_id}] 检测到异常的会话 ID，这可能导致记忆功能异常。"
-                )
+                logger.warning("[召回流程] 检测到异常的会话来源，继续使用保守召回路径")
 
             async with OperationContext("记忆召回", session_id):
                 prompt_text = getattr(req, "prompt", "")
@@ -183,7 +184,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                         status="skipped",
                         reason_code="empty_request",
                     )
-                    logger.debug(f"[{session_id}] 请求中无可用用户内容，跳过记忆召回")
+                    logger.debug("[召回流程] 请求中无可用用户内容，跳过记忆召回")
                     return
 
                 if self._config_manager.get("recall_engine.auto_remove_injected", True):
@@ -205,7 +206,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                             count=removed,
                         )
                         logger.info(
-                            f"[{session_id}] 已清理 {removed} 处历史记忆注入片段"
+                            "[召回流程] 已清理历史记忆注入片段，count=%d", removed
                         )
 
                 query_analysis_started = time.perf_counter()
@@ -260,9 +261,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                         status="skipped",
                         reason_code="top_k_disabled",
                     )
-                    logger.info(
-                        f"[{session_id}] top_k={top_k} <= 0，跳过记忆检索和注入"
-                    )
+                    logger.info("[召回流程] top_k=%d <= 0，跳过记忆检索和注入", top_k)
                     return
 
                 if not actual_query:
@@ -270,7 +269,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                     fallback_query = await self._build_fallback_query(session_id)
                     if fallback_query:
                         logger.info(
-                            f"[{session_id}] 原始消息为空，使用历史上下文作为回退查询"
+                            "[召回流程] 原始消息为空，使用历史上下文作为回退查询"
                         )
                         actual_query = fallback_query
                     else:
@@ -283,7 +282,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                             status="skipped",
                             reason_code="empty_query",
                         )
-                        logger.warning(f"[{session_id}] 原始用户消息为空，跳过记忆召回")
+                        logger.warning("[召回流程] 原始用户消息为空，跳过记忆召回")
                         return
 
                 filtering_config = self._config_manager.filtering_settings
@@ -319,11 +318,11 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                                 expanded = " | ".join(context_parts)
                                 query_for_search = expanded + " " + actual_query
                                 logger.info(
-                                    f"[{session_id}] 上下文扩展查询: "
-                                    f"{len(context_parts)}条历史消息 + 当前消息"
+                                    "[召回流程] 上下文扩展查询完成，history_count=%d",
+                                    len(context_parts),
                                 )
-                    except Exception as e:
-                        logger.warning(f"[{session_id}] 获取上下文扩展失败: {e}")
+                    except Exception:
+                        logger.warning("[召回流程] 上下文扩展失败，使用原始查询")
 
                 # R1：语义查询改写 —— 展开模糊指代
                 query_intent = await self._query_rewriter.rewrite(
@@ -353,9 +352,9 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                 )
 
                 logger.info(
-                    f"[{session_id}] 开始记忆召回: intent={query_intent.intent}, "
-                    f"rewritten_count={len(rewritten_queries)}, "
-                    f"entity_count={len(query_intent.extracted_entities)}"
+                    "[召回流程] 查询改写完成，rewritten_count=%d, entity_count=%d",
+                    len(rewritten_queries),
+                    len(query_intent.extracted_entities),
                 )
 
                 chat_type = "group" if is_group else "private"
@@ -370,8 +369,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                         except Exception:
                             provider = None
                             logger.warning(
-                                "[召回流程] Provider 获取失败，使用保守注入能力",
-                                exc_info=True,
+                                "[召回流程] Provider 获取失败，使用保守注入能力"
                             )
 
                 observability.report_debug_event(
@@ -429,6 +427,9 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                             provider=provider,
                             preflight_short_circuit=True,
                             event=event,
+                            timing_context=timing_context,
+                            trace_id=trace_id,
+                            trace_state=trace_state,
                         )
                     )
                     injected_count = len(result.injected_memory_ids)
@@ -598,6 +599,9 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                         cognitive_format_ms=format_ms,
                         lifecycle_source="passive",
                         lifecycle_origin=lifecycle_origin,
+                        timing_context=timing_context,
+                        trace_id=trace_id,
+                        trace_state=trace_state,
                     )
                 )
                 await self._maybe_propose_reconsolidation(memories, actual_query)
@@ -629,7 +633,7 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                 status="failed",
                 reason_code="recall_error",
             )
-            logger.error(f"处理 on_llm_request 钩子时发生错误: {e}", exc_info=True)
+            logger.error("处理 on_llm_request 钩子时发生错误")
         finally:
             recall_total_ms = (time.perf_counter() - recall_started) * 1000.0
             timing_context.record("recall_hook_total_ms", recall_total_ms)
@@ -646,3 +650,72 @@ class RecallHandler(RecallRoutingMixin, RecallContextMixin):
                 selected_count=injection_selected_count,
                 timing_context=timing_context,
             )
+            self._record_trace_only(
+                trace_id=trace_id,
+                trace_state=trace_state,
+                total_ms=recall_total_ms,
+                candidate_count=candidate_count,
+                status=recall_status,
+                reason_code=recall_reason,
+            )
+
+    def _record_trace_only(
+        self,
+        *,
+        trace_id: str,
+        trace_state: dict[str, bool],
+        total_ms: float,
+        candidate_count: int,
+        status: str,
+        reason_code: str,
+    ) -> None:
+        """保留没有注入决策的请求级生产 Trace，不伪造 decision 行。"""
+        if trace_state.get("decision_recorded"):
+            return
+        recorder = self._injection_recorder
+        record_trace = getattr(recorder, "record_trace", None)
+        if not callable(record_trace):
+            return
+        stage_status = (
+            "cancelled"
+            if status == "cancelled"
+            else "failed"
+            if status == "failed"
+            else "skipped"
+            if status == "skipped"
+            else "degraded"
+        )
+        stage_name = {
+            "empty_request": "request",
+            "top_k_disabled": "retrieval",
+            "empty_query": "query",
+            "recall_cancelled": "recall",
+            "recall_error": "recall",
+        }.get(reason_code, "recall")
+        payload = {
+            "trace_id": trace_id,
+            "total_ms": max(0.0, float(total_ms)),
+            "stages": [
+                {
+                    "name": stage_name,
+                    "status": stage_status,
+                    "duration_ms": max(0.0, float(total_ms)),
+                    "candidate_count": max(0, int(candidate_count)),
+                    "metadata": {"reason_code": reason_code},
+                }
+            ],
+            "results": [],
+            "filtered": [],
+            "metadata": {
+                "debug_trace_available": False,
+                "trace_kind": "production",
+            },
+        }
+        try:
+            accepted = record_trace(payload, trace_id=trace_id)
+            if accepted is not False:
+                trace_state["decision_recorded"] = True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.debug("[召回流程] 请求级生产 Trace 记录失败")

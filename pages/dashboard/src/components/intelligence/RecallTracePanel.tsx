@@ -9,11 +9,14 @@ import {
   SelectItem,
   SelectTrigger,
 } from "@/components/ui/select";
+import { StatePanel } from "@/components/ui/StatePanel";
 import { useI18n } from "@/hooks/useI18n";
 import { apiRequest, unwrapApiData } from "@/lib/bridge";
 import { dashboardLocale, formatDashboardNumber, translateEnum } from "@/lib/i18n";
+import { ApiRequestError } from "@/types/editing";
 import type {
   RecallTraceFilteredCandidate,
+  RecallTraceInjectionSummary,
   RecallTraceRequest,
   RecallTraceResponse,
   RecallTraceResult,
@@ -21,6 +24,50 @@ import type {
 import type { IntelligenceNavigationTarget } from "@/types/navigation";
 
 import { TraceContributionList } from "./TraceContributionList";
+
+type TraceDetailState = "idle" | "loading" | "ready" | "unavailable" | "error";
+
+/** 稳定 unavailable 语义的错误码；其余失败按可重试错误展示。 */
+const UNAVAILABLE_TRACE_CODES = ["trace_unavailable", "recall_trace_not_found"];
+
+/** 生产快照注入摘要的固定 allowlist；枚举值复用既有 injection.* 翻译。 */
+const INJECTION_SUMMARY_FIELDS: ReadonlyArray<{
+  field: keyof RecallTraceInjectionSummary;
+  labelKey: string;
+  enumPrefix?: string;
+}> = [
+  { field: "candidate_count", labelKey: "intelligence.trace.injection.candidate_count" },
+  { field: "injected_count", labelKey: "intelligence.trace.injection.injected_count" },
+  { field: "selected_count", labelKey: "intelligence.trace.injection.selected_count" },
+  {
+    field: "configured_budget_chars",
+    labelKey: "intelligence.trace.injection.configured_budget_chars",
+  },
+  {
+    field: "effective_budget_chars",
+    labelKey: "intelligence.trace.injection.effective_budget_chars",
+  },
+  {
+    field: "routing_mode",
+    labelKey: "intelligence.trace.injection.routing_mode",
+    enumPrefix: "injection.mode",
+  },
+  {
+    field: "resolved_preset",
+    labelKey: "intelligence.trace.injection.resolved_preset",
+    enumPrefix: "injection.preset",
+  },
+  {
+    field: "resolved_delivery",
+    labelKey: "intelligence.trace.injection.resolved_delivery",
+    enumPrefix: "injection.delivery",
+  },
+  {
+    field: "outcome",
+    labelKey: "intelligence.trace.injection.outcome",
+    enumPrefix: "injection.outcome",
+  },
+];
 
 interface RecallTracePanelProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -47,9 +94,11 @@ function formatScore(value: number | undefined, locale: string): string {
     : formatDashboardNumber(value, locale, { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 }
 
-/** 读取后端安全 DTO 中有界数量的标量 metadata。 */
+/** 读取后端安全 DTO 中有界数量的标量 metadata；trace_kind 由来源徽标单独展示。 */
 function metadataEntries(metadata: Record<string, unknown>, limit = 5) {
-  return Object.entries(metadata).slice(0, limit);
+  return Object.entries(metadata)
+    .filter(([key]) => key !== "trace_kind")
+    .slice(0, limit);
 }
 
 /** 展示已经过后端固定 allowlist 过滤的标量。 */
@@ -131,6 +180,7 @@ export function RecallTracePanel({
   const [chatType, setChatType] = useState("private");
   const [chainDepth, setChainDepth] = useState(2);
   const [trace, setTrace] = useState<RecallTraceResponse | null>(null);
+  const [detailState, setDetailState] = useState<TraceDetailState>("idle");
   const [loading, setLoading] = useState(false);
   const feedbackRef = useRef({ showToast, t });
 
@@ -147,18 +197,27 @@ export function RecallTracePanel({
     if (!traceId || navigationTarget.tab !== "recallTrace") return;
     let active = true;
     setLoading(true);
+    setDetailState("loading");
     void apiRequest(
       `recall/trace/detail?trace_id=${encodeURIComponent(traceId)}`,
       { retries: 0 },
     )
       .then((response) => {
-        if (active) setTrace(unwrapApiData<RecallTraceResponse>(response));
+        if (!active) return;
+        const nextTrace = unwrapApiData<RecallTraceResponse>(response);
+        setTrace(nextTrace);
+        setDetailState("ready");
       })
       .catch((error) => {
-        if (active) {
-          const feedback = feedbackRef.current;
-          feedback.showToast(feedback.t("common.errorPrefix", String(error)), true);
+        if (!active) return;
+        setTrace(null);
+        if (error instanceof ApiRequestError && UNAVAILABLE_TRACE_CODES.includes(error.code)) {
+          setDetailState("unavailable");
+          return;
         }
+        setDetailState("error");
+        const feedback = feedbackRef.current;
+        feedback.showToast(feedback.t("common.errorPrefix", String(error)), true);
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -192,8 +251,8 @@ export function RecallTracePanel({
     setLoading(true);
     try {
       const response = await apiRequest("recall/trace", { method: "POST", body });
-      const nextTrace = unwrapApiData<RecallTraceResponse>(response);
-      setTrace(nextTrace);
+      setTrace(unwrapApiData<RecallTraceResponse>(response));
+      setDetailState("ready");
     } catch (error) {
       showToast(t("common.errorPrefix", error instanceof Error ? error.message : String(error)), true);
     } finally {
@@ -297,8 +356,31 @@ export function RecallTracePanel({
       </div>
 
       <div className="space-y-4">
-        {trace ? (
+        {detailState === "loading" && !trace ? (
+          <StatePanel state="loading" title={t("intelligence.trace.detailLoading")} />
+        ) : detailState === "unavailable" ? (
+          <StatePanel
+            state="empty"
+            title={t("intelligence.trace.detailUnavailable")}
+            description={t("intelligence.trace.detailUnavailableHint")}
+          />
+        ) : detailState === "error" && !trace ? (
+          <StatePanel
+            state="error"
+            title={t("intelligence.trace.detailFailed")}
+            description={t("intelligence.trace.detailFailedHint")}
+          />
+        ) : trace ? (
           <>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded bg-[var(--color-border-light)] px-1.5 py-0.5 text-2xs text-[var(--text-secondary)]">
+                {trace.metadata?.trace_kind === "production"
+                  ? t("intelligence.trace.origin.production")
+                  : t("intelligence.trace.origin.preview")}
+              </span>
+              <MetadataChips metadata={trace.metadata} limit={4} />
+            </div>
+
             <div className="grid gap-3 md:grid-cols-4">
               {[
                 [t("intelligence.trace.stat.trace"), trace.trace_id],
@@ -313,18 +395,49 @@ export function RecallTracePanel({
               ))}
             </div>
 
+            {trace.injection ? (
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
+                <div className="border-b border-[var(--color-border)] px-4 py-3">
+                  <h4 className="text-sm font-semibold text-[var(--text-primary)]">{t("intelligence.trace.injection.title")}</h4>
+                </div>
+                <dl className="grid gap-3 p-4 md:grid-cols-3">
+                  {INJECTION_SUMMARY_FIELDS.map(({ field, labelKey, enumPrefix }) => {
+                    const value = trace.injection?.[field];
+                    if (value === undefined || value === null) return null;
+                    return (
+                      <div key={field} className="min-w-0">
+                        <dt className="text-2xs uppercase text-[var(--text-tertiary)]">{t(labelKey)}</dt>
+                        <dd className="mt-1 break-words text-sm tabular-nums text-[var(--text-primary)]">
+                          {enumPrefix
+                            ? translateEnum(t, enumPrefix, value, String(value))
+                            : formatDashboardNumber(value, locale)}
+                        </dd>
+                      </div>
+                    );
+                  })}
+                </dl>
+              </div>
+            ) : null}
+
             <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
               <div className="border-b border-[var(--color-border)] px-4 py-3">
                 <h4 className="text-sm font-semibold text-[var(--text-primary)]">{t("intelligence.trace.stages")}</h4>
               </div>
               <div className="grid gap-2 p-4 md:grid-cols-2 xl:grid-cols-3">
                 {trace.stages.map((stage) => (
-                  <div key={stage.name} className="rounded-lg border border-[var(--color-border-light)] bg-[var(--color-surface)] p-3">
-                    <div className="flex items-center justify-between gap-2">
+                  <div key={`${stage.name}-${stage.status ?? "default"}`} className="rounded-lg border border-[var(--color-border-light)] bg-[var(--color-surface)] p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
                       <p className="text-xs font-medium text-[var(--text-primary)]">
                         {translateEnum(t, "intelligence.trace.stage", stage.name, stage.name)}
                       </p>
-                      <span className="text-2xs tabular-nums text-[var(--text-secondary)]">{formatMs(stage.duration_ms, locale)}</span>
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        {stage.status ? (
+                          <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-secondary)] px-1.5 py-0.5 text-2xs font-semibold uppercase text-[var(--text-secondary)]">
+                            {translateEnum(t, "intelligence.trace.stageStatus", stage.status, stage.status)}
+                          </span>
+                        ) : null}
+                        <span className="text-2xs tabular-nums text-[var(--text-secondary)]">{formatMs(stage.duration_ms, locale)}</span>
+                      </div>
                     </div>
                     <p className="mt-2 text-2xs text-[var(--text-tertiary)]">{t("intelligence.trace.candidates", String(stage.candidate_count))}</p>
                     <div className="mt-2">
@@ -335,6 +448,40 @@ export function RecallTracePanel({
               </div>
             </div>
 
+            {trace.fact_alignment || trace.source_status ? (
+              <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
+                <div className="border-b border-[var(--color-border)] px-4 py-3">
+                  <h4 className="text-sm font-semibold text-[var(--text-primary)]">{t("intelligence.trace.evidence.title")}</h4>
+                </div>
+                <dl className="grid gap-3 p-4 sm:grid-cols-2 xl:grid-cols-4">
+                  {trace.fact_alignment ? (
+                    <>
+                      <div className="min-w-0">
+                        <dt className="text-2xs uppercase text-[var(--text-tertiary)]">{t("intelligence.trace.factAlignment.aligned")}</dt>
+                        <dd className="mt-1 text-sm font-semibold tabular-nums text-[var(--text-primary)]">{formatDashboardNumber(trace.fact_alignment.aligned, locale)}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-2xs uppercase text-[var(--text-tertiary)]">{t("intelligence.trace.factAlignment.misaligned")}</dt>
+                        <dd className="mt-1 text-sm font-semibold tabular-nums text-[var(--text-primary)]">{formatDashboardNumber(trace.fact_alignment.misaligned, locale)}</dd>
+                      </div>
+                      <div className="min-w-0">
+                        <dt className="text-2xs uppercase text-[var(--text-tertiary)]">{t("intelligence.trace.factAlignment.undeterminable")}</dt>
+                        <dd className="mt-1 text-sm font-semibold tabular-nums text-[var(--text-primary)]">{formatDashboardNumber(trace.fact_alignment.undeterminable, locale)}</dd>
+                      </div>
+                    </>
+                  ) : null}
+                  {trace.source_status ? (
+                    <div className="min-w-0">
+                      <dt className="text-2xs uppercase text-[var(--text-tertiary)]">{t("intelligence.trace.sourceStatus.title")}</dt>
+                      <dd className="mt-1 break-words text-sm font-semibold text-[var(--text-primary)]">
+                        {translateEnum(t, "intelligence.trace.sourceStatus", trace.source_status, trace.source_status)}
+                      </dd>
+                    </div>
+                  ) : null}
+                </dl>
+              </div>
+            ) : null}
+
             <div className="space-y-3">
               {trace.results.map((result) => <ResultCard key={result.rank} result={result} />)}
             </div>
@@ -342,29 +489,61 @@ export function RecallTracePanel({
             <div className="overflow-hidden rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-secondary)]">
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] px-4 py-3">
                 <h4 className="text-sm font-semibold text-[var(--text-primary)]">{t("intelligence.trace.filteredCandidates")}</h4>
-                <MetadataChips metadata={trace.metadata} limit={4} />
               </div>
-              {trace.filtered.length === 0 ? (
+              {trace.filtered.length === 0 && (trace.filter_summary?.length ?? 0) === 0 ? (
                 <p className="px-4 py-5 text-xs text-[var(--text-tertiary)]">{t("intelligence.trace.noFilteredCandidates")}</p>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="min-w-[520px] w-full text-left text-xs">
-                    <thead className="text-[var(--text-tertiary)]">
-                      <tr>
-                        <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.reason")}</th>
-                        <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.stage")}</th>
-                        <th className="px-4 py-2 text-right font-medium">{t("intelligence.trace.table.score")}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {trace.filtered.map((item, index) => (
-                        <FilteredCandidateRow
-                          key={`${item.reason}-${item.stage ?? "none"}-${index}`}
-                          item={item}
-                        />
-                      ))}
-                    </tbody>
-                  </table>
+                  {(trace.filter_summary?.length ?? 0) > 0 ? (
+                    <table className="min-w-[520px] w-full text-left text-xs">
+                      <thead className="text-[var(--text-tertiary)]">
+                        <tr>
+                          <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.reason")}</th>
+                          <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.stage")}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t("intelligence.trace.table.count")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(trace.filter_summary ?? []).map((item) => (
+                          <tr
+                            key={`${item.stage}-${item.reason}`}
+                            className="border-t border-[var(--color-border-light)]"
+                          >
+                            <td className="px-4 py-2 text-[var(--text-secondary)]">
+                              {translateEnum(t, "intelligence.trace.filterReason", item.reason, item.reason)}
+                            </td>
+                            <td className="px-4 py-2 text-[var(--text-tertiary)]">
+                              {item.stage
+                                ? translateEnum(t, "intelligence.trace.stage", item.stage, item.stage)
+                                : "--"}
+                            </td>
+                            <td className="px-4 py-2 text-right tabular-nums text-[var(--text-secondary)]">
+                              {formatDashboardNumber(item.count, locale)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : null}
+                  {trace.filtered.length > 0 ? (
+                    <table className="min-w-[520px] w-full text-left text-xs">
+                      <thead className="text-[var(--text-tertiary)]">
+                        <tr>
+                          <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.reason")}</th>
+                          <th className="px-4 py-2 font-medium">{t("intelligence.trace.table.stage")}</th>
+                          <th className="px-4 py-2 text-right font-medium">{t("intelligence.trace.table.score")}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {trace.filtered.map((item, index) => (
+                          <FilteredCandidateRow
+                            key={`${item.reason}-${item.stage ?? "none"}-${index}`}
+                            item={item}
+                          />
+                        ))}
+                      </tbody>
+                    </table>
+                  ) : null}
                 </div>
               )}
             </div>

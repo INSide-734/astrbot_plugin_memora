@@ -128,7 +128,8 @@
         "watch": "Наблюдение",
         "degraded": "Деградация",
         "critical": "Критично",
-        "info": "Информация"
+        "info": "Информация",
+        "unknown": "Неизвестно"
       },
       "domains": {
         "provider": "Provider",
@@ -136,7 +137,12 @@
         "write": "Запись",
         "scheduler": "Фоновые задачи",
         "index": "Индекс",
-        "prometheus": "Prometheus"
+        "anomaly": "Аномалии",
+        "prometheus": "Prometheus",
+        "summary_tasks": "Задачи сводки",
+        "write_availability": "Доступность записи",
+        "quality": "Качество",
+        "restore": "Восстановление"
       },
       "actions": {
         "provider_critical": "Восстановите или перенастройте Provider, затем повторите инициализацию.",

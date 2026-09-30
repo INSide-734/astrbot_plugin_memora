@@ -15,20 +15,46 @@ _TRACE_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,64}$")
 _STAGE_NAMES = frozenset(
     {
         "bm25",
+        "context_cleanup",
+        "decision",
+        "format",
         "graph",
         "injection_decision",
         "personalize",
         "privacy_filter",
         "projection_attachment",
+        "prospective",
+        "provider",
+        "query",
         "query_parse",
+        "query_rewrite",
+        "recall",
         "relation_expansion",
         "rerank",
+        "request",
+        "retrieval",
         "search_memories",
+        "spontaneous",
         "vector",
     }
 )
 _ROUTING_MODES = frozenset({"auto", "manual", "hybrid"})
 _PRESETS = frozenset({"tool_first", "low_cost", "balanced", "quality"})
+_DELIVERY_MODES = frozenset(
+    {
+        "auto",
+        "extra_user_content",
+        "user_message_before",
+        "user_message_after",
+        "fake_tool_call",
+        "fake_tool_call_deepseek_v4",
+    }
+)
+_OUTCOMES = frozenset({"injected", "skipped", "empty", "fallback", "error"})
+_STAGE_STATUSES = frozenset(
+    {"started", "completed", "degraded", "skipped", "failed", "cancelled"}
+)
+_TRACE_KINDS = frozenset({"production"})
 _REASON_CODES = frozenset(
     {
         "AUTO_FALLBACK",
@@ -39,9 +65,19 @@ _REASON_CODES = frozenset(
         "HYBRID_CLAMPED_MIN",
         "INVALID_CONFIG_FALLBACK",
         "MANUAL_SELECTED",
+        "NO_USEFUL_CANDIDATES",
+        "PROVIDER_DELIVERY_DOWNGRADED",
         "PROVIDER_TOOL_UNAVAILABLE",
+        "empty_query",
+        "empty_request",
+        "passive_recall_only",
+        "recall_cancelled",
+        "recall_completed",
+        "recall_error",
+        "top_k_disabled",
     }
 )
+
 _CONTRIBUTION_SOURCES = frozenset(
     {
         "bm25",
@@ -123,7 +159,7 @@ def sanitize_trace_payload(value: Any) -> dict[str, Any]:
     stages = _sanitize_stages(value.get("stages"))
     results = _sanitize_results(value.get("results"))
     filtered = _sanitize_filtered(value.get("filtered"))
-    return {
+    payload: dict[str, Any] = {
         "trace_id": trace_id,
         "total_ms": _safe_number(value.get("total_ms"), default=0.0),
         "stages": stages,
@@ -132,18 +168,36 @@ def sanitize_trace_payload(value: Any) -> dict[str, Any]:
         "created_at": _safe_number(value.get("created_at"), default=time.time()),
         "metadata": _sanitize_trace_metadata(value.get("metadata")),
     }
+    injection = _sanitize_injection(value.get("injection"))
+    if injection:
+        payload["injection"] = injection
+    fact_alignment = _sanitize_fact_alignment(value.get("fact_alignment"))
+    if fact_alignment:
+        payload["fact_alignment"] = fact_alignment
+    source_status = _safe_enum(
+        value.get("source_status"), frozenset({"not_assessed", "unknown"})
+    )
+    if source_status:
+        payload["source_status"] = source_status
+    filter_summary = _sanitize_filter_summary(value.get("filter_summary"))
+    if filter_summary:
+        payload["filter_summary"] = filter_summary
+    return payload
 
 
-def _sanitize_trace_metadata(value: Any) -> dict[str, bool]:
-    """仅保留问题报告状态和候选评分轨迹状态两个安全布尔值。"""
+def _sanitize_trace_metadata(value: Any) -> dict[str, Any]:
+    """仅保留问题报告、候选评分和生产 trace 类型标记。"""
     source = _mapping(value)
-    sanitized = {
+    sanitized: dict[str, Any] = {
         "debug_trace_available": bool(source.get("debug_trace_available", False))
     }
     if "debug_reporting_enabled" in source:
         sanitized["debug_reporting_enabled"] = bool(
             source.get("debug_reporting_enabled", False)
         )
+    trace_kind = _safe_enum(source.get("trace_kind"), _TRACE_KINDS)
+    if trace_kind:
+        sanitized["trace_kind"] = trace_kind
     return sanitized
 
 
@@ -154,14 +208,16 @@ def _sanitize_stages(value: Any) -> list[dict[str, Any]]:
         name = _safe_enum(item.get("name"), _STAGE_NAMES)
         if not name:
             continue
-        sanitized.append(
-            {
-                "name": name,
-                "duration_ms": _safe_number(item.get("duration_ms"), default=0.0),
-                "candidate_count": _safe_int(item.get("candidate_count"), default=0),
-                "metadata": _sanitize_stage_metadata(item.get("metadata")),
-            }
-        )
+        entry: dict[str, Any] = {
+            "name": name,
+            "duration_ms": _safe_number(item.get("duration_ms"), default=0.0),
+            "candidate_count": _safe_int(item.get("candidate_count"), default=0),
+            "metadata": _sanitize_stage_metadata(item.get("metadata")),
+        }
+        status = _safe_enum(item.get("status"), _STAGE_STATUSES)
+        if status:
+            entry["status"] = status
+        sanitized.append(entry)
     return sanitized
 
 
@@ -195,6 +251,55 @@ def _sanitize_stage_metadata(value: Any) -> dict[str, Any]:
         sanitized["reason_count"] = min(len(reason_codes), _MAX_ITEMS)
     if reason_code:
         sanitized["reason_code"] = reason_code
+    return sanitized
+
+
+def _sanitize_fact_alignment(value: Any) -> dict[str, int]:
+    """保留生产事实对齐三态的有界计数。"""
+    source = _mapping(value)
+    return {
+        state: count
+        for state in ("aligned", "misaligned", "undeterminable")
+        if (count := _optional_nonnegative_int(source.get(state))) is not None
+    }
+
+
+def _sanitize_injection(value: Any) -> dict[str, Any]:
+    """保留生产注入结果的固定枚举和非负计数。"""
+    source = _mapping(value)
+    sanitized: dict[str, Any] = {}
+    for key in (
+        "candidate_count",
+        "selected_count",
+        "injected_count",
+        "configured_budget_chars",
+        "effective_budget_chars",
+    ):
+        parsed = _optional_nonnegative_int(source.get(key))
+        if parsed is not None:
+            sanitized[key] = parsed
+    for key, choices in (
+        ("routing_mode", _ROUTING_MODES),
+        ("resolved_preset", _PRESETS),
+        ("resolved_delivery", _DELIVERY_MODES),
+        ("outcome", _OUTCOMES),
+    ):
+        selected = _safe_enum(source.get(key), choices)
+        if selected:
+            sanitized[key] = selected
+    return sanitized
+
+
+def _sanitize_filter_summary(value: Any) -> list[dict[str, Any]]:
+    """保留已确认过滤阶段、闭集原因和正整数计数。"""
+    sanitized: list[dict[str, Any]] = []
+    for item in _mapping_items(value):
+        stage = _safe_enum(item.get("stage"), _STAGE_NAMES)
+        reason = _safe_enum(item.get("reason"), _FILTER_REASONS)
+        count = _optional_nonnegative_int(item.get("count"))
+        if not stage or not reason or count is None or count < 1:
+            continue
+        sanitized.append({"stage": stage, "reason": reason, "count": count})
     return sanitized
 
 
@@ -309,7 +414,7 @@ def _safe_number(
         return default
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     if not math.isfinite(parsed):
         return default
@@ -320,11 +425,38 @@ def _safe_int(value: Any, *, default: int, minimum: int = 0) -> int:
     """把观测计数规范化为有界整数。"""
     if isinstance(value, bool):
         return default
+    if isinstance(value, float) and (
+        not math.isfinite(value) or not value.is_integer()
+    ):
+        return default
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
     return max(minimum, min(int(_MAX_NUMBER), parsed))
 
 
-__all__ = ["sanitize_trace_payload"]
+def normalize_trace_id(value: Any) -> str | None:
+    """返回符合 trace 关联码格式的值，非法值不参与详情查询。"""
+    text = str(value or "").strip()
+    return text if _TRACE_ID_PATTERN.fullmatch(text) else None
+
+
+def _optional_nonnegative_int(value: Any) -> int | None:
+    """把可选计数严格规范化；非法值不伪造成零。"""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, float) and (
+        not math.isfinite(value) or not value.is_integer()
+    ):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed < 0 or parsed > _MAX_NUMBER:
+        return None
+    return parsed
+
+
+__all__ = ["normalize_trace_id", "sanitize_trace_payload"]

@@ -52,9 +52,8 @@ class MetricsApiMixin:
             return ok_response(summary)
         except Exception as exc:
             logger.error(
-                "[指标接口] 获取运行观测摘要失败，异常类型=%s",
+                "[指标接口] operation=get_metrics_summary exception_type=%s",
                 exc.__class__.__name__,
-                exc_info=True,
             )
             return error_response("metrics_summary_failed")
 
@@ -74,7 +73,10 @@ class MetricsApiMixin:
         except TypeError:
             data = tracker.get_perf_data()
         except Exception as exc:
-            logger.warning("[指标接口] 读取 PerfTracker 失败: %s", exc, exc_info=True)
+            logger.warning(
+                "[指标接口] operation=read_perf_tracker exception_type=%s",
+                exc.__class__.__name__,
+            )
             return {
                 "sample_count": 0,
                 "avg_total_ms": 0.0,
@@ -110,7 +112,10 @@ class MetricsApiMixin:
         try:
             stats = scorer.get_stats()
         except Exception as exc:
-            logger.warning("[指标接口] 读取质量统计失败: %s", exc, exc_info=True)
+            logger.warning(
+                "[指标接口] operation=read_quality_stats exception_type=%s",
+                exc.__class__.__name__,
+            )
             return {
                 "status": "error",
                 "total_scored": 0,
@@ -202,7 +207,7 @@ class MetricsApiMixin:
             return sanitize_summary_task_snapshot(safe_snapshot).to_dict()
         except Exception as exc:
             logger.warning(
-                "[指标接口] 读取总结任务快照失败，异常类型=%s",
+                "[指标接口] operation=read_summary_task_snapshot exception_type=%s",
                 exc.__class__.__name__,
             )
             return sanitize_summary_task_snapshot(None).to_dict()
@@ -232,7 +237,8 @@ class MetricsApiMixin:
                     snapshot = raw_snapshot
             except Exception as exc:
                 logger.warning(
-                    "[指标接口] 读取 readiness snapshot 失败: %s", exc, exc_info=True
+                    "[指标接口] operation=read_readiness_snapshot exception_type=%s",
+                    exc.__class__.__name__,
                 )
 
         waiter = getattr(initializer, "_provider_waiter", None)
@@ -389,7 +395,7 @@ class MetricsApiMixin:
             stats = detector.stats if isinstance(detector.stats, dict) else {}
         except Exception as exc:
             logger.warning(
-                "[指标接口] 读取异常检测统计失败，异常类型=%s",
+                "[指标接口] operation=read_anomaly_stats exception_type=%s",
                 type(exc).__name__,
             )
             return {
@@ -421,7 +427,7 @@ class MetricsApiMixin:
                 feedback_summary = feedback.safe_summary()
             except Exception as exc:
                 logger.warning(
-                    "[指标接口] 读取反馈摘要失败，异常类型=%s",
+                    "[指标接口] operation=read_feedback_summary exception_type=%s",
                     type(exc).__name__,
                 )
         summary: dict[str, Any] = {
@@ -438,7 +444,7 @@ class MetricsApiMixin:
                 summary.update(auto_learning.safe_summary())
             except Exception as exc:
                 logger.warning(
-                    "[指标接口] 读取自主学习摘要失败，异常类型=%s",
+                    "[指标接口] operation=read_learning_summary exception_type=%s",
                     type(exc).__name__,
                 )
                 summary["status"] = "error"
@@ -534,7 +540,10 @@ class MetricsApiMixin:
 
             snapshot = get_write_metrics_snapshot()
         except Exception as exc:
-            logger.warning("[指标接口] 读取写协调器指标失败: %s", exc, exc_info=True)
+            logger.warning(
+                "[指标接口] operation=read_write_metrics exception_type=%s",
+                exc.__class__.__name__,
+            )
             return {
                 "operations_total": 0,
                 "lock_retries_total": 0,
@@ -569,7 +578,8 @@ class MetricsApiMixin:
             }
         except Exception as exc:
             logger.warning(
-                "[指标接口] 读取 Prometheus registry 失败: %s", exc, exc_info=True
+                "[指标接口] operation=read_prometheus_registry exception_type=%s",
+                exc.__class__.__name__,
             )
             return {
                 "available": False,
@@ -647,8 +657,11 @@ class MetricsApiMixin:
             return ok_response(
                 tracker.get_samples(after_sequence=after_sequence, limit=limit)
             )
-        except Exception:
-            logger.warning("[指标接口] 读取召回样本失败", exc_info=True)
+        except Exception as exc:
+            logger.warning(
+                "[指标接口] operation=read_recall_samples exception_type=%s",
+                exc.__class__.__name__,
+            )
             return error_response("recall_samples_unavailable")
 
 

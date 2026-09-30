@@ -1153,6 +1153,7 @@
       "diagnostics": {
         "noMessage": "暂无诊断消息。",
         "untitledEvent": "未命名诊断事件",
+        "unknownDomain": "暂无该诊断域的可用信号。",
         "noActiveSignal": "暂无活跃诊断信号。",
         "level": {
           "healthy": "健康",
@@ -1190,7 +1191,9 @@
           "write": "写入",
           "scheduler": "调度器",
           "index": "索引",
-          "prometheus": "Prometheus"
+          "prometheus": "Prometheus",
+          "restore": "恢复",
+          "quality": "质量"
         },
         "health": "健康",
         "signals": "诊断信号",
@@ -1419,7 +1422,10 @@
         "filterReason": {
           "low_score": "分数过低",
           "topic_mismatch": "主题不匹配",
-          "missing_fields": "缺少字段"
+          "missing_fields": "缺少字段",
+          "privacy": "隐私过滤",
+          "mark_write": "标记写入",
+          "stale": "内容过时"
         },
         "stage": {
           "search_memories": "记忆检索",
@@ -1429,7 +1435,32 @@
           "graph": "图谱检索",
           "merge": "结果融合",
           "boost": "分数增强",
-          "rerank": "重排序"
+          "rerank": "重排序",
+          "request": "请求",
+          "retrieval": "检索",
+          "query": "查询",
+          "recall": "召回"
+        },
+        "stageStatus": {
+          "started": "已开始",
+          "completed": "已完成",
+          "degraded": "已降级",
+          "skipped": "已跳过",
+          "failed": "失败",
+          "cancelled": "已取消"
+        },
+        "factAlignment": {
+          "aligned": "事实一致",
+          "misaligned": "事实不一致",
+          "undeterminable": "无法判定"
+        },
+        "sourceStatus": {
+          "title": "来源状态",
+          "not_assessed": "尚未评估",
+          "unknown": "未知"
+        },
+        "evidence": {
+          "title": "事实与来源证据"
         },
         "source": {
           "bm25": "BM25",
@@ -1478,7 +1509,29 @@
           "doc": "文档",
           "reason": "原因",
           "stage": "阶段",
-          "score": "得分"
+          "score": "得分",
+          "count": "条数"
+        },
+        "origin": {
+          "production": "生产快照",
+          "preview": "手动预览"
+        },
+        "detailLoading": "正在加载聚合链路...",
+        "detailUnavailable": "该关联码暂无可用链路",
+        "detailUnavailableHint": "该次召回没有写入安全快照，或记录已被保留策略清理；这不代表链路为空。",
+        "detailFailed": "加载链路详情失败",
+        "detailFailedHint": "请稍后重试；失败不会回显服务端细节。",
+        "injection": {
+          "title": "本次注入结果",
+          "candidate_count": "候选数",
+          "selected_count": "执行器选择数",
+          "injected_count": "成功注入数",
+          "configured_budget_chars": "配置预算字符数",
+          "effective_budget_chars": "有效预算字符数",
+          "routing_mode": "实际路由",
+          "resolved_preset": "最终预设",
+          "resolved_delivery": "最终投递方式",
+          "outcome": "注入结果"
         },
         "noContributions": "暂无得分贡献",
         "contributionScore": "得分 {0} / 权重 {1}"

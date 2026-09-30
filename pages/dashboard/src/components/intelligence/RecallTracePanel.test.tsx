@@ -239,4 +239,136 @@ describe("RecallTracePanel", () => {
     expect(screen.queryByText("trace-stale")).toBeNull();
     expect(screen.getByText("trace-fresh")).toBeTruthy();
   });
+
+  it("renders production results, fact alignment, source state, filter summary, and stage status", async () => {
+    bridge.apiGet.mockResolvedValue(ok({
+      ...persistedTrace("trace-production"),
+      stages: [
+        { name: "request", duration_ms: 0, candidate_count: 0, metadata: {}, status: "skipped" },
+        { name: "retrieval", duration_ms: 8.2, candidate_count: 6, metadata: {}, status: "completed" },
+      ],
+      results: [{
+        rank: 1,
+        initial_score: 0.58,
+        final_score: 0.74,
+        score_contributions: [],
+        metadata: { memory_type: "episodic", status: "active" },
+      }],
+      metadata: { debug_trace_available: false, trace_kind: "production" },
+      injection: {
+        candidate_count: 6,
+        selected_count: 3,
+        injected_count: 2,
+        routing_mode: "auto",
+        outcome: "injected",
+      },
+      fact_alignment: { aligned: 2, misaligned: 1, undeterminable: 3 },
+      source_status: "not_assessed",
+      filter_summary: [
+        { stage: "retrieval", reason: "privacy", count: 2 },
+        { stage: "query", reason: "mark_write", count: 1 },
+        { stage: "recall", reason: "stale", count: 1 },
+        { stage: "future_stage", reason: "future_reason", count: 5 },
+      ],
+    }));
+
+    render(
+      <RecallTracePanel
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, tab: "recallTrace", traceId: "trace-production" }}
+      />,
+    );
+
+    expect(await screen.findByText("Production snapshot")).toBeTruthy();
+    expect(screen.getByText("#1")).toBeTruthy();
+    expect(screen.getByText(/memory_type: episodic/)).toBeTruthy();
+    expect(screen.getByText(/status: active/)).toBeTruthy();
+    expect(screen.getByText("Successfully injected").parentElement?.textContent).toContain("2");
+    expect(screen.getByText("Candidates").parentElement?.textContent).toContain("6");
+    expect(screen.getByText("Facts aligned")).toBeTruthy();
+    expect(screen.getByText("Facts misaligned")).toBeTruthy();
+    expect(screen.getByText("Cannot determine")).toBeTruthy();
+    expect(screen.getByText("Not assessed")).toBeTruthy();
+    expect(screen.getAllByText("Request").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Retrieval").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Query").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Recall").length).toBeGreaterThan(0);
+    expect(screen.getByText("future_reason")).toBeTruthy();
+    expect(screen.getByText("future_stage")).toBeTruthy();
+    expect(screen.getByText("Privacy filter")).toBeTruthy();
+    expect(screen.getByText("Marked for write")).toBeTruthy();
+    expect(screen.getByText("Stale candidate")).toBeTruthy();
+    expect(screen.getAllByText("1").length).toBeGreaterThan(0);
+    expect(screen.queryByText(/trace_kind/)).toBeNull();
+    expect(bridge.apiPost).not.toHaveBeenCalled();
+  });
+
+  it("renders unknown source status distinctly from not assessed", async () => {
+    bridge.apiGet.mockResolvedValue(ok({
+      ...persistedTrace("trace-source-unknown"),
+      metadata: { trace_kind: "production" },
+      source_status: "unknown",
+    }));
+
+    render(
+      <RecallTracePanel
+        showToast={showToast}
+        navigationTarget={{ requestId: 2, tab: "recallTrace", traceId: "trace-source-unknown" }}
+      />,
+    );
+
+    expect(await screen.findByText("Unknown")).toBeTruthy();
+    expect(screen.queryByText("Not assessed")).toBeNull();
+  });
+
+  it("labels a manually traced result as preview without an injection summary", async () => {
+    render(<RecallTracePanel showToast={showToast} />);
+
+    fireEvent.change(screen.getByLabelText(/Query|查询/), { target: { value: "coffee" } });
+    fireEvent.click(screen.getByRole("button", { name: /Trace|追踪/ }));
+
+    expect(await screen.findByText("Manual preview")).toBeTruthy();
+    expect(screen.queryByText("Production snapshot")).toBeNull();
+    expect(screen.queryByText("Injection result for this request")).toBeNull();
+  });
+
+  it("renders a stable unavailable state instead of an empty trace", async () => {
+    bridge.apiGet.mockResolvedValue({
+      status: "error",
+      message: "trace_unavailable",
+      code: "trace_unavailable",
+    });
+
+    render(
+      <RecallTracePanel
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, tab: "recallTrace", traceId: "trace-missing" }}
+      />,
+    );
+
+    expect(
+      await screen.findByText("No trace is available for this correlation code"),
+    ).toBeTruthy();
+    expect(screen.queryByText("No filtered candidates")).toBeNull();
+    expect(screen.queryByText("trace-missing")).toBeNull();
+    expect(showToast).not.toHaveBeenCalled();
+  });
+
+  it("renders a failure state and toast when the detail read fails", async () => {
+    bridge.apiGet.mockResolvedValue({
+      status: "error",
+      message: "recall_trace_detail_failed",
+    });
+
+    render(
+      <RecallTracePanel
+        showToast={showToast}
+        navigationTarget={{ requestId: 1, tab: "recallTrace", traceId: "trace-broken" }}
+      />,
+    );
+
+    expect(await screen.findByText("Failed to load trace detail")).toBeTruthy();
+    expect(screen.queryByText("No trace is available for this correlation code")).toBeNull();
+    expect(showToast).toHaveBeenCalledTimes(1);
+  });
 });

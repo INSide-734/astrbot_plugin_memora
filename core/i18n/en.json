@@ -128,7 +128,8 @@
         "watch": "Watch",
         "degraded": "Degraded",
         "critical": "Critical",
-        "info": "Info"
+        "info": "Info",
+        "unknown": "Unknown"
       },
       "domains": {
         "provider": "Provider",
@@ -136,7 +137,12 @@
         "write": "Write",
         "scheduler": "Background tasks",
         "index": "Index",
-        "prometheus": "Prometheus"
+        "anomaly": "Anomaly",
+        "prometheus": "Prometheus",
+        "summary_tasks": "Summary tasks",
+        "write_availability": "Write availability",
+        "quality": "Quality",
+        "restore": "Restore"
       },
       "actions": {
         "provider_critical": "Restore or reconfigure the Provider, then retry initialization.",

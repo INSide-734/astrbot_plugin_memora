@@ -1901,3 +1901,123 @@ async def test_setter_exception_real_executor_never_registers_unscoped(
     assert service.has_scope(scope_id)
     assert service.sanitizer._original_instructions == []
     assert case.recorder.record.call_args.args[0].outcome in {"injected", "fallback"}
+
+
+@pytest.mark.asyncio
+async def test_production_trace_uses_one_search_and_actual_injected_count(
+    handler_case,
+) -> None:
+    case = handler_case(
+        config=strategy_config(),
+        memories=high_confidence_memories(),
+    )
+    case.handler._executor.execute = AsyncMock(
+        return_value=InjectionExecutionResult(
+            outcome=InjectionOutcome.INJECTED,
+            selected_count=3,
+            configured_budget_chars=400,
+            effective_budget_chars=300,
+            actual_resolved_delivery=DeliveryMode.EXTRA_USER_CONTENT,
+            injected_memory_ids=(1,),
+        )
+    )
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    case.memory_engine.search_memories.assert_awaited_once()
+    record = case.recorder.record.call_args.args[0]
+    trace = case.recorder.record.call_args.kwargs["trace_payload"]
+    assert record.trace_id
+    assert trace["trace_id"] == record.trace_id
+    assert case.recorder.record.call_args.kwargs["trace_id"] == record.trace_id
+    assert trace["metadata"]["trace_kind"] == "production"
+    assert trace["injection"]["candidate_count"] == record.candidate_count
+    assert trace["injection"]["selected_count"] == 3
+    assert trace["injection"]["injected_count"] == 1
+    assert [item["rank"] for item in trace["results"]] == [1, 2, 3]
+    assert [item["final_score"] for item in trace["results"]] == [0.95, 0.82, 0.61]
+    assert trace["fact_alignment"] == {
+        "aligned": 3,
+        "misaligned": 0,
+        "undeterminable": 0,
+    }
+    assert trace["source_status"] == "not_assessed"
+    assert "remember coffee" not in json.dumps(trace)
+
+
+@pytest.mark.asyncio
+async def test_empty_request_records_trace_only_without_decision(handler_case) -> None:
+    case = handler_case(config=strategy_config())
+    case.request.prompt = ""
+    case.request.extra_user_content_parts = []
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    case.memory_engine.search_memories.assert_not_awaited()
+    case.recorder.record.assert_not_called()
+    case.recorder.record_trace.assert_called_once()
+    trace = case.recorder.record_trace.call_args.args[0]
+    assert trace["trace_id"]
+    assert trace["metadata"]["trace_kind"] == "production"
+    assert trace["stages"][-1]["name"] == "request"
+    assert trace["stages"][-1]["status"] == "skipped"
+    assert trace["stages"][-1]["metadata"]["reason_code"] == "empty_request"
+    assert case.recorder.record_trace.call_args.kwargs["trace_id"] == trace["trace_id"]
+    assert "remember coffee" not in json.dumps(trace)
+
+
+@pytest.mark.asyncio
+async def test_top_k_disabled_records_retrieval_trace_only(handler_case) -> None:
+    case = handler_case(
+        config=strategy_config(**{"recall_engine.top_k": 0}),
+    )
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    case.memory_engine.search_memories.assert_not_awaited()
+    case.recorder.record.assert_not_called()
+    trace = case.recorder.record_trace.call_args.args[0]
+    assert trace["stages"][-1]["name"] == "retrieval"
+    assert trace["stages"][-1]["metadata"]["reason_code"] == "top_k_disabled"
+
+
+@pytest.mark.asyncio
+async def test_protection_scope_failure_records_same_production_trace_shape(
+    handler_case,
+) -> None:
+    from core.platform.security.prompt_sanitizer import PromptProtectionService
+
+    class EventWithoutStorage:
+        __slots__ = ("unified_msg_origin",)
+
+        def __init__(self):
+            self.unified_msg_origin = "session-1"
+
+        def set_extra(self, *_args):
+            raise RuntimeError("setter unavailable")
+
+        def get_extra(self, *_args):
+            raise RuntimeError("getter unavailable")
+
+        def get_message_type(self):
+            return MessageType.PRIVATE_MESSAGE
+
+        def get_sender_id(self):
+            return "user-1"
+
+    case = handler_case(
+        config=strategy_config(),
+        memories=high_confidence_memories(),
+        prompt_protection_service=PromptProtectionService(enable_double_check=False),
+    )
+    case.event = EventWithoutStorage()
+    case.handler._executor.execute = AsyncMock()
+
+    await case.handler.handle_memory_recall(case.event, case.request)
+
+    case.memory_engine.search_memories.assert_awaited_once()
+    case.handler._executor.execute.assert_not_awaited()
+    trace = case.recorder.record.call_args.kwargs["trace_payload"]
+    assert trace["injection"]["outcome"] == "error"
+    assert trace["injection"]["injected_count"] == 0
+    assert trace["stages"][-1]["status"] == "failed"

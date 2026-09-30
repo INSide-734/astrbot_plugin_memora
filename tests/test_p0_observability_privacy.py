@@ -295,6 +295,104 @@ async def test_capture_explainable_recall_returns_no_sensitive_observation_field
     }
 
 
+def test_production_trace_sanitizer_keeps_only_closed_set_summaries() -> None:
+    """生产 Trace 摘要只保留闭集字段，非法值不得变成健康零值。"""
+    from core.features.retrieval.trace_privacy import (
+        normalize_trace_id,
+        sanitize_trace_payload,
+    )
+
+    trace = sanitize_trace_payload(
+        {
+            "trace_id": "8a8a4d08-cdb6-4e6a-a3dd-b1b64c89a1ae",
+            "query": _SENTINEL,
+            "metadata": {"trace_kind": "production", "session_id": _SENTINEL},
+            "stages": [
+                {"name": "search_memories", "status": "completed"},
+                {"name": "injection_decision", "status": _SENTINEL},
+            ],
+            "injection": {
+                "candidate_count": 3,
+                "selected_count": 2,
+                "injected_count": 1,
+                "configured_budget_chars": -1,
+                "effective_budget_chars": "invalid",
+                "routing_mode": "manual",
+                "resolved_preset": _SENTINEL,
+                "resolved_delivery": "extra_user_content",
+                "outcome": "fallback",
+                "memory_ids": [101],
+            },
+            "fact_alignment": {
+                "aligned": 2,
+                "misaligned": 1,
+                "undeterminable": 3,
+                "secret": _SENTINEL,
+            },
+            "source_status": "not_assessed",
+            "reason_codes": ["NO_USEFUL_CANDIDATES", "PROVIDER_DELIVERY_DOWNGRADED"],
+            "filter_summary": [
+                {"stage": "search_memories", "reason": "stale", "count": 2},
+                {"stage": "search_memories", "reason": _SENTINEL, "count": 5},
+                {"stage": "search_memories", "reason": "privacy", "count": 0},
+                {"stage": "search_memories", "reason": "privacy", "doc_id": 202},
+            ],
+        }
+    )
+
+    assert trace["metadata"] == {
+        "debug_trace_available": False,
+        "trace_kind": "production",
+    }
+    assert trace["stages"][0]["status"] == "completed"
+    assert "status" not in trace["stages"][1]
+    assert trace["injection"] == {
+        "candidate_count": 3,
+        "selected_count": 2,
+        "injected_count": 1,
+        "routing_mode": "manual",
+        "resolved_delivery": "extra_user_content",
+        "outcome": "fallback",
+    }
+    assert trace["fact_alignment"] == {
+        "aligned": 2,
+        "misaligned": 1,
+        "undeterminable": 3,
+    }
+    assert trace["source_status"] == "not_assessed"
+    assert trace["filter_summary"] == [
+        {"stage": "search_memories", "reason": "stale", "count": 2}
+    ]
+    assert normalize_trace_id(" trace-safe ") == "trace-safe"
+    assert normalize_trace_id(f"trace/{_SENTINEL}") is None
+    assert _SENTINEL not in _serialized(trace)
+    assert not (_FORBIDDEN_TRACE_KEYS & _collect_keys(trace))
+
+
+def test_trace_sanitizer_handles_giant_numeric_values_and_closed_reasons() -> None:
+    from core.features.retrieval.trace_privacy import sanitize_trace_payload
+
+    trace = sanitize_trace_payload(
+        {
+            "trace_id": "trace-safe",
+            "total_ms": 10**10_000,
+            "stages": [
+                {
+                    "name": "request",
+                    "metadata": {
+                        "reason_codes": [
+                            "NO_USEFUL_CANDIDATES",
+                            "PROVIDER_DELIVERY_DOWNGRADED",
+                        ]
+                    },
+                }
+            ],
+        }
+    )
+    assert trace["total_ms"] == 0.0
+    assert trace["stages"][0]["metadata"]["reason_code"] == "NO_USEFUL_CANDIDATES"
+
+
 @pytest.mark.asyncio
 async def test_diagnostics_api_returns_stable_codes_without_exception_text(
     tmp_path: Path,
@@ -312,11 +410,18 @@ async def test_diagnostics_api_returns_stable_codes_without_exception_text(
     action = await api.run_diagnostics_action_payload(
         {"action": f"unknown-{_SENTINEL}"}
     )
+    api.rebuild_index = AsyncMock(
+        return_value={"status": "error", "message": f"索引重建失败：{_SENTINEL}"}
+    )
+    rebuild = await api.run_diagnostics_action_payload(
+        {"action": "rebuild_index", "confirmed": True}
+    )
 
     assert listed == {"status": "error", "message": "diagnostics_events_failed"}
     assert detail == {"status": "error", "message": "diagnostics_event_failed"}
     assert action == {"status": "error", "message": "unknown_diagnostics_action"}
-    assert _SENTINEL not in _serialized([listed, detail, action])
+    assert rebuild == {"status": "error", "message": "rebuild_index_failed"}
+    assert _SENTINEL not in _serialized([listed, detail, action, rebuild])
 
 
 @pytest.mark.asyncio

@@ -135,6 +135,7 @@ sequenceDiagram
 `capture_explainable_recall()` 调用 `engine.search_memories(trace_debug=True)`，内部可使用候选 ID、正文预览和请求上下文计算路由信号，但 `RecallTrace.to_dict()` 在保存与返回前统一调用 `sanitize_trace_payload()`。内部调试模型不是持久化或 API 契约。
 
 - 安全 DTO 只保留 trace 关联码、总耗时、已知阶段及其耗时/计数/路由枚举、无 canonical ID 的 rank/score、受限贡献标量、有限 memory type/status/source type，以及无候选 ID 的过滤原因/阶段/分数。
+- 生产 Trace 额外可带 `metadata.trace_kind="production"`、阶段闭集 `status`、`injection`（候选/选择/成功注入计数、配置/有效预算、路由模式、预设、实际投递、outcome）和按 `(stage, reason)` 聚合的 `filter_summary`；非法或未知值直接丢弃，不补零。手动预览不带 `trace_kind`。
 - query、prompt、正文/preview/summary、canonical `doc_id`、图路径、贡献 explanation、request metadata、session/persona/user ID、source mapping、revision、scope/privacy/role/job 信息和任意 metadata 都不得持久化或返回。
 - `RecallTraceStore` 使用内存 `OrderedDict` 和可选 SQLite，按 `retention_count` 裁剪；新写入、缓存载入、列表与详情读取都重新执行 sanitizer，因此旧数据库 payload 也不能绕过当前 allowlist。
 - API 普通失败只返回稳定错误码并记录异常类型；`asyncio.CancelledError` 仍按协程取消语义传播。

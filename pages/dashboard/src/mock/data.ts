@@ -665,6 +665,85 @@ export const RECALL_TRACE_SAMPLE: RecallTraceResponse = {
   metadata: { debug_trace_available: true },
 };
 
+/**
+ * 生产请求快照样本：与决策列表的 trace_id 同源，含同请求注入摘要。
+ *
+ * 过滤投影按 (stage, reason) 聚合计数，不携带被滤候选 ID。
+ */
+export const RECALL_TRACE_PRODUCTION_SAMPLE: RecallTraceResponse = {
+  trace_id: "trace-mock-001",
+  total_ms: 31.7,
+  stages: [
+    {
+      name: "request",
+      duration_ms: 0,
+      candidate_count: 0,
+      metadata: {},
+      status: "skipped",
+    },
+    {
+      name: "retrieval",
+      duration_ms: 26.4,
+      candidate_count: 6,
+      metadata: {},
+      status: "completed",
+    },
+    {
+      name: "query",
+      duration_ms: 1.8,
+      candidate_count: 6,
+      metadata: {},
+      status: "completed",
+    },
+    {
+      name: "recall",
+      duration_ms: 2.1,
+      candidate_count: 6,
+      metadata: {
+        routing_mode: "auto",
+        resolved_preset: "balanced",
+        effective_budget_chars: 1200,
+        reason_code: "AUTO_FALLBACK",
+        reason_count: 1,
+      },
+      status: "completed",
+    },
+  ],
+  results: [
+    {
+      rank: 1,
+      initial_score: 0.58,
+      final_score: 0.74,
+      score_contributions: [
+        { source: "bm25", score: 0.51, weight: 0.35 },
+        { source: "recency", score: 0.44, weight: 0.15 },
+      ],
+      metadata: { memory_type: "episodic", status: "active" },
+    },
+  ],
+  filtered: [],
+  filter_summary: [
+    { stage: "retrieval", reason: "privacy", count: 2 },
+    { stage: "query", reason: "mark_write", count: 1 },
+    { stage: "recall", reason: "stale", count: 1 },
+  ],
+  created_at: Date.now() / 1000,
+  metadata: { debug_trace_available: false, trace_kind: "production" },
+  injection: {
+    candidate_count: 6,
+    selected_count: 3,
+    injected_count: 2,
+    configured_budget_chars: 1200,
+    effective_budget_chars: 1200,
+    routing_mode: "auto",
+    resolved_preset: "balanced",
+    resolved_delivery: "extra_user_content",
+    outcome: "fallback",
+  },
+  fact_alignment: { aligned: 2, misaligned: 1, undeterminable: 3 },
+  source_status: "not_assessed",
+};
+
 export const DIAGNOSTIC_HEALTH: DiagnosticHealthResponse = {
   score: 82,
   level: "watch",
