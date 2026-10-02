@@ -87,7 +87,8 @@ flowchart TD
 - `MemoryAtomSchema`
   - `content` 长度 5–2000，先去首尾空白且不可全空；
   - `atom_type` 仅允许 `fact/event/preference/knowledge/reflection`；
-  - `importance` 与可选 `confidence` 在 `[0,1]`；实体和情绪标签默认空列表。
+  - `importance` 与可选 `confidence` 在 `[0,1]`；实体和情绪标签默认空列表；
+  - 可选 `fact_bindings`（≤32）逐项声明 `key_facts[fact_index]` 与 `topics`/显式 `entities`/`participants` 内的 `target`，非法项逐条丢弃、不拒绝整条记忆，`entity` 目标只认模型显式给出的 entities（不把 topics 回填当实体）。
 - `MemoryExtractionResult`
   - `memories` 默认空；整体 `confidence` 在 `[0,1]`；`extraction_quality` 仅 `low/medium/high`。
 - `GraphExtractionResult`

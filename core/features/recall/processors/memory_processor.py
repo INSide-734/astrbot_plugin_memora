@@ -54,7 +54,7 @@ from .reflection_generation_observability import (
 from .reflection_generation_observability import (
     report_parse_success as _report_parse_success,
 )
-from .storage_builder import StorageBuilder
+from .storage_builder import StorageBuilder, validated_fact_bindings
 from .topic_segmentation_pipeline import (
     TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS,
     TopicSegmentationPipeline,
@@ -423,6 +423,15 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
                     mem_metadata.update(identity_metadata)
                 elif is_group_chat and mem.get("participants"):
                     mem_metadata["participants"] = mem["participants"]
+                # 身份元数据可能改写 participants：按最终 metadata 再收敛一次绑定，
+                # 指向已不存在参与者的绑定丢弃（不补造、不推断）。
+                final_bindings = validated_fact_bindings(
+                    mem_metadata.get("fact_bindings"), mem_metadata
+                )
+                if final_bindings:
+                    mem_metadata["fact_bindings"] = final_bindings
+                else:
+                    mem_metadata.pop("fact_bindings", None)
 
                 should_quarantine = apply_admission_metadata(
                     mem_metadata,

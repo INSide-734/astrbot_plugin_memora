@@ -230,6 +230,10 @@ async def _source(
         "canonical_summary": "; ".join(fact_list),
         "topics": ["drink"],
         "participants": ["Alice"],
+        "fact_bindings": [
+            {"fact_index": index, "target": "drink", "target_type": "topic"}
+            for index in range(len(fact_list))
+        ],
     }
     async with store._connect() as db:
         await db.execute(

@@ -44,6 +44,7 @@ from ...features.memory.application.catalog_reconcile_scheduler import (
     TopicCatalogReconcileScheduler,
 )
 from ...features.memory.application.memory_engine import MemoryEngine
+from ...features.memory.domain.graph_memory_config import graph_runtime_enabled
 from ...features.memory.infrastructure.dedup_metrics_store import DedupMetricsStore
 from ...features.memory.infrastructure.topic_metrics import build_metrics_recorder
 from ...features.notes.application import NoteProposalPipeline
@@ -145,7 +146,14 @@ class ComponentFactory:
         index_path = data_dir_path / "memora.index"
         graph_doc_path = data_dir_path / "memora_graph_documents.db"
         graph_index_path = data_dir_path / "memora_graph.index"
-        graph_memory_enabled = self.config_manager.get("graph_memory.enabled", True)
+        # 功能开关保留 Atom/DualRoute 基线；有效图路权重只控制图组件。
+        graph_memory_enabled = bool(
+            self.config_manager.get("graph_memory.enabled", True)
+        )
+        graph_runtime = graph_runtime_enabled(
+            graph_memory_enabled,
+            self.config_manager.get("graph_memory.graph_route_weight", 0.35),
+        )
         semantic_compression_enabled = bool(
             self.config_manager.get("semantic_compression.enabled", False)
         )
@@ -184,7 +192,7 @@ class ComponentFactory:
         await faiss_checker.check_and_fix_dimension_mismatch(
             str(index_path), embedding_provider
         )
-        if graph_memory_enabled:
+        if graph_runtime:
             await faiss_checker.check_and_fix_dimension_mismatch(
                 str(graph_index_path), embedding_provider
             )
@@ -203,7 +211,7 @@ class ComponentFactory:
         cleanup_state["db"] = db
 
         graph_db = None
-        if graph_memory_enabled:
+        if graph_runtime:
             graph_db = faiss_vec_db_cls(
                 str(graph_doc_path),
                 str(graph_index_path),
@@ -280,7 +288,7 @@ class ComponentFactory:
         # graph_db 单独追踪；MemoryEngine 清理失败时仍需继续关闭它。
         # canonical Schema 迁移必须早于任何其他 memora.db 持久连接。
         await memory_engine.initialize()
-        if graph_memory_enabled:
+        if graph_runtime:
             assert graph_db is not None
             await asyncio.gather(db.initialize(), graph_db.initialize())
         else:

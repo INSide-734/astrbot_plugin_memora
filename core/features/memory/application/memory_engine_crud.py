@@ -48,6 +48,7 @@ from .fact_text_alignment import (
     FactTextAlignment,
     facts_aligned,
 )
+from .graph_memory_manager import GraphSourceIneligibleError
 from .memory_engine_atom_support import (
     prepare_atoms_for_write,
     reinforce_existing_atoms,
@@ -280,6 +281,14 @@ class MemoryEngineCRUDMixin(
                     )
                 except asyncio.CancelledError:
                     raise
+                except GraphSourceIneligibleError as error:
+                    await self._write_journal.advance_op(
+                        op_id,
+                        "graph_skipped",
+                        status="needs_repair" if needs_repair else "pending",
+                        memory_id=doc_id,
+                        payload_patch={"graph_skipped": str(error)},
+                    )
                 except Exception as e:
                     await self._write_journal.advance_op(
                         op_id,
@@ -916,6 +925,14 @@ class MemoryEngineCRUDMixin(
                             "reason_code=fact_evidence_mismatch"
                         )
                         return False
+                    # 新事实表示下标已变：未随之提供绑定时丢弃旧绑定，不让旧下标
+                    # 指到新事实上。
+                    if (
+                        "fact_bindings" not in requested_metadata
+                        and "fact_bindings" in guarded_metadata
+                    ):
+                        cleared_keys = ("fact_bindings",)
+                        guarded_metadata.pop("fact_bindings")
                 else:
                     alignment = facts_aligned(
                         new_content,
@@ -925,7 +942,11 @@ class MemoryEngineCRUDMixin(
                     if alignment is not FactTextAlignment.ALIGNED:
                         cleared_keys = tuple(
                             key
-                            for key in ("key_facts", "fact_source_evidence")
+                            for key in (
+                                "key_facts",
+                                "fact_source_evidence",
+                                "fact_bindings",
+                            )
                             if key in guarded_metadata
                         )
                         for key in cleared_keys:
@@ -978,6 +999,15 @@ class MemoryEngineCRUDMixin(
                         )
                     except asyncio.CancelledError:
                         raise
+                    except GraphSourceIneligibleError:
+                        # 来源确定不可派生：manager 已回收该来源自己的图 evidence，
+                        # 这是正确的派生终态而非修复失败。
+                        await self._write_journal.advance_op(
+                            graph_op_id,
+                            "graph_source_ineligible",
+                            status="completed",
+                            memory_id=memory_id,
+                        )
                     except Exception:
                         # canonical 已提交：图派生失败只登记修复账本，不回滚正文。
                         self._last_write_reason_code = "graph_reindex_failed"
@@ -1052,6 +1082,16 @@ class MemoryEngineCRUDMixin(
                         )
                     except asyncio.CancelledError:
                         raise
+                    except GraphSourceIneligibleError:
+                        # 归档/mark_write 等语义更新使来源不可派生：自身 evidence 已
+                        # 回收，共享语义边的其他来源不受影响；恢复时按当前 canonical
+                        # 重新写入。
+                        await self._write_journal.advance_op(
+                            op_id,
+                            "graph_source_ineligible",
+                            status="completed",
+                            memory_id=memory_id,
+                        )
                     except Exception:
                         self._last_write_reason_code = "graph_reindex_failed"
                         await self._write_journal.advance_op(
@@ -1145,8 +1185,15 @@ class MemoryEngineCRUDMixin(
         new_metadata = dict(metadata)
         new_metadata.update(requested_metadata)
         if not facts_provided:
-            for key in ("key_facts", "fact_source_evidence", "canonical_summary"):
+            for key in (
+                "key_facts",
+                "fact_source_evidence",
+                "canonical_summary",
+                "fact_bindings",
+            ):
                 new_metadata.pop(key, None)
+        elif "fact_bindings" not in requested_metadata:
+            new_metadata.pop("fact_bindings", None)
         if (
             facts_provided
             or "canonical_summary" in metadata

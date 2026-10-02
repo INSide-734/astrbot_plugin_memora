@@ -30,6 +30,25 @@ WITH scoped_entries AS (
      AND ge.scope_key = json_extract(allowed.value, '$.scope_key')
      AND ge.privacy_level = json_extract(allowed.value, '$.privacy_level')
      AND ge.revision_token = json_extract(allowed.value, '$.revision_token')
+    AND (
+      (ge.edge_id IS NULL AND ge.entry_type <> 'edge')
+      OR EXISTS (
+          SELECT 1
+          FROM graph_edges evidence
+          JOIN graph_semantic_edges semantic
+            ON semantic.id = evidence.semantic_edge_id
+           AND semantic.scope_key = evidence.scope_key
+           AND semantic.privacy_level = evidence.privacy_level
+           AND semantic.status = 'active'
+          WHERE evidence.id = ge.edge_id
+            AND evidence.status = 'active'
+            AND evidence.semantic_edge_id IS NOT NULL
+            AND evidence.source_memory_id = ge.source_memory_id
+            AND evidence.scope_key = ge.scope_key
+            AND evidence.privacy_level = ge.privacy_level
+            AND evidence.revision_token = ge.revision_token
+      )
+    )
     WHERE (:session_id IS NULL OR ge.session_id = :session_id)
       AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
 )
@@ -55,6 +74,25 @@ WITH scoped_entries AS (
      AND ge.scope_key = json_extract(allowed.value, '$.scope_key')
      AND ge.privacy_level = json_extract(allowed.value, '$.privacy_level')
      AND ge.revision_token = json_extract(allowed.value, '$.revision_token')
+    AND (
+      (ge.edge_id IS NULL AND ge.entry_type <> 'edge')
+      OR EXISTS (
+          SELECT 1
+          FROM graph_edges evidence
+          JOIN graph_semantic_edges semantic
+            ON semantic.id = evidence.semantic_edge_id
+           AND semantic.scope_key = evidence.scope_key
+           AND semantic.privacy_level = evidence.privacy_level
+           AND semantic.status = 'active'
+          WHERE evidence.id = ge.edge_id
+            AND evidence.status = 'active'
+            AND evidence.semantic_edge_id IS NOT NULL
+            AND evidence.source_memory_id = ge.source_memory_id
+            AND evidence.scope_key = ge.scope_key
+            AND evidence.privacy_level = ge.privacy_level
+            AND evidence.revision_token = ge.revision_token
+      )
+    )
     WHERE (:session_id IS NULL OR ge.session_id = :session_id)
       AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
 ),
@@ -90,6 +128,11 @@ SELECT edge.id, edge.source_node_id, edge.target_node_id,
        edge.relation_type, edge.weight, edge.metadata,
        edge.created_at, entry_time.metadata AS entry_metadata
 FROM graph_edges edge
+JOIN graph_semantic_edges semantic
+  ON semantic.id = edge.semantic_edge_id
+ AND semantic.scope_key = edge.scope_key
+ AND semantic.privacy_level = edge.privacy_level
+ AND semantic.status = 'active'
 JOIN json_each(:sources_json) AS allowed
   ON edge.source_memory_id = json_extract(allowed.value, '$.memory_id')
  AND edge.scope_key = json_extract(allowed.value, '$.scope_key')
@@ -106,7 +149,8 @@ JOIN scoped_nodes target_node ON target_node.node_id = edge.target_node_id
  AND target_node.privacy_level = edge.privacy_level
  AND target_node.revision_token = edge.revision_token
 LEFT JOIN edge_entry_times entry_time ON entry_time.edge_id = edge.id
-WHERE EXISTS (
+WHERE edge.status = 'active'
+  AND EXISTS (
     SELECT 1
     FROM scoped_entries se
     WHERE se.source_memory_id = edge.source_memory_id
@@ -163,6 +207,25 @@ class GraphCanvasMixin(BaseStore):
                   AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                   AND ge.scope_key = :scope_key AND ge.privacy_level = :privacy_level
                   AND ge.revision_token = :revision_token
+                  AND (
+                    (ge.edge_id IS NULL AND ge.entry_type <> 'edge')
+                    OR EXISTS (
+                        SELECT 1
+                        FROM graph_edges evidence
+                        JOIN graph_semantic_edges semantic
+                          ON semantic.id = evidence.semantic_edge_id
+                         AND semantic.scope_key = evidence.scope_key
+                         AND semantic.privacy_level = evidence.privacy_level
+                         AND semantic.status = 'active'
+                        WHERE evidence.id = ge.edge_id
+                          AND evidence.status = 'active'
+                          AND evidence.semantic_edge_id IS NOT NULL
+                          AND evidence.source_memory_id = ge.source_memory_id
+                          AND evidence.scope_key = ge.scope_key
+                          AND evidence.privacy_level = ge.privacy_level
+                          AND evidence.revision_token = ge.revision_token
+                    )
+                  )
                   AND gn.scope_key = :scope_key AND gn.privacy_level = :privacy_level
                   AND gn.revision_token = :revision_token
                 GROUP BY gn.id
@@ -182,6 +245,25 @@ class GraphCanvasMixin(BaseStore):
                       AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                       AND ge.scope_key = :scope_key AND ge.privacy_level = :privacy_level
                       AND ge.revision_token = :revision_token
+                      AND (
+                        (ge.edge_id IS NULL AND ge.entry_type <> 'edge')
+                        OR EXISTS (
+                            SELECT 1
+                            FROM graph_edges evidence
+                            JOIN graph_semantic_edges semantic
+                              ON semantic.id = evidence.semantic_edge_id
+                             AND semantic.scope_key = evidence.scope_key
+                             AND semantic.privacy_level = evidence.privacy_level
+                             AND semantic.status = 'active'
+                            WHERE evidence.id = ge.edge_id
+                              AND evidence.status = 'active'
+                              AND evidence.semantic_edge_id IS NOT NULL
+                              AND evidence.source_memory_id = ge.source_memory_id
+                              AND evidence.scope_key = ge.scope_key
+                              AND evidence.privacy_level = ge.privacy_level
+                              AND evidence.revision_token = ge.revision_token
+                        )
+                      )
                 ),
                 scoped_nodes AS (
                     SELECT DISTINCT gen.node_id
@@ -206,10 +288,16 @@ class GraphCanvasMixin(BaseStore):
                        edge.relation_type, edge.weight, edge.metadata,
                        edge.created_at, entry_time.metadata AS entry_metadata
                 FROM graph_edges edge
+                JOIN graph_semantic_edges semantic
+                  ON semantic.id = edge.semantic_edge_id
+                 AND semantic.scope_key = edge.scope_key
+                 AND semantic.privacy_level = edge.privacy_level
+                 AND semantic.status = 'active'
                 JOIN scoped_nodes source_node ON source_node.node_id = edge.source_node_id
                 JOIN scoped_nodes target_node ON target_node.node_id = edge.target_node_id
                 LEFT JOIN edge_entry_times entry_time ON entry_time.edge_id = edge.id
-                WHERE EXISTS (
+                WHERE edge.status = 'active'
+                  AND EXISTS (
                     SELECT 1
                     FROM scoped_entries se
                     WHERE se.source_memory_id = edge.source_memory_id

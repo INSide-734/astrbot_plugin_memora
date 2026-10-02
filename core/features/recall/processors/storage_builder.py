@@ -58,4 +58,88 @@ class StorageBuilder:
         if is_group_chat and "participants" in structured_data:
             metadata["participants"] = structured_data["participants"]
 
+        entities = _string_list(structured_data.get("entities"))
+        if entities:
+            metadata["entities"] = entities
+        bindings = validated_fact_bindings(
+            structured_data.get("fact_bindings"), metadata
+        )
+        if bindings:
+            metadata["fact_bindings"] = bindings
+
         return content, metadata
+
+
+def _string_list(raw: Any) -> list[str]:
+    """只保留非空字符串，去重保序。"""
+
+    if not isinstance(raw, list):
+        return []
+    values: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip() and item.strip() not in values:
+            values.append(item.strip())
+    return values
+
+
+_BINDING_TARGET_FIELDS = {
+    "topic": "topics",
+    "entity": "entities",
+    "participant": "participants",
+}
+
+
+def validated_fact_bindings(
+    raw_bindings: Any, metadata: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """按最终 metadata 校验 fact 绑定：下标、事实文本与目标标签都必须一致。
+
+    绑定只由上游结构化输出显式给出；这里只做收敛，不从全局 topics/participants
+    推断任何新绑定。下标越界、事实文本不匹配（下标已陈旧）、目标不在本条记忆
+    的对应标签里或重复的项一律丢弃。
+    """
+
+    if not isinstance(raw_bindings, list):
+        return []
+    facts = metadata.get("key_facts")
+    if not isinstance(facts, list) or not facts:
+        return []
+    declared = {
+        target_type: set(_string_list(metadata.get(field)))
+        for target_type, field in _BINDING_TARGET_FIELDS.items()
+    }
+    seen: set[tuple[int, str, str]] = set()
+    kept: list[dict[str, Any]] = []
+    for binding in raw_bindings:
+        if not isinstance(binding, dict):
+            continue
+        index = binding.get("fact_index")
+        target = binding.get("target")
+        target_type = binding.get("target_type")
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or not 0 <= index < len(facts)
+            or not isinstance(target, str)
+            or target_type not in declared
+        ):
+            continue
+        target = target.strip()
+        fact = binding.get("fact")
+        if fact is not None and fact != facts[index]:
+            continue
+        if target not in declared[target_type]:
+            continue
+        key = (index, target_type, target)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(
+            {
+                "fact_index": index,
+                "fact": facts[index],
+                "target": target,
+                "target_type": target_type,
+            }
+        )
+    return kept

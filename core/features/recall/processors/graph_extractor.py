@@ -20,7 +20,6 @@ from ...memory.application.fact_text_alignment import (
 from ...memory.graph.domain.models import (
     ExtractedGraph,
     GraphBoundary,
-    GraphEdge,
     GraphEntry,
     GraphNode,
 )
@@ -48,9 +47,17 @@ from .atom_graph_extractor import (
     validate_atom_graph_sources,
 )
 from .entity_resolver import EntityResolver
+from .graph_fact_bindings import (
+    admitted_labels,
+    apply_fact_bindings,
+    declared_structured_entities,
+    metadata_entity_nodes,
+    plan_fact_bindings,
+)
 
+# 记录事实表示的字段：事实已不在正文时整体剥离，fact 绑定随事实下标一起失效。
 _FACT_TEXT_METADATA_KEYS = frozenset(
-    {"key_facts", "fact_source_evidence", "canonical_summary"}
+    {"key_facts", "fact_source_evidence", "canonical_summary", "fact_bindings"}
 )
 
 
@@ -164,14 +171,6 @@ def _stale_fact_keys(content: str, metadata: dict[str, Any] | None) -> frozenset
     return frozenset(keys)
 
 
-def _is_stale_fact_name(name: Any, stale_fact_keys: frozenset[str]) -> bool:
-    """判断名字是否是被改写掉的旧事实文本（与来源字段和自声明类型无关）。"""
-
-    if not stale_fact_keys or not isinstance(name, str):
-        return False
-    return normalize_fact(name) in stale_fact_keys
-
-
 class GraphExtractor:
     """将记忆摘要转换为节点、边与可检索的图条目。"""
 
@@ -204,22 +203,39 @@ class GraphExtractor:
         判据不看实体自声明类型：记录过的事实条目只要已不在当前正文中，无论由
         哪个字段或自声明类型承载，都不产生节点、entry 或关系端点；不来自事实
         表示的抽象标签不受影响。
+
+        永久关系只来自同一份 fact 绑定计划（``graph_fact_bindings``）：Atom、
+        结构化与 legacy 三条表示路径只决定节点/entry 信号，关系集合对同一
+        canonical 快照保持一致，不因是否加载 Atom 而切换语义。
         """
         stale_fact_keys = _stale_fact_keys(content, metadata)
         metadata = _aligned_fact_metadata(content, metadata)
         GraphBoundary.from_metadata(metadata)
         if atoms:
             validate_atom_graph_sources(source_memory_id, atoms, metadata)
+        guarded = self._validate_structured_graph(metadata)
+        bindings = plan_fact_bindings(
+            content,
+            metadata,
+            guarded=guarded,
+            stale_fact_keys=stale_fact_keys,
+            max_facts=self.max_facts,
+            max_topics=self.max_topics,
+            max_participants=self.max_participants,
+        )
+        summary = (metadata or {}).get("canonical_summary") or content
         kept_atoms = filter_atoms_by_current_facts(atoms, content, metadata)
         if kept_atoms:
-            return extract_graph_from_atoms(
+            graph = extract_graph_from_atoms(
                 source_memory_id,
                 kept_atoms,
                 metadata,
                 temporal_edges_enabled=self.temporal_edges_enabled,
                 causal_edges_enabled=self.causal_edges_enabled,
             )
-        guarded = self._validate_structured_graph(metadata)
+            return apply_fact_bindings(
+                graph, source_memory_id, metadata, bindings, summary=summary
+            )
         if guarded is not None:
             graph = self._extract_from_structured_graph(
                 source_memory_id,
@@ -229,9 +245,14 @@ class GraphExtractor:
                 stale_fact_keys,
             )
             if graph.entries:
-                return graph
-        return self._extract_legacy(
+                return apply_fact_bindings(
+                    graph, source_memory_id, metadata, bindings, summary=summary
+                )
+        graph = self._extract_legacy(
             source_memory_id, content, metadata, stale_fact_keys
+        )
+        return apply_fact_bindings(
+            graph, source_memory_id, metadata, bindings, summary=summary
         )
 
     @staticmethod
@@ -262,14 +283,24 @@ class GraphExtractor:
                 fallback_return_none=True,
             )
         if isinstance(payload, dict):
-            try:
-                return GraphExtractionResult(**payload)
-            except Exception:
-                logger.warning(
-                    "[图提取器] 结构化图元数据未通过护栏校验；已回退到旧版提取流程",
-                    exc_info=True,
-                )
-                return None
+            entities = payload.get("entities")
+            relations = payload.get("relations")
+            if isinstance(entities, list) and isinstance(relations, list):
+                try:
+                    return GraphExtractionResult(entities=entities, relations=relations)
+                except Exception:
+                    logger.warning(
+                        "[图提取器] 结构化图元数据未通过护栏校验；已回退到旧版提取流程",
+                        exc_info=True,
+                    )
+                    return None
+            logger.warning(
+                "[图提取器] 结构化图载荷的 entities/relations 必须是数组，"
+                "类型=entities:%s/relations:%s",
+                type(entities).__name__,
+                type(relations).__name__,
+            )
+            return None
 
         logger.warning(
             "[图提取器] 不支持的结构化图载荷类型：%s",
@@ -285,31 +316,15 @@ class GraphExtractor:
         guarded: GraphExtractionResult,
         stale_fact_keys: frozenset[str],
     ) -> ExtractedGraph:
-        """将通过护栏校验的图数据转换为图记忆模型。"""
+        """将通过护栏校验的结构化实体转换为节点与检索 entry 信号。
+
+        关系不在这里生成：结构化关系只有带 fact 归属（``fact_index`` 或端点即
+        已准入事实）时才由共享绑定计划写入永久边，端点也不再按名字合成节点。
+        """
         graph = ExtractedGraph()
-        node_map: dict[str, GraphNode] = {}
-        name_to_key: dict[str, str] = {}
         session_id = metadata.get("session_id")
         persona_id = metadata.get("persona_id")
         summary = metadata.get("canonical_summary") or content
-
-        def _add_node(
-            node_type: str,
-            value: str,
-            extra: dict[str, Any] | None = None,
-        ) -> str:
-            """添加结构化实体节点并返回稳定节点键。"""
-            canonical_value = EntityResolver.canonicalize(value)
-            if not canonical_value:
-                return ""
-            node = GraphNode(
-                node_type=node_type,
-                value=value.strip(),
-                canonical_value=canonical_value,
-                metadata=extra or {},
-            )
-            node_map[node.node_key] = node
-            return node.node_key
 
         def _confidence(raw: Any, default: float = 0.75) -> float:
             """将结构化置信度限制在零到一之间。"""
@@ -318,17 +333,22 @@ class GraphExtractor:
             except (TypeError, ValueError):
                 return default
 
-        def _add_entry(
-            entry_type: str,
-            content_text: str,
-            node_keys: list[str],
-            relation_type: str | None = None,
-            confidence: float = 0.75,
-        ) -> None:
-            """为结构化图产物添加可检索条目。"""
+        # R4.3/D5：事实表示的载体必须属于当前 canonical 正文——归属判据不看
+        # 自声明类型（旧事实被贴上 topic/entity 等类型同样是事实文本）。残留
+        # 事实不派生节点/entry，也不能作为关系端点；抽象标签不受影响。
+        declared, dropped = declared_structured_entities(
+            content, guarded, stale_fact_keys
+        )
+        if dropped:
+            logger.debug(
+                "[图提取器] 结构化事实实体与当前正文不一致，按无事实回落：entities=%d",
+                len(dropped),
+            )
+        for node in declared.values():
+            graph.nodes.append(node)
             payload = (
-                f"{entry_type}|{source_memory_id}|{relation_type or ''}|"
-                f"{'|'.join(node_keys)}|{content_text}"
+                f"entity|{source_memory_id}|entity|{node.node_key}|"
+                f"实体：{node.value}（类型：{node.node_type}）"
             )
             entry_key = hashlib.sha1(payload.encode("utf-8")).hexdigest()
             graph.entries.append(
@@ -337,8 +357,10 @@ class GraphExtractor:
                     source_memory_id=source_memory_id,
                     session_id=session_id,
                     persona_id=persona_id,
-                    entry_type=entry_type,
-                    content=content_text,
+                    entry_type="entity",
+                    content=(
+                        f"实体：{node.value}（类型：{node.node_type}）。摘要：{summary}"
+                    ),
                     metadata={
                         "source_memory_id": source_memory_id,
                         "session_id": session_id,
@@ -347,133 +369,15 @@ class GraphExtractor:
                         "create_time": metadata.get("create_time"),
                         "last_access_time": metadata.get("last_access_time"),
                         "canonical_summary": summary,
-                        "graph_confidence": confidence,
+                        "graph_confidence": _confidence(
+                            node.metadata.get("confidence"), 0.7
+                        ),
                         "graph_guardrails_validated": True,
                     },
-                    node_keys=node_keys,
-                    relation_type=relation_type,
+                    node_keys=[node.node_key],
+                    relation_type="entity",
                 )
             )
-
-        dropped_fact_names: set[str] = set()
-
-        def _is_dropped_fact(name: str) -> bool:
-            """判断名字是否属于被剔除的残留事实（含仅由关系合成的端点）。"""
-
-            return name in dropped_fact_names or _is_stale_fact_name(
-                name, stale_fact_keys
-            )
-
-        for entity in guarded.entities:
-            name = str(entity.get("name", "")).strip()
-            node_type = str(entity.get("type", "entity")).strip() or "entity"
-            if not name:
-                continue
-            if (node_type == "fact" and not fact_in_content(content, name)) or (
-                _is_stale_fact_name(name, stale_fact_keys)
-            ):
-                # R4.3/D5：事实表示的载体必须属于当前 canonical 正文——对齐事实的
-                # 准入条件就是条目出现在正文中，归属判据不看自声明类型（旧事实被
-                # 贴上 topic/entity 等类型同样是事实文本）。残留事实不派生节点/
-                # entry，也不允许作为关系端点把旧事实带回图；不来自事实表示的
-                # 抽象标签不在此判定范围内。
-                dropped_fact_names.add(name)
-                continue
-            extra = {
-                key: value
-                for key, value in entity.items()
-                if key not in {"name", "type"}
-            }
-            extra["graph_guardrails_validated"] = True
-            node_key = _add_node(node_type, name, extra)
-            if not node_key:
-                continue
-            name_to_key[name] = node_key
-            _add_entry(
-                "entity",
-                f"实体：{name}（类型：{node_type}）。摘要：{summary}",
-                [node_key],
-                relation_type="entity",
-                confidence=_confidence(entity.get("confidence"), 0.7),
-            )
-
-        if dropped_fact_names:
-            logger.debug(
-                "[图提取器] 结构化事实实体与当前正文不一致，按无事实回落：entities=%d",
-                len(dropped_fact_names),
-            )
-
-        for relation in guarded.relations:
-            source_name = str(relation.get("source", "")).strip()
-            target_name = str(relation.get("target", "")).strip()
-            relation_type = str(relation.get("relation", "")).strip()
-            if not source_name or not target_name or not relation_type:
-                continue
-            if _is_dropped_fact(source_name) or _is_dropped_fact(target_name):
-                # 端点是被剔除的残留事实（含只出现在关系里的名字）：该关系同样由
-                # 旧事实派生，不生成边与 entry，也不合成节点。
-                continue
-            source_key = name_to_key.get(source_name)
-            if not source_key:
-                source_key = _add_node(
-                    "entity",
-                    source_name,
-                    {
-                        "graph_guardrails_validated": True,
-                        "generated_from_relation": True,
-                    },
-                )
-                if source_key:
-                    name_to_key[source_name] = source_key
-            target_key = name_to_key.get(target_name)
-            if not target_key:
-                target_key = _add_node(
-                    "entity",
-                    target_name,
-                    {
-                        "graph_guardrails_validated": True,
-                        "generated_from_relation": True,
-                    },
-                )
-                if target_key:
-                    name_to_key[target_name] = target_key
-            if not source_key or not target_key:
-                continue
-
-            confidence = _confidence(relation.get("confidence"), 0.78)
-            rel_metadata = {
-                key: value
-                for key, value in relation.items()
-                if key not in {"source", "target", "relation"}
-            }
-            rel_metadata.update(
-                {
-                    "summary": summary,
-                    "graph_guardrails_validated": True,
-                }
-            )
-            graph.edges.append(
-                GraphEdge(
-                    source_key=source_key,
-                    target_key=target_key,
-                    relation_type=relation_type,
-                    source_memory_id=source_memory_id,
-                    confidence=confidence,
-                    metadata=rel_metadata,
-                )
-            )
-            _add_entry(
-                "edge",
-                (
-                    f"实体 {source_name} 与 {target_name} 的关系为 {relation_type}。"
-                    f"摘要：{summary}"
-                ),
-                [source_key, target_key],
-                relation_type=relation_type,
-                confidence=confidence,
-            )
-
-        graph.nodes = list(node_map.values())
         return graph
 
     def _extract_legacy(
@@ -483,7 +387,12 @@ class GraphExtractor:
         metadata: dict[str, Any] | None,
         stale_fact_keys: frozenset[str],
     ) -> ExtractedGraph:
-        """从 metadata 执行旧版图提取逻辑（向后兼容路径）。"""
+        """从 metadata 生成节点与独立检索 entry（向后兼容路径）。
+
+        topics/participants/key_facts 只各自产生节点与 entry 信号；它们之间不再
+        做 topic×fact、participant×fact、participant×participant 的笛卡尔积，
+        永久关系只由共享 fact 绑定计划写入。
+        """
         metadata = metadata or {}
         graph = ExtractedGraph()
 
@@ -500,14 +409,9 @@ class GraphExtractor:
             身份）。
             """
 
-            values = EntityResolver.dedupe_preserve_order(
-                [str(item) for item in metadata.get(field, []) if item]
+            return admitted_labels(
+                metadata, field, limit=limit, stale_fact_keys=stale_fact_keys
             )
-            return [
-                value
-                for value in values
-                if not _is_stale_fact_name(value, stale_fact_keys)
-            ][:limit]
 
         topics = _admitted_names("topics", self.max_topics)
         participants = _admitted_names("participants", self.max_participants)
@@ -541,6 +445,11 @@ class GraphExtractor:
         fact_keys = [
             _add_node("fact", fact, {"summary": summary}) for fact in key_facts
         ]
+        entity_keys: list[str] = []
+        for node in metadata_entity_nodes(metadata, stale_fact_keys=stale_fact_keys):
+            if node.node_key not in node_map:
+                node_map[node.node_key] = node
+                entity_keys.append(node.node_key)
 
         topic_keys = [item for item in topic_keys if item]
         participant_keys = [item for item in participant_keys if item]
@@ -617,74 +526,15 @@ class GraphExtractor:
                 confidence=0.7,
             )
 
-        for topic_key in topic_keys:
-            for fact_key in fact_keys:
-                graph.edges.append(
-                    GraphEdge(
-                        source_key=topic_key,
-                        target_key=fact_key,
-                        relation_type="describes",
-                        source_memory_id=source_memory_id,
-                        confidence=0.82,
-                        metadata={"summary": summary},
-                    )
-                )
-                _add_entry(
-                    "edge",
-                    (
-                        f"主题 {node_map[topic_key].value} 描述了"
-                        f"事实 {node_map[fact_key].value}。摘要：{summary}"
-                    ),
-                    [topic_key, fact_key],
-                    relation_type="describes",
-                    confidence=0.82,
-                )
-
-        for person_key in participant_keys:
-            for fact_key in fact_keys:
-                graph.edges.append(
-                    GraphEdge(
-                        source_key=person_key,
-                        target_key=fact_key,
-                        relation_type="mentioned_in",
-                        source_memory_id=source_memory_id,
-                        confidence=0.88,
-                        metadata={"summary": summary},
-                    )
-                )
-                _add_entry(
-                    "edge",
-                    (
-                        f"参与者 {node_map[person_key].value} 与"
-                        f"事实 {node_map[fact_key].value} 相关联。摘要：{summary}"
-                    ),
-                    [person_key, fact_key],
-                    relation_type="mentioned_in",
-                    confidence=0.88,
-                )
-
-        for index, first_key in enumerate(participant_keys):
-            for second_key in participant_keys[index + 1 :]:
-                graph.edges.append(
-                    GraphEdge(
-                        source_key=first_key,
-                        target_key=second_key,
-                        relation_type="co_occurs_with",
-                        source_memory_id=source_memory_id,
-                        confidence=0.7,
-                        metadata={"summary": summary},
-                    )
-                )
-                _add_entry(
-                    "edge",
-                    (
-                        f"参与者 {node_map[first_key].value} 与"
-                        f"参与者 {node_map[second_key].value} 共同出现。摘要：{summary}"
-                    ),
-                    [first_key, second_key],
-                    relation_type="co_occurs_with",
-                    confidence=0.7,
-                )
+        for entity_key in entity_keys:
+            entity_value = node_map[entity_key].value
+            _add_entry(
+                "entity",
+                f"实体：{entity_value}。摘要：{summary}",
+                [entity_key],
+                relation_type="entity",
+                confidence=0.7,
+            )
 
         if not graph.entries and summary:
             summary_key = _add_node("summary", summary)

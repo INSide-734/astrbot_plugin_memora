@@ -46,6 +46,13 @@ def graph_source_gate_reason(metadata: Any) -> str | None:
     return None
 
 
+class GraphSourceIneligibleError(ValueError):
+    """canonical 来源确定不可派生图（不可召回、mark_write、缺证据、边界非法）。
+
+    ``str(error)`` 保持固定原因码，与既有 ``ValueError`` 调用方兼容。
+    """
+
+
 class GraphMemoryManager:
     """将图记忆产物与文档记忆存储进行同步。"""
 
@@ -77,21 +84,47 @@ class GraphMemoryManager:
     ) -> None:
         """为一条源记忆重建图产物。
 
-        当提供原子（或可由加载器取得）时，每个原子独立贡献节点/边/条目，
-        并携带各自的置信度分数。重建先按 canonical 源记忆回收旧图向量，
-        再在一个事务内替换全部 revision 的图行，最后写入新向量：
-        向量清理失败时旧图行与其向量映射保持不变，便于重试与修复。
+        当提供原子（或可由加载器取得）时，每个原子独立贡献节点/条目信号；
+        永久关系只来自抽取器的共享 fact 绑定计划，因此在线写入、正文/metadata
+        变化与全量重建对同一 canonical 快照得到同一关系集合。重建先按 canonical
+        源记忆回收旧图向量，再在一个事务内替换该来源自己的 entry/evidence，最后
+        写入新向量：向量清理失败时旧图行与其向量映射保持不变，便于重试与修复。
+
+        来源确定不可派生（归档、mark_write、缺用户证据等）时，先回收该来源自己
+        的向量、entry 与 evidence（其他来源共享的语义边保留），再抛出
+        ``GraphSourceIneligibleError``；恢复可召回后按当前 canonical 重新写入，
+        不复活旧 evidence。boundary 与调用方快照冲突时不做任何修改。
         """
         async with self._mutation_lock:
-            (
-                canonical_content,
-                canonical_metadata,
-            ) = await self.graph_store.load_source_memory(source_memory_id)
+            try:
+                (
+                    canonical_content,
+                    canonical_metadata,
+                ) = await self.graph_store.load_source_memory(source_memory_id)
+            except ValueError as error:
+                # 来源缺失或 canonical 边界已失效：先回收自身图行/向量，
+                # 不让其他来源共享的语义边残留本来源 evidence。
+                if str(error) not in {
+                    "graph_boundary_required",
+                    "graph_source_boundary_invalid",
+                }:
+                    raise
+                await self.graph_vector_retriever.reap_entries_for_memory(
+                    source_memory_id
+                )
+                await self.graph_store.reap_source_graphs([source_memory_id])
+                raise GraphSourceIneligibleError("graph_source_boundary_invalid") from (
+                    error
+                )
             boundary = GraphBoundary.from_metadata(canonical_metadata)
             boundary.validate_metadata(metadata or {})
             gate_reason = graph_source_gate_reason(canonical_metadata)
             if gate_reason is not None:
-                raise ValueError(gate_reason)
+                await self.graph_vector_retriever.reap_entries_for_memory(
+                    source_memory_id
+                )
+                await self.graph_store.reap_source_graphs([source_memory_id])
+                raise GraphSourceIneligibleError(gate_reason)
             if atoms is None and self._atom_loader is not None:
                 loaded = await self._atom_loader(int(source_memory_id))
                 atoms = list(loaded) if loaded else None
@@ -216,4 +249,8 @@ class GraphMemoryManager:
             await self.graph_store.reap_source_graphs(normalized_ids)
 
 
-__all__ = ["GraphMemoryManager"]
+__all__ = [
+    "GraphMemoryManager",
+    "GraphSourceIneligibleError",
+    "graph_source_gate_reason",
+]

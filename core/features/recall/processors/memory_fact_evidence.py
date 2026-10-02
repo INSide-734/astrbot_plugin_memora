@@ -170,9 +170,53 @@ def apply_fact_admission(
             topics = [topic for topic in topics if topic.casefold() in retained_text]
             applied["topics"] = list(topics)
             applied["causal_relations"] = []
+        applied["fact_bindings"] = _admitted_fact_bindings(
+            mem.get("fact_bindings"),
+            original_facts=mem.get("key_facts"),
+            admission=admission,
+        )
     else:
         applied["fact_source_evidence"] = []
+        applied["fact_bindings"] = []
     return applied, topics
+
+
+def _admitted_fact_bindings(
+    raw_bindings: Any,
+    *,
+    original_facts: Any,
+    admission: FactAdmission,
+) -> list[dict[str, Any]]:
+    """把原始事实下标上的绑定映射到准入后的下标；被拒事实的绑定一律丢弃。
+
+    只做下标映射与事实文本核对，不推断新绑定；任何不一致都 fail-closed。
+    """
+
+    if not isinstance(raw_bindings, list) or not isinstance(original_facts, list):
+        return []
+    rejected = set(admission.rejected)
+    accepted_positions: dict[int, int] = {}
+    for original_index in range(len(original_facts)):
+        if original_index in rejected:
+            continue
+        accepted_positions[original_index] = len(accepted_positions)
+    if len(accepted_positions) != len(admission.key_facts):
+        return []
+    remapped: list[dict[str, Any]] = []
+    for binding in raw_bindings:
+        if not isinstance(binding, dict):
+            continue
+        index = binding.get("fact_index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        position = accepted_positions.get(index)
+        if position is None:
+            continue
+        fact = admission.key_facts[position]
+        if binding.get("fact") != fact:
+            continue
+        remapped.append({**binding, "fact_index": position})
+    return remapped
 
 
 async def admit_candidate_facts(
@@ -317,11 +361,18 @@ def guarded_result_to_structured_data(
         if not content:
             continue
         key_facts = list(atom.key_facts)
+        topics = list(atom.topics or atom.entities)
+        # entities 缺省时由 topics 兼容回填；只有与 topics 不同的显式实体列表
+        # 才作为独立实体信号保留，避免主题被重复当作实体。
+        entities = (
+            list(atom.entities) if list(atom.entities) != list(atom.topics) else []
+        )
         memories.append(
             {
                 "summary": content,
                 "key_facts": key_facts,
-                "topics": list(atom.topics or atom.entities),
+                "topics": topics,
+                "entities": entities,
                 "importance": atom.importance,
                 "sentiment": atom.sentiment,
                 "emotion_tags": list(atom.emotion_tags),
@@ -333,6 +384,17 @@ def guarded_result_to_structured_data(
                 "fact_source_refs": [
                     [reference.model_dump() for reference in group]
                     for group in atom.fact_source_refs
+                ],
+                # 绑定按原始 key_facts 下标携带事实文本，下游重排下标时可逐条核对。
+                "fact_bindings": [
+                    {
+                        "fact_index": binding.fact_index,
+                        "fact": key_facts[binding.fact_index],
+                        "target": binding.target,
+                        "target_type": binding.target_type,
+                    }
+                    for binding in atom.fact_bindings
+                    if binding.fact_index < len(key_facts)
                 ],
                 "confidence": atom.confidence,
                 "atom_type": (

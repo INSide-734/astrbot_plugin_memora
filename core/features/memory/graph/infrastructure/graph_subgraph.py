@@ -200,6 +200,25 @@ class GraphSubgraphMixin(BaseStore):
                     SELECT value FROM json_each(:memory_ids_json)
                 )
                   AND scope_key = :scope_key AND privacy_level = :privacy_level
+                  AND (
+                    (edge_id IS NULL AND entry_type <> 'edge')
+                    OR EXISTS (
+                        SELECT 1
+                        FROM graph_edges evidence
+                        JOIN graph_semantic_edges semantic
+                          ON semantic.id = evidence.semantic_edge_id
+                         AND semantic.scope_key = evidence.scope_key
+                         AND semantic.privacy_level = evidence.privacy_level
+                         AND semantic.status = 'active'
+                        WHERE evidence.id = graph_entries.edge_id
+                          AND evidence.status = 'active'
+                          AND evidence.semantic_edge_id IS NOT NULL
+                          AND evidence.source_memory_id = graph_entries.source_memory_id
+                          AND evidence.scope_key = graph_entries.scope_key
+                          AND evidence.privacy_level = graph_entries.privacy_level
+                          AND evidence.revision_token = graph_entries.revision_token
+                    )
+                  )
                   AND revision_token = :revision_token
                 ORDER BY id DESC
                 LIMIT :limit_entries
@@ -238,23 +257,33 @@ class GraphSubgraphMixin(BaseStore):
             edge_rows: list[aiosqlite.Row] = []
             if node_ids:
                 edge_cursor = await db.execute(
+                    # evidence 行必须挂在 active 语义边上：legacy 边行与失去
+                    # 语义边的行不展示；各来源 evidence 仍按自身 boundary 过滤。
                     """
-                    SELECT id, edge_key, source_node_id, target_node_id,
-                           relation_type, source_memory_id, weight,
-                           confidence, status, metadata, created_at
-                    FROM graph_edges
-                    WHERE source_memory_id IN (
+                    SELECT edge.id, edge.edge_key, edge.source_node_id,
+                           edge.target_node_id, edge.relation_type,
+                           edge.source_memory_id, edge.weight, edge.confidence,
+                           edge.status, edge.metadata, edge.created_at
+                    FROM graph_edges edge
+                    JOIN graph_semantic_edges semantic
+                      ON semantic.id = edge.semantic_edge_id
+                     AND semantic.scope_key = edge.scope_key
+                     AND semantic.privacy_level = edge.privacy_level
+                     AND semantic.status = 'active'
+                    WHERE edge.status = 'active'
+                      AND edge.source_memory_id IN (
                         SELECT value FROM json_each(:memory_ids_json)
                     )
-                      AND source_node_id IN (
+                      AND edge.source_node_id IN (
                         SELECT value FROM json_each(:node_ids_json)
                       )
-                      AND target_node_id IN (
+                      AND edge.target_node_id IN (
                         SELECT value FROM json_each(:node_ids_json)
                       )
-                      AND scope_key = :scope_key AND privacy_level = :privacy_level
-                      AND revision_token = :revision_token
-                    ORDER BY id DESC
+                      AND edge.scope_key = :scope_key
+                      AND edge.privacy_level = :privacy_level
+                      AND edge.revision_token = :revision_token
+                    ORDER BY edge.id DESC
                     LIMIT :limit_edges
                     """,
                     {
@@ -293,6 +322,25 @@ class GraphSubgraphMixin(BaseStore):
                   AND (:persona_id IS NULL OR ge.persona_id = :persona_id)
                   AND ge.scope_key = :scope_key AND ge.privacy_level = :privacy_level
                   AND ge.revision_token = :revision_token
+                  AND (
+                    (ge.edge_id IS NULL AND ge.entry_type <> 'edge')
+                    OR EXISTS (
+                        SELECT 1
+                        FROM graph_edges evidence
+                        JOIN graph_semantic_edges semantic
+                          ON semantic.id = evidence.semantic_edge_id
+                         AND semantic.scope_key = evidence.scope_key
+                         AND semantic.privacy_level = evidence.privacy_level
+                         AND semantic.status = 'active'
+                        WHERE evidence.id = ge.edge_id
+                          AND evidence.status = 'active'
+                          AND evidence.semantic_edge_id IS NOT NULL
+                          AND evidence.source_memory_id = ge.source_memory_id
+                          AND evidence.scope_key = ge.scope_key
+                          AND evidence.privacy_level = ge.privacy_level
+                          AND evidence.revision_token = ge.revision_token
+                    )
+                  )
                 ORDER BY ge.id DESC
                 """,
                 params,
@@ -334,9 +382,15 @@ class GraphSubgraphMixin(BaseStore):
                        graph_edge.status, graph_edge.metadata,
                        graph_edge.created_at
                 FROM graph_edges graph_edge
+                JOIN graph_semantic_edges semantic
+                  ON semantic.id = graph_edge.semantic_edge_id
+                 AND semantic.scope_key = graph_edge.scope_key
+                 AND semantic.privacy_level = graph_edge.privacy_level
+                 AND semantic.status = 'active'
                 JOIN graph_nodes source_node ON source_node.id = graph_edge.source_node_id
                 JOIN graph_nodes target_node ON target_node.id = graph_edge.target_node_id
-                WHERE EXISTS (
+                WHERE graph_edge.status = 'active'
+                  AND EXISTS (
                     SELECT 1
                     FROM graph_entries ge
                     WHERE ge.source_memory_id = graph_edge.source_memory_id

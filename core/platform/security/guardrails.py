@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -41,6 +41,27 @@ class SourceReferenceSchema(BaseModel):
         if self.end <= self.start:
             raise ValueError("source_refs 的 end 必须大于 start")
         return self
+
+
+_MAX_FACT_BINDINGS = 32
+
+
+class FactBindingSchema(BaseModel):
+    """单条 fact 级绑定：``key_facts[fact_index]`` 明确涉及某个主题/实体/参与者。"""
+
+    fact_index: int = Field(ge=0, le=63, strict=True, description="key_facts 下标")
+    target: str = Field(min_length=1, max_length=64, description="被绑定的标签原文")
+    target_type: Literal["topic", "entity", "participant"] = Field(
+        description="标签来源：topics、entities 或 participants"
+    )
+
+    @field_validator("target")
+    @classmethod
+    def _strip_target(cls, value: str) -> str:
+        stripped = value.strip()
+        if not stripped:
+            raise ValueError("fact_binding_target_blank")
+        return stripped
 
 
 class MemoryAtomSchema(BaseModel):
@@ -98,6 +119,28 @@ class MemoryAtomSchema(BaseModel):
         default_factory=list,
         description="与 key_facts 按下标一一对应的匿名来源引用",
     )
+    fact_bindings: list[FactBindingSchema] = Field(
+        default_factory=list,
+        description=(
+            "可选：key_facts[fact_index] 明确涉及的 topics/entities/participants "
+            "成员；不明确时省略，绝不按共现猜测"
+        ),
+    )
+
+    @field_validator("fact_bindings", mode="wrap")
+    @classmethod
+    def _parse_fact_bindings(cls, value: Any, handler: Any) -> Any:
+        """逐项校验可选绑定：非法项单独丢弃，不拒绝整条记忆（fail-closed）。"""
+
+        if not isinstance(value, list):
+            return []
+        accepted: list[FactBindingSchema] = []
+        for item in value[:_MAX_FACT_BINDINGS]:
+            try:
+                accepted.extend(handler([item]))
+            except ValueError:
+                continue
+        return accepted
 
     @field_validator("fact_source_refs", mode="wrap")
     @classmethod
@@ -115,19 +158,54 @@ class MemoryAtomSchema(BaseModel):
             raise ValueError("grounding_fact_evidence_mismatch")
         return self
 
-    @model_validator(mode="before")
+    @model_validator(mode="wrap")
     @classmethod
-    def _accept_summary_prompt_contract(cls, value: Any) -> Any:
-        """把现有 Prompt 的 summary/topics 字段映射到护栏基础字段。"""
+    def _accept_summary_prompt_contract(cls, value: Any, handler: Any) -> Any:
+        """把现有 Prompt 的 summary/topics 字段映射到护栏基础字段，并收敛绑定。
 
-        if not isinstance(value, dict):
-            return value
-        normalized = dict(value)
-        if not normalized.get("content") and normalized.get("summary"):
-            normalized["content"] = normalized["summary"]
-        if not normalized.get("entities") and normalized.get("topics"):
-            normalized["entities"] = normalized["topics"]
-        return normalized
+        ``entities`` 缺省时仍按兼容语义由 ``topics`` 回填；但 ``entity`` 类型的
+        fact 绑定只认模型显式给出的 entities，避免把主题标签冒充实体。绑定只能
+        指向本条记忆自己的事实下标与声明标签，越界、未声明或重复的项被丢弃，
+        不拒绝整条记忆。
+        """
+
+        entities_explicit = False
+        if isinstance(value, dict):
+            normalized = dict(value)
+            if not normalized.get("content") and normalized.get("summary"):
+                normalized["content"] = normalized["summary"]
+            entities_explicit = bool(normalized.get("entities"))
+            if not normalized.get("entities") and normalized.get("topics"):
+                normalized["entities"] = normalized["topics"]
+            value = normalized
+        result = handler(value)
+        if not isinstance(result, MemoryAtomSchema) or not result.fact_bindings:
+            return result
+        declared_by_type = {
+            "topic": {item.strip() for item in result.topics if item.strip()},
+            "entity": (
+                {item.strip() for item in result.entities if item.strip()}
+                if entities_explicit
+                else set()
+            ),
+            "participant": {
+                item.strip() for item in result.participants if item.strip()
+            },
+        }
+        seen: set[tuple[int, str, str]] = set()
+        kept: list[FactBindingSchema] = []
+        for binding in result.fact_bindings:
+            key = (binding.fact_index, binding.target_type, binding.target)
+            if (
+                binding.fact_index >= len(result.key_facts)
+                or binding.target not in declared_by_type[binding.target_type]
+                or key in seen
+            ):
+                continue
+            seen.add(key)
+            kept.append(binding)
+        result.fact_bindings = kept
+        return result
 
     @field_validator("content")
     @classmethod

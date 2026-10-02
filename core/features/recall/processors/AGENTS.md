@@ -86,7 +86,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - `format_conversation_with_source_refs()` 增加稳定 `S0..S<n>` 标签和原始正文 `chars` 长度；持久化证据使用消息指纹和字符 offset，Judge 只接收当前候选实际引用的片段。抽取结果保持引用正文的主要语言；日期规范化只接受正文绝对日期、明确相对日期或消息时间戳锚定的确定性推导，中文数字只在量词、序数、比例、独立数量或明确前缀等确定语境中归一，口语省略（如「两千三」→2300）与小数位按位解析；普通数字继续严格匹配。
 - 来源证据必须带稳定身份与角色：`grounding_evidence.py` 把引用解析为 `message_id`、`message_seq`（调用方给出窗口序号时）、`role`、`start/end` 与 `message_fingerprint`，缺引用时只从 `user` 消息推断；`grounding_checks.py` 只把 `user` 角色片段当作支持正文，群聊主体按稳定标识分组、同名标签在多主体间不可用于归属。推断引用时同名歧义按整个窗口判定，主体一致性只要求被引用用户能被 `participants` 覆盖，不要求窗口内无关主体出现在 participants 中。仅由 `assistant`/`system` 片段支撑的声明以 `grounding_user_source_missing` 隔离，不得写 canonical。
 - `SummaryWorker` 把 `SourceWindow.message_seqs` 传给 `MemoryProcessor.process_conversation(message_seqs=...)`；长度不一致按来源不可信处理。门禁关闭时仍调用 `resolve_evidence()` 绑定证据，但沿用既有放行处置。
-- `StorageBuilder`：群聊 `privacy_level=public`，私聊 `confidential`；正文优先以中文分号连接全部准入 `key_facts`，没有事实时使用摘要，两者皆空才回退到对话摘录。正文不再把叙述摘要与事实列表用 ` | ` 拼接；`canonical_summary` 与规范正文一致，原叙述保留在 `persona_summary`，事实及其证据仍按原顺序保存在 metadata。
+- `fact_bindings` 生产链：护栏 `MemoryAtomSchema.fact_bindings` 过滤后经 `guarded_result_to_structured_data` 透传（每项带 `fact` 原文），`apply_fact_admission` 按准入事实重排下标并丢弃被拒事实的绑定，`topic_fact_index.remap_fact_bindings` 按分段下标重排，`StorageBuilder.validated_fact_bindings` 与身份元数据合并后的再收敛按最终 metadata 校验；全链 fail-closed，绝不从全局 topics/participants/entities 推断新绑定。`memory_engine_crud` 在 CAS 提供新事实而无新绑定时清除旧 `fact_bindings`。
 
 ## 话题分割协议
 
@@ -110,8 +110,9 @@ Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM pro
 | 文件 | 入口/作用 | 失败或回退 |
 |---|---|---|
 | `atom_classifier.py` | `classify_atoms()`：规则分类 PLANNED/PREFERENCE/RELATIONAL/FACTUAL/EPISODIC | 低信息、低置信度/重要性被过滤；UNKNOWN 兜底 |
-| `graph_extractor.py` | `GraphExtractor.extract()`：在结构化图、原子和旧 metadata 路径间路由并生成节点/边/entry | 非法结构化载荷回退旧提取；实体交给 `EntityResolver` |
-| `atom_graph_extractor.py` | 原子图提取、父记忆人物/主题角色恢复及时序/因果边生成 | 缺少角色 metadata 的原子实体保持 topic 兼容行为 |
+| `graph_extractor.py` | `GraphExtractor.extract()`：在 Atom、结构化图和旧 metadata 表示间路由节点/entry 信号，并对三条路径统一应用同一份 fact 绑定关系计划 | 非法结构化载荷回退旧提取；实体交给 `EntityResolver`；不再生成 topic×fact、participant×fact、participant×participant 共现边 |
+| `graph_fact_bindings.py` | 唯一 fact 级关系规范：`metadata.fact_bindings`（`fact_index`/`target`/`target_type`）与带 fact 归属的结构化关系生成永久边 | 事实须与正文 `ALIGNED` 且逐事实有用户证据；越界/重复/非整数下标、未声明目标、陈旧事实文本、无 fact 归属的关系全部丢弃，不合成端点 |
+| `atom_graph_extractor.py` | 原子 fact 节点/entry、实体角色恢复（仅节点与独立 entry 信号）及时序/因果边 | Atom `entities` 是父标签并集，不证明绑定，不生成 entity→fact 边；缺少角色 metadata 的实体保持 topic 兼容行为 |
 | `entity_resolver.py` | 实体规范化、去重、IS-A 上下扩展和层级文件读写 | 层级 I/O 是尽力而为 |
 | `text_processor.py` | jieba/回退分词、停用词、BM25/FTS 预处理 | jieba 缺失或禁用时走内置分段 |
 | `human_like_formatter.py` | 按 atom 类型生成拟人片段并去重 | 无内容返回空片段 |
@@ -138,7 +139,7 @@ Memory Evolution 的 Gate、候选生成、episode/conflict 启发式与 LLM pro
 
 主管道：`memory_processor.py`、`llm_client.py`、`prompt_builder.py`、`conversation_formatter.py`、`json_parser.py`、`quality_validator.py`、`storage_builder.py`；`reflection_generation_observability.py` 只发射反思生成阶段的隐私安全标量。
 话题：`topic_splitter.py`、`topic_segmentation_pipeline.py`。
-派生与图：`atom_classifier.py`、`graph_extractor.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`human_like_formatter.py`。画像、知识与笔记提取唯一实现分别位于 `core/features/profiles/infrastructure/profile_extractor.py`、`core/features/knowledge/infrastructure/knowledge_extractor.py` 和 `core/features/notes/infrastructure/note_generator.py`。
+派生与图：`atom_classifier.py`、`graph_extractor.py`、`graph_fact_bindings.py`、`atom_graph_extractor.py`、`entity_resolver.py`、`human_like_formatter.py`。画像、知识与笔记提取唯一实现分别位于 `core/features/profiles/infrastructure/profile_extractor.py`、`core/features/knowledge/infrastructure/knowledge_extractor.py` 和 `core/features/notes/infrastructure/note_generator.py`。
 文本/兼容：`text_processor.py`、`chatroom_parser.py`、`message_utils.py`、`grounding_dates.py`、`__init__.py`。
 
 ## 测试定位与验证

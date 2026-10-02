@@ -49,6 +49,8 @@
       "summary": "我记得{具体昵称}明确表达的第一个稳定事实（第一人称叙述）",
       "topics": ["讨论主题1"],
       "key_facts": ["具体昵称+用户明确表达的事实"],
+      "entities": ["事实中明确出现的具体实体（可选）"],
+      "fact_bindings": [{"fact_index": 0, "target": "讨论主题1", "target_type": "topic"}],
       "sentiment": "positive",
       "importance": 0.7,
       "emotion_tags": [],
@@ -64,6 +66,8 @@
 - `topics`（必填，最多 5 项）: 具体的讨论主题，不要把助手建议或环境自述写成主题事实。
 - `key_facts`（必填，最多 5 项）: 只提取值得长期记住、由用户消息支持的事实、明确计划、偏好、决定或已确认关系；优先使用“具体昵称+事实内容”，有稳定身份约束时使用“当前名称（稳定标识）+事实内容”。
 - `source_refs`（必填）: 每条记忆引用当前窗口中支持该记忆的用户消息正文区间；不要用助手消息作为用户证据。
+- `entities`（可选，最多 8 项）: 事实中明确出现的具体人/物/地点/组织等实体名称；不要把主题标签重复写入。没有时省略或输出 `[]`。
+- `fact_bindings`（可选）: 只在某条事实**本身明确涉及**某个主题或实体时填写，表示 `key_facts[fact_index]` 与该标签的关系。`target` 必须原样取自本条记忆的 `topics` 或 `entities`，`target_type` 相应为 `topic` 或 `entity`（私聊一般不输出 `participant` 绑定）。不确定时省略；禁止按“同一条记忆里同时出现”给所有事实批量绑定所有标签。
 - **禁止写入**: 助手建议、推断、工具结果、环境/能力/配置/运行状态自述，以及未获用户确认的助手回复，不得进入 `summary`、`content` 或 `key_facts`。
 - 跳过纯寒暄、纯应答、无信息量闲聊、没有具体原因的短暂情绪和无实质内容的感叹。
 
@@ -108,6 +112,14 @@
       "summary": "我记得张三（QQ:123456）提醒我明天下午3点在会议室A开会，需要带项目文档，并让我约李经理",
       "topics": ["会议提醒", "文档准备", "约见安排"],
       "key_facts": ["张三（QQ:123456）安排明天下午3点会议", "会议室A（老地方）", "需携带项目文档", "张三（QQ:123456）要求约见李经理"],
+      "entities": ["会议室A", "李经理"],
+      "fact_bindings": [
+        {"fact_index": 0, "target": "会议提醒", "target_type": "topic"},
+        {"fact_index": 1, "target": "会议室A", "target_type": "entity"},
+        {"fact_index": 2, "target": "文档准备", "target_type": "topic"},
+        {"fact_index": 3, "target": "约见安排", "target_type": "topic"},
+        {"fact_index": 3, "target": "李经理", "target_type": "entity"}
+      ],
       "sentiment": "neutral",
       "importance": 0.85,
       "emotion_tags": [],

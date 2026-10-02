@@ -174,6 +174,7 @@ class GraphKeywordRetriever:
                     limit=max(self.expansion_limit, limit * 3),
                     boundary=boundary,
                     query_scope=query_scope,
+                    exclude_node_ids=matched_node_ids,
                 )
                 excluded_node_ids = matched_node_set | set(first_hop_node_ids)
                 second_hop_node_ids = [

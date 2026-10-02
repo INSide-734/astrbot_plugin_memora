@@ -154,7 +154,9 @@ class RouteExecutionCoordinator:
             "document": asyncio.create_task(_run_document()),
             "atom": asyncio.create_task(_run_atom()),
         }
-        if use_graph_route:
+        # 图检索器缺失（图关闭/零权未装配）时与路由策略跳过同样处理：不创建
+        # 图任务、不调用图检索，只保留 graph_route_skipped 观测。
+        if use_graph_route and self._graph_retriever is not None:
             tasks["graph"] = asyncio.create_task(_run_graph())
         else:
             timing["graph_route_skipped"] = True

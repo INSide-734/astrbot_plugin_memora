@@ -77,7 +77,7 @@ graph TD
 1. `aiosqlite.connect`，设置 `Row` 与共享 PRAGMA；此时尚不注册可重连连接。
 2. `SchemaMigrationCoordinator` 只读检查版本；fresh install 直接建当前结构，旧库按 `migration_settings` 决定阻断或先创建 `pre_migration` 快照再迁移，同时创建 `memory_write_ops`。迁移成功后才注册可重连连接。
 3. 构建 `TextProcessor → BM25Retriever → VectorRetriever → HybridRetriever`。
-4. 仅在 `graph_enabled` 且存在 `graph_vector_db` 时构建 `GraphStore`、`AtomStore`、层级存储、图双路检索和 `GraphMemoryManager`。
+4. 仅在图运行门开启（`graph_memory_enabled` 且 `graph_route_weight > 0`，由 `domain/graph_memory_config.graph_runtime_enabled` 统一判定，组合根与引擎使用同一判据）且存在 `graph_vector_db` 时构建 `GraphStore`、`AtomStore`、层级存储、图双路检索和 `GraphMemoryManager`；图关闭或零权时不创建图 FAISS/Store/检索器/manager，`rebuild_graph_index()` 返回 `status=skipped`、`reason_code=graph_rebuild_unavailable`。
 5. `initialize()` 只构建上述组件；组合根在 canonical/图文档存储各自 `initialize()` 成功后调用 `recover_persisted_operations()`，再继续发布后续子系统与 worker。
 6. 按配置构建画像、知识、笔记、自动学习、性格追踪、重排序器等；复用工厂注入的 typed `CostControl`，高成本 `llm`/`hybrid` 重排未通过功能门时降级为 `mmr`，成功创建的实例写回 `MemoryEngine.reranker` 并传给图双路检索器。
 7. 图路可用时构建 `DualRouteRetriever`，最后创建 `RealtimeSSE`。
@@ -168,7 +168,7 @@ sequenceDiagram
 | 区域 | 文件 | 事实边界 |
 |---|---|---|
 | 会话 | `features/conversation/application/`（`conversation_manager.py` 及 6 个 mixin） | `ConversationStore` 上层 LRU、上下文窗口、事件适配和元数据；缓存由 `_cache_lock` 保护 |
-| 图同步 | `graph_memory_manager.py`、`features/memory/graph/infrastructure/` | 删除旧图产物后重建节点/边/条目与图向量；向量 ID 最终回写 SQLite |
+| 图同步 | `graph_memory_manager.py`、`features/memory/graph/infrastructure/` | `index_memory()` 是唯一 source-level 图计划入口（在线、正文/metadata 变化、repair 与全量重建共用）。语义边 `graph_semantic_edges` 按 scope/privacy + 端点 + 关系唯一、跨来源共享；`graph_edges` 行是来源 evidence（`semantic_edge_id`/`evidence_kind`/`binding_key` + 自身 boundary）。来源替换/删除/批删/残留回收只删自身 entry 与 evidence，最后一条 evidence 消失才回收语义边；读取（邻居、子图、画布、总览、统计）只消费挂在 active 语义边上的 evidence，无语义边的 legacy 边行不当作关系。来源不可派生时 manager 先回收自身图行/向量再抛 `GraphSourceIneligibleError`（`ValueError` 子类，固定原因码），恢复后按当前 canonical 重写、不复活旧 evidence。向量 ID 最终回写 SQLite |
 | 原子生命周期（派生信号） | `atom_lifecycle_manager.py`、`features/memory/application/atom_source_binding.py` | 周期过期/遗忘/冷迁移，同批原子 Jaccard 去重；canonical add 后绑定 parent source，后台任务由 `start/stop` 管理。Atom 状态/TTL 只决定该信号是否参与排序/前瞻，不改变 canonical 事实的存在、可见性与召回；canonical 变更后由 `rederive_for_sources(ids, reason)` 按当前事实替换该父的 Atom 行与 FTS（运行态历史随之重置），统计端口是 `count_current_atoms()`（父存在、revision/scope/privacy 匹配且可召回），原始 `search_fts`/`search_fts_by_type` 只服务维护与强化 |
 | 维护 | `decay_operations.py`、`lifecycle_operations.py`、`stats_operations.py` | 衰减、分层遗忘、统计、存储与图索引维护；状态批更新提交后统一失效派生面（relation/projection 失效、图源级残留回收、Atom 重派生），失败只降级计数 |
 | 派生重建 | `core/platform/composition/derived_rebuild_coordinator.py` | 固定顺序 canonical → indexes → catalog → atoms → graph → evolution → semantic_compression → notes；命令与 Page API 经 `rebuild_stages` 单阶段入口（端口缺失记 `rebuild_coordinator_unavailable`）；atoms 阶段按 200 分页重派生并回收无父残留，失败降级为 `atoms_rebuild_partial_failed`；owner 表、读取门矩阵、替换收敛与原因码见本地契约 `.trellis/spec/core/features/memory/backend/canonical-fact-ownership.md`（项目本地 spec 存储，不随仓库分发） |
