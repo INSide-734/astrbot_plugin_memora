@@ -86,4 +86,23 @@ class GraphMemoryConfig(BaseModel):
         return self
 
 
-__all__ = ["GraphMemoryConfig"]
+def graph_runtime_enabled(enabled: object, graph_route_weight: object) -> bool:
+    """返回图运行时是否应装配：显式启用且有效图路权重大于零。
+
+    不修改 ``GraphMemoryConfig`` 的既有归一化契约；只在组合根按最终投影值
+    计算运行门。非法、非有限或非正权重都按关闭处理（fail-closed），避免
+    「组件已初始化但不产生贡献」的零权图路。
+    """
+
+    if not enabled:
+        return False
+    if isinstance(graph_route_weight, bool):
+        return False
+    try:
+        weight = float(graph_route_weight)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(weight) and weight > 0.0
+
+
+__all__ = ["GraphMemoryConfig", "graph_runtime_enabled"]

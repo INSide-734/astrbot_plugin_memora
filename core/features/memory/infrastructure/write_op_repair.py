@@ -578,6 +578,8 @@ class WriteOpRepairMixin:
                     loaded = None
                 if isinstance(loaded, (list, tuple)) and loaded:
                     atoms = list(loaded)
+        from ..application.graph_memory_manager import GraphSourceIneligibleError
+
         try:
             await self._graph_memory_manager.index_memory(
                 int(memory_id),
@@ -587,6 +589,12 @@ class WriteOpRepairMixin:
             )
         except asyncio.CancelledError:
             raise
+        except GraphSourceIneligibleError as error:
+            logger.info(
+                "[WriteOpJournal] 无账本来源不可派生，跳过图阶段 reason_code=%s",
+                str(error),
+            )
+            return True
         except Exception:
             logger.error(
                 f"[WriteOpJournal] 无账本收尾建图失败 (memory_id={memory_id})",
@@ -639,12 +647,24 @@ class WriteOpRepairMixin:
         if self._graph_memory_manager is None or not content.strip():
             await self.advance_op(op_id, "graph_skipped", memory_id=memory_id)
             return
-        await self._graph_memory_manager.index_memory(
-            memory_id,
-            content,
-            metadata,
-            atoms or None,
-        )
+        from ..application.graph_memory_manager import GraphSourceIneligibleError
+
+        try:
+            await self._graph_memory_manager.index_memory(
+                memory_id,
+                content,
+                metadata,
+                atoms or None,
+            )
+        except GraphSourceIneligibleError as error:
+            await self.advance_op(
+                op_id,
+                "graph_skipped",
+                status="completed",
+                memory_id=memory_id,
+                payload_patch={"graph_skipped": str(error)},
+            )
+            return
         await self.advance_op(op_id, "graph_indexed", memory_id=memory_id)
 
     async def _repair_source_atoms(

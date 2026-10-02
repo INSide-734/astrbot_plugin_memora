@@ -124,7 +124,13 @@ class GraphNode:
 
 @dataclass(slots=True)
 class GraphEdge:
-    """从一份记忆文档中提取的图边。"""
+    """一条来源 evidence 对某个语义关系的支持。
+
+    ``semantic_key`` 只由端点与关系类型决定（不含来源），同一 scope/privacy 下
+    多条 canonical 来源共享一条语义边；``edge_key`` 仍按来源区分，标识这条
+    来源自身的 evidence 行。``evidence_kind``/``binding_key`` 只用于内部去重与
+    审计，不进入模型输入或普通 API。
+    """
 
     source_key: str
     target_key: str
@@ -134,13 +140,17 @@ class GraphEdge:
     weight: float = 1.0
     status: str = "active"
     metadata: dict[str, Any] = field(default_factory=dict)
+    evidence_kind: str = "structured_relation"
+    binding_key: str = ""
+
+    @property
+    def semantic_key(self) -> str:
+        """不含来源 ID 的稳定语义边键。"""
+        return f"{self.source_key}|{self.relation_type}|{self.target_key}"
 
     @property
     def edge_key(self) -> str:
-        return (
-            f"{self.source_key}|{self.relation_type}|"
-            f"{self.target_key}|{self.source_memory_id}"
-        )
+        return f"{self.semantic_key}|{self.source_memory_id}"
 
 
 @dataclass(slots=True)

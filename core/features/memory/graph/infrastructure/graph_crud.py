@@ -185,10 +185,19 @@ class GraphCRUDMixin(BaseStore):
         *,
         boundary: GraphBoundary,
     ) -> int:
-        """Deduplicate only within source memory, endpoints and boundary."""
+        """写入一条来源 evidence，并挂到同 scope/privacy 的共享语义边上。
+
+        evidence 行按来源 + 端点 + 关系 + 完整 boundary 去重，同一来源重复写入
+        只更新自身；语义边按 ``(scope_key, privacy_level, semantic_key)`` 唯一，
+        多来源共享同一 ID。语义边聚合值只增不减（取最大），不会被低置信度的新
+        来源覆盖；删除来源后由 ``_refresh_semantic_edges`` 按剩余 evidence 重算。
+        """
         boundary.validate_metadata(edge.metadata)
         await self._validate_node_boundary(
             db, [source_node_id, target_node_id], boundary
+        )
+        semantic_edge_id = await self._upsert_semantic_edge(
+            db, edge, now, boundary=boundary
         )
         params = {
             **boundary.as_params(),
@@ -201,15 +210,21 @@ class GraphCRUDMixin(BaseStore):
             """INSERT INTO graph_edges (
                 edge_key, source_node_id, target_node_id, relation_type,
                 source_memory_id, weight, confidence, status, metadata,
-                created_at, updated_at, scope_key, privacy_level, revision_token
+                created_at, updated_at, scope_key, privacy_level, revision_token,
+                semantic_edge_id, evidence_kind, binding_key
             ) VALUES (
                 :edge_key, :source_node_id, :target_node_id, :relation_type,
                 :source_memory_id, :weight, :confidence, :status, :metadata,
-                :now, :now, :scope_key, :privacy_level, :revision_token
+                :now, :now, :scope_key, :privacy_level, :revision_token,
+                :semantic_edge_id, :evidence_kind, :binding_key
             ) ON CONFLICT(source_memory_id, source_node_id, target_node_id,
                           relation_type, scope_key, privacy_level, revision_token)
             DO UPDATE SET weight = excluded.weight, confidence = excluded.confidence,
-                status = excluded.status, metadata = excluded.metadata, updated_at = excluded.updated_at""",
+                status = excluded.status, metadata = excluded.metadata,
+                semantic_edge_id = excluded.semantic_edge_id,
+                evidence_kind = excluded.evidence_kind,
+                binding_key = excluded.binding_key,
+                updated_at = excluded.updated_at""",
             {
                 **params,
                 "edge_key": edge.edge_key,
@@ -218,6 +233,9 @@ class GraphCRUDMixin(BaseStore):
                 "status": edge.status,
                 "metadata": self._to_json(edge.metadata),
                 "now": now,
+                "semantic_edge_id": semantic_edge_id,
+                "evidence_kind": edge.evidence_kind or "structured_relation",
+                "binding_key": edge.binding_key or edge.semantic_key,
             },
         )
         cursor = await db.execute(
@@ -231,6 +249,62 @@ class GraphCRUDMixin(BaseStore):
         row = await cursor.fetchone()
         if row is None:
             raise RuntimeError("graph_edge_write_failed")
+        return int(row[0])
+
+    async def _upsert_semantic_edge(
+        self,
+        db: aiosqlite.Connection,
+        edge: GraphEdge,
+        now: str,
+        *,
+        boundary: GraphBoundary,
+    ) -> int:
+        """按 scope/privacy 分区 upsert 语义边并返回其稳定 ID。
+
+        语义边不带 revision：同一 canonical 来源的新旧 revision 与不同来源的
+        evidence 都挂在同一条语义边上，可见性由各 evidence 自身的 boundary 与
+        canonical 读取门决定。跨 scope/privacy 永不共享语义边。
+        """
+        params = {
+            "semantic_key": edge.semantic_key,
+            "scope_key": boundary.scope_key,
+            "privacy_level": boundary.privacy_level,
+            "source_node_key": edge.source_key,
+            "target_node_key": edge.target_key,
+            "relation_type": edge.relation_type,
+            "weight": edge.weight,
+            "confidence": edge.confidence,
+            "status": edge.status,
+            "now": now,
+        }
+        await db.execute(
+            """INSERT INTO graph_semantic_edges (
+                semantic_key, scope_key, privacy_level, source_node_key,
+                target_node_key, relation_type, weight, confidence, status,
+                created_at, updated_at
+            ) VALUES (
+                :semantic_key, :scope_key, :privacy_level, :source_node_key,
+                :target_node_key, :relation_type, :weight, :confidence, :status,
+                :now, :now
+            ) ON CONFLICT(scope_key, privacy_level, semantic_key) DO UPDATE SET
+                weight = MAX(graph_semantic_edges.weight, excluded.weight),
+                confidence = MAX(graph_semantic_edges.confidence, excluded.confidence),
+                status = CASE
+                    WHEN excluded.status = 'active' THEN 'active'
+                    ELSE graph_semantic_edges.status
+                END,
+                updated_at = excluded.updated_at""",
+            params,
+        )
+        cursor = await db.execute(
+            """SELECT id FROM graph_semantic_edges
+            WHERE scope_key = :scope_key AND privacy_level = :privacy_level
+              AND semantic_key = :semantic_key""",
+            params,
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            raise RuntimeError("graph_semantic_edge_write_failed")
         return int(row[0])
 
     async def _validate_node_boundary(

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import SchemaManager, TopicCatalogStore, WriteOpJournal
+from ..domain.graph_memory_config import graph_runtime_enabled
 from .maintenance_operations import MaintenanceOperations
 from .memory_engine_batch import MemoryEngineBatchMixin
 from .memory_engine_crud import MemoryEngineCRUDMixin
@@ -44,7 +45,12 @@ class MemoryEngine(
         self.graph_vector_db = graph_vector_db
         self.llm_provider = llm_provider
         self.config = config or {}
+        # 功能开关控制 Atom/DualRoute 基线；有效图权重只控制图存储与图路。
         self.graph_enabled = bool(self.config.get("graph_memory_enabled", False))
+        self.graph_runtime_enabled = graph_runtime_enabled(
+            self.graph_enabled,
+            self.config.get("graph_route_weight", 0.35),
+        )
         self.atom_enabled = bool(
             self.config.get(
                 "atom_enabled", self.config.get("graph_memory_atom_enabled", True)

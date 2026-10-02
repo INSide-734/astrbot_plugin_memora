@@ -107,13 +107,68 @@ def segment_metadata(
         "participants": data.get("participants") or [],
         "schema_version": "v3",
     }
+    entities = data.get("entities")
+    if isinstance(entities, list) and entities:
+        metadata["entities"] = list(entities)
     aligned_refs = aligned_fact_refs(data, key_facts, fact_indices)
     if aligned_refs is not None:
         metadata["fact_source_refs"] = aligned_refs
+    bindings = remap_fact_bindings(data, key_facts, fact_indices)
+    if bindings:
+        metadata["fact_bindings"] = bindings
     for key in ("source_refs", "atom_type", "confidence"):
         if data.get(key) is not None:
             metadata[key] = data[key]
     return metadata
+
+
+def remap_fact_bindings(
+    data: dict[str, Any],
+    key_facts: list[str],
+    fact_indices: list[int] | None,
+) -> list[dict[str, Any]]:
+    """把原始 ``key_facts`` 下标上的 fact 绑定映射到片段下标。
+
+    与 ``aligned_fact_refs`` 同口径：缺省下标只在片段等于原始全量事实时按位置
+    对齐；每条绑定都核对原始与片段事实文本一致，片段外的事实、文本不一致或
+    非法下标一律丢弃。目标标签是否仍属片段由 ``StorageBuilder`` 按最终
+    metadata 再次收敛，这里不推断任何新绑定。
+    """
+
+    raw_bindings = data.get("fact_bindings")
+    original_facts = data.get("key_facts")
+    if not isinstance(raw_bindings, list) or not isinstance(original_facts, list):
+        return []
+    if fact_indices is None:
+        if len(key_facts) != len(original_facts):
+            return []
+        fact_indices = list(range(len(key_facts)))
+    if len(fact_indices) != len(key_facts):
+        return []
+    positions: dict[int, int] = {}
+    for position, (index, fact) in enumerate(zip(fact_indices, key_facts, strict=True)):
+        if isinstance(index, bool) or not isinstance(index, int):
+            return []
+        if not 0 <= index < len(original_facts) or original_facts[index] != fact:
+            return []
+        positions[index] = position
+    remapped: list[dict[str, Any]] = []
+    for binding in raw_bindings:
+        if not isinstance(binding, dict):
+            continue
+        index = binding.get("fact_index")
+        if isinstance(index, bool) or not isinstance(index, int):
+            continue
+        position = positions.get(index)
+        if position is None:
+            continue
+        declared_fact = binding.get("fact")
+        if declared_fact is not None and declared_fact != key_facts[position]:
+            continue
+        remapped.append(
+            {**binding, "fact_index": position, "fact": key_facts[position]}
+        )
+    return remapped
 
 
 def agglomerative_index_clusters(
@@ -178,5 +233,6 @@ __all__ = [
     "aligned_fact_refs",
     "cluster_facts",
     "indexed_facts",
+    "remap_fact_bindings",
     "segment_metadata",
 ]

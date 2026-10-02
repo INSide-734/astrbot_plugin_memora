@@ -13,6 +13,9 @@ import aiosqlite
 import pytest
 
 import core.features.observability.infrastructure.metrics as monitoring_metrics
+from core.features.memory.application.graph_memory_manager import (
+    GraphSourceIneligibleError,
+)
 from core.features.memory.application.memory_engine import MemoryEngine
 from core.features.memory.infrastructure.schema_manager import SchemaManager
 from core.features.retrieval.bm25_retriever import BM25Retriever
@@ -244,6 +247,41 @@ class TestMemoryEngineAddMemoryErrors:
         assert atom_payload["content"] == "Alice likes tea"
         assert atom_payload["source_type"] == "private_chat"
         scorer.check_alerts.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_add_memory_ineligible_graph_is_skipped_not_repair_failure(
+        self,
+    ) -> None:
+        mock_faiss = MagicMock()
+        engine = MemoryEngine(db_path=":memory:", faiss_db=mock_faiss)
+        engine.hybrid_retriever = MagicMock()
+        engine.hybrid_retriever.add_memory = AsyncMock(return_value=123)
+        engine.graph_memory_manager = MagicMock()
+        engine.graph_memory_manager.index_memory = AsyncMock(
+            side_effect=GraphSourceIneligibleError("graph_source_evidence_required")
+        )
+        engine.atom_store = None
+        engine._write_journal.start_op = AsyncMock(return_value=1)
+        engine._write_journal.advance_op = AsyncMock()
+        engine._retrieval = MagicMock()
+        engine._retrieval.invalidate_cache = MagicMock()
+        engine._retrieval.apply_interference = MagicMock(return_value=None)
+        engine._retrieval.extract_triggers = MagicMock(return_value=None)
+        engine._create_tracked_task = MagicMock()
+
+        assert await engine.add_memory("Alice likes tea") == 123
+        advances = engine._write_journal.advance_op.await_args_list
+        graph_steps = [call for call in advances if call.args[1] == "graph_skipped"]
+        assert len(graph_steps) == 1
+        assert graph_steps[0].kwargs["status"] == "pending"
+        assert graph_steps[0].kwargs["payload_patch"] == {
+            "graph_skipped": "graph_source_evidence_required"
+        }
+        assert not any(call.args[1] == "graph_failed" for call in advances)
+        assert any(
+            call.args[1] == "completed" and call.kwargs["status"] == "completed"
+            for call in advances
+        )
 
     @pytest.mark.asyncio
     async def test_add_memory_records_document_write_failure_metric(self) -> None:

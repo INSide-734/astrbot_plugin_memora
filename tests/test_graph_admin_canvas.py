@@ -92,6 +92,80 @@ async def _write_canonical(
         await db.commit()
 
 
+async def _insert_edge_evidence(
+    db: aiosqlite.Connection,
+    *,
+    edge_key: str,
+    source_node_id: int,
+    target_node_id: int,
+    relation: str,
+    memory_id: int,
+    metadata: dict[str, Any] | None = None,
+    boundary: tuple[str, str, str] = ("scope-a", "public", "rev-1"),
+) -> int:
+    """写入一条来源 evidence，并挂到同 scope/privacy 的共享语义边上。
+
+    读取路径只接受挂在 active 语义边上的 evidence；直接写 SQL 的夹具必须同时
+    写语义边，否则等价于无 evidence 的 legacy 边而被排除。
+    """
+    timestamp = "2026-09-17T00:00:00+00:00"
+    scope, privacy, revision = boundary
+    semantic_key = f"{source_node_id}|{relation}|{target_node_id}"
+    await db.execute(
+        """
+        INSERT OR IGNORE INTO graph_semantic_edges(
+            semantic_key, scope_key, privacy_level, source_node_key,
+            target_node_key, relation_type, weight, confidence, status,
+            created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 1.0, 0.8, 'active', ?, ?)
+        """,
+        (
+            semantic_key,
+            scope,
+            privacy,
+            str(source_node_id),
+            str(target_node_id),
+            relation,
+            timestamp,
+            timestamp,
+        ),
+    )
+    cursor = await db.execute(
+        "SELECT id FROM graph_semantic_edges WHERE scope_key = ? "
+        "AND privacy_level = ? AND semantic_key = ?",
+        (scope, privacy, semantic_key),
+    )
+    row = await cursor.fetchone()
+    assert row is not None
+    cursor = await db.execute(
+        """
+        INSERT INTO graph_edges(
+            edge_key, source_node_id, target_node_id, relation_type,
+            source_memory_id, weight, confidence, status, metadata,
+            created_at, updated_at, scope_key, privacy_level, revision_token,
+            semantic_edge_id, evidence_kind, binding_key
+        ) VALUES (?, ?, ?, ?, ?, 1.0, 0.8, 'active', ?, ?, ?, ?, ?, ?, ?,
+                  'structured_relation', ?)
+        """,
+        (
+            edge_key,
+            source_node_id,
+            target_node_id,
+            relation,
+            memory_id,
+            json.dumps(metadata or {}, ensure_ascii=False),
+            timestamp,
+            timestamp,
+            scope,
+            privacy,
+            revision,
+            int(row[0]),
+            semantic_key,
+        ),
+    )
+    return int(cursor.lastrowid or 0)
+
+
 async def _write_graph_rows(
     store: GraphStore,
     memory_id: int,
@@ -130,25 +204,15 @@ async def _write_graph_rows(
             )
             node_ids[node_key] = int(cursor.lastrowid or 0)
         for source_key, target_key, relation, edge_metadata in edges:
-            await db.execute(
-                """
-                INSERT INTO graph_edges(
-                    edge_key, source_node_id, target_node_id, relation_type,
-                    source_memory_id, weight, confidence, status, metadata,
-                    created_at, updated_at, scope_key, privacy_level, revision_token
-                ) VALUES (?, ?, ?, ?, ?, 1.0, 0.8, 'active', ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    f"edge-{memory_id}-{source_key}-{target_key}",
-                    node_ids[source_key],
-                    node_ids[target_key],
-                    relation,
-                    memory_id,
-                    json.dumps(edge_metadata, ensure_ascii=False),
-                    timestamp,
-                    timestamp,
-                    *edge_boundary,
-                ),
+            await _insert_edge_evidence(
+                db,
+                edge_key=f"edge-{memory_id}-{source_key}-{target_key}",
+                source_node_id=node_ids[source_key],
+                target_node_id=node_ids[target_key],
+                relation=relation,
+                memory_id=memory_id,
+                metadata=edge_metadata,
+                boundary=edge_boundary,
             )
         entry_cursor = await db.execute(
             """
@@ -343,17 +407,14 @@ async def test_admin_canvas_drops_cross_boundary_nodes_and_edges(tmp_db_path) ->
     )
     # 合法来源的边指向仅有失效来源条目支撑的节点时也必须被丢弃。
     async with store._connect() as db:
-        await db.execute(
-            """
-            INSERT INTO graph_edges(
-                edge_key, source_node_id, target_node_id, relation_type,
-                source_memory_id, weight, confidence, status, metadata,
-                created_at, updated_at, scope_key, privacy_level, revision_token
-            ) VALUES ('cross-entry-edge', ?, ?, 'related', 2, 1.0, 0.8, 'active',
-                      '{}', '2026-09-17T00:00:00+00:00',
-                      '2026-09-17T00:00:00+00:00', 'scope-b', 'public', 'rev-1')
-            """,
-            (valid_ids["fact:kept"], foreign_ids["fact:foreign"]),
+        await _insert_edge_evidence(
+            db,
+            edge_key="cross-entry-edge",
+            source_node_id=valid_ids["fact:kept"],
+            target_node_id=foreign_ids["fact:foreign"],
+            relation="related",
+            memory_id=2,
+            boundary=("scope-b", "public", "rev-1"),
         )
         await db.commit()
 
@@ -391,18 +452,14 @@ async def test_admin_canvas_edge_cannot_borrow_same_boundary_endpoint(
     )
     # A 的边指向只有 B 条目支撑的节点：同 scope/privacy/revision 也不得借用。
     async with store._connect() as db:
-        await db.execute(
-            """
-            INSERT INTO graph_edges(
-                edge_key, source_node_id, target_node_id, relation_type,
-                source_memory_id, weight, confidence, status, metadata,
-                created_at, updated_at, scope_key, privacy_level, revision_token
-            ) VALUES ('borrowed-endpoint-edge', ?, ?, 'related', 1, 1.0, 0.8,
-                      'active', '{}', '2026-09-17T00:00:00+00:00',
-                      '2026-09-17T00:00:00+00:00',
-                      'scope-shared', 'public', 'rev-1')
-            """,
-            (first_ids["fact:a1"], second_ids["fact:b1"]),
+        await _insert_edge_evidence(
+            db,
+            edge_key="borrowed-endpoint-edge",
+            source_node_id=first_ids["fact:a1"],
+            target_node_id=second_ids["fact:b1"],
+            relation="related",
+            memory_id=1,
+            boundary=("scope-shared", "public", "rev-1"),
         )
         await db.commit()
 

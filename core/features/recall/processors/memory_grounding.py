@@ -87,6 +87,11 @@ class MemoryGroundingValidator:
             "每条结果还必须返回 fact_source_refs，其长度必须与 key_facts 完全一致："
             "fact_source_refs[i] 只能包含直接支持 key_facts[i] 的引用数组，不能借用其他"
             "事实的引用。source_refs 只用于 summary/window，不代替逐事实证据。"
+            "可选的 fact_bindings 数组只记录事实本身明确涉及的标签，每项写成 "
+            '{"fact_index": 0, "target": "主题", "target_type": "topic"}：'
+            "fact_index 指向 key_facts 下标，target 必须原样取自本条的 topics、entities 或"
+            " participants，target_type 为 topic、entity 或 participant；不确定时省略，"
+            "不得因同条共现而批量绑定。"
             "start/end 是该条原始消息正文中的字符区间，左闭右开，必须满足 "
             "0 <= start < end <= chars；引用整条正文时使用 start=0、end=chars。"
             "消息头中的时间、昵称和 ID 不属于正文 offset，不得仅据消息头中的时间生成事实。"

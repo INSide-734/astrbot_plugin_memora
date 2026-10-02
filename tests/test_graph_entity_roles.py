@@ -77,10 +77,40 @@ def test_atom_graph_preserves_participant_and_topic_roles() -> None:
     assert "topic:inside_734" not in nodes_by_key
     assert "topic:图谱设计" in nodes_by_key
 
+    # Atom.entities 是父记忆标签并集，不证明绑定：无显式 fact 绑定时不组边。
+    assert graph.edges == []
+    entry_types = {entry.entry_type for entry in graph.entries}
+    assert {"participant", "topic", "fact"} <= entry_types
+
+
+def test_atom_graph_bound_roles_create_role_specific_relations() -> None:
+    """显式 fact 绑定按目标角色生成 mentioned_in/describes 关系。"""
+    extractor = GraphExtractor()
+    atom = _make_atom(
+        "INSide_734 和大家讨论图谱设计",
+        ["图谱设计", "INSide_734"],
+    )
+
+    graph = extractor.extract(
+        source_memory_id=1,
+        content=atom.content,
+        metadata=_canonical_metadata(
+            atom.content,
+            topics=["图谱设计"],
+            participants=["INSide_734"],
+            fact_bindings=[
+                {"fact_index": 0, "target": "INSide_734", "target_type": "participant"},
+                {"fact_index": 0, "target": "图谱设计", "target_type": "topic"},
+            ],
+        ),
+        atoms=[atom],
+    )
+
     relations = {(edge.source_key, edge.relation_type) for edge in graph.edges}
-    assert ("person:inside_734", "mentioned_in") in relations
-    assert ("topic:图谱设计", "describes") in relations
-    assert sum(edge.source_key == "person:inside_734" for edge in graph.edges) == 1
+    assert relations == {
+        ("person:inside_734", "mentioned_in"),
+        ("topic:图谱设计", "describes"),
+    }
 
 
 def test_same_participant_uses_stable_person_key_across_memories() -> None:
@@ -132,6 +162,13 @@ async def test_shared_participant_connects_two_memories_in_subgraph(
                 fact,
                 topics=["群聊"],
                 participants=["INSide_734"],
+                fact_bindings=[
+                    {
+                        "fact_index": 0,
+                        "target": "INSide_734",
+                        "target_type": "participant",
+                    }
+                ],
             ),
             atoms=[_make_atom(fact, ["群聊", "INSide_734"], memory_id)],
         )
@@ -153,4 +190,6 @@ async def test_shared_participant_connects_two_memories_in_subgraph(
         for edge in snapshot["edges"]
         if edge["source"] == person_id and edge["relation_type"] == "mentioned_in"
     ]
+    # 两条事实不同，各自一条语义边；每条边只由自己的来源 evidence 支持。
     assert len(person_edges) == 2
+    assert {edge["memory_id"] for edge in person_edges} == {1, 2}

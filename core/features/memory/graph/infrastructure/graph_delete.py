@@ -11,6 +11,12 @@ from ...infrastructure.base import BaseStore
 from ..domain.models import GraphBoundary
 
 
+def _chunked(items: list[int], size: int) -> list[list[int]]:
+    """按固定大小把整数列表拆分为连续批次。"""
+    step = max(1, int(size))
+    return [items[index : index + step] for index in range(0, len(items), step)]
+
+
 class GraphDeleteMixin(BaseStore):
     """GraphStore 的删除操作。"""
 
@@ -27,16 +33,19 @@ class GraphDeleteMixin(BaseStore):
     async def delete_memory(
         self, source_memory_id: int, *, boundary: GraphBoundary
     ) -> list[int]:
-        """删除属于某个源记忆的图产物。"""
+        """删除属于某个源记忆的图产物；共享语义边只回收失去最后 evidence 的。"""
         GraphBoundary.require(boundary)
         async with self._connect() as db:
             await db.execute("BEGIN IMMEDIATE")
             try:
+                affected: set[int] = set()
                 vector_doc_ids = await self._delete_memory_rows(
                     db,
                     source_memory_id,
                     boundary=boundary,
+                    affected_semantic_ids=affected,
                 )
+                await self._refresh_semantic_edges(db, affected, self._now_iso())
                 await self._delete_orphan_nodes(db, boundary=boundary)
                 await db.commit()
                 return vector_doc_ids
@@ -57,9 +66,14 @@ class GraphDeleteMixin(BaseStore):
         async with self._connect() as db:
             await db.execute("BEGIN IMMEDIATE")
             try:
+                affected: set[int] = set()
                 result = await self._delete_memories_rows(
-                    db, normalized_ids, boundary=boundary
+                    db,
+                    normalized_ids,
+                    boundary=boundary,
+                    affected_semantic_ids=affected,
                 )
+                await self._refresh_semantic_edges(db, affected, self._now_iso())
                 await self._delete_orphan_nodes(db, boundary=boundary)
                 await db.commit()
                 return result
@@ -73,10 +87,14 @@ class GraphDeleteMixin(BaseStore):
         source_memory_id: int,
         *,
         boundary: GraphBoundary,
+        affected_semantic_ids: set[int] | None = None,
     ) -> list[int]:
         """使用调用方事务删除单条源记忆的图行并返回旧向量标识。"""
         result = await self._delete_memories_rows(
-            db, [source_memory_id], boundary=boundary
+            db,
+            [source_memory_id],
+            boundary=boundary,
+            affected_semantic_ids=affected_semantic_ids,
         )
         return result.get(source_memory_id, [])
 
@@ -86,14 +104,22 @@ class GraphDeleteMixin(BaseStore):
         source_memory_ids: list[int],
         *,
         boundary: GraphBoundary | None = None,
+        affected_semantic_ids: set[int] | None = None,
     ) -> dict[int, list[int]]:
-        """使用调用方事务批量删除多条源记忆的图行。
+        """使用调用方事务批量删除多条源记忆的 entry 与 edge evidence。
 
         省略 ``boundary`` 时按 canonical 源记忆回收，覆盖全部 revision 与 legacy 行。
+        只删除这些来源自己的 evidence 行；被触及的语义边 ID 写入
+        ``affected_semantic_ids``，由调用方在同一事务末尾调用
+        ``_refresh_semantic_edges`` 汇总（未传入集合时立即汇总）。
         """
         result: dict[int, list[int]] = {}
         scope_params = self._scope_params(boundary)
-        for batch in self._chunked(source_memory_ids, self._SQLITE_BATCH_SIZE):
+        touched: set[int] = (
+            affected_semantic_ids if affected_semantic_ids is not None else set()
+        )
+        batch_size = int(getattr(self, "_SQLITE_BATCH_SIZE", 500))
+        for batch in _chunked(source_memory_ids, batch_size):
             batch_params = {
                 **scope_params,
                 "memory_ids_json": json.dumps(batch),
@@ -124,7 +150,7 @@ class GraphDeleteMixin(BaseStore):
 
             cursor = await db.execute(
                 """
-                SELECT id FROM graph_edges
+                SELECT id, semantic_edge_id FROM graph_edges
                 WHERE source_memory_id IN (
                     SELECT value FROM json_each(:memory_ids_json)
                 )
@@ -138,9 +164,13 @@ class GraphDeleteMixin(BaseStore):
                 """,
                 batch_params,
             )
-            edge_ids = [int(row[0]) for row in await cursor.fetchall()]
+            edge_rows = await cursor.fetchall()
+            edge_ids = [int(row[0]) for row in edge_rows]
+            touched.update(int(row[1]) for row in edge_rows if row[1] is not None)
             await self._delete_entries_by_id(db, entry_ids)
-            await self._delete_unreferenced_edges(db, edge_ids)
+            await self._delete_source_evidence(db, edge_ids)
+        if affected_semantic_ids is None:
+            await self._refresh_semantic_edges(db, touched, self._now_iso())
         return result
 
     async def _delete_entries_by_id(
@@ -149,7 +179,8 @@ class GraphDeleteMixin(BaseStore):
         entry_ids: list[int],
     ) -> None:
         """使用调用方事务删除条目、FTS 与节点关联行。"""
-        for entry_batch in self._chunked(entry_ids, self._SQLITE_BATCH_SIZE):
+        batch_size = int(getattr(self, "_SQLITE_BATCH_SIZE", 500))
+        for entry_batch in _chunked(entry_ids, batch_size):
             entry_params = {"entry_ids_json": json.dumps(entry_batch)}
             await db.execute(
                 """
@@ -173,24 +204,74 @@ class GraphDeleteMixin(BaseStore):
                 entry_params,
             )
 
-    async def _delete_unreferenced_edges(
+    async def _delete_source_evidence(
         self,
         db: aiosqlite.Connection,
         edge_ids: list[int],
     ) -> None:
-        """使用调用方事务删除已经没有图条目引用的边。"""
+        """使用调用方事务删除这些来源自己的 edge evidence 行。
+
+        evidence 行按来源一一归属：删除来源时它的 evidence 必须一并删除，不能因
+        同来源其他 entry 仍引用而留下（调用方已先删掉该来源的全部 entry）。其他
+        来源对同一语义边的 evidence 是不同行，不受影响。
+        """
         unique_edge_ids = sorted(set(edge_ids))
-        for edge_batch in self._chunked(unique_edge_ids, self._SQLITE_BATCH_SIZE):
+        batch_size = int(getattr(self, "_SQLITE_BATCH_SIZE", 500))
+        for edge_batch in _chunked(unique_edge_ids, batch_size):
             await db.execute(
                 """
                 DELETE FROM graph_edges
                 WHERE id IN (SELECT value FROM json_each(:edge_ids_json))
-                AND NOT EXISTS (
-                    SELECT 1 FROM graph_entries
-                    WHERE graph_entries.edge_id = graph_edges.id
-                )
                 """,
                 {"edge_ids_json": json.dumps(edge_batch)},
+            )
+
+    async def _refresh_semantic_edges(
+        self,
+        db: aiosqlite.Connection,
+        semantic_edge_ids: set[int] | list[int],
+        now: str,
+    ) -> None:
+        """按剩余 evidence 重算语义边聚合值，并回收失去最后 evidence 的语义边。
+
+        聚合值取所有剩余 evidence 的最大权重/置信度；只要仍有任一 active
+        evidence 语义边就保持 active。被回收的语义边上不会残留 evidence。
+        """
+        ids = sorted({int(item) for item in semantic_edge_ids})
+        batch_size = int(getattr(self, "_SQLITE_BATCH_SIZE", 500))
+        for batch in _chunked(ids, batch_size):
+            params = {"ids_json": json.dumps(batch), "now": now}
+            await db.execute(
+                """
+                DELETE FROM graph_semantic_edges
+                WHERE id IN (SELECT value FROM json_each(:ids_json))
+                  AND NOT EXISTS (
+                    SELECT 1 FROM graph_edges evidence
+                    WHERE evidence.semantic_edge_id = graph_semantic_edges.id
+                  )
+                """,
+                params,
+            )
+            await db.execute(
+                """
+                UPDATE graph_semantic_edges
+                SET weight = (
+                        SELECT MAX(evidence.weight) FROM graph_edges evidence
+                        WHERE evidence.semantic_edge_id = graph_semantic_edges.id
+                    ),
+                    confidence = (
+                        SELECT MAX(evidence.confidence) FROM graph_edges evidence
+                        WHERE evidence.semantic_edge_id = graph_semantic_edges.id
+                    ),
+                    status = CASE WHEN EXISTS (
+                        SELECT 1 FROM graph_edges evidence
+                        WHERE evidence.semantic_edge_id = graph_semantic_edges.id
+                          AND evidence.status = 'active'
+                    ) THEN 'active' ELSE 'inactive' END,
+                    updated_at = :now
+                WHERE id IN (SELECT value FROM json_each(:ids_json))
+                """,
+                params,
             )
 
     async def _delete_orphan_nodes(
@@ -225,7 +306,9 @@ class GraphDeleteMixin(BaseStore):
         """在一个事务内回收源记忆的全部图行。
 
         删除范围以 canonical 源记忆 ID 为准，覆盖全部 revision 与 legacy NULL 行；
-        未被删除行引用的节点一并回收。向量平面由调用方先行清理。
+        只删除这些来源自己的 entry 与 evidence，其他来源共享的语义边保留，
+        失去最后 evidence 的语义边与未被引用的节点一并回收。向量平面由调用方
+        先行清理。
         """
 
         normalized_ids = sorted({int(item) for item in source_memory_ids})
@@ -234,7 +317,11 @@ class GraphDeleteMixin(BaseStore):
         async with self._connect() as db:
             await db.execute("BEGIN IMMEDIATE")
             try:
-                await self._delete_memories_rows(db, normalized_ids)
+                affected: set[int] = set()
+                await self._delete_memories_rows(
+                    db, normalized_ids, affected_semantic_ids=affected
+                )
+                await self._refresh_semantic_edges(db, affected, self._now_iso())
                 await self._delete_orphan_nodes(db)
                 await db.commit()
             except BaseException:
@@ -292,7 +379,8 @@ class GraphDeleteMixin(BaseStore):
             return []
         unreferenced: list[int] = []
         async with self._connect() as db:
-            for batch in self._chunked(candidates, self._SQLITE_BATCH_SIZE):
+            batch_size = int(getattr(self, "_SQLITE_BATCH_SIZE", 500))
+            for batch in _chunked(candidates, batch_size):
                 cursor = await db.execute(
                     """
                     SELECT vector_doc_id FROM graph_entries

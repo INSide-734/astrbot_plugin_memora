@@ -104,7 +104,10 @@ class TestGraphExtractorLegacy:
 
         assert any(node.node_key == "person:qq:10001" for node in graph.nodes)
 
-    def test_co_occurs_edges_created(self, extractor: GraphExtractor) -> None:
+    def test_co_occurring_participants_do_not_form_edges(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """同一文档出现多名参与者只产生节点/entry，不生成 co_occurs_with 边。"""
         graph = extractor.extract(
             source_memory_id=1,
             content="fallback",
@@ -114,10 +117,18 @@ class TestGraphExtractorLegacy:
                 "key_facts": ["something happened"],
             },
         )
-        co_edges = [e for e in graph.edges if e.relation_type == "co_occurs_with"]
-        assert len(co_edges) >= 3  # 3 participants -> 3 pairs
+        assert {n.value for n in graph.nodes if n.node_type == "person"} == {
+            "Alice",
+            "Bob",
+            "Charlie",
+        }
+        assert graph.edges == []
+        assert {e.entry_type for e in graph.entries} >= {"participant"}
 
-    def test_topic_fact_edges_created(self, extractor: GraphExtractor) -> None:
+    def test_unbound_topic_and_fact_do_not_form_edges(
+        self, extractor: GraphExtractor
+    ) -> None:
+        """无 fact 绑定时 topic 与 fact 只保留独立信号，不生成 describes 边。"""
         graph = extractor.extract(
             source_memory_id=1,
             content="fallback",
@@ -127,8 +138,8 @@ class TestGraphExtractorLegacy:
                 "key_facts": ["fact1"],
             },
         )
-        describe_edges = [e for e in graph.edges if e.relation_type == "describes"]
-        assert len(describe_edges) >= 1
+        assert any(n.node_type == "topic" for n in graph.nodes)
+        assert [e for e in graph.edges if e.relation_type == "describes"] == []
 
     def test_dedup_preserves_order_in_metadata(self, extractor: GraphExtractor) -> None:
         graph = extractor.extract(
@@ -159,13 +170,16 @@ class TestGraphExtractorLegacy:
     def test_structured_graph_metadata_validated_and_used(
         self, extractor: GraphExtractor
     ) -> None:
+        """带 fact 归属的结构化关系生成边；实体仍作为已校验信号保留。"""
+        fact = "用户A 正在学习 Python"
         graph = extractor.extract(
             source_memory_id=42,
-            content="用户A 正在学习 Python",
+            content=fact,
             metadata={
                 **BOUNDARY.as_params(),
                 "session_id": "s1",
-                "canonical_summary": "用户A 学习 Python",
+                "key_facts": [fact],
+                "fact_source_evidence": fact_evidence([fact]),
                 "graph_extraction": {
                     "entities": [
                         {"name": "用户A", "type": "person", "confidence": 0.91},
@@ -177,6 +191,7 @@ class TestGraphExtractorLegacy:
                             "target": "Python",
                             "relation": "learning",
                             "confidence": 0.88,
+                            "fact_index": 0,
                         },
                     ],
                 },
@@ -185,15 +200,17 @@ class TestGraphExtractorLegacy:
 
         assert {node.value for node in graph.nodes} >= {"用户A", "Python"}
         assert [edge.relation_type for edge in graph.edges] == ["learning"]
+        assert graph.edges[0].evidence_kind == "structured_relation"
         assert graph.edges[0].metadata["graph_guardrails_validated"] is True
         assert all(
             entry.metadata["graph_guardrails_validated"] is True
             for entry in graph.entries
         )
 
-    def test_structured_graph_json_payload_validated(
+    def test_structured_relation_without_fact_binding_is_not_permanent(
         self, extractor: GraphExtractor
     ) -> None:
+        """结构化关系缺少 fact 归属时只保留实体信号，不生成永久边。"""
         graph = extractor.extract(
             source_memory_id=7,
             content="Alice knows Bob",
@@ -209,8 +226,7 @@ class TestGraphExtractorLegacy:
         )
 
         assert {node.value for node in graph.nodes} == {"Alice", "Bob"}
-        assert len(graph.edges) == 1
-        assert graph.edges[0].relation_type == "knows"
+        assert graph.edges == []
 
     def test_invalid_structured_graph_falls_back_to_legacy(
         self, extractor: GraphExtractor
@@ -846,6 +862,8 @@ class TestGraphExtractorStructuredFactBoundary:
             content="用户现在住在杭州",
             metadata={
                 **BOUNDARY.as_params(),
+                "key_facts": ["用户现在住在杭州"],
+                "fact_source_evidence": fact_evidence(["用户现在住在杭州"]),
                 "graph_extraction": {
                     "entities": [
                         {"name": stale, "type": "fact"},
@@ -869,7 +887,9 @@ class TestGraphExtractorStructuredFactBoundary:
 
         assert not any(node.value == stale for node in graph.nodes)
         assert all(stale not in entry.content for entry in graph.entries)
+        # 只有端点为已准入当前事实的关系形成 evidence 边。
         assert [edge.relation_type for edge in graph.edges] == ["describes"]
+        assert graph.edges[0].target_key == "fact:用户现在住在杭州"
 
     def test_non_fact_entities_are_not_filtered_by_content(
         self, extractor: GraphExtractor
@@ -994,9 +1014,10 @@ class TestGraphExtractorFactTextOwnership:
         assert all(node.value != stale for node in graph.nodes)
         assert all(stale not in entry.content for entry in graph.entries)
         assert all(stale not in str(edge.metadata) for edge in graph.edges)
-        # 不来自事实表示的标签与关系照常派生。
+        # 不来自事实表示的标签照常派生；指向未准入事实（无当前事实证据）的
+        # 关系不形成永久边。
         assert any(node.value == "杭州" for node in graph.nodes)
-        assert [edge.relation_type for edge in graph.edges] == ["describes"]
+        assert graph.edges == []
 
     def test_stale_fact_relation_endpoints_are_not_synthesized(
         self, extractor: GraphExtractor
@@ -1101,3 +1122,173 @@ def test_atom_graph_rejects_missing_evidence_or_foreign_parent(field, value, rea
     setattr(rejected, field, value)
     with pytest.raises(ValueError, match=reason):
         GraphExtractor().extract(1, "", BOUNDARY.as_params(), [accepted, rejected])
+
+
+class TestGraphFactBindings:
+    """Issue 88：永久关系只来自 fact 自身的显式绑定，三条表示路径共享同一计划。"""
+
+    FACTS = ["Alice 喜欢咖啡", "Bob 周末去爬山"]
+
+    def _metadata(self, **extra: object) -> dict:
+        return {
+            **BOUNDARY.as_params(),
+            "key_facts": list(self.FACTS),
+            "fact_source_evidence": fact_evidence(list(self.FACTS)),
+            "topics": ["饮品", "户外"],
+            "participants": ["Alice", "Bob"],
+            **extra,
+        }
+
+    @staticmethod
+    def _relations(graph) -> set[tuple[str, str, str]]:
+        return {
+            (edge.source_key, edge.relation_type, edge.target_key)
+            for edge in graph.edges
+        }
+
+    def test_mixed_document_without_bindings_has_no_cartesian_edges(self) -> None:
+        graph = GraphExtractor().extract(1, "；".join(self.FACTS), self._metadata())
+
+        assert graph.edges == []
+        node_types = {node.node_type for node in graph.nodes}
+        assert {"fact", "topic", "person"} <= node_types
+        assert not any(entry.entry_type == "edge" for entry in graph.entries)
+
+    def test_explicit_bindings_create_only_bound_relations(self) -> None:
+        metadata = self._metadata(
+            fact_bindings=[
+                {"fact_index": 0, "target": "饮品", "target_type": "topic"},
+                {"fact_index": 0, "target": "Alice", "target_type": "participant"},
+                {"fact_index": 1, "target": "户外", "target_type": "topic"},
+            ]
+        )
+        graph = GraphExtractor().extract(1, "；".join(self.FACTS), metadata)
+
+        assert self._relations(graph) == {
+            ("topic:饮品", "describes", "fact:Alice 喜欢咖啡"),
+            ("person:alice", "mentioned_in", "fact:Alice 喜欢咖啡"),
+            ("topic:户外", "describes", "fact:Bob 周末去爬山"),
+        }
+        assert all(
+            edge.evidence_kind == "explicit_fact_binding" for edge in graph.edges
+        )
+        assert all(edge.binding_key.startswith("fact:") for edge in graph.edges)
+        # Bob 未绑定任何事实，不与任何事实组边。
+        assert not any(edge.source_key == "person:bob" for edge in graph.edges)
+
+    @pytest.mark.parametrize(
+        "binding",
+        [
+            {"fact_index": 5, "target": "饮品", "target_type": "topic"},
+            {"fact_index": -1, "target": "饮品", "target_type": "topic"},
+            {"fact_index": True, "target": "饮品", "target_type": "topic"},
+            {"fact_index": "0", "target": "饮品", "target_type": "topic"},
+            {"fact_index": 0, "target": "未声明主题", "target_type": "topic"},
+            {"fact_index": 0, "target": "Carol", "target_type": "participant"},
+            {"fact_index": 0, "target": "饮品", "target_type": "unknown"},
+            {"fact_index": 0, "target": "饮品", "target_type": "topic", "fact": "旧"},
+            "not-a-dict",
+        ],
+    )
+    def test_invalid_bindings_fail_closed(self, binding: object) -> None:
+        graph = GraphExtractor().extract(
+            1, "；".join(self.FACTS), self._metadata(fact_bindings=[binding])
+        )
+
+        assert graph.edges == []
+
+    def test_binding_requires_user_evidence_for_bound_fact(self) -> None:
+        evidence = fact_evidence(list(self.FACTS))
+        evidence[0] = source_evidence(role="assistant")
+        graph = GraphExtractor().extract(
+            1,
+            "；".join(self.FACTS),
+            self._metadata(
+                fact_source_evidence=evidence,
+                fact_bindings=[
+                    {"fact_index": 0, "target": "饮品", "target_type": "topic"},
+                    {"fact_index": 1, "target": "户外", "target_type": "topic"},
+                ],
+            ),
+        )
+
+        assert self._relations(graph) == {
+            ("topic:户外", "describes", "fact:Bob 周末去爬山")
+        }
+
+    def test_bindings_drop_when_facts_leave_the_body(self) -> None:
+        graph = GraphExtractor().extract(
+            1,
+            "正文已经改写",
+            self._metadata(
+                fact_bindings=[
+                    {"fact_index": 0, "target": "饮品", "target_type": "topic"}
+                ]
+            ),
+        )
+
+        assert graph.edges == []
+
+    def test_atom_and_non_atom_paths_share_relations(self) -> None:
+        metadata = self._metadata(
+            fact_bindings=[
+                {"fact_index": 0, "target": "Alice", "target_type": "participant"},
+                {"fact_index": 1, "target": "户外", "target_type": "topic"},
+            ]
+        )
+        atoms = []
+        for fact in self.FACTS:
+            atom = _atom()
+            atom.content = fact
+            atom.entities = ["饮品", "户外", "Alice", "Bob"]
+            atom.confidence = 0.8
+            atom.session_id = None
+            atom.persona_id = None
+            atom.atom_type = "FACTUAL"
+            atom.importance = 0.6
+            atom.ttl_days = 30.0
+            atom.created_at = None
+            atom.event_time = None
+            atom.expires_at = None
+            atom.decay_type = None
+            atoms.append(atom)
+        extractor = GraphExtractor(
+            config={
+                "graph_memory.temporal_edges_enabled": False,
+                "graph_memory.causal_edges_enabled": False,
+            }
+        )
+        content = "；".join(self.FACTS)
+
+        with_atoms = extractor.extract(1, content, metadata, atoms)
+        without_atoms = extractor.extract(1, content, metadata)
+
+        assert self._relations(with_atoms) == self._relations(without_atoms)
+        assert self._relations(with_atoms) == {
+            ("person:alice", "mentioned_in", "fact:Alice 喜欢咖啡"),
+            ("topic:户外", "describes", "fact:Bob 周末去爬山"),
+        }
+        # Atom 的 entities 并集只作为独立信号，不再对每条事实组边。
+        assert any(entry.entry_type == "topic" for entry in with_atoms.entries)
+
+    def test_structured_relation_endpoints_are_never_synthesized(self) -> None:
+        graph = GraphExtractor().extract(
+            1,
+            "；".join(self.FACTS),
+            self._metadata(
+                graph_extraction={
+                    "entities": [{"name": "Alice", "type": "person"}],
+                    "relations": [
+                        {
+                            "source": "Alice",
+                            "target": "未声明实体",
+                            "relation": "knows",
+                            "fact_index": 0,
+                        }
+                    ],
+                }
+            ),
+        )
+
+        assert graph.edges == []
+        assert not any(node.value == "未声明实体" for node in graph.nodes)

@@ -30,7 +30,7 @@ from ....shared.sql import (
 )
 from ...decay.application.operations import _normalize_batch_metadata
 from ..domain.revision import memory_revision
-from .graph_memory_manager import graph_source_gate_reason
+from .graph_memory_manager import GraphSourceIneligibleError, graph_source_gate_reason
 
 _TREND_DAYS = 90
 _MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000
@@ -511,7 +511,16 @@ class StatsOperationsMixin:
         """
 
         if self._graph_memory_manager is None:
-            return {"rebuilt": 0, "skipped": 0, "failed": 0, "total": 0}
+            # 图关闭、零权或未装配：稳定 skipped，而不是伪装成健康的空重建。
+            return {
+                "rebuilt": 0,
+                "skipped": 0,
+                "failed": 0,
+                "total": 0,
+                "status": "skipped",
+                "success": True,
+                "reason_code": "graph_rebuild_unavailable",
+            }
 
         total_count = await self._faiss_db.document_storage.count_documents(
             metadata_filters={}
@@ -564,6 +573,13 @@ class StatsOperationsMixin:
                     )
                 except asyncio.CancelledError:
                     raise
+                except GraphSourceIneligibleError as error:
+                    # 扫描后 canonical 才变为不可派生：manager 已回收其自身
+                    # evidence，按确定不适用计 skipped，而非存储失败。
+                    reason = str(error) or "graph_source_not_recallable"
+                    skipped += 1
+                    skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+                    continue
                 except Exception as error:
                     failed += 1
                     failed_reasons["graph_index_failed"] = (

@@ -50,6 +50,8 @@
       "topics": ["讨论主题1"],
       "key_facts": ["具体昵称+用户明确表达的事实"],
       "participants": ["发言者稳定标签或具体昵称"],
+      "entities": ["事实中明确出现的具体实体（可选）"],
+      "fact_bindings": [{"fact_index": 0, "target": "讨论主题1", "target_type": "topic"}],
       "sentiment": "positive",
       "importance": 0.7,
       "emotion_tags": [],
@@ -66,6 +68,8 @@
 - `key_facts`（必填，最多 5 项）: 只提取值得长期记住、由用户消息支持的事实、明确计划、偏好、决定、群体规范或已确认关系；默认使用“具体昵称+事实内容”，有稳定身份约束时使用“当前名称（稳定标识）+事实内容”。
 - `participants`（必填）: 有稳定参与者身份约束时只列出约束中的 user 稳定标签，不加入 Bot；没有约束时使用消息中可见的具体昵称。participants 仅用于内容理解，最终身份元数据由系统确定。
 - `source_refs`（必填）: 每条记忆引用当前窗口中支持该记忆的用户消息正文区间；不要用助手消息作为用户证据。
+- `entities`（可选，最多 8 项）: 事实中明确出现的具体人/物/地点/组织等实体名称；不要把主题标签或参与者重复写入。没有时省略或输出 `[]`。
+- `fact_bindings`（可选）: 只在某条事实**本身明确涉及**某个主题、实体或参与者时填写，表示 `key_facts[fact_index]` 与该标签的关系。`target` 必须原样取自本条记忆的 `topics`、`entities` 或 `participants`，`target_type` 相应为 `topic`、`entity` 或 `participant`。不确定时省略；禁止按“同一条记忆里同时出现”给所有事实批量绑定所有标签。
 - **禁止写入**: 助手建议、推断、工具结果、环境/能力/配置/运行状态自述，以及未获用户确认的助手回复，不得进入 `summary`、`content` 或 `key_facts`。
 - 跳过纯寒暄、纯应答、无信息量闲聊、没有具体原因的短暂情绪和无实质内容的感叹。
 
@@ -118,6 +122,13 @@
       "topics": ["团建活动安排", "滑雪场出行", "教练服务"],
       "key_facts": ["张三（QQ:123456）发起明天团建并提议去滑雪场", "李四（QQ:234567）和王五（QQ:345678）确认参加", "王五（QQ:345678）询问教练配备", "张三（QQ:123456）确认初级道有教练"],
       "participants": ["QQ:123456", "QQ:234567", "QQ:345678"],
+      "entities": ["滑雪场"],
+      "fact_bindings": [
+        {"fact_index": 0, "target": "团建活动安排", "target_type": "topic"},
+        {"fact_index": 0, "target": "滑雪场", "target_type": "entity"},
+        {"fact_index": 0, "target": "QQ:123456", "target_type": "participant"},
+        {"fact_index": 3, "target": "教练服务", "target_type": "topic"}
+      ],
       "sentiment": "positive",
       "importance": 0.75,
       "emotion_tags": ["热烈", "期待"],

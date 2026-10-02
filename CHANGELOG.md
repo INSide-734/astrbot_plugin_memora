@@ -11,6 +11,8 @@ Memora 的所有重要变更都记录在此文件中。
 
 - 完成生产召回诊断闭环：每次请求生成 opaque `trace_id`，脱敏快照记录检索阶段、候选结果、实际注入摘要、路由与预算、事实对齐和来源状态；空请求、跳过、失败与取消路径保留 trace-only 诊断，不伪造注入决策（#89）。
 - 诊断 API、`/memora health`、`/memora diagnostics`、`/memora trace` 与 Dashboard 智能诊断/召回 Trace 面板统一展示闭集状态、过滤原因计数、健康域和生产 Trace 的空态/不可用态，并同步中英俄文案。
+- 新增 `entities` 与 `fact_bindings` 记忆提取契约：每个绑定以 `fact_index`、`target`、`target_type` 明确单条事实与主题、实体或参与者的关系；Prompt、guardrail、逐事实准入、分段、写入及正文更新共同校验、重排或清除。越界、重复、未声明标签或与当前事实不一致的绑定一律丢弃，不按同条记忆中的共现补造关系（#88）。
+- 图派生新增多来源 evidence 平面：同一作用域和隐私边界下相同端点与关系共享一条 semantic edge，每个 canonical 来源及 revision 保留独立 evidence；来源更新、删除或变为不可派生时仅回收自身 evidence，最后一条 evidence 消失后才回收共享关系（#88）。
 
 ### 变更
 
@@ -24,13 +26,26 @@ Memora 的所有重要变更都记录在此文件中。
 - 重建统一为固定阶段闭包：canonical → 索引 → 主题目录 → 原子 → 图 → 关系/投影 → 语义压缩 → 笔记；其中原子阶段按来源分页重派生并回收父记忆已不存在的残留信号（降级原因码 `atoms_rebuild_partial_failed`）。`/memora rebuild-index`、`/memora rebuild-graph` 与控制台维护入口统一经过该阶段调度。
 - 读取路径补齐 canonical 状态门：检索缓存命中按当前 canonical 重新校验正文、状态、mark_write、用户证据与时间可见性，并新增请求可见性校验——群会话不再收到已改为 `confidential` 的记录，请求给出的来源作用域/隐私与记录不一致即剔除，失效项计入 `dropped_stale_count`；任何推进 revision 的 canonical 写入都会使检索缓存整代失效。记忆列表按来源完整性、作用域与隐私过滤，召回测试只投影 canonical 当前行（改写后不再出现旧正文或旧摘要，失效候选计入响应计数），聚焦图查询使用与管理员画布相同的来源条件。
 - 记忆导出 JSONL 每条记录新增整数 `memory_id` 与显式 `status` 字段（仍导出全集，不按状态过滤）。
+- 永久图关系统一由显式 fact 绑定或带 fact 归属的结构化关系生成，Atom、结构化与 legacy 提取路径对同一 canonical 快照使用同一关系计划；Atom 的 entities 仅作为节点和检索信号，时序/因果关系仍要求各自明确证据，不再生成 topic、参与者或实体与事实的共现关系（#88）。
+- 图运行门改为同时要求功能启用且图路权重为有限正数；权重为零、非法或非有限时不再装配图存储、向量索引或检索任务，文档与 Atom 路保持可用，图重建返回明确的 `graph_rebuild_unavailable` 跳过状态（#88）。
+- 图搜索、子图、管理员画布和统计只消费由 active semantic edge 支持的 active evidence；缺少完整 evidence 的历史图行保持不可读，不再混入关系读取、总览或统计（#88）。
 
 ### 修复
+- 修复图关系在同一作用域和隐私边界下因不同来源 revision 的物理节点而重复、或二跳扩展绕回已命中节点的问题：邻居按 canonical `node_key` 聚合，关联条目按 canonical 键扩展，二跳排除已命中键；精确 revision 查询仍保持物理节点隔离（#88）。
+- 修复图来源因归档、`mark_write`、证据不足或边界失效而不可派生时，add、图索引修复、重建与再巩固路径误标为失败的问题：现只回收该来源派生数据并按 skipped/完成语义收敛；取消继续传播，未知存储错误仍按失败处理。缺少完整 semantic evidence 的历史图行保持 fail-closed，须由当前 canonical 重建恢复（#88）。
 
 - 修复内容替换在旧记录删除失败时可能留下两条可召回记录的问题：补偿失败会保留可重放的修复账本（`content_replace_compensation_failed`），不再出现正文重复或正文丢失。
 - 修复 CAS 正文更新后图索引刷新失败只有告警的问题：改为登记可重放修复（`graph_reindex_failed`），后续维护或重建会补齐图派生。
 - 修复衰减、归档等状态批量变更后派生面未收敛的问题：提交后统一失效关系/投影、回收图源级残留并按当前事实重派生原子信号，失败只降级计数，不回滚状态写。
 - 修复持久化健康修复在目标缺失、健康报告不可用或底层清理未生效时以「已修复 0 条」回应的问题：现在返回显式错误，不把未清理伪装成成功。
+
+### 测试
+
+- 新增事实级绑定校验、准入与分段下标重排、三条图提取路径一致性、共现关系剔除、多来源 evidence 共享/最后来源回收、跨 revision 邻居与二跳排除、来源不可派生收敛、运行门及历史图行 fail-closed 的回归覆盖（#88）。
+
+### 升级说明
+
+- 无需迁移配置或 canonical memory；启动时仅增量创建图派生的 semantic edge/evidence 结构。缺少完整 evidence 的历史图行会安全保留但不参与读取，运行 `/memora rebuild-graph` 可按当前 canonical 来源恢复。
 
 ## [1.4.0] — 2026-09-20
 

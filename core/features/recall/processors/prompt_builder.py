@@ -110,6 +110,7 @@ class PromptBuilder:
                     "分析以下对话并生成JSON格式的记忆:\n{conversation}\n\n"
                     "输出格式:\n"
                     '{"summary": "摘要", "topics": ["主题"], "key_facts": ["事实"], '
+                    '"entities": [], "fact_bindings": [], '
                     '"sentiment": "neutral", "importance": 0.5}\n'
                 )
             if not self.group_chat_prompt:
@@ -117,7 +118,8 @@ class PromptBuilder:
                     "分析以下群聊对话并生成JSON格式的记忆:\n{conversation}\n\n"
                     "输出格式:\n"
                     '{"summary": "摘要", "topics": ["主题"], "key_facts": ["事实"], '
-                    '"participants": ["参与者"], "sentiment": "neutral", "importance": 0.5}\n'
+                    '"participants": ["参与者"], "entities": [], "fact_bindings": [], '
+                    '"sentiment": "neutral", "importance": 0.5}\n'
                 )
 
     @staticmethod

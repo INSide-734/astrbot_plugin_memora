@@ -30,7 +30,7 @@ from ..graph.infrastructure.graph_store import GraphStore
 from ..infrastructure.atom_store import AtomStore
 from ..infrastructure.base import apply_perf_pragmas
 from .atom_lifecycle_manager import AtomLifecycleManager
-from .graph_memory_manager import GraphMemoryManager
+from .graph_memory_manager import GraphMemoryManager, GraphSourceIneligibleError
 from .schema_migration import SchemaMigrationCoordinator
 from .write_coordinator import ConnectionRegistry
 
@@ -210,9 +210,7 @@ class MemoryEngineLifecycleMixin:
         self.hybrid_retriever = HybridRetriever(
             self.bm25_retriever, self.vector_retriever, self.rrf_fusion, self.config
         )
-        if self.graph_enabled and self.graph_vector_db is not None:
-            self.graph_store = GraphStore(self.db_path)
-            await self.graph_store.initialize()
+        if self.graph_enabled:
             self.atom_store = AtomStore(self.db_path, self.config)
             await self.atom_store.initialize()
             if self.atom_enabled:
@@ -227,6 +225,11 @@ class MemoryEngineLifecycleMixin:
                     text_processor=self.text_processor,
                 )
                 await self.atom_lifecycle_manager.start()
+            self._write_journal._atom_store = self.atom_store
+
+        if self.graph_runtime_enabled and self.graph_vector_db is not None:
+            self.graph_store = GraphStore(self.db_path)
+            await self.graph_store.initialize()
             self.graph_extractor = GraphExtractor(self.config)
             from ..infrastructure.hierarchy_store import EntityHierarchyStore
 
@@ -259,7 +262,6 @@ class MemoryEngineLifecycleMixin:
                 ),
             )
             self._write_journal._graph_memory_manager = self.graph_memory_manager
-            self._write_journal._atom_store = self.atom_store
             self._maintenance._graph_memory_manager = self.graph_memory_manager
             self._maintenance._graph_store = self.graph_store
 
@@ -478,8 +480,9 @@ class MemoryEngineLifecycleMixin:
 
             self.memory_exporter = MemoryExporter(get_all_memories_cb=_get_all_memories)
 
-        # DualRouteRetriever（需在 v2.5 组件之后创建，以传入依赖）
-        if self.graph_enabled and self.graph_vector_db is not None:
+        # DualRouteRetriever（需在 v2.5 子系统之后创建，以传入依赖）。
+        # 图路不可用时传入 None，保留文档、Atom、重排和派生增强基线。
+        if self.graph_enabled:
             from ...retrieval.evidence_scorer import RetrievalEvidenceScorer
 
             self.dual_route_retriever = DualRouteRetriever(
@@ -521,7 +524,7 @@ class MemoryEngineLifecycleMixin:
 
         if not self._document_storage_engine_ready(self.faiss_db):
             raise RuntimeError(_CANONICAL_DOCUMENT_STORAGE_NOT_READY)
-        if self.graph_enabled and not self._document_storage_engine_ready(
+        if self.graph_runtime_enabled and not self._document_storage_engine_ready(
             self.graph_vector_db
         ):
             raise RuntimeError(_GRAPH_DOCUMENT_STORAGE_NOT_READY)
@@ -686,5 +689,10 @@ class MemoryEngineLifecycleMixin:
         content = str(memory.get("text") or memory.get("content") or "")
         if not content.strip():
             return False
-        await graph_manager.index_memory(memory_id, content, metadata)
+        try:
+            await graph_manager.index_memory(memory_id, content, metadata)
+        except asyncio.CancelledError:
+            raise
+        except GraphSourceIneligibleError:
+            return True
         return True

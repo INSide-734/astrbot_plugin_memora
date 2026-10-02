@@ -120,6 +120,11 @@ def extract_graph_from_atoms(
 ) -> ExtractedGraph:
     """基于独立记忆原子构图，并从父记忆恢复实体角色。
 
+    ``MemoryAtom.entities`` 是父记忆全部 topics+participants 的并集，并不说明
+    某条事实绑定了哪个实体；因此这里只把实体作为独立节点与 entry 信号，不再
+    生成 entity→fact 永久边。永久关系由调用方按共享 fact 绑定计划补入；时序/
+    因果边以 Atom 自身明确的事件时间/因果关键词为证据，按开关生成。
+
     参数:
         source_memory_id: 原子所属的 canonical memory 标识。
         atoms: 当前记忆持久化的原子列表。
@@ -153,6 +158,7 @@ def extract_graph_from_atoms(
         node_map[node.node_key] = node
         return node.node_key
 
+    entity_entry_keys: set[str] = set()
     for atom in atoms:
         atom_confidence = float(getattr(atom, "confidence", 0.7))
         session_id = getattr(atom, "session_id", None)
@@ -204,39 +210,31 @@ def extract_graph_from_atoms(
             )
         )
 
+        # 实体只作为独立检索信号：同一来源每个实体一条 entry，不与事实组边。
         for entity_key, node_type in entity_nodes:
-            edge_confidence = atom_confidence * 0.9
-            relation_type = "mentioned_in" if node_type == "person" else "describes"
+            if entity_key in entity_entry_keys:
+                continue
+            entity_entry_keys.add(entity_key)
             entity_label = "参与者" if node_type == "person" else "主题"
-            graph.edges.append(
-                GraphEdge(
-                    source_key=entity_key,
-                    target_key=fact_key,
-                    relation_type=relation_type,
-                    source_memory_id=source_memory_id,
-                    confidence=edge_confidence,
-                    metadata={"atom_content": atom.content},
-                )
+            entity_value = node_map[entity_key].value
+            entity_payload = (
+                f"{node_type}|{source_memory_id}|{node_type}|{entity_key}|"
+                f"{entity_value}"
             )
-            edge_payload = (
-                f"edge|{source_memory_id}|{relation_type}|"
-                f"{entity_key}|{fact_key}|{atom.content}"
-            )
-            edge_entry_key = hashlib.sha1(edge_payload.encode("utf-8")).hexdigest()
             graph.entries.append(
                 GraphEntry(
-                    entry_key=edge_entry_key,
+                    entry_key=hashlib.sha1(entity_payload.encode("utf-8")).hexdigest(),
                     source_memory_id=source_memory_id,
                     session_id=session_id,
                     persona_id=persona_id,
-                    entry_type="edge",
-                    content=(f"{entity_label} {entity_key} 关联到事实：{atom.content}"),
+                    entry_type="participant" if node_type == "person" else "topic",
+                    content=f"{entity_label}：{entity_value}",
                     metadata={
                         **entry_metadata,
-                        "graph_confidence": edge_confidence,
+                        "graph_confidence": atom_confidence * 0.9,
                     },
-                    node_keys=[entity_key, fact_key],
-                    relation_type=relation_type,
+                    node_keys=[entity_key],
+                    relation_type="participant" if node_type == "person" else "topic",
                 )
             )
 
@@ -338,6 +336,8 @@ def _extract_temporal_edges(
                     "event_time_a": time_a,
                     "event_time_b": time_b,
                 },
+                evidence_kind="atom_temporal",
+                binding_key=f"temporal:{relation_type}:{key_a}|{key_b}",
             )
         )
         if time_diff > _DURING_WINDOW_SEC:
@@ -354,6 +354,8 @@ def _extract_temporal_edges(
                         "event_time_a": time_a,
                         "event_time_b": time_b,
                     },
+                    evidence_kind="atom_temporal",
+                    binding_key=f"temporal:{TEMPORAL_AFTER}:{key_b}|{key_a}",
                 )
             )
 
@@ -422,6 +424,8 @@ def _extract_causal_edges(
                     confidence=confidence,
                     weight=1.0,
                     metadata=edge_metadata,
+                    evidence_kind="atom_causal",
+                    binding_key=f"causal:{edge_type}:{source_key}|{target_key}",
                 )
             )
 

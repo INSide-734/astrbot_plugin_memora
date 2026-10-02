@@ -65,6 +65,9 @@ class GraphStore(
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 scope_key TEXT, privacy_level TEXT, revision_token TEXT,
+                semantic_edge_id INTEGER,
+                evidence_kind TEXT,
+                binding_key TEXT,
                 UNIQUE(source_memory_id, source_node_id, target_node_id,
                        relation_type, scope_key, privacy_level, revision_token),
                 FOREIGN KEY(source_node_id) REFERENCES graph_nodes(id) ON DELETE CASCADE,
@@ -131,6 +134,38 @@ class GraphStore(
                               OR NEW.revision_token IS NULL OR trim(NEW.revision_token) = ''
                             BEGIN SELECT RAISE(ABORT, 'graph_boundary_required'); END"""
                         )
+                # graph_edges 行是「某来源对某语义边」的 evidence；语义边本体按
+                # scope/privacy + 端点 node_key + 关系类型唯一，跨来源、跨 revision
+                # 共享。旧库缺少 evidence 列时增量补列，旧行 semantic_edge_id 为
+                # NULL，读取路径不把它们当作有效关系，等待重建写入新 evidence。
+                cursor = await db.execute("PRAGMA table_info(graph_edges)")
+                edge_columns = {str(row[1]) for row in await cursor.fetchall()}
+                for column, ddl in (
+                    ("semantic_edge_id", "INTEGER"),
+                    ("evidence_kind", "TEXT"),
+                    ("binding_key", "TEXT"),
+                ):
+                    if column not in edge_columns:
+                        await db.execute(
+                            f"ALTER TABLE graph_edges ADD COLUMN {column} {ddl}"
+                        )
+                await db.execute(
+                    """CREATE TABLE IF NOT EXISTS graph_semantic_edges (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        semantic_key TEXT NOT NULL,
+                        scope_key TEXT NOT NULL,
+                        privacy_level TEXT NOT NULL,
+                        source_node_key TEXT NOT NULL,
+                        target_node_key TEXT NOT NULL,
+                        relation_type TEXT NOT NULL,
+                        weight REAL NOT NULL DEFAULT 1.0,
+                        confidence REAL NOT NULL DEFAULT 0.8,
+                        status TEXT NOT NULL DEFAULT 'active',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        UNIQUE(scope_key, privacy_level, semantic_key)
+                    )"""
+                )
                 await db.execute(
                     """CREATE TABLE IF NOT EXISTS graph_entry_nodes (
                         entry_id INTEGER NOT NULL, node_id INTEGER NOT NULL,
@@ -146,6 +181,7 @@ class GraphStore(
                 indexes = {
                     "idx_graph_nodes_canonical": "graph_nodes(canonical_value)",
                     "idx_graph_edges_memory_id": "graph_edges(source_memory_id, scope_key, privacy_level, revision_token)",
+                    "idx_graph_edges_semantic": "graph_edges(semantic_edge_id)",
                     "idx_graph_entries_memory_id": "graph_entries(source_memory_id, scope_key, privacy_level, revision_token)",
                     "idx_graph_entries_scope_latest": "graph_entries(session_id, persona_id, source_memory_id, id DESC)",
                     "idx_graph_entries_session_id": "graph_entries(session_id)",
@@ -176,7 +212,11 @@ class GraphStore(
         metadata = dict(self._from_json(row[1]))
         revision = memory_revision({"created_at": row[2], "updated_at": row[3]})
         metadata["revision_token"] = revision
-        GraphBoundary.from_metadata(metadata)
+        try:
+            GraphBoundary.from_metadata(metadata)
+        except ValueError as error:
+            # canonical 边界已失效：来源不可派生，由调用方按来源级清理处理。
+            raise ValueError("graph_source_boundary_invalid") from error
         return str(row[0]), metadata
 
     async def replace_memory_graph(
@@ -190,8 +230,10 @@ class GraphStore(
     ) -> GraphReplaceResult:
         """在一个 SQLite 事务中替换源记忆的全部结构化图产物。
 
-        事务内先按 canonical 源记忆回收全部 revision 与 legacy 行，
-        再写入新边界产物，避免旧 revision 残留。
+        事务内先按 canonical 源记忆回收该来源全部 revision 与 legacy 的 entry
+        和 edge evidence，再写入新边界产物；共享语义边只在事务末尾按 evidence
+        重新汇总：仍被其他来源（或本次新 evidence）支持的语义边保留同一 ID，
+        最后一条 evidence 消失时才回收。其他来源的 evidence 不受影响。
         """
         GraphBoundary.require(boundary)
         if any(
@@ -202,7 +244,12 @@ class GraphStore(
         async with self._connect() as db:
             await db.execute("BEGIN IMMEDIATE")
             try:
-                await self._delete_memories_rows(db, [source_memory_id])
+                affected_semantic_ids: set[int] = set()
+                await self._delete_memories_rows(
+                    db,
+                    [source_memory_id],
+                    affected_semantic_ids=affected_semantic_ids,
+                )
                 node_key_to_id = await self._upsert_nodes(
                     db, nodes, now, boundary=boundary
                 )
@@ -221,6 +268,7 @@ class GraphStore(
                     now,
                     boundary=boundary,
                 )
+                await self._refresh_semantic_edges(db, affected_semantic_ids, now)
                 await self._delete_orphan_nodes(db)
                 await db.commit()
                 return GraphReplaceResult(entry_ids=entry_ids)
@@ -268,10 +316,21 @@ class GraphStore(
         )
 
     async def get_memory_entry_stats(self) -> dict[str, int]:
-        """返回图存储计数，用于状态报告。"""
+        """返回图存储计数，用于状态报告。
+
+        ``graph_edges`` 统计仍有有效 evidence 的语义边：多来源共享的一条关系只
+        计一次，没有 evidence 的 legacy 边行不计入。
+        """
         async with self._connect() as db:
             node_cursor = await db.execute("SELECT COUNT(*) FROM graph_nodes")
-            edge_cursor = await db.execute("SELECT COUNT(*) FROM graph_edges")
+            edge_cursor = await db.execute(
+                """SELECT COUNT(*) FROM graph_semantic_edges semantic
+                WHERE semantic.status = 'active' AND EXISTS (
+                    SELECT 1 FROM graph_edges evidence
+                    WHERE evidence.semantic_edge_id = semantic.id
+                      AND evidence.status = 'active'
+                )"""
+            )
             entry_cursor = await db.execute("SELECT COUNT(*) FROM graph_entries")
             node_count_row = await node_cursor.fetchone()
             edge_count_row = await edge_cursor.fetchone()

@@ -9,6 +9,9 @@ from unittest.mock import AsyncMock, MagicMock
 import aiosqlite
 import pytest
 
+from core.features.memory.application.graph_memory_manager import (
+    GraphSourceIneligibleError,
+)
 from core.features.memory.infrastructure.schema_manager import SchemaManager
 from core.features.memory.infrastructure.write_op_journal import WriteOpJournal
 from core.features.memory.infrastructure.write_op_repair import ledger_content_digest
@@ -747,6 +750,49 @@ class TestWriteOpRepairAddIntegration:
             assert row is not None
             assert row["status"] == "completed"
             assert row["step"] == "completed"
+
+    async def test_repair_graph_reindex_ineligible_source_skips_completed(
+        self, tmp_db_path: str
+    ) -> None:
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            existing_doc = {
+                "id": 42,
+                "text": "archived graph source",
+                "metadata": {"memory_status": "archived"},
+            }
+            mock_graph = MagicMock()
+            mock_graph.index_memory = AsyncMock(
+                side_effect=GraphSourceIneligibleError("graph_source_not_recallable")
+            )
+            journal = WriteOpJournal(
+                db_connection=db,
+                graph_memory_manager=mock_graph,
+                atom_store=None,
+                get_memory_cb=AsyncMock(return_value=existing_doc),
+            )
+            await _create_test_schema(db, journal)
+            op_id = await journal.start_op("graph_reindex", memory_id=42)
+            await db.execute(
+                "UPDATE memory_write_ops SET status='needs_repair', "
+                "step='graph_reindex_failed' WHERE id = ?",
+                (op_id,),
+            )
+            await db.commit()
+
+            assert await journal.repair_incomplete() == 1
+            row = await (
+                await db.execute(
+                    "SELECT status, step, error, payload "
+                    "FROM memory_write_ops WHERE id = ?",
+                    (op_id,),
+                )
+            ).fetchone()
+            assert row is not None
+            assert tuple(row[:3]) == ("completed", "completed", None)
+            assert json.loads(row[3])["graph_skipped"] == (
+                "graph_source_not_recallable"
+            )
 
     async def test_repair_graph_reindex_source_missing_fails(
         self,
