@@ -134,7 +134,8 @@ describe("DiagnosticCenter", () => {
 
     render(<DiagnosticCenter showToast={() => undefined} />);
 
-    const unknownStatuses = await screen.findAllByText("Unknown");
+    expect(await screen.findByText("Provider ready")).toBeTruthy();
+    const unknownStatuses = screen.getAllByText("Unknown");
     expect(unknownStatuses.length).toBeGreaterThanOrEqual(7);
     expect(screen.getAllByText("No diagnostic signal is available for this domain.")).toHaveLength(7);
     for (const domain of ["Recall", "Write", "Scheduler", "Index", "Prometheus", "Restore", "Quality"]) {
