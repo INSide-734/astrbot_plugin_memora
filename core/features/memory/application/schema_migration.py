@@ -15,7 +15,7 @@ from typing import Protocol
 from astrbot.api import logger
 
 from ...backup.application import BackupManager
-from ...backup.infrastructure import atomic_write_json
+from ...backup.infrastructure import atomic_write_json, sha256_file
 from ..infrastructure.schema_manager import (
     CURRENT_DB_VERSION,
     SchemaManager,
@@ -80,6 +80,7 @@ class SchemaMigrationCoordinator:
         self.create_backup = bool(create_backup)
         self.backup_manager = backup_manager or BackupManager(str(self.data_dir))
         self._state_path = self.data_dir / _STATE_FILE
+        self._snapshot_verified = False
 
     async def run(
         self,
@@ -120,8 +121,16 @@ class SchemaMigrationCoordinator:
                 require_write_journal=write_journal_create_table_cb is not None,
             )
         except ValueError as exc:
-            reason_code = "schema_version_unsupported"
-            migration_id = f"schema-v{inspection.version}-unsupported"
+            reason_code = (
+                "schema_documents_missing"
+                if str(exc) == "schema_documents_missing"
+                else "schema_version_unsupported"
+            )
+            migration_id = (
+                "schema-missing-documents"
+                if reason_code == "schema_documents_missing"
+                else f"schema-v{inspection.version}-unsupported"
+            )
             self._persist_state(
                 migration_id=migration_id,
                 from_version=inspection.version,
@@ -188,6 +197,22 @@ class SchemaMigrationCoordinator:
                     "pre_migration_backup_failed",
                     stage="failed",
                 ) from exc
+            if not self._snapshot_is_ready(backup_result):
+                self._persist_plan(
+                    plan,
+                    stage="failed",
+                    reason_code="pre_migration_backup_failed",
+                )
+                logger.error(
+                    "Schema 迁移前快照未发布 ready: migration_id=%s reason_code=%s",
+                    plan.migration_id,
+                    "pre_migration_backup_failed",
+                )
+                raise SchemaMigrationError(
+                    "pre_migration_backup_failed",
+                    stage="failed",
+                )
+            self._snapshot_verified = True
 
         self._persist_plan(
             plan,
@@ -238,6 +263,7 @@ class SchemaMigrationCoordinator:
             "stage",
             "reason_code",
             "canonical_count",
+            "snapshot_ready",
             "columns_added",
             "tables_added",
             "indexes_added",
@@ -306,6 +332,85 @@ class SchemaMigrationCoordinator:
             "schema_migration_rolled_back",
             stage="rolled_back",
         ) from cause
+
+    def _snapshot_is_ready(self, backup_result: dict[str, object] | None) -> bool:
+        """校验快照确实发布为 ready 且带可回滚的 canonical 成员证据。
+
+        只读 ``backup_result['status']`` 不足以作为迁移回滚基线：任何返回
+        ``ready`` 但目录不存在、目录不在 ``<data_dir>/backups`` 之下、清单
+        缺失/非 v2、缺 canonical 成员或其 size/digest/quick_check 与清单不
+        一致的快照都必须在首条 DDL/DML 前被拒绝。复用既有 sha256 工具，不
+        另建校验实现。
+        """
+
+        if not isinstance(backup_result, dict):
+            return False
+        if backup_result.get("status") != "ready":
+            return False
+        directory = str(backup_result.get("directory") or "")
+        if not directory:
+            return False
+        backup_directory = Path(directory)
+        backups_root = (self.data_dir / "backups").resolve()
+        try:
+            if backup_directory.is_symlink() or not backup_directory.is_dir():
+                return False
+            resolved_directory = backup_directory.resolve()
+            if resolved_directory.parent != backups_root:
+                return False
+        except OSError:
+            return False
+        manifest_path = backup_directory / "backup_info.json"
+        try:
+            if manifest_path.is_symlink() or not manifest_path.is_file():
+                return False
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        if not isinstance(manifest, dict):
+            return False
+        if manifest.get("manifest_version") != 2 or manifest.get("status") != "ready":
+            return False
+        files = manifest.get("files")
+        if not isinstance(files, dict):
+            return False
+        member = files.get(self.db_path.name)
+        if not isinstance(member, dict):
+            return False
+        if (
+            str(member.get("role", "")) != "canonical"
+            or str(member.get("kind", "")) != "sqlite"
+        ):
+            return False
+        source = backup_directory / self.db_path.name
+        try:
+            if source.is_symlink() or not source.is_file():
+                return False
+            if source.resolve().parent != resolved_directory:
+                return False
+            if source.stat().st_size != int(member.get("size_bytes", -1)):
+                return False
+            if sha256_file(source) != str(member.get("sha256", "")):
+                return False
+            quick_check = str(member.get("quick_check", ""))
+            if quick_check.lower() != "ok":
+                return False
+            return self._snapshot_quick_check(source)
+        except (OSError, TypeError, ValueError, sqlite3.DatabaseError):
+            return False
+
+    @staticmethod
+    def _snapshot_quick_check(db_path: Path) -> bool:
+        """只读确认快照自身仍是完整 SQLite；打开失败一律按不可用处理。"""
+        connection = sqlite3.connect(
+            f"{db_path.resolve().as_uri()}?mode=ro",
+            uri=True,
+        )
+        try:
+            result = str(connection.execute("PRAGMA quick_check").fetchone()[0])
+        finally:
+            connection.close()
+        return result.lower() == "ok"
 
     def _restore_canonical_snapshot(
         self,
@@ -463,6 +568,7 @@ class SchemaMigrationCoordinator:
                 "stage": stage,
                 "reason_code": reason_code,
                 "canonical_count": int(canonical_count),
+                "snapshot_ready": bool(self._snapshot_verified),
                 "columns_added": int(columns_added),
                 "tables_added": int(tables_added),
                 "indexes_added": int(indexes_added),

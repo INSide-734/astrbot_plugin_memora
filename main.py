@@ -329,7 +329,6 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                     ),
                 )
                 return
-            self._backup_manager.mark_restore_succeeded()
             self._inject_delegation_services()
             self.feature_delegation.log_status()
             observability.report_debug_event(
@@ -467,6 +466,12 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 return False
 
             publish_runtime_handlers(self)
+            # 恢复成功的唯一确认点：runtime 首次成功发布之后。此位置
+            # 必经且只经一次——两条提前 return 都意味着上一次调用已完成
+            # 发布与确认。Provider 后台重试就绪的路径不经过
+            # _initialize_plugin，确认放这里才能同时覆盖两条初始化路径。
+            if self._restore_confirmation_pending():
+                self._backup_manager.mark_restore_succeeded()
 
         observability.report_debug_event(
             "plugin_initialized",
@@ -481,6 +486,40 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
             ),
         )
         return True
+
+    def _restore_confirmation_pending(self) -> bool:
+        """判断是否存在等待 runtime 确认成功的已安装恢复事务。
+
+        只有恢复 owner 报告 ``validating``（文件已安装并通过跨库校验），
+        且发布门结论允许成功（非 required 场景，或 required 派生重建已
+        成功）时才确认。required 判定与构造期同源——读取初始化器保留的
+        ``catalog_maintenance_result``，不在 main 二次推导可变状态。
+
+        ``publish_gate_required`` 必须是真正的布尔值：畸形或半写的门结论
+        （缺字段、``None``、字符串）一律不确认，避免把未证明的发布状态
+        当成允许成功。
+        """
+
+        getter = getattr(self._backup_manager, "get_restore_status", None)
+        if not callable(getter):
+            return False
+        try:
+            status = getter()
+        except Exception:
+            logger.error("恢复状态读取失败，不标记恢复成功")
+            return False
+        if not (
+            isinstance(status, dict) and status.get("restore_status") == "validating"
+        ):
+            return False
+        gate = self.initializer.catalog_maintenance_result
+        if not isinstance(gate, dict):
+            # 发布门结论缺失按 required 处理，不确认。
+            return False
+        required = gate.get("publish_gate_required")
+        if required is False:
+            return True
+        return required is True and gate.get("derived_rebuild_success") is True
 
     def _inject_delegation_services(self) -> None:
         """将 MemoryEngine / KnowledgeManager 注入 FeatureDelegation。

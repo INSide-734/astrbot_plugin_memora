@@ -86,6 +86,7 @@ class RestorePlan:
     reason_code: str | None = None
     reload_scheduled: bool = False
     requires_manual_restart: bool = False
+    conversation_evidence: dict[str, object] | None = None
 
 
 __all__ = [

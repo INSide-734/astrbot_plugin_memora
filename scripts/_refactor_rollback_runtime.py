@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import shutil
 import sqlite3
 import sys
@@ -100,6 +101,38 @@ def _create_legacy_database(path: Path) -> None:
         connection.commit()
 
 
+def _write_stale_canonical(path: Path) -> None:
+    """写入一份数量不同于 live 计划的 v7 canonical，用作不可用回滚基线。"""
+
+    with closing(sqlite3.connect(path)) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE documents (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                text TEXT NOT NULL,
+                metadata TEXT DEFAULT '{}'
+            );
+            CREATE TABLE db_version (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL,
+                description TEXT,
+                migrated_at TEXT NOT NULL,
+                migration_duration_seconds REAL
+            );
+            INSERT INTO db_version (
+                version,description,migrated_at,migration_duration_seconds
+            ) VALUES (7,'stale-baseline','2026-01-01T00:00:00+00:00',0.0);
+            INSERT INTO documents (id,text,metadata) VALUES
+                (31,'stale row one','{}'),
+                (32,'stale row two','{}'),
+                (33,'stale row three','{}'),
+                (34,'stale row four','{}'),
+                (35,'stale row five','{}');
+            """
+        )
+        connection.commit()
+
+
 def _legacy_snapshot(path: Path) -> tuple[int, int, tuple[str, ...]]:
     """读取迁移恢复后的数量、版本和 documents 列。"""
 
@@ -140,6 +173,38 @@ class _FailAfterFirstAlter:
         return getattr(self._connection, name)
 
 
+def _publish_manifest_snapshot(source: Path, directory: Path) -> None:
+    """用生产 snapshot_sqlite 与真实 v2 清单发布一份迁移前快照。
+
+    迁移前快照已收紧为「必须有可验证清单证据」：只返回 ``status=ready``
+    而目录或清单不可验证会在首条 DDL 前被发布门拒绝。因此本 harness 生成
+    与生产同形的快照，再由各用例决定该内容能否作为回滚基线。
+    """
+
+    from core.features.backup.infrastructure import snapshot_sqlite
+
+    directory.mkdir(parents=True, exist_ok=False)
+    snapshot = snapshot_sqlite(source, directory / "memora.db")
+    (directory / "backup_info.json").write_text(
+        json.dumps(
+            {
+                "manifest_version": 2,
+                "status": "ready",
+                "files": {
+                    "memora.db": {
+                        "role": "canonical",
+                        "kind": "sqlite",
+                        "size_bytes": snapshot.size_bytes,
+                        "sha256": snapshot.sha256,
+                        "quick_check": snapshot.quick_check,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
 class _SnapshotBackup:
     """使用生产 snapshot_sqlite 创建协调器可恢复的快照。"""
 
@@ -151,35 +216,45 @@ class _SnapshotBackup:
     async def create_backup(self, kind: str = "manual") -> dict[str, object]:
         """创建严格位于隔离 data/backups 下的迁移快照。"""
 
-        from core.features.backup.infrastructure import snapshot_sqlite
-
         if kind != "pre_migration":
             raise ValueError("unexpected_backup_kind")
         directory = self.data_dir / "backups" / "pre_migration_evidence"
-        directory.mkdir(parents=True, exist_ok=False)
-        await asyncio.to_thread(
-            snapshot_sqlite,
-            self.database,
-            directory / self.database.name,
-        )
+        await asyncio.to_thread(_publish_manifest_snapshot, self.database, directory)
         self.created = True
-        return {"name": directory.name, "directory": str(directory)}
+        return {
+            "name": directory.name,
+            "directory": str(directory),
+            "status": "ready",
+        }
 
 
-class _MissingBackup:
-    """返回不存在的合法形状路径以验证恢复失败的 blocked 边界。"""
+class _UnusableBaselineBackup:
+    """发布清单合法的快照，但基线内容与迁移计划不符以触发恢复失败。
+
+    返回不存在的目录会在首条 DDL 前就被发布门拒绝，走不到恢复分支；因此
+    这里用另一份数量不同的 canonical 生成合法快照，让协调器进入真实
+    「恢复失败 → blocked」路径。
+    """
 
     def __init__(self, data_dir: Path) -> None:
         self.data_dir = data_dir
         self.created = False
 
     async def create_backup(self, kind: str = "manual") -> dict[str, object]:
-        """记录备份阶段已执行，但让恢复源验证 fail-closed。"""
+        """创建清单合法但无法作为回滚基线的迁移快照。"""
 
         if kind != "pre_migration":
             raise ValueError("unexpected_backup_kind")
-        directory = self.data_dir / "backups" / "missing_evidence"
-        return {"name": directory.name, "directory": str(directory)}
+        stale_path = self.data_dir / "stale-memora.db"
+        await asyncio.to_thread(_write_stale_canonical, stale_path)
+        directory = self.data_dir / "backups" / "unusable_baseline"
+        await asyncio.to_thread(_publish_manifest_snapshot, stale_path, directory)
+        self.created = True
+        return {
+            "name": directory.name,
+            "directory": str(directory),
+            "status": "ready",
+        }
 
 
 async def _run_migration_case(
@@ -206,7 +281,9 @@ async def _run_migration_case(
     failing = _FailAfterFirstAlter(connection)
     manager = SchemaManager(cast(aiosqlite.Connection, failing))
     backup: Any = (
-        _MissingBackup(root) if restore_fails else _SnapshotBackup(database, root)
+        _UnusableBaselineBackup(root)
+        if restore_fails
+        else _SnapshotBackup(database, root)
     )
     coordinator = SchemaMigrationCoordinator(
         manager,

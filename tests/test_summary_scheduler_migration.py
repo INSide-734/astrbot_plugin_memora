@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +13,7 @@ from core.features.conversation.infrastructure.conversation_store import (
 )
 from core.features.conversation.infrastructure.summary_schema import (
     SUMMARY_SCHEMA_VERSION,
+    inspect_conversation_database,
 )
 from core.features.quality.application.gate_runtime import (
     default_gate_snapshot,
@@ -157,6 +159,54 @@ async def test_migration_preserves_legacy_summary_cursor(tmp_db_path: str) -> No
         assert [(row[0], row[1]) for row in await cursor.fetchall()] == [(2, 4)]
     finally:
         await store.close()
+
+
+@pytest.mark.asyncio
+async def test_conversation_migration_exposes_safe_schema_and_epoch_summary(
+    tmp_db_path: str,
+) -> None:
+    """会话迁移后的安全汇总只暴露聚合计数，不含会话身份。"""
+    _legacy_database(tmp_db_path, {})
+    store = ConversationStore(tmp_db_path)
+    await store.initialize()
+    await store.close()
+
+    evidence = inspect_conversation_database(Path(tmp_db_path))
+
+    assert evidence["integrity"] == "verified"
+    assert evidence["schema_version"] == SUMMARY_SCHEMA_VERSION
+    assert evidence["migration_id"] == "summary_schema_v7_merged_ledger"
+    assert evidence["session_count"] == 1
+    assert evidence["message_count"] == 4
+    assert evidence["epoch_count"] == 1
+    assert evidence["job_count"] == 0
+    assert "legacy" not in json.dumps(evidence, ensure_ascii=False)
+
+
+@pytest.mark.asyncio
+async def test_future_conversation_schema_version_fails_with_stable_reason(
+    tmp_db_path: str,
+) -> None:
+    """未知高版本保持原样并以稳定 reason code 阻断初始化。"""
+    with sqlite3.connect(tmp_db_path) as connection:
+        connection.execute(f"PRAGMA user_version={SUMMARY_SCHEMA_VERSION + 1}")
+    store = ConversationStore(tmp_db_path)
+
+    with pytest.raises(RuntimeError, match="summary_schema_version_unsupported"):
+        await store.initialize()
+
+    assert store.connection is None
+    with sqlite3.connect(tmp_db_path) as connection:
+        assert (
+            connection.execute("PRAGMA user_version").fetchone()[0]
+            == SUMMARY_SCHEMA_VERSION + 1
+        )
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'"
+            ).fetchone()
+            is None
+        )
 
 
 @pytest.mark.asyncio
