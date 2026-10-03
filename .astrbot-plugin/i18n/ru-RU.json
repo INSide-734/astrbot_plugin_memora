@@ -1291,7 +1291,64 @@
           "annotatedLatency": "Аннотированная задержка",
           "reportedLatency": "Заявленная задержка"
         },
-        "miss": "промах"
+        "miss": "промах",
+        "qualityLoop": {
+          "title": "Цикл качества",
+          "manifest": "Замороженный манифест",
+          "seed": "Сид",
+          "pairs": "Парное слепое тестирование",
+          "shouldUseHit": "Попадание «следует использовать»",
+          "shouldSilenceCorrect": "Корректность «следует промолчать»",
+          "totalPairs": "Пары",
+          "rejected": "Отклонённые пары",
+          "pairCount": "Пары отпечатков",
+          "noManifest": "Манифест не создан (нет валидных пар)",
+          "unmeasured": "Не измерено",
+          "stage": {
+            "write": "Запись",
+            "source": "Источник",
+            "recall": "Припоминание",
+            "injection": "Инъекция",
+            "lifecycle": "Жизненный цикл",
+            "expression": "Выражение"
+          },
+          "state": {
+            "available": "Доступно",
+            "degraded": "Деградация",
+            "unavailable": "Недоступно"
+          },
+          "reason": {
+            "ok": "Норма",
+            "no_annotation": "Нет аннотированных данных",
+            "no_paired_fixture": "Нет парных фикстур",
+            "engine_missing": "Отсутствует движок оценки",
+            "retrieval_failed": "Ошибка поиска",
+            "injection_port_missing": "Отсутствует порт инъекции",
+            "lifecycle_port_missing": "Отсутствует порт жизненного цикла",
+            "privacy_canary_failed": "Сбой канарейки приватности",
+            "pair_incomplete": "Неполная пара",
+            "pair_duplicate": "Дубликат пары",
+            "context_key_missing": "Отсутствует ключ контекста",
+            "db_snapshot_unavailable": "Снимок БД недоступен",
+            "hmac_secret_unavailable": "Ключ HMAC цикла качества недоступен"
+          },
+          "metric": {
+            "write_fact_correctness": "Корректность записанных фактов",
+            "source_faithfulness": "Достоверность источника",
+            "source_evidence_completeness": "Полнота доказательств источника",
+            "candidate_hit_rate": "Попадание кандидатов",
+            "final_injected_hit_rate": "Попадание финальной инъекции",
+            "negative_injection_rate": "Доля негативных инъекций",
+            "configured_budget_chars": "Заданный бюджет символов",
+            "effective_budget_chars": "Фактический бюджет символов",
+            "retrieved_count": "Количество извлечений",
+            "injected_count": "Количество инъекций",
+            "observed_p50_latency_ms": "Измеренная задержка p50",
+            "observed_p95_latency_ms": "Измеренная задержка p95",
+            "annotated_answer_faithfulness": "Аннотированная достоверность ответа",
+            "annotated_answer_relevancy": "Аннотированная релевантность ответа"
+          }
+        }
       },
       "reconsolidation": {
         "title": "Кандидаты реконсолидирования",

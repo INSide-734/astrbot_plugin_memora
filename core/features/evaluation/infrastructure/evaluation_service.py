@@ -6,10 +6,18 @@ import asyncio
 import hashlib
 import inspect
 import json
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from ...backup.infrastructure.snapshot import snapshot_sqlite
+from ..application.quality_loop import (
+    QualityLoopPairError,
+    build_quality_loop_pairs,
+    check_quality_loop_payload_privacy,
+    run_quality_loop,
+)
 from ..application.retrieval_ablation import (
     RETRIEVAL_VARIANT_NAMES,
     PreparedVariant,
@@ -21,6 +29,20 @@ from ..application.retrieval_quality import (
     evaluate_cases,
     load_fixture_dir,
     make_memory_engine_retriever,
+)
+from ..domain.quality_loop_stages import (
+    REASON_CANARY,
+    REASON_ENGINE_MISSING,
+    REASON_HMAC_SECRET_UNAVAILABLE,
+    REASON_INJECTION_PORT_MISSING,
+    REASON_LIFECYCLE_PORT_MISSING,
+    REASON_NO_ANNOTATION,
+    REASON_RETRIEVAL_FAILED,
+    REASON_SNAPSHOT_UNAVAILABLE,
+    STAGE_DEGRADED,
+    STAGE_UNAVAILABLE,
+    make_stage_read,
+    stage_read_to_payload,
 )
 from .report_store import EvaluationReportStore
 
@@ -46,6 +68,8 @@ class EvaluationService:
         fixture_dir: str | Path = "tests/fixtures/retrieval",
         db_path: str | Path | None = None,
         include_experimental_datasets: bool = False,
+        lifecycle_port: Any | None = None,
+        quality_loop_secret: bytes | None = None,
     ) -> None:
         """装配评测引擎、夹具目录和可选报告存储。"""
 
@@ -53,6 +77,8 @@ class EvaluationService:
         self.fixture_dir = Path(fixture_dir)
         self.store = EvaluationReportStore(db_path) if db_path else None
         self.include_experimental_datasets = include_experimental_datasets
+        self.lifecycle_port = lifecycle_port
+        self.quality_loop_secret = quality_loop_secret
 
     async def initialize(self) -> None:
         """配置报告存储时初始化持久化。"""
@@ -97,6 +123,8 @@ class EvaluationService:
         baseline: str | None,
         save_report: bool,
         runtime_datasets: Mapping[str, Sequence[EvaluationCase]] | None = None,
+        quality_loop: Mapping[str, Any] | None = None,
+        quality_loop_seed: int = 0,
     ) -> dict[str, Any]:
         """评测文件或运行时数据集，并按需持久化安全报告。"""
         safe_k = self._clamp_k(k)
@@ -117,12 +145,15 @@ class EvaluationService:
         completed_reports: dict[str, EvaluationReport] = {}
         variants_payload: dict[str, dict[str, Any]] = {}
         controller = RetrievalAblationController(self.engine)
+        baseline_engine: Any | None = None
 
         for variant_name in requested_variants:
             prepared = controller.prepare(variant_name)
             if not prepared.available or prepared.engine is None:
                 variants_payload[variant_name] = self._variant_skipped_payload(prepared)
                 continue
+            if variant_name == baseline_name:
+                baseline_engine = prepared.engine
             try:
                 await self._clear_evaluation_caches(prepared.engine)
                 report = await evaluate_cases(
@@ -157,7 +188,7 @@ class EvaluationService:
                 await self._clear_evaluation_caches(prepared.engine)
 
         if baseline_name not in completed_reports:
-            return {
+            unavailable_result = {
                 "status": "error",
                 "message": "Baseline variant unavailable",
                 "baseline": baseline_name,
@@ -167,6 +198,16 @@ class EvaluationService:
                 "report_id": None,
                 "saved": False,
             }
+            if quality_loop is not None:
+                unavailable_result[
+                    "quality_loop"
+                ] = await self._run_quality_loop_safely(
+                    cases,
+                    k=safe_k,
+                    seed=quality_loop_seed,
+                    engine=None,
+                )
+            return unavailable_result
 
         baseline_report = completed_reports[baseline_name]
         summary = self._report_summary(baseline_report)
@@ -183,6 +224,13 @@ class EvaluationService:
             "deltas": self._variant_deltas(completed_reports, baseline_name),
             "cases": self._report_cases(baseline_report),
         }
+        if quality_loop is not None:
+            report_payload["quality_loop"] = await self._run_quality_loop_safely(
+                cases,
+                k=safe_k,
+                seed=quality_loop_seed,
+                engine=baseline_engine,
+            )
 
         report_id = None
         saved = False
@@ -414,6 +462,270 @@ class EvaluationService:
             default=str,
         ).encode("utf-8")
         return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _schema_hash() -> str:
+        """读取插件 schema 的哈希，不把 schema 正文写入报告。"""
+        schema_path = Path(__file__).resolve().parents[4] / "_conf_schema.json"
+        try:
+            return hashlib.sha256(schema_path.read_bytes()).hexdigest()
+        except (OSError, ValueError):
+            return hashlib.sha256(b"quality-loop-schema-unavailable").hexdigest()
+
+    async def _database_snapshot_hash(self, engine: Any) -> str | None:
+        """在线程池中对 canonical SQLite 做临时 backup snapshot 并返回哈希。"""
+        return await asyncio.to_thread(self._database_snapshot_hash_sync, engine)
+
+    def _database_snapshot_hash_sync(self, engine: Any) -> str | None:
+        """同步执行 SQLite snapshot；调用方不得在事件循环直接调用。"""
+        try:
+            database_path = getattr(engine, "db_path", None)
+            if not isinstance(database_path, (str, Path)):
+                return None
+            with tempfile.TemporaryDirectory(prefix="memora-eval-") as directory:
+                result = snapshot_sqlite(
+                    Path(database_path), Path(directory) / "canonical.db"
+                )
+                return result.sha256
+        except Exception:
+            return None
+
+    @staticmethod
+    def _evaluator_code_revision() -> str:
+        """按质量闭环实现源码计算稳定的低敏代码绑定。"""
+        root = Path(__file__).resolve().parents[4]
+        paths = (
+            root / "core/features/evaluation/application/quality_loop.py",
+            root / "core/features/evaluation/domain/quality_loop_manifest.py",
+            root / "core/features/evaluation/domain/quality_loop_stages.py",
+            root / "core/features/evaluation/infrastructure/evaluation_service.py",
+        )
+        digest = hashlib.sha256()
+        for path in paths:
+            digest.update(path.name.encode("ascii"))
+            try:
+                digest.update(path.read_bytes())
+            except OSError:
+                digest.update(b"quality-loop-source-unavailable")
+        return digest.hexdigest()
+
+    def _provider_identifiers(
+        self, engine: Any
+    ) -> tuple[str | None, str | None, str | None]:
+        """从只读服务配置取得 LLM、Embedding 与 tokenizer 标识。"""
+        config = getattr(engine, "config", {})
+        provider_settings = (
+            config.get("provider_settings", {}) if isinstance(config, Mapping) else {}
+        )
+        if not isinstance(provider_settings, Mapping):
+            provider_settings = {}
+        llm_id = provider_settings.get("llm_provider_id")
+        embedding_id = provider_settings.get("embedding_provider_id")
+        tokenizer_id = provider_settings.get("tokenizer_id")
+        if tokenizer_id is None and isinstance(config, Mapping):
+            tokenizer_id = config.get("tokenizer_id")
+        return (
+            self._manifest_identifier(llm_id),
+            self._manifest_identifier(embedding_id),
+            self._manifest_identifier(tokenizer_id),
+        )
+
+    @staticmethod
+    def _manifest_identifier(value: Any) -> str | None:
+        """将自由格式 provider 标识收敛为短标识或不可逆哈希。"""
+        text = str(value).strip() if value is not None else ""
+        if not text:
+            return None
+        if (
+            len(text) <= 128
+            and text.isascii()
+            and all(char.isalnum() or char in "-_.:" for char in text)
+        ):
+            return text
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _sensitive_config_values(engine: Any) -> tuple[str, ...]:
+        """Collect configured secret values for the final public-payload canary."""
+        found: set[str] = set()
+
+        def visit(value: Any, sensitive_parent: bool = False) -> None:
+            if isinstance(value, Mapping):
+                for key, item in value.items():
+                    key_text = str(key).lower()
+                    marker = any(
+                        part in key_text
+                        for part in ("secret", "password", "key", "credential")
+                    ) or ("token" in key_text and "tokenizer" not in key_text)
+                    visit(item, marker)
+            elif isinstance(value, (list, tuple)):
+                for item in value:
+                    visit(item, sensitive_parent)
+            elif sensitive_parent and isinstance(value, str) and len(value) >= 4:
+                found.add(value)
+
+        config = getattr(engine, "config", {})
+        visit(config)
+        return tuple(sorted(found))
+
+    def _quality_loop_unavailable_payload(
+        self,
+        cases: Sequence[EvaluationCase],
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Return closed-set skipped evidence when quality-loop execution cannot start."""
+        pairs, rejects = build_quality_loop_pairs(cases)
+        pair_reasons: dict[str, int] = {}
+        for reject in rejects:
+            pair_reasons[reject] = pair_reasons.get(reject, 0) + 1
+        owning_stage = {
+            REASON_ENGINE_MISSING: "recall",
+            REASON_RETRIEVAL_FAILED: "recall",
+            REASON_CANARY: "source",
+            REASON_HMAC_SECRET_UNAVAILABLE: "source",
+        }.get(reason, "write")
+        metrics = {
+            "write": {"write_fact_correctness": None},
+            "source": {
+                "source_faithfulness": None,
+                "source_evidence_completeness": None,
+            },
+            "recall": {"candidate_hit_rate": None},
+            "injection": {
+                "final_injected_hit_rate": None,
+                "negative_injection_rate": None,
+                "configured_budget_chars": None,
+                "effective_budget_chars": None,
+            },
+            "lifecycle": {
+                "retrieved_count": None,
+                "injected_count": None,
+                "observed_p50_latency_ms": None,
+                "observed_p95_latency_ms": None,
+            },
+            "expression": {
+                "annotated_answer_faithfulness": None,
+                "annotated_answer_relevancy": None,
+            },
+        }
+        stages = []
+        for stage, stage_metrics in metrics.items():
+            if stage == owning_stage:
+                stage_reason, state = reason, STAGE_UNAVAILABLE
+            elif stage == "injection":
+                stage_reason, state = REASON_INJECTION_PORT_MISSING, STAGE_UNAVAILABLE
+            elif stage == "lifecycle":
+                stage_reason, state = REASON_LIFECYCLE_PORT_MISSING, STAGE_UNAVAILABLE
+            else:
+                stage_reason, state = REASON_NO_ANNOTATION, STAGE_DEGRADED
+            stages.append(
+                stage_read_to_payload(
+                    make_stage_read(
+                        stage,
+                        state=state,
+                        reason=stage_reason,
+                        metrics=stage_metrics,
+                    )
+                )
+            )
+        return {
+            "manifest": None,
+            "stages": stages,
+            "pairs": {
+                "total_pairs": len(pairs),
+                "should_use_hit_rate": None,
+                "should_silence_correct_rate": None,
+                "reject_reason_counts": dict(sorted(pair_reasons.items())),
+            },
+            "pair_outcomes": [],
+        }
+
+    async def _run_quality_loop_safely(
+        self,
+        cases: Sequence[EvaluationCase],
+        *,
+        k: int,
+        seed: int,
+        engine: Any | None = None,
+    ) -> dict[str, Any]:
+        """Run only against the isolated baseline and server-owned bindings."""
+        run_engine = engine
+        if (
+            not isinstance(self.quality_loop_secret, bytes)
+            or len(self.quality_loop_secret) < 32
+        ):
+            return self._quality_loop_unavailable_payload(
+                cases, reason=REASON_HMAC_SECRET_UNAVAILABLE
+            )
+        pairs, _ = build_quality_loop_pairs(cases)
+        if pairs and run_engine is None:
+            return self._quality_loop_unavailable_payload(
+                cases, reason=REASON_ENGINE_MISSING
+            )
+        if not pairs:
+            snapshot_hash = None
+        else:
+            snapshot_hash = await self._database_snapshot_hash(run_engine)
+        if run_engine is None:
+            retriever = None
+            model_id = embedding_id = tokenizer_id = None
+            config_hash = self._configuration_hash(self.engine)
+            extra_forbidden_values: tuple[str, ...] = ()
+        else:
+            retriever = make_memory_engine_retriever(run_engine)
+            model_id, embedding_id, tokenizer_id = self._provider_identifiers(
+                run_engine
+            )
+            config_hash = self._configuration_hash(run_engine)
+            extra_forbidden_values = self._sensitive_config_values(run_engine)
+        try:
+            payload = await run_quality_loop(
+                cases,
+                retriever=retriever,
+                k=k,
+                seed=seed,
+                code_revision=self._evaluator_code_revision(),
+                config_hash=config_hash,
+                schema_hash=self._schema_hash(),
+                context_key_secret=self.quality_loop_secret,
+                model_id=model_id,
+                embedding_id=embedding_id,
+                tokenizer_id=tokenizer_id,
+                db_snapshot_hash=snapshot_hash,
+                lifecycle_port=self.lifecycle_port,
+                additional_forbidden_values=extra_forbidden_values,
+            )
+            if pairs and snapshot_hash is None:
+                for stage in payload["stages"]:
+                    if stage.get("stage") == "source":
+                        stage["state"] = STAGE_DEGRADED
+                        stage["reason"] = REASON_SNAPSHOT_UNAVAILABLE
+                        stage["owning_stage"] = "source"
+                        stage["metrics"] = {
+                            key: None for key in stage.get("metrics", {})
+                        }
+            safe_payload = EvaluationReportStore.safe_quality_loop_payload(payload)
+            if safe_payload is None or not check_quality_loop_payload_privacy(
+                safe_payload,
+                cases,
+                additional_forbidden_values=extra_forbidden_values,
+            ):
+                return self._quality_loop_unavailable_payload(
+                    cases, reason=REASON_CANARY
+                )
+            return safe_payload
+        except asyncio.CancelledError:
+            raise
+        except QualityLoopPairError as error:
+            return self._quality_loop_unavailable_payload(cases, reason=error.code)
+        except Exception:
+            return self._quality_loop_unavailable_payload(
+                cases, reason=REASON_RETRIEVAL_FAILED
+            )
+        finally:
+            if run_engine is not None:
+                await self._clear_evaluation_caches(run_engine)
 
     @classmethod
     def _redact_config(cls, config: Mapping[str, Any]) -> dict[str, Any]:

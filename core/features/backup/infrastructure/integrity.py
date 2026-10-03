@@ -21,6 +21,7 @@ from ..domain import (
 
 FEEDBACK_SIGNAL_DB_NAME = "feedback_signals.db"
 FEEDBACK_HMAC_KEY_NAME = f"{FEEDBACK_SIGNAL_DB_NAME}.hmac.key"
+QUALITY_LOOP_HMAC_KEY_NAME = "evaluation_quality_loop.hmac.key"
 
 _FEEDBACK_HMAC_KEY_BYTES = 32
 _FEEDBACK_HMAC_KEY_MODE = 0o600
@@ -30,6 +31,7 @@ OPERATIONAL_FILE_SPECS: dict[str, tuple[FileRole, str, bool]] = {
     "memory_quarantine.sqlite3": (FileRole.OPERATIONAL, "sqlite", False),
     FEEDBACK_SIGNAL_DB_NAME: (FileRole.OPERATIONAL, "sqlite", False),
     FEEDBACK_HMAC_KEY_NAME: (FileRole.OPERATIONAL, "secret", False),
+    QUALITY_LOOP_HMAC_KEY_NAME: (FileRole.OPERATIONAL, "secret", False),
 }
 OPERATIONAL_BACKUP_PATTERNS = tuple(OPERATIONAL_FILE_SPECS)
 

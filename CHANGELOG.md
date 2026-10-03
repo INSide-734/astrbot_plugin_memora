@@ -14,6 +14,8 @@ Memora 的所有重要变更都记录在此文件中。
 - 新增 `entities` 与 `fact_bindings` 记忆提取契约：每个绑定以 `fact_index`、`target`、`target_type` 明确单条事实与主题、实体或参与者的关系；Prompt、guardrail、逐事实准入、分段、写入及正文更新共同校验、重排或清除。越界、重复、未声明标签或与当前事实不一致的绑定一律丢弃，不按同条记忆中的共现补造关系（#88）。
 - 图派生新增多来源 evidence 平面：同一作用域和隐私边界下相同端点与关系共享一条 semantic edge，每个 canonical 来源及 revision 保留独立 evidence；来源更新、删除或变为不可派生时仅回收自身 evidence，最后一条 evidence 消失后才回收共享关系（#88）。
 
+- 新增可选质量闭环离线评测：冻结代码/配置/schema/fixture/模型、Embedding、tokenizer、随机种子与数据库快照哈希，按写入/来源/召回/注入/生命周期/表达阶段记录可空指标，支持同上下文 `should_use`/`should_silence` 成对盲测及现有评测报告 Store/Dashboard 展示（#94）。
+
 ### 变更
 
 - 注入策略摘要新增窗口内 `retrieved_count` 与 `injected_count`，Dashboard 概览分别展示检索到与实际注入的记忆数量；保留既有载荷/决策字段语义，不创建 `adopted` 字段。测试效应配置仍保留原键名和默认值，但维护说明改为仅在成功 injected 后生效。

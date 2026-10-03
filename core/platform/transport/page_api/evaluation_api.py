@@ -17,6 +17,10 @@ from ....features.evaluation import (
     PreparedEvaluationDataset,
 )
 from ....features.evaluation.infrastructure.evaluation_service import EvaluationService
+from ....features.evaluation.infrastructure.quality_loop_secret import (
+    load_or_create_quality_loop_secret,
+)
+from ....features.evaluation.infrastructure.report_store import EvaluationReportStore
 from ....features.memory.infrastructure.base import apply_perf_pragmas
 from ....shared.sql import MEMORY_STATUS_SQL
 from .response_utils import error_response, ok_response
@@ -124,7 +128,38 @@ class EvaluationApiMixin:
         if engine is None:
             return error_response("MemoryEngine unavailable")
 
-        service = self._build_evaluation_service(engine=engine)
+        quality_loop_request = None
+        if payload.get("quality_loop") is not None:
+            quality_loop_request = self._parse_quality_loop_request(
+                payload.get("quality_loop")
+            )
+            if quality_loop_request is None:
+                return error_response(
+                    "Invalid quality-loop request", code="invalid_request"
+                )
+        quality_loop_seed = 0
+        if quality_loop_request is not None:
+            requested_seed = payload.get("quality_loop_seed", 0)
+            if (
+                isinstance(requested_seed, bool)
+                or not isinstance(requested_seed, int)
+                or requested_seed < 0
+            ):
+                return error_response(
+                    "Invalid quality-loop seed", code="invalid_request"
+                )
+            quality_loop_seed = requested_seed
+        quality_loop_secret = None
+        if quality_loop_request is not None:
+            try:
+                quality_loop_secret = load_or_create_quality_loop_secret(
+                    self._evaluation_data_dir()
+                )
+            except RuntimeError:
+                quality_loop_secret = None
+        service = self._build_evaluation_service(
+            engine=engine, quality_loop_secret=quality_loop_secret
+        )
         try:
             await service.initialize()
             requested_dataset_items = self._payload_list(payload.get("datasets"))
@@ -162,9 +197,28 @@ class EvaluationApiMixin:
                 baseline=str(payload.get("baseline") or "baseline"),
                 save_report=bool(payload.get("save_report", False)),
                 runtime_datasets=runtime_datasets,
+                quality_loop=({} if quality_loop_request is not None else None),
+                quality_loop_seed=quality_loop_seed,
             )
+            if "quality_loop" in result:
+                safe_quality_loop = EvaluationReportStore.safe_quality_loop_payload(
+                    result.get("quality_loop")
+                )
+                if safe_quality_loop is None:
+                    return error_response(
+                        "Quality-loop privacy validation failed",
+                        code="evaluation_run_failed",
+                    )
+                result["quality_loop"] = safe_quality_loop
             if result.get("status") == "error":
-                return error_response(result.get("message") or "执行评测失败")
+                data = (
+                    {"quality_loop": result["quality_loop"]}
+                    if "quality_loop" in result
+                    else None
+                )
+                return error_response(
+                    result.get("message") or "执行评测失败", data=data
+                )
             return ok_response(result)
         except Exception as exc:
             logger.error("[评测接口] 执行评测失败，异常类型=%s", exc.__class__.__name__)
@@ -284,9 +338,11 @@ class EvaluationApiMixin:
         *,
         engine: Any | None = None,
         require_engine: bool = True,
+        quality_loop_secret: bytes | None = None,
     ) -> EvaluationService:
         """使用明确引擎和插件数据目录创建评测服务。"""
-
+        initializer = getattr(self, "plugin", None)
+        initializer = getattr(initializer, "initializer", None)
         if engine is None and require_engine:
             engine = self._get_evaluation_engine()
         return EvaluationService(
@@ -294,20 +350,23 @@ class EvaluationApiMixin:
             fixture_dir=self._evaluation_dataset_dir(),
             db_path=self._evaluation_report_db_path(),
             include_experimental_datasets=True,
+            lifecycle_port=getattr(initializer, "injection_decision_store", None),
+            quality_loop_secret=quality_loop_secret,
         )
 
-    def _evaluation_dataset_dir(self) -> Path:
-        """解析插件隔离的生产评测数据集目录。"""
-
+    def _evaluation_data_dir(self) -> Path:
+        """解析插件隔离的数据目录。"""
         plugin = getattr(self, "plugin", None)
         initializer = getattr(plugin, "initializer", None)
         for owner in (plugin, initializer):
-            if owner is None:
-                continue
-            data_dir = getattr(owner, "data_dir", None)
+            data_dir = getattr(owner, "data_dir", None) if owner is not None else None
             if data_dir:
-                return Path(data_dir) / "evaluation_datasets"
-        return Path("data") / "evaluation_datasets"
+                return Path(data_dir)
+        return Path("data")
+
+    def _evaluation_dataset_dir(self) -> Path:
+        """解析插件隔离的生产评测数据集目录。"""
+        return self._evaluation_data_dir() / "evaluation_datasets"
 
     @staticmethod
     async def _validate_evaluation_references(
@@ -466,6 +525,14 @@ class EvaluationApiMixin:
         except (TypeError, ValueError):
             parsed = 5
         return max(1, min(20, parsed))
+
+    @staticmethod
+    def _parse_quality_loop_request(value: Any) -> dict[str, Any] | None:
+        """Accept only the opt-in object; all embedded binding values are claims."""
+
+        if not isinstance(value, dict):
+            return None
+        return {}
 
     @staticmethod
     def _parse_positive_int(value: Any, *, default: int, maximum: int) -> int:
