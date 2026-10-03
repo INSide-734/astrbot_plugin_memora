@@ -15,6 +15,9 @@
 - `infrastructure/evaluation_service.py`：数据集/变体执行与报告编排。
 - `dataset_repository.py`：生产人工数据集边界和原子保存。
 - `report_store.py`：独立 SQLite 报告及逐用例安全投影。
+- `domain/quality_loop_manifest.py`：冻结重放输入的低敏 manifest、哈希与实际配对校验。
+- `domain/quality_loop_stages.py`：写入/来源/召回/注入/生命周期/表达六阶段的可空指标、状态和责任阶段归因。
+- `application/quality_loop.py`：只读同上下文成对盲测、隐私 canary 与阶段证据组装。
 - 配置灰度审计归属 `core/platform/config/audit.py`（ConfigAuditEntry），评测 feature 不维护第二套审计模型。
 
 ## 主流程
@@ -44,6 +47,10 @@ flowchart LR
 8. 报告 Store 对写入和读取（含旧报告）都重新 sanitize：只保留 case ID、有限指标/reason code，不保存 query、ranked/relevant IDs、身份、scope 或任意 metadata。
 9. fixture 和报告具有隐私风险，只使用匿名合成或授权标注数据；不能把生产对话直接复制到仓库夹具。
 10. 评测结果是观测证据，不是访问控制或自动发布信号。投递 learning 时必须绑定 aggregation/config/evidence/quality gate revision。
+11. 质量闭环只在 `/evaluation/run` 显式提供 `quality_loop` 时执行；它只读取评测用例和只读引擎，不调用 Provider、不修改 live engine/config，也不写回在线策略。
+12. replay manifest 必须绑定 evaluator/code、配置、schema、fixture、模型/Embedding/tokenizer、seed、检索 `k` 和数据库快照哈希；报告/API 只返回哈希、短标识、配对计数和指纹，不返回 query、context key、正文、身份、scope/privacy、revision 或 canonical ID。所有 binding 都从服务端 runner 输入重算，拒绝客户端 manifest 声明覆盖；上下文 HMAC 使用专用持久化 32-byte、0600 sidecar，仅显式质量闭环运行时加载，不复用 `.secret_key`、其他 feature key 或客户端 secret，缺失/损坏时 fail closed。
+13. 阶段状态与指标值分开；缺少分母、输入、端口或标注时使用 `null` 与固定 reason，不以 `0` 伪造测量；每个 reason 必须归属于 `write`、`source`、`recall`、`injection`、`lifecycle`、`expression` 之一。
+14. 成对盲测只接受同一 `context_key` 下恰好一条 `should_use` 与一条 `should_silence`；未声明配对字段的普通用例不计入拒绝，已声明但重复、孤立、单侧缺键或隐私 canary 失败的输入必须稳定拒绝，写读两侧沿用报告 allowlist sanitizer。
 
 ## 依赖方向
 

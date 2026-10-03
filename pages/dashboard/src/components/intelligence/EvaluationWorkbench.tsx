@@ -16,6 +16,7 @@ import type {
 } from "@/types/intelligence";
 
 import { EvaluationCaseTable } from "./EvaluationCaseTable";
+import { QualityLoopCard } from "./QualityLoopCard";
 
 interface EvaluationWorkbenchProps {
   showToast: (msg: string, isError?: boolean) => void;
@@ -298,6 +299,8 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
           variants: selectedVariants,
           baseline: "baseline",
           save_report: true,
+          quality_loop: {},
+          quality_loop_seed: 42,
         },
       });
       const nextReport = unwrapApiData<EvaluationReport>(response);
@@ -594,6 +597,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
               </div>
             )}
 
+            {report.quality_loop ? <QualityLoopCard qualityLoop={report.quality_loop} /> : null}
             <EvaluationCaseTable cases={failedCases} />
           </>
         ) : (

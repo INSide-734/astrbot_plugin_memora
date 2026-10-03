@@ -15,6 +15,9 @@ from typing import Any
 
 import aiosqlite
 
+from ..domain.quality_loop_manifest import sanitize_quality_loop_manifest_summary
+from ..domain.quality_loop_stages import QUALITY_LOOP_STAGE_REASONS
+
 _PERF_PRAGMAS: tuple[str, ...] = (
     "PRAGMA foreign_keys = ON",
     "PRAGMA journal_mode = WAL",
@@ -34,6 +37,7 @@ _SAFE_CASE_NUMERIC_FIELDS: tuple[str, ...] = (
     "annotated_latency_ms",
     "reported_latency_ms",
 )
+
 _SAFE_ADVANCED_METRICS: frozenset[str] = frozenset(
     {
         "multi_hop_recall",
@@ -54,6 +58,28 @@ _SAFE_ADVANCED_METRICS: frozenset[str] = frozenset(
         "reported_token_cost",
     }
 )
+_SAFE_PAIR_OUTCOME_KEYS: frozenset[str] = frozenset(
+    {
+        "context_key_hash",
+        "slot_order",
+        "should_use_case_hash",
+        "should_silence_case_hash",
+        "should_use_hit",
+        "should_silence_correct",
+    }
+)
+
+_QUALITY_LOOP_EXPECTATIONS = frozenset({"should_use", "should_silence"})
+
+
+def _quality_loop_hash(value: Any) -> bool:
+    """校验质量闭环对外载荷中的 SHA-256 指纹。"""
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and value == value.lower()
+        and all(char in "0123456789abcdef" for char in value)
+    )
 
 
 async def _apply_perf_pragmas(conn: aiosqlite.Connection) -> None:
@@ -139,8 +165,16 @@ class EvaluationReportStore:
 
         payload = dict(normalized_report)
         payload.pop("cases", None)
-        summary = self._report_summary(normalized_report)
+        if "quality_loop" in payload:
+            safe_quality_loop = self.safe_quality_loop_payload(
+                payload.get("quality_loop")
+            )
+            if safe_quality_loop is None:
+                payload.pop("quality_loop", None)
+            else:
+                payload["quality_loop"] = safe_quality_loop
 
+        summary = self._report_summary(normalized_report)
         async with self._connect() as db:
             await db.execute(
                 """
@@ -226,6 +260,14 @@ class EvaluationReportStore:
         )
         report["datasets"] = self._from_json(row["datasets_json"])
         report["variants"] = self._from_json(row["variants_json"])
+        if "quality_loop" in report:
+            safe_quality_loop = self.safe_quality_loop_payload(
+                report.get("quality_loop")
+            )
+            if safe_quality_loop is None:
+                report.pop("quality_loop", None)
+            else:
+                report["quality_loop"] = safe_quality_loop
         report["cases"] = [
             self.safe_case_payload(self._from_json(case["payload_json"]))
             for case in case_rows
@@ -433,6 +475,108 @@ class EvaluationReportStore:
             if safe_advanced:
                 payload["advanced_metrics"] = safe_advanced
         return payload
+
+    @classmethod
+    def safe_quality_loop_payload(cls, value: Any) -> dict[str, Any] | None:
+        """把质量闭环载荷收敛到哈希/枚举/标量 allowlist（写读同口径）。"""
+
+        normalized = cls._normalize_json_value(value)
+        if not isinstance(normalized, Mapping):
+            return None
+        sanitized: dict[str, Any] = {}
+
+        manifest_value = normalized.get("manifest")
+        if manifest_value is not None:
+            manifest = sanitize_quality_loop_manifest_summary(manifest_value)
+            if manifest is None:
+                return None
+            sanitized["manifest"] = manifest
+        else:
+            sanitized["manifest"] = None
+
+        stages_raw = normalized.get("stages")
+        if not isinstance(stages_raw, Sequence) or isinstance(stages_raw, (str, bytes)):
+            return None
+        from ..domain.quality_loop_stages import sanitize_stage_payload
+
+        stages = [
+            stage
+            for stage in (sanitize_stage_payload(item) for item in stages_raw)
+            if isinstance(stage, Mapping)
+        ]
+        if not stages:
+            return None
+        sanitized["stages"] = [dict(stage) for stage in stages]
+
+        pairs = normalized.get("pairs")
+        if not isinstance(pairs, Mapping):
+            return None
+        count = pairs.get("total_pairs")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            return None
+        safe_pairs: dict[str, Any] = {"total_pairs": count}
+        for key in ("should_use_hit_rate", "should_silence_correct_rate"):
+            if key not in pairs:
+                continue
+            value = pairs[key]
+            if value is None:
+                safe_pairs[key] = None
+            else:
+                number = cls._finite_number(value)
+                if number is not None and 0.0 <= float(number) <= 1.0:
+                    safe_pairs[key] = number
+        rejects = pairs.get("reject_reason_counts")
+        if isinstance(rejects, Mapping):
+            safe_rejects = {
+                str(key): count
+                for key, count in rejects.items()
+                if str(key) in QUALITY_LOOP_STAGE_REASONS
+                and isinstance(count, int)
+                and not isinstance(count, bool)
+                and count >= 0
+            }
+            safe_pairs["reject_reason_counts"] = dict(sorted(safe_rejects.items()))
+        sanitized["pairs"] = safe_pairs
+
+        outcomes_raw = normalized.get("pair_outcomes")
+        if isinstance(outcomes_raw, Sequence) and not isinstance(
+            outcomes_raw, (str, bytes)
+        ):
+            outcomes: list[dict[str, Any]] = []
+            for item in outcomes_raw:
+                if not isinstance(item, Mapping):
+                    continue
+                safe_outcome: dict[str, Any] = {}
+                for key in _SAFE_PAIR_OUTCOME_KEYS:
+                    entry = item.get(key)
+                    if key == "slot_order":
+                        if isinstance(entry, Sequence) and not isinstance(
+                            entry, (str, bytes)
+                        ):
+                            slots = [str(slot) for slot in entry]
+                            if (
+                                len(slots) == 2
+                                and set(slots) == _QUALITY_LOOP_EXPECTATIONS
+                            ):
+                                safe_outcome[key] = slots
+                        continue
+                    if key in {
+                        "context_key_hash",
+                        "should_use_case_hash",
+                        "should_silence_case_hash",
+                    }:
+                        if _quality_loop_hash(entry):
+                            safe_outcome[key] = entry
+                        continue
+                    if key in {"should_use_hit", "should_silence_correct"}:
+                        if isinstance(entry, bool):
+                            safe_outcome[key] = entry
+                if safe_outcome:
+                    outcomes.append(safe_outcome)
+            if outcomes:
+                sanitized["pair_outcomes"] = outcomes
+
+        return sanitized or None
 
     @staticmethod
     def _finite_number(value: Any) -> int | float | None:

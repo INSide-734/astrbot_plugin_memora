@@ -26,11 +26,14 @@ def sha256_file(path: Path, *, chunk_size: int = 1024 * 1024) -> str:
 
 def snapshot_sqlite(source: Path, target: Path) -> SnapshotResult:
     """使用 SQLite Online Backup API 创建可独立打开的数据库快照。"""
-
+    if not source.is_file() or source.is_symlink():
+        raise FileNotFoundError("sqlite_snapshot_source_missing")
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.exists():
         target.unlink()
-    source_connection = sqlite3.connect(str(source))
+    source_connection = sqlite3.connect(
+        source.resolve().as_uri() + "?mode=ro", uri=True
+    )
     try:
         # 目标库打开失败也必须释放源连接；两个连接的关闭互不短路。
         target_connection = sqlite3.connect(str(target))

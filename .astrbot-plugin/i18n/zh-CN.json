@@ -1295,7 +1295,64 @@
           "annotatedLatency": "标注延迟",
           "reportedLatency": "外部报告延迟"
         },
-        "miss": "未命中"
+        "miss": "未命中",
+        "qualityLoop": {
+          "title": "质量闭环",
+          "manifest": "冻结 manifest",
+          "seed": "种子",
+          "pairs": "成对盲测",
+          "shouldUseHit": "应使用命中率",
+          "shouldSilenceCorrect": "应沉默正确率",
+          "totalPairs": "配对数",
+          "rejected": "被拒配对",
+          "pairCount": "指纹配对",
+          "noManifest": "本次运行未生成 manifest（无有效配对）",
+          "unmeasured": "未测量",
+          "stage": {
+            "write": "写入",
+            "source": "来源",
+            "recall": "召回",
+            "injection": "注入",
+            "lifecycle": "生命周期",
+            "expression": "表达"
+          },
+          "state": {
+            "available": "可用",
+            "degraded": "降级",
+            "unavailable": "不可用"
+          },
+          "reason": {
+            "ok": "正常",
+            "no_annotation": "无标注输入",
+            "no_paired_fixture": "无配对夹具",
+            "engine_missing": "评测引擎缺失",
+            "retrieval_failed": "检索失败",
+            "injection_port_missing": "注入端口缺失",
+            "lifecycle_port_missing": "生命周期端口缺失",
+            "privacy_canary_failed": "隐私 canary 失败",
+            "pair_incomplete": "配对不完整",
+            "pair_duplicate": "配对重复",
+            "context_key_missing": "上下文键缺失",
+            "db_snapshot_unavailable": "数据库快照不可用",
+            "hmac_secret_unavailable": "质量闭环 HMAC 密钥不可用"
+          },
+          "metric": {
+            "write_fact_correctness": "写入事实正确率",
+            "source_faithfulness": "来源忠实性",
+            "source_evidence_completeness": "来源证据完整度",
+            "candidate_hit_rate": "候选命中率",
+            "final_injected_hit_rate": "最终注入命中率",
+            "negative_injection_rate": "负向注入率",
+            "configured_budget_chars": "配置预算字符",
+            "effective_budget_chars": "有效预算字符",
+            "retrieved_count": "检索计数",
+            "injected_count": "注入计数",
+            "observed_p50_latency_ms": "实测 p50 延迟",
+            "observed_p95_latency_ms": "实测 p95 延迟",
+            "annotated_answer_faithfulness": "标注回答忠实度",
+            "annotated_answer_relevancy": "标注回答相关性"
+          }
+        }
       },
       "reconsolidation": {
         "title": "再巩固候选",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeGuard
 
@@ -184,24 +185,35 @@ def create_replay_record(
     return CandidateReplayRecord(**record_dict)
 
 
-def check_privacy_canary(record: dict[str, Any]) -> tuple[bool, list[str]]:
-    """检查记录是否包含隐私 canary 字段；fail-closed。
-
-    Returns:
-        (is_safe, violations): is_safe=False 时记录被拒绝
-    """
-    violations = []
+def check_privacy_canary(
+    record: dict[str, Any],
+    *,
+    forbidden_values: Sequence[str] = (),
+    minimum_substring_length: int = 1,
+) -> tuple[bool, list[str]]:
+    """递归拒绝敏感字段和可选的敏感字符串值。"""
+    violations: list[str] = []
 
     def _check_value(value: Any, path: str = "") -> None:
-        """递归检查值中的字段名。"""
         if isinstance(value, dict):
             for key, val in value.items():
                 if key.lower() in _PRIVACY_CANARY_FIELDS:
                     violations.append(f"{path}.{key}" if path else key)
                 _check_value(val, f"{path}.{key}" if path else key)
         elif isinstance(value, (list, tuple)):
-            for i, item in enumerate(value):
-                _check_value(item, f"{path}[{i}]")
+            for index, item in enumerate(value):
+                _check_value(item, f"{path}[{index}]")
+        elif isinstance(value, str):
+            if any(
+                token
+                and (
+                    token == value
+                    or len(token) >= minimum_substring_length
+                    and token in value
+                )
+                for token in forbidden_values
+            ):
+                violations.append(f"{path}:value_leak")
 
     _check_value(record)
     return (len(violations) == 0, violations)

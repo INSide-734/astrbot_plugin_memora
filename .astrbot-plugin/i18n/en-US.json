@@ -1295,7 +1295,64 @@
           "annotatedLatency": "Annotated latency",
           "reportedLatency": "Reported latency"
         },
-        "miss": "miss"
+        "miss": "miss",
+        "qualityLoop": {
+          "title": "Quality loop",
+          "manifest": "Frozen manifest",
+          "seed": "Seed",
+          "pairs": "Paired blind test",
+          "shouldUseHit": "Should-use hit rate",
+          "shouldSilenceCorrect": "Should-silence correct rate",
+          "totalPairs": "Pairs",
+          "rejected": "Rejected pairs",
+          "pairCount": "Fingerprinted pairs",
+          "noManifest": "No manifest for this run (no valid pairs)",
+          "unmeasured": "Not measured",
+          "stage": {
+            "write": "Write",
+            "source": "Source",
+            "recall": "Recall",
+            "injection": "Injection",
+            "lifecycle": "Lifecycle",
+            "expression": "Expression"
+          },
+          "state": {
+            "available": "Available",
+            "degraded": "Degraded",
+            "unavailable": "Unavailable"
+          },
+          "reason": {
+            "ok": "OK",
+            "no_annotation": "No annotated input",
+            "no_paired_fixture": "No paired fixture",
+            "engine_missing": "Evaluation engine missing",
+            "retrieval_failed": "Retrieval failed",
+            "injection_port_missing": "Injection port missing",
+            "lifecycle_port_missing": "Lifecycle port missing",
+            "privacy_canary_failed": "Privacy canary failed",
+            "pair_incomplete": "Pair incomplete",
+            "pair_duplicate": "Pair duplicate",
+            "context_key_missing": "Context key missing",
+            "db_snapshot_unavailable": "DB snapshot unavailable",
+            "hmac_secret_unavailable": "Quality-loop HMAC key unavailable"
+          },
+          "metric": {
+            "write_fact_correctness": "Write fact correctness",
+            "source_faithfulness": "Source faithfulness",
+            "source_evidence_completeness": "Source evidence completeness",
+            "candidate_hit_rate": "Candidate hit rate",
+            "final_injected_hit_rate": "Final injected hit rate",
+            "negative_injection_rate": "Negative injection rate",
+            "configured_budget_chars": "Configured budget chars",
+            "effective_budget_chars": "Effective budget chars",
+            "retrieved_count": "Retrieved count",
+            "injected_count": "Injected count",
+            "observed_p50_latency_ms": "Observed p50 latency",
+            "observed_p95_latency_ms": "Observed p95 latency",
+            "annotated_answer_faithfulness": "Annotated answer faithfulness",
+            "annotated_answer_relevancy": "Annotated answer relevancy"
+          }
+        }
       },
       "reconsolidation": {
         "title": "Reconsolidation candidates",

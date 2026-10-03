@@ -56,6 +56,8 @@ describe("EvaluationWorkbench", () => {
           variants: ["baseline", "graph_expansion_off", "topic_expansion_off"],
           baseline: "baseline",
           save_report: true,
+          quality_loop: {},
+          quality_loop_seed: 42,
         });
         return Promise.resolve(ok({
           report_id: "eval-test",
@@ -73,6 +75,45 @@ describe("EvaluationWorkbench", () => {
             judged_answer_faithfulness: null,
             observed_provider_calls: null,
             observed_token_cost: null,
+          },
+          quality_loop: {
+            manifest: {
+              schema_version: "quality-loop-replay-v1",
+              evaluator_version: "quality-loop-evaluator-v1",
+              code_revision: "8f0681e",
+              config_hash: "a".repeat(64),
+              schema_hash: "b".repeat(64),
+              fixture_hash: "c".repeat(64),
+              manifest_hash: "d".repeat(64),
+              model_id: null,
+              embedding_id: null,
+              tokenizer_id: null,
+              seed: 42,
+              db_snapshot_hash: null,
+              k: 5,
+              pair_count: 1,
+            },
+            stages: [
+              {
+                stage: "write",
+                state: "degraded",
+                reason: "no_annotation",
+                owning_stage: "write",
+                metrics: { write_fact_correctness: null },
+              },
+              {
+                stage: "lifecycle",
+                state: "available",
+                reason: "ok",
+                owning_stage: "lifecycle",
+                metrics: { retrieved_count: 4, observed_p95_latency_ms: 12.5 },
+              },
+            ],
+            pairs: {
+              total_pairs: 1,
+              should_use_hit_rate: 1,
+              should_silence_correct_rate: null,
+            },
           },
           variants: {
             baseline: {
@@ -164,7 +205,9 @@ describe("EvaluationWorkbench", () => {
     expect(screen.getByText(/Observed latency|实测延迟/)).toBeTruthy();
     expect(screen.getByText(/Annotated latency|标注延迟/)).toBeTruthy();
     expect(screen.getByText(/Reported latency|外部报告延迟/)).toBeTruthy();
-    expect(screen.getAllByText("Graph off").length).toBeGreaterThan(0);
+    expect(screen.getByText(/Quality loop|质量闭环/)).toBeTruthy();
+    expect(screen.getAllByText(/Not measured|未测量/).length).toBeGreaterThan(0);
+    expect(screen.getByText("12.5ms")).toBeTruthy();
     await waitFor(() => {
       expect(bridge.apiPost).toHaveBeenCalledWith("page/evaluation/run", {
         datasets: ["private_basic"],
@@ -172,6 +215,8 @@ describe("EvaluationWorkbench", () => {
         variants: ["baseline", "graph_expansion_off", "topic_expansion_off"],
         baseline: "baseline",
         save_report: true,
+        quality_loop: {},
+        quality_loop_seed: 42,
       });
     });
   });
@@ -291,6 +336,8 @@ describe("EvaluationWorkbench", () => {
         variants: ["baseline", "graph_expansion_off", "topic_expansion_off"],
         baseline: "baseline",
         save_report: true,
+        quality_loop: {},
+        quality_loop_seed: 42,
       });
     });
   });
@@ -321,6 +368,8 @@ describe("EvaluationWorkbench", () => {
         variants: ["baseline"],
         baseline: "baseline",
         save_report: true,
+        quality_loop: {},
+        quality_loop_seed: 42,
       });
     });
   });
@@ -385,6 +434,8 @@ describe("EvaluationWorkbench", () => {
         variants: ["baseline", "final_reranker_off"],
         baseline: "baseline",
         save_report: true,
+        quality_loop: {},
+        quality_loop_seed: 42,
       });
     });
   });

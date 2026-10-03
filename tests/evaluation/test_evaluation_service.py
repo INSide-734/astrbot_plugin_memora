@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from pathlib import Path
@@ -20,6 +21,8 @@ from core.features.evaluation.infrastructure.evaluation_service import Evaluatio
 from core.features.evaluation.infrastructure.report_store import (
     EvaluationReportStore,
 )
+
+_QUALITY_LOOP_SECRET = b"evaluation-quality-loop-test-key-32"
 
 
 def test_evaluation_package_imports_without_astrbot_mocks():
@@ -119,6 +122,106 @@ async def test_report_store_saves_and_loads_report(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_report_store_sanitizes_quality_loop_on_write_and_read(tmp_path):
+    """验证质量闭环写读均只保留低敏 manifest、阶段和配对摘要。"""
+    digest = "a" * 64
+    store = EvaluationReportStore(tmp_path / "evaluation_reports.db")
+    await store.initialize()
+    report_id = await store.save_report(
+        {
+            "created_at": 1783150200.0,
+            "baseline": "baseline",
+            "summary": {},
+            "datasets": [],
+            "variants": [],
+            "quality_loop": {
+                "manifest": {
+                    "schema_version": "quality-loop-replay-v1",
+                    "evaluator_version": "quality-loop-evaluator-v1",
+                    "code_revision": "safe-code",
+                    "config_hash": digest,
+                    "schema_hash": digest,
+                    "fixture_hash": digest,
+                    "manifest_hash": digest,
+                    "model_id": None,
+                    "embedding_id": None,
+                    "tokenizer_id": None,
+                    "seed": 42,
+                    "k": 5,
+                    "db_snapshot_hash": None,
+                    "pair_count": 1,
+                    "query": "QUERY-CANARY",
+                },
+                "stages": [
+                    {
+                        "stage": "write",
+                        "state": "degraded",
+                        "reason": "no_annotation",
+                        "metrics": {
+                            "write_fact_correctness": None,
+                            "query": "QUERY-CANARY",
+                        },
+                    }
+                ],
+                "pairs": {
+                    "total_pairs": 1,
+                    "should_use_hit_rate": 0.0,
+                    "should_silence_correct_rate": None,
+                    "query": "QUERY-CANARY",
+                },
+            },
+        }
+    )
+
+    with sqlite3.connect(store.db_path) as db:
+        row = db.execute(
+            "SELECT payload_json FROM evaluation_reports WHERE report_id = ?",
+            (report_id,),
+        ).fetchone()
+        assert row is not None
+        payload = json.loads(row[0])
+        payload["quality_loop"]["manifest"]["query"] = "QUERY-CANARY"
+        payload["quality_loop"]["stages"][0]["metrics"]["query"] = "QUERY-CANARY"
+        payload["quality_loop"]["pairs"]["query"] = "QUERY-CANARY"
+        payload["quality_loop"]["pairs"]["reject_reason_counts"] = {
+            "secret user text": 3,
+            "pair_incomplete": 1,
+            "context_key_missing": 2,
+        }
+        payload["quality_loop"]["pair_outcomes"] = [
+            {
+                "context_key_hash": "raw-context-key",
+                "slot_order": ["should_use", "LEAKY-QUERY-TEXT"],
+                "should_use_case_hash": "raw-case-hash",
+                "should_silence_case_hash": "raw-case-hash",
+                "should_use_hit": True,
+                "should_silence_correct": None,
+            }
+        ]
+        db.execute(
+            "UPDATE evaluation_reports SET payload_json = ? WHERE report_id = ?",
+            (json.dumps(payload), report_id),
+        )
+        db.commit()
+
+    loaded = await store.get_report(report_id)
+    assert loaded is not None
+    serialized = json.dumps(loaded, ensure_ascii=False)
+    assert "QUERY-CANARY" not in serialized
+    assert "secret user text" not in serialized
+    assert "raw-context-key" not in serialized
+    assert "LEAKY-QUERY-TEXT" not in serialized
+    assert loaded["quality_loop"]["manifest"]["pair_count"] == 1
+    assert loaded["quality_loop"]["stages"][0]["metrics"] == {
+        "write_fact_correctness": None
+    }
+    assert loaded["quality_loop"]["pairs"]["reject_reason_counts"] == {
+        "context_key_missing": 2,
+        "pair_incomplete": 1,
+    }
+
+
+@pytest.mark.asyncio
 async def test_report_store_saves_native_evaluation_report_with_relevant_sets(tmp_path):
     """验证原生评测报告及相关集合可安全持久化。"""
 
@@ -198,6 +301,82 @@ def _write_single_case_fixture(root: Path, relevant_doc_ids: list[str]) -> None:
         json.dumps(payload, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
+
+
+def _write_paired_fixture(root: Path) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "case_id": "use-case",
+            "query": "use",
+            "relevant_doc_ids": ["mem-1"],
+            "metadata": {"context_key": "ctx-1", "expectation": "should_use"},
+        },
+        {
+            "case_id": "silence-case",
+            "query": "silence",
+            "relevant_doc_ids": ["__no_relevant__"],
+            "metadata": {"context_key": "ctx-1", "expectation": "should_silence"},
+        },
+    ]
+    (root / "paired.jsonl").write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.asyncio
+async def test_quality_loop_uses_baseline_snapshot_and_safe_provider_id(tmp_path):
+    """验证质量闭环绑定隔离基准并隐藏自由格式 provider ID。"""
+
+    class SnapshotAwareEngine:
+        def __init__(self) -> None:
+            self.config = {
+                "provider_settings": {
+                    "llm_provider_id": "openai/gpt-4o-mini",
+                    "embedding_provider_id": "embedding-v1",
+                    "tokenizer_id": "tokenizer-v1",
+                }
+            }
+            self.seen_engines: list[object] = []
+
+        async def search_memories(self, **kwargs):
+            self.seen_engines.append(self)
+            return [] if kwargs["query"] == "silence" else [{"doc_id": "mem-1"}]
+
+    fixture_dir = tmp_path / "fixtures"
+    _write_paired_fixture(fixture_dir)
+    engine = SnapshotAwareEngine()
+    service = EvaluationService(
+        engine=engine,
+        fixture_dir=fixture_dir,
+        quality_loop_secret=_QUALITY_LOOP_SECRET,
+    )
+
+    result = await service.run_evaluation(
+        datasets=["paired"],
+        k=1,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=False,
+        quality_loop={},
+        quality_loop_seed=1,
+    )
+
+    quality_loop = result["quality_loop"]
+    assert quality_loop["pairs"]["total_pairs"] == 1
+    assert quality_loop["manifest"] is not None, [
+        stage["reason"] for stage in quality_loop["stages"]
+    ]
+    assert quality_loop["manifest"]["model_id"] != "openai/gpt-4o-mini"
+    assert quality_loop["manifest"]["db_snapshot_hash"] is None
+    source = next(
+        stage for stage in quality_loop["stages"] if stage["stage"] == "source"
+    )
+    assert source["state"] == "degraded"
+    assert source["reason"] == "db_snapshot_unavailable"
+    assert engine.seen_engines
+    assert all(seen is not engine for seen in engine.seen_engines)
 
 
 @pytest.mark.asyncio
@@ -759,3 +938,252 @@ async def test_evaluation_service_lists_gets_and_compares_saved_reports(tmp_path
         "ndcg_at_k",
         "observed_p95_latency_ms",
     }
+
+
+@pytest.mark.asyncio
+async def test_quality_loop_ignores_client_manifest_binding_claims(
+    tmp_path, monkeypatch
+):
+    """Client claims and unsafe runner additions cannot alter the public report."""
+    import core.features.evaluation.infrastructure.evaluation_service as service_module
+
+    fixture_dir = tmp_path / "fixtures"
+    _write_paired_fixture(fixture_dir)
+    original_runner = service_module.run_quality_loop
+
+    async def leaking_runner(*args, **kwargs):
+        payload = await original_runner(*args, **kwargs)
+        payload["query"] = "SERVICE-QUERY-CANARY-83"
+        return payload
+
+    monkeypatch.setattr(service_module, "run_quality_loop", leaking_runner)
+
+    class BoundEngine:
+        def __init__(self):
+            self.config = {
+                "provider_settings": {
+                    "llm_provider_id": "openai/gpt-4o-mini",
+                    "embedding_provider_id": "embedding-v1",
+                    "tokenizer_id": "tokenizer-v1",
+                },
+                "provider_secret": "PROVIDER-SECRET-CANARY-83",
+            }
+            self.seen = []
+
+        async def search_memories(self, **kwargs):
+            self.seen.append(self)
+            return [] if kwargs["query"] == "silence" else [{"doc_id": "mem-1"}]
+
+    engine = BoundEngine()
+    service = EvaluationService(
+        engine=engine,
+        fixture_dir=fixture_dir,
+        quality_loop_secret=_QUALITY_LOOP_SECRET,
+    )
+    snapshot_digest = "b" * 64
+    snapshot_calls = []
+
+    async def snapshot(_engine):
+        snapshot_calls.append(_engine)
+        return snapshot_digest
+
+    monkeypatch.setattr(service, "_database_snapshot_hash", snapshot)
+    client_claims = {
+        "schema_version": "client-schema",
+        "evaluator_version": "client-evaluator",
+        "code_revision": "client-revision",
+        "config_hash": "c" * 64,
+        "schema_hash": "d" * 64,
+        "fixture_hash": "e" * 64,
+        "model_id": "client-model-canary",
+        "embedding_id": "client-embedding",
+        "tokenizer_id": "client-tokenizer",
+        "seed": 999,
+        "k": 19,
+        "db_snapshot_hash": "f" * 64,
+        "pair_fingerprints": [("f" * 64,) * 3],
+        "manifest_hash": "f" * 64,
+    }
+    result = await service.run_evaluation(
+        datasets=["paired"],
+        k=3,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=False,
+        quality_loop=client_claims,
+        quality_loop_seed=17,
+    )
+
+    manifest = result["quality_loop"]["manifest"]
+    assert manifest["schema_version"] == "quality-loop-replay-v1"
+    assert manifest["evaluator_version"] == "quality-loop-evaluator-v1"
+    assert manifest["code_revision"] != client_claims["code_revision"]
+    assert manifest["config_hash"] == service._configuration_hash(engine.seen[0])
+    assert manifest["config_hash"] != client_claims["config_hash"]
+    assert manifest["schema_hash"] == service._schema_hash()
+    assert manifest["schema_hash"] != client_claims["schema_hash"]
+    assert manifest["fixture_hash"] != client_claims["fixture_hash"]
+    assert manifest["model_id"] != client_claims["model_id"]
+    assert manifest["embedding_id"] == "embedding-v1"
+    assert manifest["tokenizer_id"] == "tokenizer-v1"
+    assert manifest["seed"] == 17
+    assert manifest["k"] == 3
+    assert manifest["db_snapshot_hash"] == snapshot_digest
+    assert manifest["db_snapshot_hash"] != client_claims["db_snapshot_hash"]
+    assert manifest["manifest_hash"] != client_claims["manifest_hash"]
+    assert len(snapshot_calls) == 1
+    assert snapshot_calls[0] is not engine
+    assert "client-model-canary" not in json.dumps(result)
+    serialized_result = json.dumps(result)
+    assert "SERVICE-QUERY-CANARY-83" not in serialized_result
+    assert "PROVIDER-SECRET-CANARY-83" not in serialized_result
+    assert "client-pair" not in serialized_result
+
+
+@pytest.mark.asyncio
+async def test_quality_loop_does_not_snapshot_when_there_are_no_valid_pairs(
+    tmp_path, monkeypatch
+):
+    fixture_dir = tmp_path / "fixtures"
+    _write_single_case_fixture(fixture_dir, ["mem-1"])
+    service = EvaluationService(
+        engine=FakeEngine(),
+        fixture_dir=fixture_dir,
+        quality_loop_secret=_QUALITY_LOOP_SECRET,
+    )
+
+    async def unexpected_snapshot(_engine):
+        pytest.fail("snapshot must not run without valid quality-loop pairs")
+
+    monkeypatch.setattr(service, "_database_snapshot_hash", unexpected_snapshot)
+    result = await service.run_evaluation(
+        datasets=["ablation"],
+        k=5,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=False,
+        quality_loop={},
+    )
+    assert result["quality_loop"]["manifest"] is None
+    assert result["quality_loop"]["pairs"]["total_pairs"] == 0
+    retrieval_only = await service.run_evaluation(
+        datasets=["ablation"],
+        k=5,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=False,
+    )
+    assert "quality_loop" not in retrieval_only
+
+
+@pytest.mark.asyncio
+async def test_quality_loop_missing_database_snapshot_degrades_without_creating_db(
+    tmp_path,
+):
+    fixture_dir = tmp_path / "fixtures"
+    _write_paired_fixture(fixture_dir)
+    missing_db = tmp_path / "missing" / "memora.db"
+    engine = FakeEngine()
+    setattr(engine, "db_path", str(missing_db))
+    service = EvaluationService(
+        engine=engine,
+        fixture_dir=fixture_dir,
+        quality_loop_secret=_QUALITY_LOOP_SECRET,
+    )
+
+    result = await service.run_evaluation(
+        datasets=["paired"],
+        k=1,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=False,
+        quality_loop={},
+    )
+
+    source = next(
+        stage
+        for stage in result["quality_loop"]["stages"]
+        if stage["stage"] == "source"
+    )
+    assert source["reason"] == "db_snapshot_unavailable"
+    assert result["quality_loop"]["manifest"]["db_snapshot_hash"] is None
+    assert not missing_db.exists()
+
+
+@pytest.mark.asyncio
+async def test_missing_hmac_key_degrades_quality_loop_without_skipping_retrieval(
+    tmp_path,
+):
+    fixture_dir = tmp_path / "fixtures"
+    _write_paired_fixture(fixture_dir)
+    service = EvaluationService(engine=FakeEngine(), fixture_dir=fixture_dir)
+
+    result = await service.run_evaluation(
+        datasets=["paired"],
+        k=1,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=False,
+        quality_loop={},
+    )
+
+    assert result["variants"]["baseline"]["status"] == "completed"
+    source = next(
+        stage
+        for stage in result["quality_loop"]["stages"]
+        if stage["stage"] == "source"
+    )
+    assert source["state"] == "unavailable"
+    assert source["reason"] == "hmac_secret_unavailable"
+    assert result["quality_loop"]["manifest"] is None
+
+
+@pytest.mark.asyncio
+async def test_quality_loop_never_falls_back_to_live_engine_without_isolated_baseline(
+    tmp_path, monkeypatch
+):
+    fixture_dir = tmp_path / "fixtures"
+    _write_paired_fixture(fixture_dir)
+
+    class UncopyableEngine:
+        config = {}
+
+        def __init__(self):
+            self.search_calls = 0
+
+        def __copy__(self):
+            raise RuntimeError("snapshot unavailable")
+
+        async def search_memories(self, **_kwargs):
+            self.search_calls += 1
+            return []
+
+    engine = UncopyableEngine()
+    service = EvaluationService(
+        engine=engine,
+        fixture_dir=fixture_dir,
+        quality_loop_secret=_QUALITY_LOOP_SECRET,
+    )
+
+    async def unexpected_snapshot(_engine):
+        pytest.fail("snapshot hash must not run without an isolated engine")
+
+    monkeypatch.setattr(service, "_database_snapshot_hash", unexpected_snapshot)
+    result = await service.run_evaluation(
+        datasets=["paired"],
+        k=1,
+        variants=["baseline"],
+        baseline="baseline",
+        save_report=False,
+        quality_loop={},
+    )
+
+    recall = next(
+        stage
+        for stage in result["quality_loop"]["stages"]
+        if stage["stage"] == "recall"
+    )
+    assert result["status"] == "error"
+    assert recall["state"] == "unavailable"
+    assert recall["reason"] == "engine_missing"
+    assert engine.search_calls == 0

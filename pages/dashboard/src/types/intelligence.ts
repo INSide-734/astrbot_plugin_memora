@@ -291,6 +291,52 @@ export interface EvaluationVariantDelta {
   observed_p95_latency_ms?: number | null;
 }
 
+export interface QualityLoopManifestSummary {
+  schema_version: string;
+  evaluator_version: string;
+  code_revision: string;
+  config_hash: string;
+  schema_hash: string;
+  fixture_hash: string;
+  manifest_hash: string;
+  model_id: string | null;
+  embedding_id: string | null;
+  tokenizer_id: string | null;
+  seed: number;
+  k: number;
+  db_snapshot_hash: string | null;
+  pair_count: number;
+}
+
+export interface QualityLoopStage {
+  stage: "write" | "source" | "recall" | "injection" | "lifecycle" | "expression" | string;
+  state: "available" | "degraded" | "unavailable" | string;
+  reason: string;
+  owning_stage: string | null;
+  metrics: Record<string, number | null>;
+}
+
+export interface QualityLoopPairsSummary {
+  total_pairs: number;
+  should_use_hit_rate: number | null;
+  should_silence_correct_rate: number | null;
+  reject_reason_counts?: Record<string, number>;
+}
+
+export interface QualityLoopPayload {
+  manifest: QualityLoopManifestSummary | null;
+  stages: QualityLoopStage[];
+  pairs: QualityLoopPairsSummary;
+  pair_outcomes?: Array<{
+    context_key_hash: string;
+    slot_order: string[];
+    should_use_case_hash: string;
+    should_silence_case_hash: string;
+    should_use_hit: boolean | null;
+    should_silence_correct: boolean | null;
+  }>;
+}
+
 export interface EvaluationCaseResult {
   case_id: string;
   recall_at_k: number;
@@ -312,4 +358,5 @@ export interface EvaluationReport {
   deltas?: Record<string, EvaluationVariantDelta>;
   cases?: EvaluationCaseResult[];
   case_count?: number;
+  quality_loop?: QualityLoopPayload | null;
 }
