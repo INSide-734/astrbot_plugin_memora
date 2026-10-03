@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import time
+from contextlib import closing
+from pathlib import Path
 from typing import Any
 
 from .summary_schema_constraints import (
@@ -629,7 +632,7 @@ async def migrate_conversation_schema(connection: Any) -> None:
         row = await cursor.fetchone()
         current_version = int(row[0] if row else 0)
         if current_version > SUMMARY_SCHEMA_VERSION:
-            raise RuntimeError("conversations.db schema version is newer")
+            raise RuntimeError("summary_schema_version_unsupported")
         await _ensure_base_schema(connection)
         await _backfill_message_sequences(connection)
         await _ensure_summary_tables(connection)
@@ -659,4 +662,116 @@ async def migrate_conversation_schema(connection: Any) -> None:
         raise
 
 
-__all__ = ["SUMMARY_SCHEMA_VERSION", "migrate_conversation_schema"]
+def inspect_conversation_database(path: Path) -> dict[str, object]:
+    """Return bounded, aggregate evidence for a conversation SQLite file."""
+
+    evidence: dict[str, object] = {
+        "evidence_version": 1,
+        "present": path.is_file() and not path.is_symlink(),
+        "schema_version": 0,
+        "migration_id": None,
+        "session_count": 0,
+        "message_count": 0,
+        "job_count": 0,
+        "epoch_count": 0,
+        "candidate_count": 0,
+        "integrity": "absent",
+        "reason_code": None,
+    }
+    if not bool(evidence["present"]):
+        return evidence
+    try:
+        with closing(
+            sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
+        ) as connection:
+            row = connection.execute("PRAGMA user_version").fetchone()
+            evidence["schema_version"] = max(0, int(row[0] or 0)) if row else 0
+            tables = {
+                str(item[0])
+                for item in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+            known_tables = {
+                "sessions",
+                "messages",
+                "summary_jobs",
+                "session_epochs",
+                "summary_job_candidates",
+            }
+            if int(evidence["schema_version"]) > SUMMARY_SCHEMA_VERSION:
+                evidence["integrity"] = "invalid"
+                evidence["reason_code"] = "schema_version_newer"
+                return evidence
+            if not tables & known_tables:
+                evidence["integrity"] = "legacy_unverified"
+                evidence["reason_code"] = "schema_legacy"
+                return evidence
+            # 只校验迁移自身不会凭空补出的核心列：``message_seq`` 由
+            # ``_ensure_base_schema``/``_backfill_message_sequences`` 添加，旧库
+            # 缺少它属于可升级状态，不能判为损坏。
+            required = {
+                "sessions": {"session_id", "platform", "created_at"},
+                "messages": {"id", "session_id", "role", "content", "timestamp"},
+                "summary_jobs": {
+                    "job_id",
+                    "session_id",
+                    "session_epoch",
+                    "start_seq",
+                    "end_seq",
+                    "source_digest",
+                    "status",
+                },
+                "session_epochs": {"session_id", "epoch", "cursor_seq"},
+                "summary_job_candidates": {
+                    "job_id",
+                    "slot",
+                    "slot_key",
+                    "content_digest",
+                    "status",
+                },
+            }
+            for table, columns in required.items():
+                if table not in tables:
+                    continue
+                actual = {
+                    str(item[1])
+                    for item in connection.execute(f"PRAGMA table_info({table})")
+                }
+                if not columns <= actual:
+                    evidence["integrity"] = "invalid"
+                    evidence["reason_code"] = "schema_incomplete"
+                    return evidence
+            counts = {
+                "session_count": "sessions",
+                "message_count": "messages",
+                "job_count": "summary_jobs",
+                "epoch_count": "session_epochs",
+                "candidate_count": "summary_job_candidates",
+            }
+            for key, table in counts.items():
+                if table in tables:
+                    evidence[key] = int(
+                        connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[
+                            0
+                        ]
+                    )
+            if "summary_schema_migrations" in tables:
+                migration = connection.execute(
+                    "SELECT migration_id FROM summary_schema_migrations "
+                    "ORDER BY applied_at DESC, migration_id DESC LIMIT 1"
+                ).fetchone()
+                if migration:
+                    evidence["migration_id"] = str(migration[0])
+            evidence["integrity"] = "verified"
+    except (OSError, sqlite3.DatabaseError, TypeError, ValueError):
+        evidence["integrity"] = "invalid"
+        evidence["reason_code"] = "sqlite_invalid"
+    return evidence
+
+
+__all__ = [
+    "SUMMARY_SCHEMA_VERSION",
+    "inspect_conversation_database",
+    "migrate_conversation_schema",
+]

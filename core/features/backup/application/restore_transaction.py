@@ -10,7 +10,9 @@ import shutil
 import sqlite3
 import uuid
 from pathlib import Path
+from typing import cast
 
+from ...conversation.infrastructure.summary_schema import inspect_conversation_database
 from ..domain import (
     BackupIntegrity,
     BackupOperationError,
@@ -82,6 +84,7 @@ class BackupRestoreTransactionMixin:
             "reason_code": plan.reason_code,
             "reload_scheduled": plan.reload_scheduled,
             "requires_manual_restart": plan.requires_manual_restart,
+            "conversation_evidence": plan.conversation_evidence,
         }
 
     @staticmethod
@@ -104,6 +107,11 @@ class BackupRestoreTransactionMixin:
                 )
             except (KeyError, ValueError, TypeError) as exc:
                 raise BackupOperationError("restore_plan_invalid") from exc
+        conversation_evidence = value.get("conversation_evidence")
+        if conversation_evidence is not None and not isinstance(
+            conversation_evidence, dict
+        ):
+            raise BackupOperationError("restore_plan_invalid")
         try:
             return RestorePlan(
                 operation_id=str(value["operation_id"]),
@@ -123,6 +131,7 @@ class BackupRestoreTransactionMixin:
                 requires_manual_restart=bool(
                     value.get("requires_manual_restart", False)
                 ),
+                conversation_evidence=conversation_evidence,
             )
         except (KeyError, ValueError, TypeError) as exc:
             raise BackupOperationError("restore_plan_invalid") from exc
@@ -345,12 +354,47 @@ class BackupRestoreTransactionMixin:
             if not any(item["name"] == "memora.db" for item in file_specs):
                 raise BackupOperationError("canonical_file_missing")
         backup_integrity.validate_feedback_backup_specs(backup_dir, file_specs)
+        # conversations.db 是可选成员：备份里没有它时恢复计划不替换会话库，
+        # live 运营数据保持不动，因此不能拿「备份内缺席」的证据去比对一个
+        # 仍然存在的 live 会话库（那会在替换 memora.db 之后误判并回滚）。
+        planned_names = {str(item["name"]) for item in file_specs}
+        plans_conversations = "conversations.db" in planned_names
+        conversation_evidence = inspect_conversation_database(
+            backup_dir / "conversations.db"
+        )
+        declared_evidence = info.get("summary_state")
+        if declared_evidence is not None and not isinstance(declared_evidence, dict):
+            raise BackupOperationError("restore_conversation_evidence_mismatch")
+        evidence_verified = False
+        if isinstance(declared_evidence, dict) and (
+            "evidence_version" in declared_evidence
+        ):
+            if not plans_conversations:
+                # 计划不含会话库时，清单也不得声称带了会话证据。
+                if declared_evidence.get("present") is True:
+                    raise BackupOperationError("restore_conversation_evidence_mismatch")
+            elif conversation_evidence != declared_evidence:
+                raise BackupOperationError("restore_conversation_evidence_mismatch")
+            else:
+                evidence_verified = True
+        if plans_conversations and conversation_evidence.get("integrity") == "invalid":
+            raise BackupOperationError(
+                f"restore_conversation_{conversation_evidence.get('reason_code', 'invalid')}"
+            )
+        # 没有聚合证据的 v2 清单不能被当作完整跨库证据（fail closed）。
+        if verified and not evidence_verified:
+            integrity = BackupIntegrity.LEGACY_UNVERIFIED.value
         return {
             "backup_name": backup_name,
             "backup_dir": backup_dir,
             "file_specs": file_specs,
             "integrity": integrity,
-            "warning_codes": ["legacy_unverified"] if not verified else [],
+            "warning_codes": (
+                [] if verified and evidence_verified else ["legacy_unverified"]
+            ),
+            "conversation_evidence": (
+                conversation_evidence if plans_conversations else None
+            ),
         }
 
     def stage_restore(
@@ -365,21 +409,22 @@ class BackupRestoreTransactionMixin:
             raise BackupOperationError("restore_conflict")
         preflight = self._preflight_restore(name)
         file_specs = preflight["file_specs"]
+        backup_dir = preflight["backup_dir"]
         assert isinstance(file_specs, list)
+        assert isinstance(backup_dir, Path)
         operation_id = uuid.uuid4().hex
         operation_dir = self._restore_root() / operation_id
         payload_dir = operation_dir / "payload"
         payload_dir.mkdir(parents=True, exist_ok=False)
         try:
             required = sum(
-                (preflight["backup_dir"] / str(item["name"])).stat().st_size
-                for item in file_specs
+                (backup_dir / str(item["name"])).stat().st_size for item in file_specs
             )
             ensure_free_space(self.data_dir, required)
             progress: list[RestoreFileProgress] = []
             for item in file_specs:
                 filename = str(item["name"])
-                shutil.copy2(preflight["backup_dir"] / filename, payload_dir / filename)
+                shutil.copy2(backup_dir / filename, payload_dir / filename)
                 progress.append(
                     RestoreFileProgress(name=filename, role=FileRole(str(item["role"])))
                 )
@@ -390,6 +435,9 @@ class BackupRestoreTransactionMixin:
                 status=RestoreStatus.STAGED,
                 files=progress,
                 requires_manual_restart=apply_mode == "restart",
+                conversation_evidence=cast(
+                    dict[str, object], preflight["conversation_evidence"]
+                ),
                 reason_code=(
                     "legacy_unverified"
                     if preflight["integrity"] == "legacy_unverified"

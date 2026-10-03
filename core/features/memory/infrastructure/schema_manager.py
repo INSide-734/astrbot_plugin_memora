@@ -186,10 +186,18 @@ class SchemaManager:
             "SELECT name FROM sqlite_master WHERE type = 'trigger'"
         )
         triggers = frozenset(str(row[0]) for row in await trigger_cursor.fetchall())
+        version = 0
+        if "db_version" in tables:
+            version_cursor = await self._db.execute(
+                "SELECT COALESCE(MAX(version), 0) FROM db_version"
+            )
+            version_row = await version_cursor.fetchone()
+            version = int(version_row[0]) if version_row else 0
         if "documents" not in tables:
+            # 没有任何业务表（含 SQLite 内部表）才是真正的新库；半缺结构必须阻断。
             return SchemaInspection(
-                fresh=True,
-                version=0,
+                fresh=not any(not table.startswith("sqlite_") for table in tables),
+                version=version,
                 canonical_count=0,
                 document_columns=frozenset(),
                 tables=tables,
@@ -204,19 +212,6 @@ class SchemaManager:
         count_cursor = await self._db.execute("SELECT COUNT(*) FROM documents")
         count_row = await count_cursor.fetchone()
         canonical_count = int(count_row[0]) if count_row else 0
-        version = 0
-        if "db_version" in tables:
-            version_cursor = await self._db.execute(
-                "SELECT COALESCE(MAX(version), 0) FROM db_version"
-            )
-            version_row = await version_cursor.fetchone()
-            version = int(version_row[0]) if version_row else 0
-        fresh_install = (
-            canonical_count == 0
-            and "db_version" not in tables
-            and "entity_hierarchy" not in tables
-            and "migration_status" not in tables
-        )
         idempotency_structure_present = REQUIRED_CANONICAL_IDEMPOTENCY_TABLES.issubset(
             tables
         ) and REQUIRED_CANONICAL_IDEMPOTENCY_TRIGGERS.issubset(triggers)
@@ -226,7 +221,12 @@ class SchemaManager:
                 self._db
             )
         return SchemaInspection(
-            fresh=fresh_install,
+            fresh=(
+                canonical_count == 0
+                and "db_version" not in tables
+                and "entity_hierarchy" not in tables
+                and "migration_status" not in tables
+            ),
             version=version,
             canonical_count=canonical_count,
             document_columns=columns,
@@ -248,6 +248,8 @@ class SchemaManager:
 
         if inspection.fresh:
             raise ValueError("新数据库必须走 create_fresh_schema")
+        if "documents" not in inspection.tables:
+            raise ValueError("schema_documents_missing")
         if inspection.version > CURRENT_DB_VERSION:
             raise ValueError("数据库版本高于当前插件支持版本")
         missing_columns = tuple(
@@ -402,7 +404,9 @@ class SchemaManager:
 
         inspection = await self.inspect_schema()
         reason_code = "schema_valid"
-        if inspection.fresh:
+        if "documents" not in inspection.tables:
+            reason_code = "schema_documents_missing"
+        elif inspection.fresh:
             reason_code = "schema_documents_missing"
         elif inspection.version != expected_version:
             reason_code = "schema_version_mismatch"

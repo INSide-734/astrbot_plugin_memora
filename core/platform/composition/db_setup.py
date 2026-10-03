@@ -25,11 +25,13 @@ class DatabaseSetup:
         index_validator,
         memory_engine,
         rebuild_coordinator=None,
+        *,
+        force_rebuild: bool = False,
     ):
-        """检查索引和 topic catalog，并在需要时执行统一派生重建。
+        """检查派生一致性，必要时执行统一重建。
 
-        ``rebuild_coordinator`` 由组合根注入时，catalog readiness 独立于
-        FTS/FAISS 一致性；未注入时保留旧的 FTS/FAISS-only 兼容路径。
+        ``force_rebuild`` 仅由迁移/恢复 runtime publish gate 使用；普通维护
+        路径继续按索引和 topic catalog 一致性决定是否重建。
         """
 
         try:
@@ -40,8 +42,10 @@ class DatabaseSetup:
                 }
 
             status = await index_validator.check_consistency()
+            # required 发布门必须整套派生面重建，不能因索引当前自洽而跳过；
+            # 复用既有调用形状，不新增第二条重建分支。
             indexes_need_rebuild = bool(
-                not status.is_consistent and status.needs_rebuild
+                force_rebuild or (not status.is_consistent and status.needs_rebuild)
             )
             catalog_needs_rebuild = False
             if rebuild_coordinator is not None:
@@ -58,13 +62,18 @@ class DatabaseSetup:
             trigger_reason = classify_rebuild_trigger(
                 indexes_need_rebuild, catalog_needs_rebuild
             )
-            if indexes_need_rebuild or catalog_needs_rebuild:
-                if indexes_need_rebuild:
+            if force_rebuild or indexes_need_rebuild or catalog_needs_rebuild:
+                if indexes_need_rebuild and not force_rebuild:
                     logger.warning(f"检测到索引不一致：{status.reason}")
                     logger.info(
                         f"当前索引计数：文档 {status.documents_count}，"
                         f"BM25 {status.bm25_count}，向量 {status.vector_count}"
                     )
+                if force_rebuild and rebuild_coordinator is None:
+                    return {
+                        "success": False,
+                        "reason_code": "derived_rebuild_unavailable",
+                    }
                 if rebuild_coordinator is not None:
                     # Keep the no-argument call shape used by older coordinators;
                     # the current coordinator consumes this pending trigger.

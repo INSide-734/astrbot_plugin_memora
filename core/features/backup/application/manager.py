@@ -21,6 +21,7 @@ from astrbot.api import logger
 from ....platform.resources.version import (
     PLUGIN_VERSION,
 )  # 版本以 metadata.yaml 为唯一来源
+from ...conversation.infrastructure.summary_schema import inspect_conversation_database
 from ..domain import (
     BackupIntegrity,
     BackupOperationError,
@@ -223,33 +224,9 @@ class BackupManager(BackupRestoreTransactionMixin):
 
     @staticmethod
     def _summary_backup_state(temporary_dir: Path) -> dict[str, object]:
-        """从 conversations.db 快照读取安全 schema 与任务计数。"""
-        path = temporary_dir / "conversations.db"
-        if not path.is_file():
-            return {"present": False, "schema_version": 0, "job_count": 0}
-        connection = sqlite3.connect(str(path))
-        try:
-            version_row = connection.execute("PRAGMA user_version").fetchone()
-            schema_version = int(version_row[0] or 0) if version_row else 0
-            has_jobs = connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='summary_jobs'"
-            ).fetchone()
-            job_count = (
-                int(
-                    connection.execute("SELECT COUNT(*) FROM summary_jobs").fetchone()[
-                        0
-                    ]
-                )
-                if has_jobs
-                else 0
-            )
-            return {
-                "present": True,
-                "schema_version": max(0, schema_version),
-                "job_count": max(0, job_count),
-            }
-        finally:
-            connection.close()
+        """从 conversations.db 快照读取不含敏感数据的聚合证据。"""
+
+        return inspect_conversation_database(temporary_dir / "conversations.db")
 
     def _create_backup_sync(
         self,
@@ -488,10 +465,28 @@ class BackupManager(BackupRestoreTransactionMixin):
                 manifest_files = info["files"]
                 missing = [name for name in manifest_files if name not in files]
                 invalid = invalid or bool(missing)
+                summary_state = info.get("summary_state")
+                has_evidence = isinstance(summary_state, dict) and (
+                    "evidence_version" in summary_state
+                )
+                evidence_verified = False
+                if has_evidence:
+                    actual_summary = inspect_conversation_database(
+                        backup_dir / "conversations.db"
+                    )
+                    evidence_verified = (
+                        actual_summary == summary_state
+                        and actual_summary.get("integrity") != "invalid"
+                    )
+                    invalid = invalid or not evidence_verified
                 integrity = (
                     BackupIntegrity.INVALID.value
                     if invalid or info.get("status") != "ready"
-                    else BackupIntegrity.VERIFIED.value
+                    else (
+                        BackupIntegrity.VERIFIED.value
+                        if evidence_verified
+                        else BackupIntegrity.LEGACY_UNVERIFIED.value
+                    )
                 )
                 backup_status = (
                     "invalid" if invalid else str(info.get("status", "ready"))
@@ -499,6 +494,8 @@ class BackupManager(BackupRestoreTransactionMixin):
                 file_count = len(manifest_files)
                 total_size = int(info.get("total_size_bytes", 0) or 0)
                 warning_codes = list(info.get("warning_codes", []) or [])
+                if not evidence_verified and "legacy_unverified" not in warning_codes:
+                    warning_codes.append("legacy_unverified")
             else:
                 integrity = BackupIntegrity.LEGACY_UNVERIFIED.value
                 backup_status = "ready"

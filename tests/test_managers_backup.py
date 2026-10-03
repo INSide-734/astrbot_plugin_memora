@@ -21,6 +21,66 @@ from core.features.backup.application.manager import (
     PLUGIN_VERSION,
     BackupManager,
 )
+from core.features.conversation.infrastructure.conversation_store import (
+    ConversationStore,
+)
+from core.features.conversation.infrastructure.summary_schema import (
+    SUMMARY_SCHEMA_VERSION,
+)
+from core.shared.contracts.conversation import Message
+
+_PRIVATE_CANARY = "SUMMARY-BACKUP-PRIVATE-CANARY"
+
+
+async def _write_conversation_database(tmp_path: Path, *, job_id: str) -> None:
+    """用真实 ConversationStore 生成可校验的 conversations.db。"""
+    store = ConversationStore(str(tmp_path / "conversations.db"))
+    await store.initialize()
+    try:
+        await store.create_session("backup-session", "qq")
+        await store.add_message(_conversation_message("第一条"))
+        await store.add_message(_conversation_message("第二条", role="assistant"))
+        connection = store.connection
+        assert connection is not None
+        await connection.execute(
+            """
+            INSERT INTO summary_jobs(
+                job_id, session_id, session_epoch, start_seq, end_seq,
+                expected_count, source_digest, triggered_by, status, reason_code,
+                created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            (
+                job_id,
+                "backup-session",
+                1,
+                0,
+                2,
+                2,
+                "digest",
+                "manual",
+                "queued",
+                "queued",
+                1.0,
+                1.0,
+            ),
+        )
+        await connection.commit()
+    finally:
+        await store.close()
+
+
+def _conversation_message(content: str, *, role: str = "user") -> Message:
+    """构造一条属于固定测试会话的消息。"""
+    return Message(
+        id=0,
+        session_id="backup-session",
+        role=role,
+        content=content,
+        sender_id="u1",
+        sender_name="Tester",
+        timestamp=time.time(),
+    )
 
 
 def _db_bytes(label: str) -> bytes:
@@ -166,40 +226,145 @@ class TestCreateBackup:
         assert info["manifest_version"] == 2
         assert isinstance(info["backup_epoch"], str)
         assert len(info["backup_epoch"]) == 32
-        assert info["summary_state"] == {
-            "present": False,
-            "schema_version": 0,
-            "job_count": 0,
-        }
+        assert info["summary_state"]["present"] is False
+        assert info["summary_state"]["evidence_version"] == 1
+        assert info["summary_state"]["integrity"] == "absent"
         assert "data_dir" not in info
 
     @pytest.mark.asyncio
-    async def test_backup_manifest_records_summary_schema_and_job_count(
+    async def test_backup_manifest_records_conversation_aggregate_evidence(
         self, tmp_path: Path
     ) -> None:
-        """conversations.db 快照只投影 schema 版本和任务总数。"""
+        """conversations.db 快照只投影聚合证据，不泄露任务标识。"""
         (tmp_path / "memora.db").write_bytes(_db_bytes("canonical"))
-        with sqlite3.connect(tmp_path / "conversations.db") as connection:
-            connection.execute("CREATE TABLE summary_jobs(job_id TEXT PRIMARY KEY)")
-            connection.execute(
-                "INSERT INTO summary_jobs(job_id) VALUES (?)",
-                ("SUMMARY-BACKUP-PRIVATE-CANARY",),
-            )
-            connection.execute("PRAGMA user_version = 3")
+        await _write_conversation_database(tmp_path, job_id=_PRIVATE_CANARY)
 
         result = await BackupManager(str(tmp_path)).create_backup()
         backup_path = Path(str(result["directory"]))
         info = json.loads((backup_path / _BACKUP_INFO_FILE).read_text(encoding="utf-8"))
 
-        assert info["summary_state"] == {
-            "present": True,
-            "schema_version": 3,
-            "job_count": 1,
-        }
-        assert "SUMMARY-BACKUP-PRIVATE-CANARY" not in json.dumps(
-            info,
-            ensure_ascii=False,
-        )
+        summary = info["summary_state"]
+        assert summary["present"] is True
+        assert summary["integrity"] == "verified"
+        assert summary["schema_version"] == SUMMARY_SCHEMA_VERSION
+        assert summary["migration_id"] == "summary_schema_v7_merged_ledger"
+        assert summary["session_count"] == 1
+        assert summary["message_count"] == 2
+        assert summary["job_count"] == 1
+        assert summary["candidate_count"] == 0
+        assert _PRIVATE_CANARY not in json.dumps(info, ensure_ascii=False)
+
+    @pytest.mark.asyncio
+    async def test_restore_round_trip_preserves_conversation_evidence(
+        self, tmp_path: Path
+    ) -> None:
+        """合法备份仍可恢复，并由已安装文件复核聚合证据。"""
+        (tmp_path / "memora.db").write_bytes(_db_bytes("canonical"))
+        await _write_conversation_database(tmp_path, job_id="job-round-trip")
+        manager = BackupManager(str(tmp_path))
+        result = await manager.create_backup()
+
+        staged = manager.stage_restore(str(result["name"]))
+        applied = manager.apply_pending_restores()
+
+        assert applied["restore_status"] == "validating"
+        with closing(sqlite3.connect(tmp_path / "conversations.db")) as connection:
+            assert connection.execute("SELECT COUNT(*) FROM messages").fetchone() == (
+                2,
+            )
+        manager.mark_restore_succeeded(str(staged["operation_id"]))
+
+    @pytest.mark.asyncio
+    async def test_canonical_only_restore_keeps_live_conversations(
+        self, tmp_path: Path
+    ) -> None:
+        """备份不含会话库时，恢复只替换 canonical 并保留 live 会话数据。
+
+        ``conversations.db`` 是可选成员：缺席时恢复计划不包含它，因此不能
+        拿「备份内缺席」的证据去比对一个仍然存在的 live 会话库，否则会在
+        替换 memora.db 之后误判并回滚。
+        """
+        (tmp_path / "memora.db").write_bytes(_db_bytes("canonical"))
+        manager = BackupManager(str(tmp_path))
+        result = await manager.create_backup()
+        staged = manager.stage_restore(str(result["name"]))
+        assert staged["staged"] == 1
+        # 备份后才出现的 live 运营数据必须原样保留。
+        await _write_conversation_database(tmp_path, job_id="job-live-only")
+        with closing(sqlite3.connect(tmp_path / "conversations.db")) as connection:
+            before = connection.execute("SELECT COUNT(*) FROM messages").fetchone()
+
+        applied = manager.apply_pending_restores()
+
+        assert applied["restore_status"] == "validating"
+        with closing(sqlite3.connect(tmp_path / "conversations.db")) as connection:
+            assert (
+                connection.execute("SELECT COUNT(*) FROM messages").fetchone() == before
+            )
+        manager.mark_restore_succeeded(str(staged["operation_id"]))
+
+    @pytest.mark.asyncio
+    async def test_canonical_only_plan_rejects_conversation_evidence_claim(
+        self, tmp_path: Path
+    ) -> None:
+        """计划不含会话库时，清单也不得声称带了会话证据（fail closed）。"""
+        (tmp_path / "memora.db").write_bytes(_db_bytes("canonical"))
+        manager = BackupManager(str(tmp_path))
+        result = await manager.create_backup()
+        info_path = Path(str(result["directory"])) / _BACKUP_INFO_FILE
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        assert info["summary_state"]["present"] is False
+        info["summary_state"]["present"] = True
+        info_path.write_text(json.dumps(info), encoding="utf-8")
+
+        with pytest.raises(
+            RuntimeError, match="restore_conversation_evidence_mismatch"
+        ):
+            manager.stage_restore(str(result["name"]))
+        assert manager.list_pending_restores() == []
+
+    @pytest.mark.asyncio
+    async def test_restore_rejects_conversation_evidence_mismatch(
+        self, tmp_path: Path
+    ) -> None:
+        """恢复不得接受 manifest 与 conversations.db 聚合证据不一致。"""
+        (tmp_path / "memora.db").write_bytes(_db_bytes("canonical"))
+        await _write_conversation_database(tmp_path, job_id="job-mismatch")
+        manager = BackupManager(str(tmp_path))
+        result = await manager.create_backup()
+        backup_dir = Path(str(result["directory"]))
+        info_path = backup_dir / _BACKUP_INFO_FILE
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["summary_state"]["job_count"] = 2
+        info_path.write_text(json.dumps(info), encoding="utf-8")
+
+        with pytest.raises(
+            RuntimeError, match="restore_conversation_evidence_mismatch"
+        ):
+            manager.stage_restore(str(result["name"]))
+        assert manager.list_pending_restores() == []
+
+    @pytest.mark.asyncio
+    async def test_restore_rejects_partial_conversation_schema(
+        self, tmp_path: Path
+    ) -> None:
+        """半缺 conversations schema 不得被报告为可恢复的完整备份。"""
+        (tmp_path / "memora.db").write_bytes(_db_bytes("canonical"))
+        with sqlite3.connect(tmp_path / "conversations.db") as connection:
+            connection.execute("CREATE TABLE summary_jobs(job_id TEXT PRIMARY KEY)")
+            connection.execute(
+                "INSERT INTO summary_jobs(job_id) VALUES ('job-partial')"
+            )
+        result = await BackupManager(str(tmp_path)).create_backup()
+        backup_dir = Path(str(result["directory"]))
+        info = json.loads((backup_dir / _BACKUP_INFO_FILE).read_text(encoding="utf-8"))
+        assert info["summary_state"]["integrity"] == "invalid"
+        assert info["summary_state"]["reason_code"] == "schema_incomplete"
+
+        with pytest.raises(
+            RuntimeError, match="restore_conversation_schema_incomplete"
+        ):
+            BackupManager(str(tmp_path)).stage_restore(str(result["name"]))
 
     @pytest.mark.asyncio
     async def test_version_backup_quiesces_bound_summary_scheduler(

@@ -166,6 +166,7 @@ class InitializerReadinessMixin:
     identity_runtime: Any | None
     capture_runtime: CaptureRuntime | None
     index_validator: Any | None
+    catalog_maintenance_result: Any | None
     memory_evolution_store: Any | None
     memory_evolution_manager: Any | None
 
