@@ -1,6 +1,11 @@
 """备份 feature 的公开边界。"""
 
-from .application import PLUGIN_VERSION, BackupManager
+from .application import (
+    PLUGIN_VERSION,
+    BackupManager,
+    backup_operation_guard,
+    run_sync_backup_operation,
+)
 from .domain import (
     BackupIntegrity,
     BackupOperationError,
@@ -49,11 +54,13 @@ __all__ = [
     "RestoreStatus",
     "SnapshotResult",
     "atomic_write_json",
+    "backup_operation_guard",
     "copy_regular_file",
     "ensure_free_space",
     "finalize_snapshot_file",
     "prepare_feedback_backup",
     "rollback_restore_files",
+    "run_sync_backup_operation",
     "sha256_file",
     "snapshot_sqlite",
     "validate_feedback_backup_files",

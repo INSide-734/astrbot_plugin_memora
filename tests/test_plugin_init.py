@@ -1970,7 +1970,7 @@ class TestStartupRestoreConfirmation:
         plugin._inject_delegation_services = MagicMock()
         plugin.feature_delegation.log_status = MagicMock()
         plugin._backup_manager.backup_if_needed_async = AsyncMock()
-        plugin._backup_manager.apply_pending_restores = MagicMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
         plugin._backup_manager.mark_restore_succeeded = MagicMock()
         plugin._backup_manager.get_restore_status = MagicMock(
             return_value={"restore_status": "validating"}
@@ -1999,7 +1999,7 @@ class TestStartupRestoreConfirmation:
         plugin._inject_delegation_services = MagicMock()
         plugin.feature_delegation.log_status = MagicMock()
         plugin._backup_manager.backup_if_needed_async = AsyncMock()
-        plugin._backup_manager.apply_pending_restores = MagicMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
         plugin._backup_manager.mark_restore_succeeded = MagicMock()
         plugin._backup_manager.get_restore_status = MagicMock(
             return_value={"restore_status": "rolled_back"}
@@ -2020,7 +2020,7 @@ class TestStartupRestoreConfirmation:
         plugin.initializer.initialize = AsyncMock(return_value=True)
         plugin._ensure_runtime_components = AsyncMock(return_value=False)
         plugin._backup_manager.backup_if_needed_async = AsyncMock()
-        plugin._backup_manager.apply_pending_restores = MagicMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
         plugin._backup_manager.mark_restore_succeeded = MagicMock()
         plugin._backup_manager.mark_restore_startup_failure_if_needed = MagicMock()
         plugin._backup_manager.get_restore_status = MagicMock(
@@ -2045,7 +2045,7 @@ class TestStartupRestoreConfirmation:
         plugin.initializer._initialization_failed = True
         plugin._ensure_runtime_components = AsyncMock(return_value=True)
         plugin._backup_manager.backup_if_needed_async = AsyncMock()
-        plugin._backup_manager.apply_pending_restores = MagicMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
         plugin._backup_manager.mark_restore_succeeded = MagicMock()
         plugin._backup_manager.mark_restore_startup_failure_if_needed = MagicMock()
         plugin._backup_manager.get_restore_status = MagicMock(
@@ -2099,7 +2099,7 @@ class TestStartupRestoreConfirmation:
         plugin._inject_delegation_services = MagicMock()
         plugin.feature_delegation.log_status = MagicMock()
         plugin._backup_manager.backup_if_needed_async = AsyncMock()
-        plugin._backup_manager.apply_pending_restores = MagicMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
         plugin._backup_manager.mark_restore_succeeded = MagicMock()
         plugin._backup_manager.get_restore_status = MagicMock(
             return_value={"restore_status": "validating"}

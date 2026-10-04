@@ -284,7 +284,7 @@ class MemoraPlugin(Star, CommandEndpointsMixin):
                 reason_code="startup_restore_started",
                 task_type="maintenance",
             )
-            self._backup_manager.apply_pending_restores()
+            await self._backup_manager.apply_pending_restores_async()
             observability.report_debug_event(
                 "maintenance_task",
                 component="plugin",

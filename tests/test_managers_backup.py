@@ -289,6 +289,9 @@ class TestCreateBackup:
         result = await manager.create_backup()
         staged = manager.stage_restore(str(result["name"]))
         assert staged["staged"] == 1
+        assert staged["warning_codes"] == []
+        listed = BackupManager.list_backups(str(tmp_path))
+        assert listed[0]["integrity"] == "verified"
         # 备份后才出现的 live 运营数据必须原样保留。
         await _write_conversation_database(tmp_path, job_id="job-live-only")
         with closing(sqlite3.connect(tmp_path / "conversations.db")) as connection:
@@ -322,6 +325,26 @@ class TestCreateBackup:
         ):
             manager.stage_restore(str(result["name"]))
         assert manager.list_pending_restores() == []
+
+    @pytest.mark.asyncio
+    async def test_canonical_only_plan_rejects_undeclared_conversation_file(
+        self, tmp_path: Path
+    ) -> None:
+        """计划排除会话库时，备份目录中的未声明会话文件不得被隐藏。"""
+        (tmp_path / "memora.db").write_bytes(_db_bytes("canonical"))
+        manager = BackupManager(str(tmp_path))
+        result = await manager.create_backup()
+        backup_dir = Path(str(result["directory"]))
+        (backup_dir / "conversations.db").write_bytes(b"undeclared")
+        info_path = backup_dir / _BACKUP_INFO_FILE
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["summary_state"]["present"] = True
+        info_path.write_text(json.dumps(info), encoding="utf-8")
+
+        with pytest.raises(
+            RuntimeError, match="restore_conversation_evidence_mismatch"
+        ):
+            manager.stage_restore(str(result["name"]))
 
     @pytest.mark.asyncio
     async def test_restore_rejects_conversation_evidence_mismatch(

@@ -475,6 +475,40 @@ def test_required_stage_gate_rejects_unavailable_owners() -> None:
     )
 
 
+def test_required_stage_gate_rejects_unverified_catalog_fast_path() -> None:
+    """catalog_ready 缺少成功或 generation 证据时必须阻断发布。"""
+    coordinator = DerivedRebuildCoordinator(
+        MagicMock(),
+        MagicMock(),
+        catalog_store=MagicMock(),
+    )
+
+    for stage in (
+        {
+            "status": "skipped",
+            "success": False,
+            "reason_code": "catalog_ready",
+            "generation": 1,
+        },
+        {
+            "status": "skipped",
+            "success": True,
+            "reason_code": "catalog_ready",
+            "generation": 0,
+        },
+        {
+            "status": "skipped",
+            "success": True,
+            "reason_code": "catalog_ready",
+            "generation": True,
+        },
+    ):
+        assert (
+            coordinator.required_stage_block_reason(_stage_report(catalog=stage))
+            == "required_stage_skipped_catalog"
+        )
+
+
 def test_required_stage_gate_allows_only_configured_disabled_stages() -> None:
     """只有运行时配置明确关闭的功能才允许记 skipped。"""
 
@@ -690,6 +724,44 @@ async def test_coordinator_orders_catalog_before_graph() -> None:
 
     assert result["success"] is True
     assert order == ["indexes", "catalog", "graph"]
+
+
+@pytest.mark.asyncio
+async def test_required_publish_gate_accepts_verified_catalog_fast_path(
+    tmp_path,
+) -> None:
+    """健康 catalog generation 的 skipped 快路径不得阻断 required 发布门。"""
+    db = await _open_catalog(tmp_path)
+    try:
+        catalog = TopicCatalogStore(db)
+        await catalog.rebuild_from_canonical(now=10.0)
+        validator = SimpleNamespace(
+            _get_document_count=AsyncMock(return_value=0),
+            rebuild_indexes=AsyncMock(return_value={"success": True}),
+        )
+        engine = SimpleNamespace(
+            graph_enabled=False,
+            graph_runtime_enabled=False,
+            atom_enabled=False,
+            config={
+                "semantic_compression.enabled": False,
+                "notes.enabled": False,
+            },
+            memory_evolution_manager=SimpleNamespace(mode="disabled"),
+        )
+        coordinator = DerivedRebuildCoordinator(
+            validator,
+            engine,
+            catalog_store=catalog,
+        )
+
+        report = await coordinator.rebuild_all()
+
+        assert report["stages"]["catalog"]["status"] == "skipped"
+        assert report["stages"]["catalog"]["reason_code"] == "catalog_ready"
+        assert coordinator.required_stage_block_reason(report) is None
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio

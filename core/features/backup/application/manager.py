@@ -50,6 +50,39 @@ _BACKUP_NAME_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _BACKUP_PATTERNS = _RESTORE_BACKUP_PATTERNS
 
 
+async def run_sync_backup_operation(
+    operation: Callable[..., Any], *args: object, **kwargs: object
+) -> Any:
+    """即使调用方取消，也等待同步文件操作线程结束后再传播取消。"""
+    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+    try:
+        result = task.result()
+    except BaseException:
+        if cancelled:
+            raise asyncio.CancelledError
+        raise
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
+@contextlib.asynccontextmanager
+async def backup_operation_guard(manager: object) -> AsyncGenerator[None, None]:
+    """串行化异步调用方中的同步备份文件操作。"""
+    lock = getattr(manager, "_operation_lock", None)
+    if isinstance(lock, asyncio.Lock):
+        async with lock:
+            yield
+        return
+    yield
+
+
 class BackupManager(BackupRestoreTransactionMixin):
     """检测版本变化、创建完整快照并编排恢复事务。"""
 
@@ -125,31 +158,16 @@ class BackupManager(BackupRestoreTransactionMixin):
         self.write_current_version()
         return result
 
-    @staticmethod
-    async def _run_sync_backup(operation: Callable[..., Any], *args: object) -> Any:
-        """即使调用方取消，也等待同步快照线程结束后再传播控制流。"""
-        task = asyncio.create_task(asyncio.to_thread(operation, *args))
-        cancelled = False
-        while not task.done():
-            try:
-                await asyncio.shield(task)
-            except asyncio.CancelledError:
-                cancelled = True
-        try:
-            result = task.result()
-        except BaseException:
-            if cancelled:
-                raise asyncio.CancelledError
-            raise
-        if cancelled:
-            raise asyncio.CancelledError
-        return result
+    async def apply_pending_restores_async(self) -> dict[str, object]:
+        """在线程池应用恢复事务，并在取消时等待同步操作收束。"""
+        async with self._operation_lock:
+            return await run_sync_backup_operation(self.apply_pending_restores)
 
     async def backup_if_needed_async(self) -> dict[str, object] | None:
         """暂停总结调度器后在线程池中执行版本变更备份。"""
         async with self._operation_lock:
             async with self._summary_quiesced():
-                return await self._run_sync_backup(self.backup_if_needed)
+                return await run_sync_backup_operation(self.backup_if_needed)
 
     async def create_backup(self, kind: str = "manual") -> dict[str, object]:
         """暂停总结调度器后创建经过校验的完整备份。"""
@@ -159,7 +177,7 @@ class BackupManager(BackupRestoreTransactionMixin):
             raise BackupOperationError("invalid_backup_type") from exc
         async with self._operation_lock:
             async with self._summary_quiesced():
-                return await self._run_sync_backup(
+                return await run_sync_backup_operation(
                     self._create_backup_sync,
                     backup_type,
                     None,
@@ -535,4 +553,9 @@ class BackupManager(BackupRestoreTransactionMixin):
         return result
 
 
-__all__ = ["BackupManager", "PLUGIN_VERSION"]
+__all__ = [
+    "BackupManager",
+    "PLUGIN_VERSION",
+    "backup_operation_guard",
+    "run_sync_backup_operation",
+]

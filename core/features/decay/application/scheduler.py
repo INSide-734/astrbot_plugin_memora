@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 
+from ...backup.application import backup_operation_guard, run_sync_backup_operation
+
 if TYPE_CHECKING:
     from ...backup.application import BackupManager
     from ...memory.application.memory_engine import MemoryEngine
@@ -494,9 +496,11 @@ class DecayScheduler:
         }
         logger.info("[衰减调度] 定时备份完成")
         try:
-            prune_result = self.backup_manager.prune_backups(
-                keep_days=self.backup_keep_days
-            )
+            async with backup_operation_guard(self.backup_manager):
+                prune_result = await run_sync_backup_operation(
+                    self.backup_manager.prune_backups,
+                    keep_days=self.backup_keep_days,
+                )
             self.last_backup_prune = (
                 prune_result if isinstance(prune_result, dict) else {"removed": []}
             )
@@ -514,7 +518,11 @@ class DecayScheduler:
         if not self.backup_manager:
             return
         try:
-            result = self.backup_manager.prune_backups(keep_days=self.backup_keep_days)
+            async with backup_operation_guard(self.backup_manager):
+                result = await run_sync_backup_operation(
+                    self.backup_manager.prune_backups,
+                    keep_days=self.backup_keep_days,
+                )
             if isinstance(result, dict):
                 self.last_backup_prune = result
         except Exception:

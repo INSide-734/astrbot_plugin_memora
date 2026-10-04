@@ -370,9 +370,14 @@ class BackupRestoreTransactionMixin:
             "evidence_version" in declared_evidence
         ):
             if not plans_conversations:
-                # 计划不含会话库时，清单也不得声称带了会话证据。
-                if declared_evidence.get("present") is True:
+                # 没有替换会话库时，只有 manifest 与实际缺席证据完全一致
+                # 才算已验证；不一致仍 fail closed，避免隐藏未声明文件。
+                if (
+                    conversation_evidence.get("present") is not False
+                    or conversation_evidence != declared_evidence
+                ):
                     raise BackupOperationError("restore_conversation_evidence_mismatch")
+                evidence_verified = True
             elif conversation_evidence != declared_evidence:
                 raise BackupOperationError("restore_conversation_evidence_mismatch")
             else:

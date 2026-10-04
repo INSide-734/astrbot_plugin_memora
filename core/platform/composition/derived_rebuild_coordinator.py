@@ -48,12 +48,11 @@ _REBUILD_STAGE_OPERATIONS: dict[str, tuple[str, str]] = {
     "notes": ("_rebuild_notes", "note_rebuild_failed"),
 }
 
-# required 发布门下唯一允许记 ``skipped`` 的原因码闭集：只有运行时配置明确
-# 关闭该功能时才算可用。indexes 与 catalog 是发布门的恒定必需阶段，任何
-# skipped 都表示 owner 未装配，必须阻断。
+# required 发布门下允许的 skipped 原因码闭集：catalog_ready 仅表示
+# TopicCatalogStore 已验证 active generation；其余阶段只允许配置明确关闭。
 _REQUIRED_TOLERATED_SKIPS: dict[str, frozenset[str]] = {
     "indexes": frozenset(),
-    "catalog": frozenset(),
+    "catalog": frozenset({"catalog_ready"}),
     "atoms": frozenset({"atoms_rebuild_unavailable"}),
     "graph": frozenset({"graph_rebuild_unavailable"}),
     "evolution": frozenset({"evolution_disabled"}),
@@ -429,18 +428,27 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
             status = str(stage.get("status") or "")
             if status == "completed":
                 continue
-            if status == "skipped" and self._required_stage_skip_allowed(
-                name, str(stage.get("reason_code") or "")
-            ):
+            if status == "skipped" and self._required_stage_skip_allowed(name, stage):
                 continue
             return f"required_stage_{status or 'unknown'}_{name}"
         return None
 
-    def _required_stage_skip_allowed(self, name: str, reason_code: str) -> bool:
-        """只允许运行时配置明确关闭的派生阶段跳过。"""
+    def _required_stage_skip_allowed(self, name: str, stage: dict[str, Any]) -> bool:
+        """只允许有明确配置或已验证 generation 证据的阶段跳过。"""
 
+        if stage.get("success") is not True:
+            return False
+        reason_code = str(stage.get("reason_code") or "")
         if reason_code not in _REQUIRED_TOLERATED_SKIPS[name]:
             return False
+        if name == "catalog":
+            generation = stage.get("generation")
+            return (
+                self.catalog_store is not None
+                and isinstance(generation, int)
+                and not isinstance(generation, bool)
+                and generation > 0
+            )
         engine = self.memory_engine
         if name == "atoms":
             return (
