@@ -31,6 +31,9 @@ Memora 的所有重要变更都记录在此文件中。
 - 永久图关系统一由显式 fact 绑定或带 fact 归属的结构化关系生成，Atom、结构化与 legacy 提取路径对同一 canonical 快照使用同一关系计划；Atom 的 entities 仅作为节点和检索信号，时序/因果关系仍要求各自明确证据，不再生成 topic、参与者或实体与事实的共现关系（#88）。
 - 图运行门改为同时要求功能启用且图路权重为有限正数；权重为零、非法或非有限时不再装配图存储、向量索引或检索任务，文档与 Atom 路保持可用，图重建返回明确的 `graph_rebuild_unavailable` 跳过状态（#88）。
 - 图搜索、子图、管理员画布和统计只消费由 active semantic edge 支持的 active evidence；缺少完整 evidence 的历史图行保持不可读，不再混入关系读取、总览或统计（#88）。
+- 旧库启动采用受控原地迁移与 fail-closed 发布门：半缺 canonical schema、未知 conversation schema 版本或未发布为 `ready` 的预迁移快照不会被静默建表、覆盖或继续迁移；真实空库仍保留 fresh install 行为（#96）。
+- 备份与恢复清单新增 conversations schema、migration、session/message、summary job/epoch 等聚合证据；恢复前后复核跨库证据、quarantine canonical 引用与 SQLite 完整性，缺证据的旧清单仅标记为 `legacy_unverified`，不绕过校验（#96）。
+- 迁移/恢复场景下，catalog、索引、主题目录、原子、图、演化、语义压缩和笔记等必要派生阶段必须按固定顺序完成后才允许发布 runtime；普通维护重建仍保留既有降级语义（#96）。
 
 ### 修复
 - 修复图关系在同一作用域和隐私边界下因不同来源 revision 的物理节点而重复、或二跳扩展绕回已命中节点的问题：邻居按 canonical `node_key` 聚合，关联条目按 canonical 键扩展，二跳排除已命中键；精确 revision 查询仍保持物理节点隔离（#88）。
@@ -39,15 +42,19 @@ Memora 的所有重要变更都记录在此文件中。
 - 修复内容替换在旧记录删除失败时可能留下两条可召回记录的问题：补偿失败会保留可重放的修复账本（`content_replace_compensation_failed`），不再出现正文重复或正文丢失。
 - 修复 CAS 正文更新后图索引刷新失败只有告警的问题：改为登记可重放修复（`graph_reindex_failed`），后续维护或重建会补齐图派生。
 - 修复衰减、归档等状态批量变更后派生面未收敛的问题：提交后统一失效关系/投影、回收图源级残留并按当前事实重派生原子信号，失败只降级计数，不回滚状态写。
-- 修复持久化健康修复在目标缺失、健康报告不可用或底层清理未生效时以「已修复 0 条」回应的问题：现在返回显式错误，不把未清理伪装成成功。
+- 修复恢复文件安装或初始化函数未抛异常即确认成功的问题：只有 runtime 首次成功发布且 required 派生重建通过后才确认恢复，失败保持阻断，不启动可写入口或 SummaryScheduler（#96）。
+- 修复 canonical-only v2 备份恢复把缺席的 `conversations.db` 证据与仍保留的 live 会话库错误比较并触发回滚的问题：只有清单声明与实际缺席证据完全一致才标记 verified；备份列表、恢复暂存与 scheduler 清理的同步扫描移至线程池，并复用备份操作锁串行化文件操作，避免阻塞异步事件循环和并发恢复竞态（#96）。
+- 修复健康 Topic Catalog 已有有效 generation 时 `catalog_ready` 快路径被 required 发布门误判为缺失阶段的问题；未装配或缺少有效 generation 的 catalog owner 仍保持 fail closed（#96）。
 
 ### 测试
 
 - 新增事实级绑定校验、准入与分段下标重排、三条图提取路径一致性、共现关系剔除、多来源 evidence 共享/最后来源回收、跨 revision 邻居与二跳排除、来源不可派生收敛、运行门及历史图行 fail-closed 的回归覆盖（#88）。
+- 新增旧库、半缺 schema、预迁移快照失败、跨库证据不一致、quarantine 孤儿引用、恢复验证失败、必要派生重建失败及 Provider 重试发布路径的回归覆盖，并同时校验 canonical 数据、任务/引用状态与 runtime readiness（#96）。
 
 ### 升级说明
 
 - 无需迁移配置或 canonical memory；启动时仅增量创建图派生的 semantic edge/evidence 结构。缺少完整 evidence 的历史图行会安全保留但不参与读取，运行 `/memora rebuild-graph` 可按当前 canonical 来源恢复。
+- 旧库默认先生成并验证预迁移快照，再执行可回滚迁移；`auto_migrate=false`、未知版本、半缺 schema 或无法证明恢复完成时保持稳定阻断，不建立第二套 canonical memory（#96）。
 
 ## [1.4.0] — 2026-09-20
 

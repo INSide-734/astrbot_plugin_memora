@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -74,6 +76,30 @@ def _create_legacy_database(
         connection.close()
 
 
+def _create_partial_canonical_database(db_path: Path, *, version: int = 7) -> None:
+    """创建缺少 documents 但保留历史版本表的半缺 canonical 数据库。"""
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE db_version (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version INTEGER NOT NULL,
+                description TEXT,
+                migrated_at TEXT NOT NULL,
+                migration_duration_seconds REAL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO db_version(
+                version,description,migrated_at,migration_duration_seconds
+            ) VALUES (?, 'partial', '2026-01-01T00:00:00+00:00', 0.0)
+            """,
+            (version,),
+        )
+
+
 def _read_schema_snapshot(db_path: Path) -> tuple[int, int, set[str]]:
     """读取 canonical 数量、最高版本和 documents 列集合。"""
 
@@ -94,58 +120,115 @@ def _read_schema_snapshot(db_path: Path) -> tuple[int, int, set[str]]:
         connection.close()
 
 
+def _write_pre_migration_snapshot(
+    data_dir: Path,
+    db_path: Path,
+    *,
+    name: str = "pre_migration_test",
+    source_db: Path | None = None,
+) -> dict[str, object]:
+    """创建带 v2 清单的迁移前快照，并返回与真实 owner 同形的结果。
+
+    ``source_db`` 用于让快照内容与 live canonical 故意不一致（回滚基线
+    校验失败场景）；默认快照的就是 live canonical。
+    """
+
+    backup_dir = data_dir / "backups" / name
+    backup_dir.mkdir(parents=True, exist_ok=False)
+    snapshot = snapshot_sqlite(source_db or db_path, backup_dir / db_path.name)
+    (backup_dir / "backup_info.json").write_text(
+        json.dumps(
+            {
+                "manifest_version": 2,
+                "status": "ready",
+                "files": {
+                    db_path.name: {
+                        "role": "canonical",
+                        "kind": "sqlite",
+                        "size_bytes": snapshot.size_bytes,
+                        "sha256": snapshot.sha256,
+                        "quick_check": snapshot.quick_check,
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "name": name,
+        "directory": str(backup_dir),
+        "status": "ready",
+    }
+
+
 class _RecordingBackupManager:
-    """记录迁移备份事件并返回可控结果。"""
+    """记录迁移备份事件；未显式给定结果时创建真实快照。
+
+    ``result`` 只用于构造「owner 报告不可信结果」的负例；需要迁移真正
+    推进的用例必须让它生成带清单的真实快照，避免出现目录不存在的假
+    ``ready`` 路径。
+    """
 
     def __init__(
         self,
         events: list[str],
         *,
+        db_path: Path | None = None,
+        data_dir: Path | None = None,
         result: dict[str, object] | None = None,
         error: BaseException | None = None,
     ) -> None:
-        """保存事件列表以及可选结果或异常。"""
+        """保存事件列表、快照来源以及可选结果或异常。"""
 
         self.events = events
-        self.result = result or {
-            "name": "pre_migration_test",
-            "directory": "unused",
-        }
+        self.db_path = db_path
+        self.data_dir = data_dir
+        self.result = result
         self.error = error
 
     async def create_backup(self, kind: str = "manual") -> dict[str, object]:
-        """记录备份类型，并按测试设置返回或抛出异常。"""
+        """记录备份类型，并按测试设置创建快照或返回可控结果。"""
 
         self.events.append(f"backup:{kind}")
         if self.error is not None:
             raise self.error
+        if self.result is None:
+            assert kind == "pre_migration"
+            assert self.db_path is not None and self.data_dir is not None
+            return await asyncio.to_thread(
+                _write_pre_migration_snapshot,
+                self.data_dir,
+                self.db_path,
+            )
         return self.result
 
 
 class _SnapshotBackupManager:
-    """为恢复测试创建独立 SQLite 快照。"""
+    """为恢复测试创建带清单的独立 SQLite 快照。"""
 
-    def __init__(self, db_path: Path, data_dir: Path) -> None:
-        """保存 canonical 数据库和测试数据目录。"""
+    def __init__(
+        self,
+        db_path: Path,
+        data_dir: Path,
+        *,
+        source_db: Path | None = None,
+    ) -> None:
+        """保存 canonical 数据库、测试数据目录和可选快照来源。"""
 
         self.db_path = db_path
         self.data_dir = data_dir
+        self.source_db = source_db
 
     async def create_backup(self, kind: str = "manual") -> dict[str, object]:
         """创建固定目录中的完整 SQLite 快照。"""
 
         assert kind == "pre_migration"
-        backup_dir = self.data_dir / "backups" / "pre_migration_test"
-        backup_dir.mkdir(parents=True, exist_ok=False)
-        await asyncio.to_thread(
-            snapshot_sqlite,
+        return await asyncio.to_thread(
+            _write_pre_migration_snapshot,
+            self.data_dir,
             self.db_path,
-            backup_dir / self.db_path.name,
+            source_db=self.source_db,
         )
-        return {
-            "name": "pre_migration_test",
-            "directory": str(backup_dir),
-        }
 
 
 class _FailingConnection:
@@ -232,7 +315,9 @@ async def test_pre_migration_backup_precedes_first_change_sql(tmp_path: Path) ->
         data_dir=tmp_path,
         auto_migrate=True,
         create_backup=True,
-        backup_manager=_RecordingBackupManager(events),
+        backup_manager=_RecordingBackupManager(
+            events, db_path=db_path, data_dir=tmp_path
+        ),
     )
 
     result = await coordinator.run()
@@ -351,10 +436,16 @@ async def test_mid_migration_failure_restores_canonical_and_version(
 
 @pytest.mark.asyncio
 async def test_restore_failure_enters_persistent_blocked_state(tmp_path: Path) -> None:
-    """快照恢复也失败时必须持久化 blocked 状态并停止启动。"""
+    """快照恢复也失败时必须持久化 blocked 状态并停止启动。
+
+    快照是合法 v2 manifest 清单成员，但内容来自另一份 canonical（数量与
+    迁移计划不符），因此迁移中断后的回滚基线校验必然失败。
+    """
 
     db_path = tmp_path / "memora.db"
     _create_legacy_database(db_path)
+    stale_db = tmp_path / "stale-memora.db"
+    _create_legacy_database(stale_db, canonical_count=5)
     connection = await aiosqlite.connect(db_path)
     coordinator = SchemaMigrationCoordinator(
         SchemaManager(cast(aiosqlite.Connection, _FailingConnection(connection))),
@@ -362,13 +453,7 @@ async def test_restore_failure_enters_persistent_blocked_state(tmp_path: Path) -
         data_dir=tmp_path,
         auto_migrate=True,
         create_backup=True,
-        backup_manager=_RecordingBackupManager(
-            [],
-            result={
-                "name": "pre_migration_missing",
-                "directory": str(tmp_path / "missing-backup"),
-            },
-        ),
+        backup_manager=_SnapshotBackupManager(db_path, tmp_path, source_db=stale_db),
     )
 
     with pytest.raises(SchemaMigrationError) as caught:
@@ -432,6 +517,199 @@ async def test_empty_provider_schema_is_treated_as_fresh_install(
     assert result.stage == "fresh_created"
     assert events == []
     assert _read_schema_snapshot(db_path)[0:2] == (0, CURRENT_DB_VERSION)
+
+
+@pytest.mark.asyncio
+async def test_partial_canonical_without_documents_is_blocked_without_mutation(
+    tmp_path: Path,
+) -> None:
+    """半缺 canonical 不得被当作 fresh，也不得创建 documents。"""
+    db_path = tmp_path / "memora.db"
+    _create_partial_canonical_database(db_path)
+    connection = await aiosqlite.connect(db_path)
+    events: list[str] = []
+    coordinator = SchemaMigrationCoordinator(
+        SchemaManager(connection),
+        db_path=db_path,
+        data_dir=tmp_path,
+        auto_migrate=True,
+        create_backup=True,
+        backup_manager=_RecordingBackupManager(events),
+    )
+
+    with pytest.raises(SchemaMigrationError) as caught:
+        await coordinator.run()
+    await connection.close()
+
+    assert caught.value.reason_code == "schema_documents_missing"
+    assert events == []
+    with sqlite3.connect(db_path) as check:
+        tables = {
+            str(row[0])
+            for row in check.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert tables == {"db_version", "sqlite_sequence"}
+        assert check.execute("SELECT MAX(version) FROM db_version").fetchone()[0] == 7
+    state = coordinator.read_persisted_state()
+    assert state["stage"] == "blocked"
+    assert state["reason_code"] == "schema_documents_missing"
+
+
+@pytest.mark.asyncio
+async def test_unverified_pre_migration_backup_blocks_before_schema_changes(
+    tmp_path: Path,
+) -> None:
+    """未发布 ready 的迁移快照不得允许首条 schema 变更。"""
+    db_path = tmp_path / "memora.db"
+    _create_legacy_database(db_path)
+    connection = await aiosqlite.connect(db_path)
+    statements: list[str] = []
+    await connection.set_trace_callback(statements.append)
+    coordinator = SchemaMigrationCoordinator(
+        SchemaManager(connection),
+        db_path=db_path,
+        data_dir=tmp_path,
+        auto_migrate=True,
+        create_backup=True,
+        backup_manager=_RecordingBackupManager(
+            [],
+            result={
+                "name": "unverified",
+                "directory": "unused",
+                "status": "pending",
+            },
+        ),
+    )
+
+    with pytest.raises(SchemaMigrationError) as caught:
+        await coordinator.run()
+    await connection.close()
+
+    assert caught.value.reason_code == "pre_migration_backup_failed"
+    assert not any("ALTER TABLE" in statement for statement in statements)
+    assert _read_schema_snapshot(db_path)[0:2] == (2, 7)
+
+
+@pytest.mark.asyncio
+async def test_ready_snapshot_without_directory_blocks_before_schema_changes(
+    tmp_path: Path,
+) -> None:
+    """owner 报告 ready 但目录不存在时不得允许首条 schema 变更。
+
+    这是「假 ready 路径」回归：只信 ``status`` 会把没有可回滚基线的迁移
+    放行，进而让旧数据在 DDL 之后无处可退。
+    """
+    db_path = tmp_path / "memora.db"
+    _create_legacy_database(db_path)
+    connection = await aiosqlite.connect(db_path)
+    statements: list[str] = []
+    await connection.set_trace_callback(statements.append)
+    coordinator = SchemaMigrationCoordinator(
+        SchemaManager(connection),
+        db_path=db_path,
+        data_dir=tmp_path,
+        auto_migrate=True,
+        create_backup=True,
+        backup_manager=_RecordingBackupManager(
+            [],
+            result={
+                "name": "ghost_ready",
+                "directory": str(tmp_path / "backups" / "ghost_ready"),
+                "status": "ready",
+            },
+        ),
+    )
+
+    with pytest.raises(SchemaMigrationError) as caught:
+        await coordinator.run()
+    await connection.close()
+
+    assert caught.value.reason_code == "pre_migration_backup_failed"
+    assert not any("ALTER TABLE" in statement for statement in statements)
+    assert _read_schema_snapshot(db_path)[0:2] == (2, 7)
+    assert coordinator.read_persisted_state()["snapshot_ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_ready_snapshot_outside_backups_root_blocks_migration(
+    tmp_path: Path,
+) -> None:
+    """目录与清单都合规但不在 backups 之下时不得作为回滚基线。"""
+    db_path = tmp_path / "memora.db"
+    _create_legacy_database(db_path)
+    snapshot = await asyncio.to_thread(
+        _write_pre_migration_snapshot,
+        tmp_path,
+        db_path,
+    )
+    escaped = tmp_path / "escaped-snapshot"
+    await asyncio.to_thread(os.replace, Path(str(snapshot["directory"])), escaped)
+    connection = await aiosqlite.connect(db_path)
+    statements: list[str] = []
+    await connection.set_trace_callback(statements.append)
+    coordinator = SchemaMigrationCoordinator(
+        SchemaManager(connection),
+        db_path=db_path,
+        data_dir=tmp_path,
+        auto_migrate=True,
+        create_backup=True,
+        backup_manager=_RecordingBackupManager(
+            [],
+            result={
+                "name": "escaped-snapshot",
+                "directory": str(escaped),
+                "status": "ready",
+            },
+        ),
+    )
+
+    with pytest.raises(SchemaMigrationError) as caught:
+        await coordinator.run()
+    await connection.close()
+
+    assert caught.value.reason_code == "pre_migration_backup_failed"
+    assert not any("ALTER TABLE" in statement for statement in statements)
+    assert _read_schema_snapshot(db_path)[0:2] == (2, 7)
+
+
+@pytest.mark.asyncio
+async def test_snapshot_without_canonical_role_blocks_migration(
+    tmp_path: Path,
+) -> None:
+    """清单未声明 canonical 角色时不得进入 Schema 变更。"""
+    db_path = tmp_path / "memora.db"
+    _create_legacy_database(db_path)
+    snapshot = await asyncio.to_thread(
+        _write_pre_migration_snapshot,
+        tmp_path,
+        db_path,
+    )
+    info_path = Path(str(snapshot["directory"])) / "backup_info.json"
+    info = json.loads(info_path.read_text(encoding="utf-8"))
+    info["files"]["memora.db"]["role"] = "operational"
+    info_path.write_text(json.dumps(info), encoding="utf-8")
+
+    connection = await aiosqlite.connect(db_path)
+    statements: list[str] = []
+    await connection.set_trace_callback(statements.append)
+    coordinator = SchemaMigrationCoordinator(
+        SchemaManager(connection),
+        db_path=db_path,
+        data_dir=tmp_path,
+        auto_migrate=True,
+        create_backup=True,
+        backup_manager=_RecordingBackupManager([], result=snapshot),
+    )
+
+    with pytest.raises(SchemaMigrationError) as caught:
+        await coordinator.run()
+    await connection.close()
+
+    assert caught.value.reason_code == "pre_migration_backup_failed"
+    assert not any("ALTER TABLE" in statement for statement in statements)
+    assert _read_schema_snapshot(db_path)[0:2] == (2, 7)
 
 
 @pytest.mark.asyncio

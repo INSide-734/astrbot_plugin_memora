@@ -95,6 +95,7 @@ class PluginInitializer(InitializerReadinessMixin):
         self._capture_closed = False
         self.index_validator: IndexValidator | None = None
         self.derived_rebuild_coordinator: Any | None = None
+        self.catalog_maintenance_result: Any | None = None
         self.decay_scheduler: DecayScheduler | None = None
         self.topic_catalog_reconcile_scheduler: (
             TopicCatalogReconcileScheduler | None
@@ -345,6 +346,9 @@ class PluginInitializer(InitializerReadinessMixin):
             self.summary_scheduler = None
             self.summary_llm_limiter = components.get("summary_llm_limiter")
             self.backup_manager = components.get("backup_manager")
+            self.catalog_maintenance_result = components.get(
+                "catalog_maintenance_result"
+            )
             await self.ensure_catalog_readiness(components)
             if summary_scheduler is None:
                 raise InitializationError("总结调度器未初始化")

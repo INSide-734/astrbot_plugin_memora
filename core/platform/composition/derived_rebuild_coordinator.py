@@ -48,6 +48,18 @@ _REBUILD_STAGE_OPERATIONS: dict[str, tuple[str, str]] = {
     "notes": ("_rebuild_notes", "note_rebuild_failed"),
 }
 
+# required 发布门下允许的 skipped 原因码闭集：catalog_ready 仅表示
+# TopicCatalogStore 已验证 active generation；其余阶段只允许配置明确关闭。
+_REQUIRED_TOLERATED_SKIPS: dict[str, frozenset[str]] = {
+    "indexes": frozenset(),
+    "catalog": frozenset({"catalog_ready"}),
+    "atoms": frozenset({"atoms_rebuild_unavailable"}),
+    "graph": frozenset({"graph_rebuild_unavailable"}),
+    "evolution": frozenset({"evolution_disabled"}),
+    "semantic_compression": frozenset({"semantic_compression_disabled"}),
+    "notes": frozenset({"note_rebuild_unavailable"}),
+}
+
 
 def _skipped_stage(reason_code: str) -> dict[str, Any]:
     """构造与既有阶段字段兼容的跳过结果。"""
@@ -394,6 +406,71 @@ class DerivedRebuildCoordinator(DerivedRebuildCatalogMixin):
             if isinstance(stages, dict) and isinstance(stages.get(stage), dict):
                 return stages[stage]
         return report
+
+    def required_stage_block_reason(self, report: Any) -> str | None:
+        """判断 required 发布门下重建报告是否确实覆盖了全部阶段。
+
+        阶段 owner 把「运行时配置明确关闭该功能」报告为
+        ``status=skipped, success=True``，聚合 ``success`` 因而无法区分
+        「功能关闭」与「owner 未装配」。这里按固定阶段顺序复核：只有命中
+        `_REQUIRED_TOLERATED_SKIPS` 且与实际运行时配置匹配的跳过才算完成，
+        其余跳过、缺失或非完成状态都返回稳定原因码，让发布门 fail closed。
+        普通维护路径不读本方法，继续沿用既有降级语义。
+        """
+
+        stages = report.get("stages") if isinstance(report, dict) else None
+        if not isinstance(stages, dict):
+            return "required_stages_missing"
+        for name in _DERIVED_REBUILD_STAGES:
+            stage = stages.get(name)
+            if not isinstance(stage, dict):
+                return f"required_stage_missing_{name}"
+            status = str(stage.get("status") or "")
+            if status == "completed":
+                continue
+            if status == "skipped" and self._required_stage_skip_allowed(name, stage):
+                continue
+            return f"required_stage_{status or 'unknown'}_{name}"
+        return None
+
+    def _required_stage_skip_allowed(self, name: str, stage: dict[str, Any]) -> bool:
+        """只允许有明确配置或已验证 generation 证据的阶段跳过。"""
+
+        if stage.get("success") is not True:
+            return False
+        reason_code = str(stage.get("reason_code") or "")
+        if reason_code not in _REQUIRED_TOLERATED_SKIPS[name]:
+            return False
+        if name == "catalog":
+            generation = stage.get("generation")
+            return (
+                self.catalog_store is not None
+                and isinstance(generation, int)
+                and not isinstance(generation, bool)
+                and generation > 0
+            )
+        engine = self.memory_engine
+        if name == "atoms":
+            return (
+                getattr(engine, "graph_enabled", None) is False
+                or getattr(engine, "atom_enabled", None) is False
+            )
+        if name == "graph":
+            return getattr(engine, "graph_runtime_enabled", None) is False
+        manager = self.evolution_manager
+        if manager is None:
+            manager = getattr(engine, "memory_evolution_manager", None)
+        if name == "evolution":
+            return getattr(manager, "mode", None) == "disabled"
+        config = getattr(engine, "config", None)
+        if name == "semantic_compression":
+            return (
+                isinstance(config, dict)
+                and config.get("semantic_compression.enabled") is False
+            ) or getattr(manager, "mode", None) == "disabled"
+        if name == "notes":
+            return isinstance(config, dict) and config.get("notes.enabled") is False
+        return False
 
     async def _execute_stage_plan(
         self, stages: list[str], *, rebuild_indexes: bool

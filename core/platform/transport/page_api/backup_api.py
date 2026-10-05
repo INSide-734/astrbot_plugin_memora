@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from astrbot.api import logger
 
-from ....features.backup.application import BackupManager
+from ....features.backup.application import (
+    BackupManager,
+    backup_operation_guard,
+    run_sync_backup_operation,
+)
 from ....features.backup.domain import BackupOperationError
 from .response_utils import error_response, ok_response
 
@@ -172,9 +176,14 @@ class BackupApiMixin:
                         "capabilities": {"hot_reload": False},
                     }
                 )
+            async with backup_operation_guard(manager):
+                backup_items = await run_sync_backup_operation(
+                    BackupManager.list_backups,
+                    data_dir,
+                )
             backups = [
                 BackupApiMixin._public_backup_item(item)
-                for item in _safe_backup_list(BackupManager.list_backups(data_dir))
+                for item in _safe_backup_list(backup_items)
             ]
             pending = manager.get_restore_status() if manager is not None else None
             supports_reload = getattr(self.plugin, "supports_plugin_reload", None)
@@ -227,62 +236,71 @@ class BackupApiMixin:
         if manager is None:
             return error_response("备份管理器不可用", code="backup_invalid")
         try:
-            result = manager.stage_restore(name, apply_mode=apply_mode)
-            if not isinstance(result, Mapping):
-                return error_response("恢复计划无效", code="restore_plan_invalid")
-            operation_id = str(result.get("operation_id", "")).strip()
-            if not operation_id:
-                # 兼容旧管理器的摘要返回；新事务必须包含 operation_id。
-                def _legacy_count(value: Any) -> int:
-                    """把旧管理器计数字段规范化为非负整数。"""
+            async with backup_operation_guard(manager):
+                result = await run_sync_backup_operation(
+                    manager.stage_restore,
+                    name,
+                    apply_mode=apply_mode,
+                )
+                if not isinstance(result, Mapping):
+                    return error_response("恢复计划无效", code="restore_plan_invalid")
+                operation_id = str(result.get("operation_id", "")).strip()
+                if not operation_id:
+                    # 兼容旧管理器的摘要返回；新事务必须包含 operation_id。
+                    def _legacy_count(value: Any) -> int:
+                        """把旧管理器计数字段规范化为非负整数。"""
 
-                    if isinstance(value, bool):
-                        return 0
-                    try:
-                        return max(0, int(value))
-                    except (TypeError, ValueError):
-                        return 0
+                        if isinstance(value, bool):
+                            return 0
+                        try:
+                            return max(0, int(value))
+                        except (TypeError, ValueError):
+                            return 0
 
-                def _legacy_files(value: object) -> list[str]:
-                    """把旧管理器文件字段规范化为字符串列表。"""
+                    def _legacy_files(value: object) -> list[str]:
+                        """把旧管理器文件字段规范化为字符串列表。"""
 
-                    if isinstance(value, (list, tuple)):
-                        return [str(item) for item in value if isinstance(item, str)]
-                    return []
+                        if isinstance(value, (list, tuple)):
+                            return [
+                                str(item) for item in value if isinstance(item, str)
+                            ]
+                        return []
 
+                    return ok_response(
+                        {
+                            "staged": _legacy_count(result.get("staged", 0)),
+                            "skipped": _legacy_count(result.get("skipped", 0)),
+                            "pending": bool(result.get("pending", True)),
+                            "staged_files": _legacy_files(result.get("staged_files")),
+                            "skipped_files": _legacy_files(result.get("skipped_files")),
+                            "warning_codes": _legacy_files(result.get("warning_codes")),
+                            "message": "备份已校验并暂存，请重启 AstrBot 完成恢复。",
+                        }
+                    )
+                scheduled = False
+                if apply_mode == "reload":
+                    schedule = getattr(
+                        self.plugin, "schedule_backup_restore_reload", None
+                    )
+                    scheduled = (
+                        bool(schedule(operation_id)) if callable(schedule) else False
+                    )
+                    manager.mark_reload_scheduled(operation_id, scheduled)
+                status = manager.get_restore_status(operation_id) or result
+                message = (
+                    "备份已校验并暂存，插件热重载已安排。"
+                    if scheduled
+                    else "备份已校验并暂存，请重启 AstrBot 完成恢复。"
+                )
                 return ok_response(
                     {
-                        "staged": _legacy_count(result.get("staged", 0)),
-                        "skipped": _legacy_count(result.get("skipped", 0)),
-                        "pending": bool(result.get("pending", True)),
-                        "staged_files": _legacy_files(result.get("staged_files")),
-                        "skipped_files": _legacy_files(result.get("skipped_files")),
-                        "warning_codes": _legacy_files(result.get("warning_codes")),
-                        "message": "备份已校验并暂存，请重启 AstrBot 完成恢复。",
+                        **status,
+                        "message": message,
+                        "staged": result.get("staged", 0),
+                        "pending": True,
+                        "warning_codes": result.get("warning_codes", []),
                     }
                 )
-            scheduled = False
-            if apply_mode == "reload":
-                schedule = getattr(self.plugin, "schedule_backup_restore_reload", None)
-                scheduled = (
-                    bool(schedule(operation_id)) if callable(schedule) else False
-                )
-                manager.mark_reload_scheduled(operation_id, scheduled)
-            status = manager.get_restore_status(operation_id) or result
-            message = (
-                "备份已校验并暂存，插件热重载已安排。"
-                if scheduled
-                else "备份已校验并暂存，请重启 AstrBot 完成恢复。"
-            )
-            return ok_response(
-                {
-                    **status,
-                    "message": message,
-                    "staged": result.get("staged", 0),
-                    "pending": True,
-                    "warning_codes": result.get("warning_codes", []),
-                }
-            )
         except Exception as exc:
             return _safe_operation_error(exc, "restore_apply_failed")
 
@@ -321,10 +339,15 @@ class BackupApiMixin:
         if manager is None:
             return error_response("备份管理器不可用", code="restore_not_found")
         try:
+            async with backup_operation_guard(manager):
+                result = await run_sync_backup_operation(
+                    manager.cancel_restore,
+                    operation_id,
+                )
             return ok_response(
                 {
                     "message": "已取消暂存恢复",
-                    **manager.cancel_restore(operation_id),
+                    **result,
                 }
             )
         except Exception as exc:
@@ -355,7 +378,9 @@ class BackupApiMixin:
         if manager is None:
             return error_response("备份管理器不可用", code="backup_not_found")
         try:
-            if not manager.delete_backup(name):
+            async with backup_operation_guard(manager):
+                deleted = await run_sync_backup_operation(manager.delete_backup, name)
+            if not deleted:
                 return error_response("未找到备份", code="backup_not_found")
             return ok_response({"message": "备份已删除", "name": name})
         except Exception as exc:
@@ -385,23 +410,30 @@ class BackupApiMixin:
             return error_response("备份管理器不可用", code="backup_not_found")
         deleted_names: list[str] = []
         failed_items: list[dict[str, str]] = []
-        for raw_name in names:
-            name = str(raw_name).strip()
-            try:
-                normalized = BackupManager.validate_backup_name(name)
-                if manager.delete_backup(normalized):
-                    deleted_names.append(normalized)
-                else:
-                    failed_items.append(
-                        {"name": normalized, "reason_code": "backup_not_found"}
+        async with backup_operation_guard(manager):
+            for raw_name in names:
+                name = str(raw_name).strip()
+                try:
+                    normalized = BackupManager.validate_backup_name(name)
+                    deleted = await run_sync_backup_operation(
+                        manager.delete_backup,
+                        normalized,
                     )
-            except ValueError:
-                failed_items.append(
-                    {"name": name, "reason_code": "invalid_backup_name"}
-                )
-            except Exception as exc:
-                code = str(exc) if str(exc) in _BACKUP_ERROR_CODES else "backup_in_use"
-                failed_items.append({"name": name, "reason_code": code})
+                    if deleted:
+                        deleted_names.append(normalized)
+                    else:
+                        failed_items.append(
+                            {"name": normalized, "reason_code": "backup_not_found"}
+                        )
+                except ValueError:
+                    failed_items.append(
+                        {"name": name, "reason_code": "invalid_backup_name"}
+                    )
+                except Exception as exc:
+                    code = (
+                        str(exc) if str(exc) in _BACKUP_ERROR_CODES else "backup_in_use"
+                    )
+                    failed_items.append({"name": name, "reason_code": code})
         return ok_response(
             {
                 "message": f"已删除 {len(deleted_names)}/{len(names)} 个备份",

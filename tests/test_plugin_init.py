@@ -1934,3 +1934,204 @@ class TestMemoryEvolutionLifecycle:
         assert components["memory_evolution_manager"] is False
         assert components["memory_quarantine_store"] is False
         assert components["memory_quality_gate"] is False
+
+
+class TestStartupRestoreConfirmation:
+    """验证启动恢复成功标记只跟随 owner 报告的已安装状态。"""
+
+    @staticmethod
+    def _make_plugin():
+        MemoraPlugin = _load_memora_plugin_class()
+        with (
+            patch.object(MemoraPlugin, "_register_official_page_api_if_available"),
+            patch.object(
+                MemoraPlugin,
+                "_create_tracked_task",
+                side_effect=lambda coro: coro.close(),
+            ),
+        ):
+            return MemoraPlugin(MagicMock(), {})
+
+    @pytest.mark.asyncio
+    async def test_startup_marks_restore_succeeded_only_for_installed_plan(
+        self,
+    ) -> None:
+        """恢复文件已安装、跨库校验通过且发布门允许时才标记 succeeded。"""
+
+        plugin = self._make_plugin()
+        plugin.initializer._initialization_complete = True
+        plugin.initializer.memory_engine = MagicMock()
+        plugin.initializer.memory_processor = MagicMock()
+        plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.catalog_maintenance_result = {
+            "publish_gate_required": True,
+            "derived_rebuild_success": True,
+        }
+        plugin._inject_delegation_services = MagicMock()
+        plugin.feature_delegation.log_status = MagicMock()
+        plugin._backup_manager.backup_if_needed_async = AsyncMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
+        plugin._backup_manager.mark_restore_succeeded = MagicMock()
+        plugin._backup_manager.get_restore_status = MagicMock(
+            return_value={"restore_status": "validating"}
+        )
+        plugin._component_init_lock = asyncio.Lock()
+        module = sys.modules[plugin.__module__]
+        plugin.publish_runtime_handlers = MagicMock()
+        with patch.object(
+            module, "publish_runtime_handlers", plugin.publish_runtime_handlers
+        ):
+            ready = await plugin._ensure_runtime_components()
+
+        assert ready is True
+        plugin._backup_manager.mark_restore_succeeded.assert_called_once_with()
+        plugin.publish_runtime_handlers.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_startup_does_not_mark_restore_succeeded_after_rollback(
+        self,
+    ) -> None:
+        """恢复已回滚时不得把事务伪造成成功。"""
+
+        plugin = self._make_plugin()
+        plugin.initializer.initialize = AsyncMock(return_value=True)
+        plugin._ensure_runtime_components = AsyncMock(return_value=True)
+        plugin._inject_delegation_services = MagicMock()
+        plugin.feature_delegation.log_status = MagicMock()
+        plugin._backup_manager.backup_if_needed_async = AsyncMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
+        plugin._backup_manager.mark_restore_succeeded = MagicMock()
+        plugin._backup_manager.get_restore_status = MagicMock(
+            return_value={"restore_status": "rolled_back"}
+        )
+
+        await plugin._initialize_plugin()
+
+        plugin._backup_manager.mark_restore_succeeded.assert_not_called()
+        plugin._ensure_runtime_components.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_startup_keeps_restore_blocked_when_runtime_is_not_ready(
+        self,
+    ) -> None:
+        """runtime 未发布时恢复保持待回滚，不标记成功。"""
+
+        plugin = self._make_plugin()
+        plugin.initializer.initialize = AsyncMock(return_value=True)
+        plugin._ensure_runtime_components = AsyncMock(return_value=False)
+        plugin._backup_manager.backup_if_needed_async = AsyncMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
+        plugin._backup_manager.mark_restore_succeeded = MagicMock()
+        plugin._backup_manager.mark_restore_startup_failure_if_needed = MagicMock()
+        plugin._backup_manager.get_restore_status = MagicMock(
+            return_value={"restore_status": "validating"}
+        )
+
+        await plugin._initialize_plugin()
+
+        plugin._backup_manager.mark_restore_succeeded.assert_not_called()
+        plugin._backup_manager.mark_restore_startup_failure_if_needed.assert_called_once_with(
+            True
+        )
+
+    @pytest.mark.asyncio
+    async def test_initialization_failure_never_marks_restore_succeeded(
+        self,
+    ) -> None:
+        """初始化未就绪时保持真实失败状态，不伪造恢复成功。"""
+
+        plugin = self._make_plugin()
+        plugin.initializer.initialize = AsyncMock(return_value=False)
+        plugin.initializer._initialization_failed = True
+        plugin._ensure_runtime_components = AsyncMock(return_value=True)
+        plugin._backup_manager.backup_if_needed_async = AsyncMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
+        plugin._backup_manager.mark_restore_succeeded = MagicMock()
+        plugin._backup_manager.mark_restore_startup_failure_if_needed = MagicMock()
+        plugin._backup_manager.get_restore_status = MagicMock(
+            return_value={"restore_status": "validating"}
+        )
+
+        await plugin._initialize_plugin()
+
+        plugin._backup_manager.mark_restore_succeeded.assert_not_called()
+        plugin._ensure_runtime_components.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "gate",
+        [
+            pytest.param(None, id="gate-missing"),
+            pytest.param({}, id="required-missing"),
+            pytest.param({"publish_gate_required": None}, id="required-none"),
+            pytest.param({"publish_gate_required": "true"}, id="required-string"),
+            pytest.param(
+                {"publish_gate_required": True, "derived_rebuild_success": "yes"},
+                id="rebuild-success-string",
+            ),
+            pytest.param(
+                {"publish_gate_required": True, "derived_rebuild_success": None},
+                id="rebuild-success-none",
+            ),
+        ],
+    )
+    async def test_malformed_publish_gate_never_confirms_restore(self, gate) -> None:
+        """畸形或半写的发布门结论一律不确认恢复成功。"""
+
+        plugin = self._make_plugin()
+        plugin.initializer.catalog_maintenance_result = gate
+        plugin._backup_manager.get_restore_status = MagicMock(
+            return_value={"restore_status": "validating"}
+        )
+
+        assert plugin._restore_confirmation_pending() is False
+
+    @pytest.mark.asyncio
+    async def test_missing_publish_gate_keeps_restore_blocked(self) -> None:
+        """发布门结论缺失时 runtime 已发布也不得确认恢复成功。"""
+
+        plugin = self._make_plugin()
+        plugin.initializer._initialization_complete = True
+        plugin.initializer.memory_engine = MagicMock()
+        plugin.initializer.memory_processor = MagicMock()
+        plugin.initializer.conversation_manager = MagicMock()
+        plugin.initializer.catalog_maintenance_result = None
+        plugin._inject_delegation_services = MagicMock()
+        plugin.feature_delegation.log_status = MagicMock()
+        plugin._backup_manager.backup_if_needed_async = AsyncMock()
+        plugin._backup_manager.apply_pending_restores_async = AsyncMock()
+        plugin._backup_manager.mark_restore_succeeded = MagicMock()
+        plugin._backup_manager.get_restore_status = MagicMock(
+            return_value={"restore_status": "validating"}
+        )
+        plugin._component_init_lock = asyncio.Lock()
+        module = sys.modules[plugin.__module__]
+        plugin.publish_runtime_handlers = MagicMock()
+        with patch.object(
+            module, "publish_runtime_handlers", plugin.publish_runtime_handlers
+        ):
+            ready = await plugin._ensure_runtime_components()
+
+        assert ready is True
+        plugin._backup_manager.mark_restore_succeeded.assert_not_called()
+
+
+class TestShutdownBeforeProviderReadiness:
+    """验证 Provider 就绪前关停不会因缺少协调器引用而失败。"""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_reconcile_is_noop_before_components_publish(self) -> None:
+        """初始化器尚未发布协调器时关停收敛按 skipped 返回。"""
+
+        from core.platform.composition.plugin_initializer import PluginInitializer
+
+        initializer = PluginInitializer(MagicMock(), MagicMock(), ".")
+
+        assert initializer.derived_rebuild_coordinator is None
+        result = await initializer.reconcile_catalog_for_shutdown()
+
+        assert result == {
+            "success": True,
+            "status": "skipped",
+            "reason_code": "catalog_coordinator_unavailable",
+        }

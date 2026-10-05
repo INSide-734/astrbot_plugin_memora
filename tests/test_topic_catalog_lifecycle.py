@@ -324,6 +324,346 @@ async def test_database_setup_uses_coordinator_when_indexes_need_rebuild() -> No
 
 
 @pytest.mark.asyncio
+async def test_database_setup_forces_full_rebuild_for_runtime_publish_gate() -> None:
+    """required publish 场景即使索引一致也必须完整重建派生面。"""
+
+    validator = MagicMock()
+    validator.check_consistency = AsyncMock(
+        return_value=SimpleNamespace(
+            is_consistent=True,
+            needs_rebuild=False,
+            reason="indexes_consistent",
+            documents_count=2,
+            bm25_count=2,
+            vector_count=2,
+        )
+    )
+    coordinator = MagicMock()
+    coordinator.rebuild_all = AsyncMock(
+        return_value={"success": True, "reason_code": "derived_rebuild_completed"}
+    )
+
+    result = await DatabaseSetup.auto_rebuild_index_if_needed(
+        validator,
+        MagicMock(),
+        coordinator,
+        force_rebuild=True,
+    )
+
+    assert result["success"] is True
+    coordinator.rebuild_all.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_finalize_catalog_lifecycle_blocks_required_rebuild_failure() -> None:
+    """required 派生重建失败时不得继续进入 catalog readiness。"""
+
+    from core.platform.composition.catalog_lifecycle import finalize_catalog_lifecycle
+    from core.shared.errors import InitializationError
+
+    db_setup = MagicMock()
+    db_setup.auto_rebuild_index_if_needed = AsyncMock(
+        return_value={
+            "success": False,
+            "reason_code": "graph_rebuild_failed",
+        }
+    )
+    coordinator = MagicMock()
+    coordinator.catalog_readiness_decision = AsyncMock()
+
+    with pytest.raises(InitializationError, match="runtime_publish_gate_blocked"):
+        await finalize_catalog_lifecycle(
+            db_setup,
+            MagicMock(),
+            MagicMock(),
+            coordinator,
+            required=True,
+        )
+
+    coordinator.catalog_readiness_decision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_finalize_catalog_lifecycle_keeps_degraded_semantics_by_default() -> None:
+    """普通维护路径下派生重建失败只降级，不阻断 catalog 决定。"""
+
+    from core.platform.composition.catalog_lifecycle import finalize_catalog_lifecycle
+
+    db_setup = MagicMock()
+    db_setup.auto_rebuild_index_if_needed = AsyncMock(
+        return_value={"success": False, "reason_code": "graph_rebuild_failed"}
+    )
+    coordinator = MagicMock()
+    coordinator.catalog_readiness_decision = AsyncMock(
+        return_value={
+            "catalog_decision": "degraded",
+            "safe_baseline": True,
+            "reason_code": "catalog_not_ready",
+        }
+    )
+
+    result = await finalize_catalog_lifecycle(
+        db_setup,
+        MagicMock(),
+        MagicMock(),
+        coordinator,
+    )
+
+    assert db_setup.auto_rebuild_index_if_needed.await_args.kwargs == {
+        "force_rebuild": False
+    }
+    assert result["catalog_decision"] == "degraded"
+    assert result["derived_rebuild_success"] is False
+    assert result["derived_rebuild_reason_code"] == "graph_rebuild_failed"
+
+
+def _stage_report(**overrides) -> dict[str, object]:
+    """构造覆盖全部派生阶段的成功报告，只替换指定阶段。"""
+
+    stages: dict[str, object] = {
+        name: {"status": "completed", "success": True}
+        for name in (
+            "indexes",
+            "catalog",
+            "atoms",
+            "graph",
+            "evolution",
+            "semantic_compression",
+            "notes",
+        )
+    }
+    stages.update(overrides)
+    return {"success": True, "stages": stages}
+
+
+def test_required_stage_gate_rejects_unavailable_owners() -> None:
+    """required 门必须拒绝未装配的 owner，而不是接受聚合 success。"""
+
+    coordinator = DerivedRebuildCoordinator(MagicMock(), MagicMock())
+
+    assert coordinator.required_stage_block_reason(_stage_report()) is None
+    # owner 未装配（indexes/catalog 没有配置关闭语义）必须阻断。
+    assert (
+        coordinator.required_stage_block_reason(
+            _stage_report(indexes={"status": "skipped", "success": True})
+        )
+        == "required_stage_skipped_indexes"
+    )
+    assert (
+        coordinator.required_stage_block_reason(
+            _stage_report(
+                catalog={
+                    "status": "skipped",
+                    "success": True,
+                    "reason_code": "catalog_unavailable",
+                }
+            )
+        )
+        == "required_stage_skipped_catalog"
+    )
+    # 阶段缺失或被写成失败都不能当作完成。
+    missing = _stage_report()
+    missing_stages = missing["stages"]
+    assert isinstance(missing_stages, dict)
+    missing_stages.pop("notes")
+    assert (
+        coordinator.required_stage_block_reason(missing)
+        == "required_stage_missing_notes"
+    )
+    assert coordinator.required_stage_block_reason(_stage_report()) is None, (
+        "覆盖全部阶段后必须放行"
+    )
+
+
+def test_required_stage_gate_rejects_unverified_catalog_fast_path() -> None:
+    """catalog_ready 缺少成功或 generation 证据时必须阻断发布。"""
+    coordinator = DerivedRebuildCoordinator(
+        MagicMock(),
+        MagicMock(),
+        catalog_store=MagicMock(),
+    )
+
+    for stage in (
+        {
+            "status": "skipped",
+            "success": False,
+            "reason_code": "catalog_ready",
+            "generation": 1,
+        },
+        {
+            "status": "skipped",
+            "success": True,
+            "reason_code": "catalog_ready",
+            "generation": 0,
+        },
+        {
+            "status": "skipped",
+            "success": True,
+            "reason_code": "catalog_ready",
+            "generation": True,
+        },
+    ):
+        assert (
+            coordinator.required_stage_block_reason(_stage_report(catalog=stage))
+            == "required_stage_skipped_catalog"
+        )
+
+
+def test_required_stage_gate_allows_only_configured_disabled_stages() -> None:
+    """只有运行时配置明确关闭的功能才允许记 skipped。"""
+
+    engine = SimpleNamespace(
+        graph_enabled=False,
+        graph_runtime_enabled=False,
+        atom_enabled=False,
+        config={
+            "semantic_compression.enabled": False,
+            "notes.enabled": False,
+        },
+    )
+    evolution_manager = SimpleNamespace(mode="disabled")
+    coordinator = DerivedRebuildCoordinator(
+        MagicMock(), engine, evolution_manager=evolution_manager
+    )
+
+    disabled = _stage_report(
+        atoms={
+            "status": "skipped",
+            "success": True,
+            "reason_code": "atoms_rebuild_unavailable",
+        },
+        graph={
+            "status": "skipped",
+            "success": True,
+            "reason_code": "graph_rebuild_unavailable",
+        },
+        evolution={
+            "status": "skipped",
+            "success": True,
+            "reason_code": "evolution_disabled",
+        },
+        semantic_compression={
+            "status": "skipped",
+            "success": True,
+            "reason_code": "semantic_compression_disabled",
+        },
+        notes={
+            "status": "skipped",
+            "success": True,
+            "reason_code": "note_rebuild_unavailable",
+        },
+    )
+    assert coordinator.required_stage_block_reason(disabled) is None
+
+    # 同一阶段换成「未接入实现」的占位原因码必须阻断。
+    assert (
+        coordinator.required_stage_block_reason(
+            _stage_report(
+                graph={
+                    "status": "skipped",
+                    "success": True,
+                    "reason_code": "graph_rebuild_skipped_by_placeholder",
+                }
+            )
+        )
+        == "required_stage_skipped_graph"
+    )
+
+
+@pytest.mark.parametrize(
+    ("stage", "reason"),
+    [
+        ("atoms", "atoms_rebuild_unavailable"),
+        ("graph", "graph_rebuild_unavailable"),
+        ("evolution", "evolution_disabled"),
+        ("semantic_compression", "semantic_compression_disabled"),
+        ("notes", "note_rebuild_unavailable"),
+    ],
+)
+def test_required_stage_gate_rejects_skip_without_explicit_disable(
+    stage: str, reason: str
+) -> None:
+    """配置启用时，owner 缺失的 skipped 不得伪装为完成。"""
+
+    engine = SimpleNamespace(
+        graph_enabled=True,
+        graph_runtime_enabled=True,
+        atom_enabled=True,
+        config={
+            "semantic_compression.enabled": True,
+            "notes.enabled": True,
+        },
+        memory_evolution_manager=SimpleNamespace(mode="active"),
+    )
+    coordinator = DerivedRebuildCoordinator(MagicMock(), engine)
+    report = _stage_report(
+        **{stage: {"status": "skipped", "success": True, "reason_code": reason}}
+    )
+
+    assert coordinator.required_stage_block_reason(report) == (
+        f"required_stage_skipped_{stage}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_finalize_catalog_lifecycle_blocks_skipped_required_owner() -> None:
+    """required 下聚合成 success 的 skipped owner 也必须阻断发布。"""
+
+    from core.platform.composition.catalog_lifecycle import finalize_catalog_lifecycle
+    from core.shared.errors import InitializationError
+
+    db_setup = MagicMock()
+    db_setup.auto_rebuild_index_if_needed = AsyncMock(
+        return_value=_stage_report(
+            indexes={
+                "status": "skipped",
+                "success": True,
+                "reason_code": "indexes_consistent",
+            }
+        )
+    )
+    coordinator = DerivedRebuildCoordinator(MagicMock(), MagicMock())
+    coordinator.catalog_readiness_decision = AsyncMock()
+
+    with pytest.raises(InitializationError, match="runtime_publish_gate_blocked"):
+        await finalize_catalog_lifecycle(
+            db_setup,
+            MagicMock(),
+            MagicMock(),
+            coordinator,
+            required=True,
+        )
+
+    coordinator.catalog_readiness_decision.assert_not_awaited()
+
+
+def test_runtime_publish_gate_detects_pending_restore_and_migration() -> None:
+    """恢复阻塞与真实迁移都必须进入 required 发布门。"""
+
+    from core.platform.composition.catalog_lifecycle import (
+        runtime_publish_gate_required,
+    )
+
+    blocked = MagicMock()
+    blocked.get_maintenance_state.return_value = {"blocked": True}
+    idle = MagicMock()
+    idle.get_maintenance_state.return_value = {"blocked": False}
+    migrated = SimpleNamespace(
+        schema_migration_status=SimpleNamespace(stage="completed")
+    )
+    unchanged = SimpleNamespace(
+        schema_migration_status=SimpleNamespace(stage="current")
+    )
+    unreadable = MagicMock()
+    unreadable.get_maintenance_state.side_effect = RuntimeError("state unavailable")
+
+    assert runtime_publish_gate_required(blocked, SimpleNamespace()) is True
+    assert runtime_publish_gate_required(idle, migrated) is True
+    assert runtime_publish_gate_required(idle, unchanged) is False
+    assert runtime_publish_gate_required(unreadable, unchanged) is True
+
+
+@pytest.mark.asyncio
 async def test_coordinator_orders_catalog_before_graph() -> None:
     """统一协调器应在索引后、图重建前执行 catalog 阶段。"""
 
@@ -384,6 +724,44 @@ async def test_coordinator_orders_catalog_before_graph() -> None:
 
     assert result["success"] is True
     assert order == ["indexes", "catalog", "graph"]
+
+
+@pytest.mark.asyncio
+async def test_required_publish_gate_accepts_verified_catalog_fast_path(
+    tmp_path,
+) -> None:
+    """健康 catalog generation 的 skipped 快路径不得阻断 required 发布门。"""
+    db = await _open_catalog(tmp_path)
+    try:
+        catalog = TopicCatalogStore(db)
+        await catalog.rebuild_from_canonical(now=10.0)
+        validator = SimpleNamespace(
+            _get_document_count=AsyncMock(return_value=0),
+            rebuild_indexes=AsyncMock(return_value={"success": True}),
+        )
+        engine = SimpleNamespace(
+            graph_enabled=False,
+            graph_runtime_enabled=False,
+            atom_enabled=False,
+            config={
+                "semantic_compression.enabled": False,
+                "notes.enabled": False,
+            },
+            memory_evolution_manager=SimpleNamespace(mode="disabled"),
+        )
+        coordinator = DerivedRebuildCoordinator(
+            validator,
+            engine,
+            catalog_store=catalog,
+        )
+
+        report = await coordinator.rebuild_all()
+
+        assert report["stages"]["catalog"]["status"] == "skipped"
+        assert report["stages"]["catalog"]["reason_code"] == "catalog_ready"
+        assert coordinator.required_stage_block_reason(report) is None
+    finally:
+        await db.close()
 
 
 @pytest.mark.asyncio

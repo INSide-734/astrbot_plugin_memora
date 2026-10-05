@@ -133,13 +133,22 @@ async def test_legacy_pending_recovers_authoritative_group_scope(
 async def test_incomplete_schema_is_rejected_before_store_ready(
     tmp_db_path: str,
 ) -> None:
-    """缺少调度必需列的已有任务表必须在初始化阶段拒绝。"""
+    """缺少调度必需列的已有任务表必须回滚且不发布半迁移库。"""
     with sqlite3.connect(tmp_db_path) as connection:
         connection.execute("CREATE TABLE summary_jobs (job_id TEXT PRIMARY KEY)")
     store = ConversationStore(tmp_db_path)
     with pytest.raises(RuntimeError, match="summary_schema_incomplete"):
         await store.initialize()
     assert store.connection is None
+    with sqlite3.connect(tmp_db_path) as connection:
+        tables = {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+        assert tables == {"summary_jobs"}
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
 
 
 @pytest.mark.asyncio

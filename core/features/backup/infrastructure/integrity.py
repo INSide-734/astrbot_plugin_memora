@@ -12,6 +12,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Iterable, Mapping
 
+from ...conversation.infrastructure.summary_schema import inspect_conversation_database
 from ..domain import (
     BackupOperationError,
     FileRole,
@@ -328,6 +329,13 @@ def validate_restored_files(
             raise BackupOperationError("restore_apply_failed")
         if path.suffix in {".db", ".sqlite3"}:
             quick_check(path)
+    expected = plan.conversation_evidence
+    if expected is not None:
+        actual = inspect_conversation_database(data_dir / "conversations.db")
+        if actual != expected:
+            raise BackupOperationError("restore_conversation_evidence_mismatch")
+        if actual.get("integrity") == "invalid":
+            raise BackupOperationError("restore_conversation_schema_invalid")
     validate_quarantine_references(data_dir)
     validate_feedback_restore_files(
         data_dir,
@@ -340,23 +348,8 @@ def validate_quarantine_references(data_dir: Path) -> None:
 
     canonical_path = data_dir / "memora.db"
     quarantine_path = data_dir / "memory_quarantine.sqlite3"
-    if not canonical_path.is_file() or not quarantine_path.is_file():
+    if not quarantine_path.is_file():
         return
-    with closing(sqlite3.connect(str(canonical_path))) as canonical_db:
-        canonical_tables = {
-            str(row[0])
-            for row in canonical_db.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table'"
-            )
-        }
-        if "documents" not in canonical_tables:
-            return
-        try:
-            canonical_ids = {
-                int(row[0]) for row in canonical_db.execute("SELECT id FROM documents")
-            }
-        except (TypeError, ValueError) as exc:
-            raise BackupOperationError("restore_canonical_reference_invalid") from exc
     with closing(sqlite3.connect(str(quarantine_path))) as quarantine_db:
         quarantine_tables = {
             str(row[0])
@@ -373,11 +366,28 @@ def validate_quarantine_references(data_dir: Path) -> None:
             WHERE status = 'approved'
             """
         ).fetchall()
-    missing: list[str] = []
-    for candidate_id, canonical_memory_id in rows:
+    if not rows:
+        return
+    if not canonical_path.is_file():
+        raise BackupOperationError("restore_quarantine_reference_missing")
+    with closing(sqlite3.connect(str(canonical_path))) as canonical_db:
+        canonical_tables = {
+            str(row[0])
+            for row in canonical_db.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        if "documents" not in canonical_tables:
+            raise BackupOperationError("restore_quarantine_reference_missing")
+        try:
+            canonical_ids = {
+                int(row[0]) for row in canonical_db.execute("SELECT id FROM documents")
+            }
+        except (TypeError, ValueError) as exc:
+            raise BackupOperationError("restore_canonical_reference_invalid") from exc
+    for _, canonical_memory_id in rows:
         if canonical_memory_id is None:
-            missing.append(str(candidate_id))
-            continue
+            raise BackupOperationError("restore_quarantine_reference_missing")
         try:
             if (
                 isinstance(canonical_memory_id, float)
@@ -388,9 +398,7 @@ def validate_quarantine_references(data_dir: Path) -> None:
         except (TypeError, ValueError) as exc:
             raise BackupOperationError("restore_quarantine_reference_invalid") from exc
         if canonical_id not in canonical_ids:
-            missing.append(str(candidate_id))
-    if missing:
-        raise BackupOperationError("restore_quarantine_reference_missing")
+            raise BackupOperationError("restore_quarantine_reference_missing")
 
 
 __all__ = [

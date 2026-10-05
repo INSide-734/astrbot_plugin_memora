@@ -76,7 +76,11 @@ from ...shared.summary_llm_limiter import SummaryLlmLimiter
 from ..config.cost_control import build_cost_control_from_config
 from ..provider.adapters import EmbeddingProviderAdapter, LLMProviderAdapter
 from ..transport.realtime_hub import RealtimeHub
-from .catalog_lifecycle import build_catalog_components, finalize_catalog_lifecycle
+from .catalog_lifecycle import (
+    build_catalog_components,
+    finalize_catalog_lifecycle,
+    runtime_publish_gate_required,
+)
 from .engine_runtime_config import build_engine_runtime_config
 from .identity_component_factory import build_identity_runtime
 
@@ -504,8 +508,17 @@ class ComponentFactory:
         conversation_store.set_summary_quarantine_candidate_lookup(
             memory_quarantine_store.find_quarantine_candidate_by_key
         )
+        # 迁移/恢复启动必须整套派生面重建成功才允许发布 runtime；普通维护
+        # 路径继续沿用「派生失败只降级」的既有语义。
+        publish_gate_required = runtime_publish_gate_required(
+            backup_manager, memory_engine
+        )
         catalog_maintenance_result = await finalize_catalog_lifecycle(
-            db_setup, index_validator, memory_engine, derived_rebuild_coordinator
+            db_setup,
+            index_validator,
+            memory_engine,
+            derived_rebuild_coordinator,
+            required=publish_gate_required,
         )
 
         summary_batch_preparer = TopicBatchPreparer(
