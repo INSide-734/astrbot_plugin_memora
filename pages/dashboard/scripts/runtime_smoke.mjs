@@ -1,4 +1,4 @@
-import { JSDOM, ResourceLoader, VirtualConsole } from "jsdom";
+import jsdom from "jsdom";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
@@ -9,21 +9,41 @@ import {
   waitFor,
 } from "./runtime_smoke_helpers.mjs";
 
+const { JSDOM, VirtualConsole, requestInterceptor } = jsdom;
+
 const dashboardRoot = process.cwd();
 const htmlPath = path.join(dashboardRoot, "index.html");
 const html = await readFile(htmlPath, "utf8");
 const errors = [];
 const runtimeOrigin = "https://memora.runtime";
+const CONTENT_TYPES = {
+  ".css": "text/css",
+  ".html": "text/html",
+  ".js": "text/javascript",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
 
-class LocalDashboardResourceLoader extends ResourceLoader {
-  fetch(url) {
-    const localPath = resolveRuntimeResourcePath(url, {
-      runtimeOrigin,
-      dashboardRoot,
-    });
-    return localPath ? readFile(localPath) : null;
-  }
-}
+const localDashboardResource = requestInterceptor(async (request) => {
+  const localPath = resolveRuntimeResourcePath(request.url, {
+    runtimeOrigin,
+    dashboardRoot,
+  });
+  if (!localPath) return undefined;
+  const contentType =
+    CONTENT_TYPES[path.extname(localPath).toLowerCase()] ??
+    "application/octet-stream";
+  return new Response(await readFile(localPath), {
+    headers: { "Content-Type": contentType },
+  });
+});
 
 if (html.includes("/src/main") || html.includes('type="module"')) {
   throw new Error("Dashboard index.html is not a production AstrBot-compatible build");
@@ -43,7 +63,7 @@ virtualConsole.on("error", (...args) => {
 const dom = new JSDOM(html, {
   url: `${runtimeOrigin}/index.html`,
   runScripts: "dangerously",
-  resources: new LocalDashboardResourceLoader(),
+  resources: { interceptors: [localDashboardResource] },
   pretendToBeVisual: true,
   virtualConsole,
   beforeParse(window) {
