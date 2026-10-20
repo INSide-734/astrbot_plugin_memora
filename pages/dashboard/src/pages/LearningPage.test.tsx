@@ -262,7 +262,7 @@ describe("LearningPage", () => {
     render(<LearningPage showToast={showToast} />);
 
     expect(await screen.findByText("Shadow candidates")).toBeTruthy();
-    expect(screen.getByText("No expression patterns")).toBeTruthy();
+    expect(await screen.findByText("No expression patterns")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /reset learning/i }));
 
