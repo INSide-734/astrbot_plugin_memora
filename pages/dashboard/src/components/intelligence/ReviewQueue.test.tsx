@@ -239,7 +239,7 @@ describe("ReviewQueue", () => {
     await waitForDetailReady();
     fireEvent.click(screen.getByRole("button", { name: /Delete|删除/i }));
 
-    const confirmMessage = screen.getByText(/Confirm delete|确认删除/i);
+    const confirmMessage = await screen.findByText(/Confirm delete|确认删除/i);
     expect(confirmMessage).toBeTruthy();
     expect(bridge.apiPost).not.toHaveBeenCalled();
 
@@ -267,7 +267,7 @@ describe("ReviewQueue", () => {
     await waitForDetailReady();
     fireEvent.click(screen.getByRole("button", { name: /Archive|归档/i }));
 
-    const confirmMessage = screen.getByText(/Confirm archive|确认归档/i);
+    const confirmMessage = await screen.findByText(/Confirm archive|确认归档/i);
     expect(confirmMessage).toBeTruthy();
     expect(bridge.apiPost).not.toHaveBeenCalled();
 
@@ -298,7 +298,7 @@ describe("ReviewQueue", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /Merge|合并/i }));
 
-    const confirmMessage = screen.getByText(/Confirm merge|确认合并/i);
+    const confirmMessage = await screen.findByText(/Confirm merge|确认合并/i);
     expect(confirmMessage).toBeTruthy();
     expect(bridge.apiPost).not.toHaveBeenCalled();
 
@@ -355,7 +355,7 @@ describe("ReviewQueue", () => {
     const draft = screen.getByPlaceholderText("target_memory_id") as HTMLInputElement;
     fireEvent.change(draft, { target: { value: "mem-target-9" } });
     fireEvent.click(screen.getByRole("button", { name: /Merge|合并/i }));
-    const confirmBar = screen.getByText(/Confirm merge|确认合并/i).closest("div");
+    const confirmBar = (await screen.findByText(/Confirm merge|确认合并/i)).closest("div");
     if (!confirmBar) throw new Error("expected merge confirmation bar");
     const confirm = within(confirmBar).getByRole("button", { name: /Confirm|确认/i });
     act(() => {
@@ -382,7 +382,7 @@ describe("ReviewQueue", () => {
     expect(await screen.findByText("mem-duplicate-1")).toBeTruthy();
     await waitForDetailReady();
     fireEvent.click(screen.getByRole("button", { name: /Archive|归档/i }));
-    const confirmBar = screen.getByText(/Confirm archive|确认归档/i).closest("div");
+    const confirmBar = (await screen.findByText(/Confirm archive|确认归档/i)).closest("div");
     if (!confirmBar) throw new Error("expected archive confirmation bar");
     fireEvent.click(within(confirmBar).getByRole("button", { name: /Confirm|确认/i }));
 
