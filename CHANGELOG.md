@@ -15,9 +15,11 @@ Memora 的所有重要变更都记录在此文件中。
 - 图派生新增多来源 evidence 平面：同一作用域和隐私边界下相同端点与关系共享一条 semantic edge，每个 canonical 来源及 revision 保留独立 evidence；来源更新、删除或变为不可派生时仅回收自身 evidence，最后一条 evidence 消失后才回收共享关系（#88）。
 
 - 新增可选质量闭环离线评测：冻结代码/配置/schema/fixture/模型、Embedding、tokenizer、随机种子与数据库快照哈希，按写入/来源/召回/注入/生命周期/表达阶段记录可空指标，支持同上下文 `should_use`/`should_silence` 成对盲测及现有评测报告 Store/Dashboard 展示（#94）。
+- 新增离线效果门：以 `fixed_route_baseline` 为参照，对 Atom 信号、图路、动态权重与 MMR rerank 做单因子消融；逐用例记录候选命中、最终注入、负向注入、事实覆盖、预算利用率、延迟与 Provider 调用次数，按七类样本输出 `pass_enable`/`pass_disable`/`reject`/`insufficient_evidence` 建议（#110）。新增 `scripts/run_effect_gate.py` 与真实 SQLite/FAISS + GraphStore/AtomStore 合成场景，支持 `--freeze-dir` 复用冻结 DB/索引与稳定 manifest。
 
 ### 变更
 
+- 新增 `graph_memory.atom_route_weight`（0–0.5，默认 0.25）与 `graph_memory.graph_retrieval_enabled`（默认 true）：前者让 Atom 检索信号可独立关闭，后者只跳过图检索、保留图存储与写入；默认值保持既有运行时行为，Dashboard 配置叶计数同步为 43/264。
 - 注入策略摘要新增窗口内 `retrieved_count` 与 `injected_count`，Dashboard 概览分别展示检索到与实际注入的记忆数量；保留既有载荷/决策字段语义，不创建 `adopted` 字段。测试效应配置仍保留原键名和默认值，但维护说明改为仅在成功 injected 后生效。
 - 记忆正文更新改为两阶段收敛：新内容先落为不可召回的暂存记录，再在单个事务内切换可见性（赢家恢复原状态、输家隐藏），随后单独删除旧记录；删除未完成记 `replacement_cleanup_pending`，补偿成功/失败分别记 `replacement_rolled_back`/`replacement_rollback_failed`，失败只记录不回滚，由写修复收敛，保证任一时刻最多一条可召回记录（失败原因码 `content_replace_failed`），对同一记录重复发起替换会被安全拒绝。
 - 记忆写入在索引阶段失败时不再整体报错：canonical 已提交即返回该记忆 ID，并把派生索引标记为待修复（`index_stage_degraded`），调用方不会把派生失败当作写入失败重试而产生重复记忆。
@@ -36,6 +38,7 @@ Memora 的所有重要变更都记录在此文件中。
 - 迁移/恢复场景下，catalog、索引、主题目录、原子、图、演化、语义压缩和笔记等必要派生阶段必须按固定顺序完成后才允许发布 runtime；普通维护重建仍保留既有降级语义（#96）。
 
 ### 修复
+- 修复双路融合未解码 canonical loader 返回的 JSON 字符串 metadata 的问题：graph-only 候选不再因 metadata 被当作非字典而在 `require_user_evidence` 前丢失（#110）。
 - 修复图关系在同一作用域和隐私边界下因不同来源 revision 的物理节点而重复、或二跳扩展绕回已命中节点的问题：邻居按 canonical `node_key` 聚合，关联条目按 canonical 键扩展，二跳排除已命中键；精确 revision 查询仍保持物理节点隔离（#88）。
 - 修复图来源因归档、`mark_write`、证据不足或边界失效而不可派生时，add、图索引修复、重建与再巩固路径误标为失败的问题：现只回收该来源派生数据并按 skipped/完成语义收敛；取消继续传播，未知存储错误仍按失败处理。缺少完整 semantic evidence 的历史图行保持 fail-closed，须由当前 canonical 重建恢复（#88）。
 
@@ -48,11 +51,13 @@ Memora 的所有重要变更都记录在此文件中。
 
 ### 测试
 
+- 新增效果门快照隔离、adapter `query_scope`/`query_plan`、注入观察分母、Pareto 决策、配置杠杆、真实冻结场景与报告 allowlist 的回归覆盖；CLI 在冻结 DB 复用下产出稳定 `db_snapshot_hash` 与 `fixture_hmac`（#110）。
 - 新增事实级绑定校验、准入与分段下标重排、三条图提取路径一致性、共现关系剔除、多来源 evidence 共享/最后来源回收、跨 revision 邻居与二跳排除、来源不可派生收敛、运行门及历史图行 fail-closed 的回归覆盖（#88）。
 - 新增旧库、半缺 schema、预迁移快照失败、跨库证据不一致、quarantine 孤儿引用、恢复验证失败、必要派生重建失败及 Provider 重试发布路径的回归覆盖，并同时校验 canonical 数据、任务/引用状态与 runtime readiness（#96）。
 
 ### 升级说明
 
+- 无需迁移配置或 canonical memory；新增的两个配置叶默认值保持既有行为。`graph_memory.graph_retrieval_enabled=false` 只停用图检索并保留图存储/写入；`graph_memory.graph_route_weight=0` 仍会停用图运行时。
 - 无需迁移配置或 canonical memory；启动时仅增量创建图派生的 semantic edge/evidence 结构。缺少完整 evidence 的历史图行会安全保留但不参与读取，运行 `/memora rebuild-graph` 可按当前 canonical 来源恢复。
 - 旧库默认先生成并验证预迁移快照，再执行可回滚迁移；`auto_migrate=false`、未知版本、半缺 schema 或无法证明恢复完成时保持稳定阻断，不建立第二套 canonical memory（#96）。
 
