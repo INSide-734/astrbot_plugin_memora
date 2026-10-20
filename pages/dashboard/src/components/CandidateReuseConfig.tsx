@@ -69,7 +69,7 @@ export function CandidateReuseConfig({ showToast }: CandidateReuseConfigProps) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [draft, setDraft] = useState<Partial<CandidateReuseSettings>>({});
-  const pollInterval = useRef<number>();
+  const pollInterval = useRef<number | undefined>(undefined);
 
   const fetchStatus = useCallback(async () => {
     try {
