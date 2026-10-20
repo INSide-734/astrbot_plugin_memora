@@ -1,8 +1,8 @@
 import {
   flexRender,
   functionalUpdate,
-  getCoreRowModel,
-  useReactTable,
+  useTable,
+  type ColumnPinningState,
   type ColumnSizingState,
   type RowData,
   type RowSelectionState,
@@ -37,7 +37,11 @@ import {
   saveTablePreferences,
   type TablePreferences,
 } from "./table-preferences";
-import type { DataTableColumn, DataTableSort } from "./table-types";
+import {
+  dataTableFeatures,
+  type DataTableColumn,
+  type DataTableSort,
+} from "./table-types";
 import {
   DataTableColumnHeader,
   pinnedCellStyle,
@@ -129,11 +133,18 @@ export function DataTable<TData extends RowData>({
       ),
     [selectedRowIds],
   );
+  const columnPinning = useMemo<ColumnPinningState>(
+    () => ({
+      start: preferences.columnPinning.left ?? [],
+      end: preferences.columnPinning.right ?? [],
+    }),
+    [preferences.columnPinning],
+  );
 
-  const table = useReactTable({
+  const table = useTable({
+    features: dataTableFeatures,
     data,
     columns,
-    getCoreRowModel: getCoreRowModel(),
     getRowId,
     manualSorting: true,
     enableMultiSort: false,
@@ -143,7 +154,7 @@ export function DataTable<TData extends RowData>({
       rowSelection,
       columnVisibility: preferences.columnVisibility,
       columnOrder: preferences.columnOrder,
-      columnPinning: preferences.columnPinning,
+      columnPinning,
       columnSizing,
     },
     onSortingChange: (updater) => {
@@ -169,10 +180,16 @@ export function DataTable<TData extends RowData>({
       }));
     },
     onColumnPinningChange: (updater) => {
-      updatePreferences((current) => ({
-        ...current,
-        columnPinning: functionalUpdate(updater, current.columnPinning),
-      }));
+      updatePreferences((current) => {
+        const next = functionalUpdate(updater, {
+          start: current.columnPinning.left ?? [],
+          end: current.columnPinning.right ?? [],
+        });
+        return {
+          ...current,
+          columnPinning: { left: next.start, right: next.end },
+        };
+      });
     },
     onColumnSizingChange: setColumnSizing,
     columnResizeMode: "onChange",

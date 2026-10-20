@@ -1,4 +1,15 @@
-import type { ColumnDef, RowData } from "@tanstack/react-table";
+import {
+  columnOrderingFeature,
+  columnPinningFeature,
+  columnResizingFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  rowSelectionFeature,
+  rowSortingFeature,
+  tableFeatures,
+  type ColumnDef,
+  type RowData,
+} from "@tanstack/react-table";
 
 export type DataTableDensity = "compact" | "standard" | "comfortable";
 export type DataTablePin = "left" | "right" | false;
@@ -22,13 +33,23 @@ export interface DataTableColumnMeta {
   cellClassName?: string;
 }
 
+export const dataTableFeatures = tableFeatures({
+  columnOrderingFeature,
+  columnPinningFeature,
+  columnResizingFeature,
+  columnSizingFeature,
+  columnVisibilityFeature,
+  rowSelectionFeature,
+  rowSortingFeature,
+  columnMeta: {} as DataTableColumnMeta,
+});
+
+export type DataTableFeatures = typeof dataTableFeatures;
+
 export type DataTableColumn<TData extends RowData, TValue = unknown> = ColumnDef<
+  DataTableFeatures,
   TData,
   TValue
 > & {
   meta: DataTableColumnMeta;
 };
-
-declare module "@tanstack/react-table" {
-  interface ColumnMeta<TData extends RowData, TValue> extends DataTableColumnMeta {}
-}
