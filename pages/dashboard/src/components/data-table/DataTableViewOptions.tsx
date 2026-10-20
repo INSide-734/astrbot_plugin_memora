@@ -1,4 +1,4 @@
-import type { RowData, Table } from "@tanstack/react-table";
+import type { ReactTable, RowData } from "@tanstack/react-table";
 import {
   ArrowLeft,
   ArrowRight,
@@ -23,10 +23,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useI18n } from "@/hooks/useI18n";
-import type { DataTableDensity } from "./table-types";
+import type { DataTableDensity, DataTableFeatures } from "./table-types";
 
 interface DataTableViewOptionsProps<TData extends RowData> {
-  table: Table<TData>;
+  table: ReactTable<DataTableFeatures, TData>;
   density: DataTableDensity;
   onDensityChange(density: DataTableDensity): void;
   onReset(): void;
@@ -68,10 +68,10 @@ export function DataTableViewOptions<TData extends RowData>({
   const { currentLang, t } = useI18n();
   const [draggedColumnId, setDraggedColumnId] = useState<string | null>(null);
   const columns = table.getAllLeafColumns();
-  const order = table.getState().columnOrder;
-  const pinning = table.getState().columnPinning;
-  const leftOrder = pinning.left ?? [];
-  const rightOrder = pinning.right ?? [];
+  const order = table.state.columnOrder;
+  const pinning = table.state.columnPinning;
+  const leftOrder = pinning.start ?? [];
+  const rightOrder = pinning.end ?? [];
   const pinnedIds = new Set([...leftOrder, ...rightOrder]);
   const centerOrder = order.filter((id) => !pinnedIds.has(id));
   const columnsById = new Map(columns.map((column) => [column.id, column]));
@@ -209,7 +209,7 @@ export function DataTableViewOptions<TData extends RowData>({
                       <PinOff aria-hidden="true" />
                     </Button>
                   ) : null}
-                  {pin !== "right" ? (
+                  {pin !== "end" ? (
                     <Button
                       type="button"
                       variant="ghost"
@@ -221,13 +221,13 @@ export function DataTableViewOptions<TData extends RowData>({
                       )}
                       onClick={(event) => {
                         preventMenuSelection(event);
-                        column.pin("right");
+                        column.pin("end");
                       }}
                     >
                       <Pin aria-hidden="true" />
                     </Button>
                   ) : null}
-                  {pin !== "left" ? (
+                  {pin !== "start" ? (
                     <Button
                       type="button"
                       variant="ghost"
@@ -239,7 +239,7 @@ export function DataTableViewOptions<TData extends RowData>({
                       )}
                       onClick={(event) => {
                         preventMenuSelection(event);
-                        column.pin("left");
+                        column.pin("start");
                       }}
                     >
                       <Pin aria-hidden="true" />
