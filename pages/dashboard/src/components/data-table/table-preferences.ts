@@ -1,15 +1,20 @@
-import type { ColumnPinningState, VisibilityState } from "@tanstack/react-table";
-
 import type { DataTableColumnDescriptor, DataTableDensity } from "./table-types";
 
 export const TABLE_PREFERENCE_SCHEMA = 1;
 
+export interface TableColumnPinning {
+  left: string[];
+  right: string[];
+}
+
+export type TableColumnVisibility = Record<string, boolean>;
+
 export interface TablePreferences {
   schemaVersion: 1;
   density: DataTableDensity;
-  columnVisibility: VisibilityState;
+  columnVisibility: TableColumnVisibility;
   columnOrder: string[];
-  columnPinning: ColumnPinningState;
+  columnPinning: TableColumnPinning;
 }
 
 const keyFor = (tableId: string) => `memora.table.${tableId}.v1`;

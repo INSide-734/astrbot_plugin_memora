@@ -4,9 +4,10 @@ import type { CSSProperties, ReactNode } from "react";
 
 import { Button } from "@/components/ui/Button";
 import { useI18n } from "@/hooks/useI18n";
+import type { DataTableFeatures } from "./table-types";
 
 interface DataTableColumnHeaderProps<TData extends RowData, TValue> {
-  header: Header<TData, TValue>;
+  header: Header<DataTableFeatures, TData, TValue>;
   title: ReactNode;
 }
 
@@ -20,15 +21,15 @@ function columnActionLabel(action: string, label: string, language: string): str
 }
 
 export function pinnedCellStyle<TData extends RowData, TValue>(
-  column: Column<TData, TValue>,
+  column: Column<DataTableFeatures, TData, TValue>,
 ): CSSProperties {
   const pin = column.getIsPinned();
   if (!pin) return {};
 
   return {
     position: "sticky",
-    left: pin === "left" ? `${column.getStart("left")}px` : undefined,
-    right: pin === "right" ? `${column.getAfter("right")}px` : undefined,
+    left: pin === "start" ? `${column.getStart("start")}px` : undefined,
+    right: pin === "end" ? `${column.getAfter("end")}px` : undefined,
     width: column.getSize(),
     zIndex: 2,
   };

@@ -61,7 +61,7 @@ const columns: DataTableColumn<RowFixture>[] = [
       <Checkbox
         aria-label={`Select ${row.original.title}`}
         checked={row.getIsSelected()}
-        onCheckedChange={row.getToggleSelectedHandler()}
+        onCheckedChange={(checked) => row.toggleSelected(Boolean(checked))}
       />
     ),
   },
