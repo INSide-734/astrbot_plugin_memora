@@ -412,8 +412,7 @@ try {
   for (const [hash, expectedText] of routes) {
     window.location.hash = hash;
     window.dispatchEvent(new window.HashChangeEvent("hashchange"));
-    await delay(350);
-    assertRootContains(expectedText, hash);
+    await waitForRootText(expectedText, `route ${hash}`);
   }
 
   window.location.hash = "#/config";

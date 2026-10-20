@@ -179,7 +179,7 @@ export function SearchBar({ onNavigate }: SearchBarProps) {
     [configEntries, query, queryReady],
   );
   const inputRef = useRef<HTMLInputElement>(null);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<number | undefined>(undefined);
   const configSchemaStatusRef = useRef<ConfigSchemaStatus>("idle");
   const schemaRequestRef = useRef<Promise<void> | null>(null);
   const schemaAttemptedThisOpenRef = useRef(false);
@@ -277,7 +277,7 @@ export function SearchBar({ onNavigate }: SearchBarProps) {
     }
 
     setLoading(true);
-    timerRef.current = setTimeout(() => {
+    timerRef.current = window.setTimeout(() => {
       timerRef.current = undefined;
       void doSearch(value, generation);
     }, 300);

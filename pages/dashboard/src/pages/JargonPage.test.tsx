@@ -526,7 +526,11 @@ describe("JargonPage", () => {
       is_confirmed: true,
       is_global: false,
     }));
-    expect(screen.getByRole("tab", { name: "Confirmed" }).getAttribute("aria-selected")).toBe("true");
+    expect(
+      screen
+        .getByRole("tab", { name: "Confirmed", hidden: true })
+        .getAttribute("aria-selected"),
+    ).toBe("true");
     expect(await screen.findByText("fresh-term in a complete context")).toBeTruthy();
     expect(screen.queryByLabelText("Meaning")).toBeNull();
     expect(within(screen.getByRole("dialog", { name: "fresh-term" })).getByText("rev-created")).toBeTruthy();

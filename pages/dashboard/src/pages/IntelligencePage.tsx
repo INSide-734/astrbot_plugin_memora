@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactElement } from "react";
 import { Activity, AlertTriangle, BrainCircuit, ClipboardCheck, Gauge, GitBranch, Stethoscope } from "lucide-react";
 import { CandidateReuseConfig } from "@/components/CandidateReuseConfig";
 import { MemoryDedupMetrics } from "@/components/MemoryDedupMetrics";
@@ -35,7 +35,7 @@ const tabs: TabDefinition[] = [
 const panelByTab: Record<IntelligenceTabId, (
   showToast: IntelligencePageProps["showToast"],
   navigationTarget?: IntelligenceNavigationTarget | null,
-) => JSX.Element> = {
+) => ReactElement> = {
   evaluation: (showToast) => <EvaluationWorkbench showToast={showToast} />,
   recallTrace: (showToast, navigationTarget) => (
     <RecallTracePanel
