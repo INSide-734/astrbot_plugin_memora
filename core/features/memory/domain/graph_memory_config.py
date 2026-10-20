@@ -30,6 +30,9 @@ class GraphMemoryConfig(BaseModel):
     dynamic_route_weighting: bool = Field(
         default=True, description="是否按查询意图动态调整文档路和图路权重"
     )
+    graph_retrieval_enabled: bool = Field(
+        default=True, description="是否启用图检索；关闭时保留图存储与写入"
+    )
     max_topics_per_memory: int = Field(
         default=6, ge=1, le=20, description="单条记忆最多索引主题数"
     )
@@ -42,6 +45,12 @@ class GraphMemoryConfig(BaseModel):
     # 原子级记忆配置
     atom_enabled: bool = Field(
         default=True, description="是否启用记忆原子化（细化粒度+时间衰减）"
+    )
+    atom_route_weight: float = Field(
+        default=0.25,
+        ge=0.0,
+        le=0.5,
+        description="Atom 证据在双路融合中的权重；0 表示跳过 Atom 检索任务",
     )
     atom_maintenance_interval_hours: float = Field(
         default=24.0, ge=1.0, le=168.0, description="原子生命周期维护间隔(小时)"

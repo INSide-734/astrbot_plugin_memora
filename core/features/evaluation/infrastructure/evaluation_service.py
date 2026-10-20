@@ -444,6 +444,12 @@ class EvaluationService:
             "reported_provider_calls": report.reported_provider_calls,
             "reported_token_cost": report.reported_token_cost,
             "reason_code_aggregates": dict(report.reason_code_aggregates),
+            "injection_summary": EvaluationReportStore._normalize_json_value(
+                report.injection_summary
+            ),
+            "category_breakdown": EvaluationReportStore._normalize_json_value(
+                report.category_breakdown
+            ),
             "dataset_breakdown": EvaluationReportStore._normalize_json_value(
                 report.dataset_breakdown
             ),

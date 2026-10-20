@@ -9,7 +9,6 @@ import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +21,8 @@ from ..domain.metric_provenance import (
     reported_latency,
     split_retrieval_observation,
 )
+from .engine_adapter import make_memory_engine_retriever
+from .injection_ablation import aggregate_injection, build_category_breakdown
 
 
 @dataclass(slots=True)
@@ -60,6 +61,7 @@ class EvaluationResult:
     advanced_metrics: dict[str, float] = field(default_factory=dict)
     annotated_latency_ms: float | None = None
     reported_latency_ms: float | None = None
+    injection: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -99,6 +101,8 @@ class EvaluationReport:
     reported_provider_calls: float | None = None
     reported_token_cost: float | None = None
     reason_code_aggregates: dict[str, int] = field(default_factory=dict)
+    injection_summary: dict[str, Any] = field(default_factory=dict)
+    category_breakdown: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     @property
     def metrics(self) -> dict[str, Any]:
@@ -199,39 +203,6 @@ RetrieverValue = Sequence[Any] | RetrievalObservation
 RetrieverFn = Callable[
     [EvaluationCase, int], RetrieverValue | Awaitable[RetrieverValue]
 ]
-
-
-def make_memory_engine_retriever(engine: Any) -> RetrieverFn:
-    """将 MemoryEngine 类对象适配为评测器检索协议。
-
-    样本元数据会映射到 ``MemoryEngine.search_memories`` 的关键字参数，
-    以便离线夹具覆盖私聊/群聊上下文、记忆类型过滤、用户个性化、情绪上下文
-    和链路深度。
-    """
-
-    async def _retriever(case: EvaluationCase, k: int) -> Sequence[Any]:
-        metadata = case.metadata or {}
-        kwargs = dict(
-            query=case.query,
-            k=k,
-            session_id=_optional_string(metadata.get("session_id")),
-            persona_id=_optional_string(metadata.get("persona_id")),
-            user_id=_optional_string(metadata.get("user_id")),
-            chat_type=_optional_string(metadata.get("chat_type")) or "private",
-            memory_types=_optional_string_list(metadata.get("memory_types")),
-            emotion_context=_optional_string_list(metadata.get("emotion_context")),
-            recall_type=_optional_string(metadata.get("recall_type")) or "passive",
-            chain_depth=_optional_int(metadata.get("chain_depth"), default=0),
-            query_intent=metadata.get("query_intent"),
-            recall_strategy=metadata.get("recall_strategy"),
-        )
-        if "reference_time" in metadata:
-            kwargs["reference_time"] = _parse_reference_time(
-                metadata.get("reference_time")
-            )
-        return await engine.search_memories(**kwargs)
-
-    return _retriever
 
 
 async def evaluate_variants(
@@ -398,6 +369,7 @@ async def evaluate_cases(
     retriever: RetrieverFn,
     *,
     k: int,
+    case_observer: Callable[[Any, Sequence[Any]], Any] | None = None,
 ) -> EvaluationReport:
     """使用异步或同步检索器评测给定样本的检索质量。"""
     results: list[EvaluationResult] = []
@@ -408,6 +380,9 @@ async def evaluate_cases(
             retrieved = await retrieved
         measured_latency_ms = (time.perf_counter() - started_at) * 1000.0
         documents, observed_metrics = split_retrieval_observation(retrieved)
+        injection_payload = None
+        if case_observer is not None:
+            injection_payload = _observation_payload(case_observer(case, documents))
         ranked_doc_ids = [_document_id(item) for item in documents[:k]]
         case_metrics = _score_case(case, ranked_doc_ids, k=k)
         advanced_metrics = build_case_metrics(
@@ -434,6 +409,7 @@ async def evaluate_cases(
                 advanced_metrics=advanced_metrics,
                 annotated_latency_ms=annotated_latency(case.metadata),
                 reported_latency_ms=reported_latency(case.metadata),
+                injection=injection_payload,
             )
         )
 
@@ -451,12 +427,14 @@ async def evaluate_cases(
         cases=results,
         dataset_breakdown=_dataset_breakdown(results),
         precision_at_k=_mean(item.precision_at_k for item in results),
-        multi_hop_recall=advanced["multi_hop_recall"],
-        single_hop_recall=advanced["single_hop_recall"],
-        noise_negative_false_hit=advanced["noise_negative_false_hit"],
-        temporal_consistency=advanced["temporal_consistency"],
-        conflict_accuracy=advanced["conflict_accuracy"],
-        source_supported_projection_rate=advanced["source_supported_projection_rate"],
+        multi_hop_recall=advanced["multi_hop_recall"] or 0.0,
+        single_hop_recall=advanced["single_hop_recall"] or 0.0,
+        noise_negative_false_hit=advanced["noise_negative_false_hit"] or 0.0,
+        temporal_consistency=advanced["temporal_consistency"] or 0.0,
+        conflict_accuracy=advanced["conflict_accuracy"] or 0.0,
+        source_supported_projection_rate=(
+            advanced["source_supported_projection_rate"] or 0.0
+        ),
         observed_p50_latency_ms=_percentile(
             [item.observed_latency_ms for item in results], 50
         ),
@@ -505,6 +483,8 @@ async def evaluate_cases(
         reason_code_aggregates=reason_code_aggregates(
             item.metadata for item in results
         ),
+        injection_summary=aggregate_injection([item.injection for item in results]),
+        category_breakdown=build_category_breakdown(results),
     )
 
 
@@ -557,61 +537,6 @@ def _normalize_doc_id_set(values: Iterable[Any]) -> set[str]:
     return {
         doc_id for doc_id in (_normalize_doc_id(value) for value in values) if doc_id
     }
-
-
-def _optional_string(value: Any) -> str | None:
-    normalized = str(value or "").strip()
-    return normalized or None
-
-
-def _optional_string_list(value: Any) -> list[str] | None:
-    if value is None:
-        return None
-    if isinstance(value, str):
-        items = [value]
-    elif isinstance(value, Iterable):
-        items = list(value)
-    else:
-        return None
-    normalized = [_optional_string(item) for item in items]
-    result = [item for item in normalized if item]
-    return result or None
-
-
-def _optional_int(value: Any, *, default: int) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
-
-def _parse_reference_time(value: Any) -> datetime | None:
-    """在不导入 AstrBot/运行时模型的评测包中解析 UTC as-of 时间。"""
-
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return (
-            value.replace(tzinfo=timezone.utc)
-            if value.tzinfo is None
-            else value.astimezone(timezone.utc)
-        )
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        try:
-            return datetime.fromtimestamp(float(value), tz=timezone.utc)
-        except (OverflowError, OSError, ValueError):
-            return None
-    if not isinstance(value, str):
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return None
-    return (
-        parsed.replace(tzinfo=timezone.utc)
-        if parsed.tzinfo is None
-        else parsed.astimezone(timezone.utc)
-    )
 
 
 def _score_case(
@@ -715,6 +640,19 @@ def _dataset_breakdown(
             ),
         }
     return breakdown
+
+
+def _observation_payload(observation: Any) -> dict[str, Any] | None:
+    """把观察器对象/DTO 收敛为 JSON 安全字典；未知对象保持未测量。"""
+
+    if observation is None:
+        return None
+    to_payload = getattr(observation, "to_payload", None)
+    if callable(to_payload):
+        observation = to_payload()
+    if isinstance(observation, Mapping):
+        return dict(observation)
+    return None
 
 
 __all__ = [

@@ -50,6 +50,7 @@ class RouteExecutionCoordinator:
         reference_time: Any = None,
         deadline_monotonic: float | None = None,
         use_graph_route: bool = True,
+        use_atom_route: bool = True,
         query_scope: GraphQueryScope | None = None,
     ) -> RouteOutcome:
         """并发启动三路检索，并在调用方取消后收敛所有子任务。"""
@@ -129,8 +130,8 @@ class RouteExecutionCoordinator:
             route_timing: dict[str, float] = {}
             if self._atom_retriever is None:
                 return [], route_timing
+            started = time.perf_counter()
             try:
-                started = time.perf_counter()
                 results = await self._atom_retriever.search(
                     query,
                     k=max(k * 2, k),
@@ -152,8 +153,12 @@ class RouteExecutionCoordinator:
 
         tasks: dict[str, asyncio.Task[tuple[list[Any], dict[str, float]]]] = {
             "document": asyncio.create_task(_run_document()),
-            "atom": asyncio.create_task(_run_atom()),
         }
+        # Atom 零权或组件缺失时不创建任务，避免产生延迟与零贡献候选。
+        if use_atom_route and self._atom_retriever is not None:
+            tasks["atom"] = asyncio.create_task(_run_atom())
+        else:
+            timing["atom_route_skipped"] = True
         # 图检索器缺失（图关闭/零权未装配）时与路由策略跳过同样处理：不创建
         # 图任务、不调用图检索，只保留 graph_route_skipped 观测。
         if use_graph_route and self._graph_retriever is not None:
@@ -172,7 +177,7 @@ class RouteExecutionCoordinator:
             raise
 
         doc_results, doc_timing = route_results["document"]
-        atom_results, atom_timing = route_results["atom"]
+        atom_results, atom_timing = route_results.get("atom", ([], {}))
         graph_results, graph_timing = route_results.get("graph", ([], {}))
 
         # 合并各路子阶段计时

@@ -58,6 +58,59 @@ _SAFE_ADVANCED_METRICS: frozenset[str] = frozenset(
         "reported_token_cost",
     }
 )
+_SAFE_INJECTION_NUMERIC_FIELDS: tuple[str, ...] = (
+    "candidate_count",
+    "selected_count",
+    "rejected_count",
+    "source_rejected_count",
+    "selection_dropped_count",
+    "dropped_relevant",
+    "injection_precision",
+    "required_fact_coverage",
+    "budget_utilization",
+    "injection_simulation_ms",
+)
+_SAFE_INJECTION_BOOLEAN_FIELDS: tuple[str, ...] = (
+    "candidate_hit",
+    "final_injected_hit",
+    "negative_injection",
+)
+_SAFE_INJECTION_ROUTE_NUMERIC_FIELDS: tuple[str, ...] = (
+    "document_route_weight",
+    "graph_route_weight",
+    "atom_route_weight",
+    "document_route_score_max",
+    "graph_route_score_max",
+    "atom_route_score_max",
+)
+_SAFE_INJECTION_PRESETS: frozenset[str] = frozenset(
+    {"tool_first", "low_cost", "balanced", "quality"}
+)
+_SAFE_INJECTION_INTENTS: frozenset[str] = frozenset(
+    {
+        "fixed",
+        "default",
+        "factual",
+        "relationship",
+        "temporal",
+        "preference",
+        "contextual",
+        "strategy",
+    }
+)
+_SAFE_INJECTION_REASON_CODES: frozenset[str] = frozenset(
+    {
+        "MANUAL_SELECTED",
+        "PROVIDER_TOOL_UNAVAILABLE",
+        "AUTO_HISTORY_INTENT",
+        "AUTO_LOW_CONTEXT_HEADROOM",
+        "AUTO_FALLBACK",
+        "AUTO_MEMORY_UNCERTAIN",
+        "HYBRID_CLAMPED_MIN",
+        "HYBRID_CLAMPED_MAX",
+        "INVALID_CONFIG_FALLBACK",
+    }
+)
 _SAFE_PAIR_OUTCOME_KEYS: frozenset[str] = frozenset(
     {
         "context_key_hash",
@@ -474,7 +527,53 @@ class EvaluationReportStore:
                     safe_advanced[key_text] = number
             if safe_advanced:
                 payload["advanced_metrics"] = safe_advanced
+
+        injection = cls._safe_injection_payload(normalized.get("injection"))
+        if injection is not None:
+            payload["injection"] = injection
         return payload
+
+    @classmethod
+    def _safe_injection_payload(cls, value: Any) -> dict[str, Any] | None:
+        """把逐用例注入观察收敛到数值/布尔/闭集枚举。"""
+
+        if not isinstance(value, Mapping):
+            return None
+        safe: dict[str, Any] = {}
+        for key in _SAFE_INJECTION_NUMERIC_FIELDS:
+            number = cls._finite_number(value.get(key))
+            if number is not None:
+                safe[key] = number
+        for key in _SAFE_INJECTION_BOOLEAN_FIELDS:
+            if isinstance(value.get(key), bool):
+                safe[key] = value[key]
+        preset = str(value.get("resolved_preset") or "").strip().casefold()
+        if preset in _SAFE_INJECTION_PRESETS:
+            safe["resolved_preset"] = preset
+        reasons = value.get("decision_reason_codes")
+        if isinstance(reasons, Sequence) and not isinstance(reasons, (str, bytes)):
+            safe_reasons = sorted(
+                {
+                    str(reason)
+                    for reason in reasons
+                    if str(reason) in _SAFE_INJECTION_REASON_CODES
+                }
+            )
+            if safe_reasons:
+                safe["decision_reason_codes"] = safe_reasons
+        route = value.get("route_signals")
+        if isinstance(route, Mapping):
+            safe_route: dict[str, Any] = {}
+            for key in _SAFE_INJECTION_ROUTE_NUMERIC_FIELDS:
+                number = cls._finite_number(route.get(key))
+                if number is not None:
+                    safe_route[key] = number
+            intent = str(route.get("query_intent") or "").strip().casefold()
+            if intent in _SAFE_INJECTION_INTENTS:
+                safe_route["query_intent"] = intent
+            if safe_route:
+                safe["route_signals"] = safe_route
+        return safe or None
 
     @classmethod
     def safe_quality_loop_payload(cls, value: Any) -> dict[str, Any] | None:

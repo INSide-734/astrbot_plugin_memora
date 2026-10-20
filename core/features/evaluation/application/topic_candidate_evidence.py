@@ -8,6 +8,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeGuard
 
+from ..domain.statistics import (
+    nearest_rank as _nearest_rank,
+)
+from ..domain.statistics import (
+    paired_bootstrap_mean_ci,
+    paired_p95_delta_bootstrap_ci,
+)
+
 # 预注册 K 网格：证据门、回放和 benchmark 必须使用同一集合。
 TOP_K_VALUES: tuple[int, ...] = (4, 8, 12, 16, 24)
 _BASE_BOOTSTRAP_CONFIDENCE = 0.95
@@ -219,15 +227,6 @@ def check_privacy_canary(
     return (len(violations) == 0, violations)
 
 
-def _nearest_rank(values: list[float], percentile: float) -> float | None:
-    """使用 nearest-rank 定义计算百分位；空样本返回 None。"""
-    if not values:
-        return None
-    ordered = sorted(values)
-    rank = max(1, math.ceil(percentile / 100.0 * len(ordered)))
-    return ordered[min(rank - 1, len(ordered) - 1)]
-
-
 def _paired_bootstrap_ci(
     paired_diffs: list[float],
     *,
@@ -244,19 +243,13 @@ def _paired_bootstrap_ci(
     if seed is None:
         seed = "topic_candidate_evidence_bootstrap"
     seed_bytes = hashlib.sha256(seed.encode("utf-8")).digest()
-    rng = _DeterministicRandom(int.from_bytes(seed_bytes[:8], "big"))
-
-    n = len(paired_diffs)
-    alpha = 1.0 - confidence
-    boot_means = []
-    for _ in range(n_boot):
-        resample = [paired_diffs[rng.randint(0, n - 1)] for _ in range(n)]
-        boot_means.append(sum(resample) / n)
-
-    boot_means.sort()
-    lower_idx = int(alpha / 2 * n_boot)
-    upper_idx = min(n_boot - 1, int((1 - alpha / 2) * n_boot))
-    return (boot_means[lower_idx], boot_means[upper_idx])
+    return paired_bootstrap_mean_ci(
+        paired_diffs,
+        confidence=confidence,
+        iterations=n_boot,
+        seed=int.from_bytes(seed_bytes[:8], "big"),
+        rng="lcg",
+    )
 
 
 def _paired_p95_delta_bootstrap_ci(
@@ -276,38 +269,12 @@ def _paired_p95_delta_bootstrap_ci(
     if seed is None:
         seed = "topic_candidate_provider_p95_bootstrap"
     seed_bytes = hashlib.sha256(seed.encode("utf-8")).digest()
-    rng = _DeterministicRandom(int.from_bytes(seed_bytes[:8], "big"))
-
-    n = len(paired_durations)
-    alpha = 1.0 - confidence
-    deltas: list[float] = []
-    for _ in range(n_boot):
-        sampled = [paired_durations[rng.randint(0, n - 1)] for _ in range(n)]
-        full_p95 = _nearest_rank([full for full, _ in sampled], 95.0)
-        candidate_p95 = _nearest_rank([candidate for _, candidate in sampled], 95.0)
-        assert full_p95 is not None
-        assert candidate_p95 is not None
-        deltas.append(candidate_p95 - full_p95)
-
-    deltas.sort()
-    lower_idx = int(alpha / 2 * n_boot)
-    upper_idx = min(n_boot - 1, int((1 - alpha / 2) * n_boot))
-    return (deltas[lower_idx], deltas[upper_idx])
-
-
-class _DeterministicRandom:
-    """确定性伪随机数生成器；LCG 实现。"""
-
-    def __init__(self, seed: int):
-        self._state = seed & 0xFFFFFFFFFFFFFFFF
-        self._a = 6364136223846793005
-        self._c = 1442695040888963407
-        self._m = 2**64
-
-    def randint(self, a: int, b: int) -> int:
-        """返回 [a, b] 范围内的随机整数。"""
-        self._state = (self._a * self._state + self._c) % self._m
-        return a + int((self._state / self._m) * (b - a + 1))
+    return paired_p95_delta_bootstrap_ci(
+        paired_durations,
+        confidence=confidence,
+        iterations=n_boot,
+        seed=int.from_bytes(seed_bytes[:8], "big"),
+    )
 
 
 def _bonferroni_confidence(factor: int) -> float:

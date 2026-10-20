@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -115,7 +116,9 @@ def build_score_breakdown(
     route_bonus: float,
     final_score: float,
     intent: str,
-) -> dict[str, float]:
+    atom_signal: float = 0.0,
+    atom_weight: float = 0.0,
+) -> dict[str, Any]:
     """合并两条检索路的内部证据并补充双路融合解释字段。
 
     Args:
@@ -133,7 +136,7 @@ def build_score_breakdown(
         保留原始路内证据并追加双路解释字段的字典。
     """
 
-    score_breakdown: dict[str, float] = {}
+    score_breakdown: dict[str, Any] = {}
     if doc_result and doc_result.score_breakdown:
         score_breakdown.update(doc_result.score_breakdown)
     if graph_result and graph_result.score_breakdown:
@@ -146,6 +149,8 @@ def build_score_breakdown(
             "graph_route_weight": round(graph_weight, 4),
             "cross_route_bonus": round(route_bonus, 4),
             "dual_route_final_score": round(final_score, 4),
+            "atom_route_score": round(atom_signal, 4),
+            "atom_route_weight": round(atom_weight, 4),
         }
     )
     if intent:
@@ -364,6 +369,11 @@ def _merge_candidate(
             return None
         memory_content = str(loaded_memory.get("text") or memory_content)
         raw_metadata = loaded_memory.get("metadata") or memory_metadata
+        if isinstance(raw_metadata, str):
+            try:
+                raw_metadata = json.loads(raw_metadata)
+            except (json.JSONDecodeError, TypeError):
+                raw_metadata = {}
         memory_metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
 
     final_score = min(
@@ -394,5 +404,7 @@ def _merge_candidate(
             route_bonus=route_bonus,
             final_score=final_score,
             intent=intent,
+            atom_signal=atom_signal,
+            atom_weight=atom_weight,
         ),
     )

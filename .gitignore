@@ -71,6 +71,7 @@ openspec/
 .tmp*/
 .trellis/
 .omp/
+artifacts/
 
 # 本地数据目录
 data/
