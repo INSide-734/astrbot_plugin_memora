@@ -116,8 +116,6 @@ def build_score_breakdown(
     route_bonus: float,
     final_score: float,
     intent: str,
-    atom_signal: float = 0.0,
-    atom_weight: float = 0.0,
 ) -> dict[str, Any]:
     """合并两条检索路的内部证据并补充双路融合解释字段。
 
@@ -149,8 +147,6 @@ def build_score_breakdown(
             "graph_route_weight": round(graph_weight, 4),
             "cross_route_bonus": round(route_bonus, 4),
             "dual_route_final_score": round(final_score, 4),
-            "atom_route_score": round(atom_signal, 4),
-            "atom_route_weight": round(atom_weight, 4),
         }
     )
     if intent:
@@ -404,7 +400,5 @@ def _merge_candidate(
             route_bonus=route_bonus,
             final_score=final_score,
             intent=intent,
-            atom_signal=atom_signal,
-            atom_weight=atom_weight,
         ),
     )
