@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import math
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
@@ -43,7 +42,11 @@ from .provider_privacy_prefilter import (
     rerank_with_provider_boundary,
 )
 from .retrieval_execution import RouteExecutionCoordinator
-from .route_policy import should_use_graph_route
+from .route_policy import (
+    atom_route_allowed,
+    graph_route_allowed,
+    should_use_graph_route,
+)
 from .rrf_fusion import HybridResult
 
 if TYPE_CHECKING:
@@ -115,18 +118,6 @@ class DualRouteRetriever:
         self._provider_prefilter = ProviderPrivacyPrefilter()
         # 阶段计时存储（每次 search() 后更新）
 
-    def _graph_route_allowed(self) -> bool:
-        """图路运行门：已装配图检索器且配置图路权重 > 0。
-
-        零权时不创建图任务、不调用图 keyword/vector 检索，也就不会在融合中
-        产生仅由图路提供的零贡献候选；文档路与 Atom 路保持 baseline。
-        """
-
-        if self.graph_retriever is None:
-            return False
-        weight = self.graph_route_weight
-        return math.isfinite(weight) and weight > 0.0
-
     async def search(
         self,
         query: str,
@@ -158,9 +149,9 @@ class DualRouteRetriever:
                 摘要都归属用户来源的候选；缺省保持既有检索行为。
         """
         if query_plan is not None and query_plan.queries:
-            use_graph_route = self._graph_route_allowed() and should_use_graph_route(
-                query_plan, query_intent
-            )
+            use_graph_route = graph_route_allowed(
+                self.graph_retriever, self.graph_route_weight, self.config
+            ) and should_use_graph_route(query_plan, query_intent)
             return await self._search_with_plan(
                 query_plan=query_plan,
                 k=k,
@@ -193,9 +184,12 @@ class DualRouteRetriever:
             reference_time=reference_time,
             deadline_monotonic=deadline_monotonic,
             use_graph_route=(
-                self._graph_route_allowed()
+                graph_route_allowed(
+                    self.graph_retriever, self.graph_route_weight, self.config
+                )
                 and should_use_graph_route(query_plan, query_intent)
             ),
+            use_atom_route=atom_route_allowed(self.atom_retriever, self.config),
             query_scope=query_scope,
         )
         doc_results = outcome.document_results
@@ -422,6 +416,7 @@ class DualRouteRetriever:
                     reference_time=reference_time,
                     deadline_monotonic=deadline_monotonic,
                     use_graph_route=use_graph_route,
+                    use_atom_route=atom_route_allowed(self.atom_retriever, self.config),
                     query_scope=query_scope,
                 )
                 for sub_query, budget in active_queries

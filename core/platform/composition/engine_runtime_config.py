@@ -86,6 +86,8 @@ ENGINE_RUNTIME_FIELDS: tuple[EngineRuntimeField, ...] = (
         "dynamic_route_weighting",
         True,
     ),
+    _field("graph_memory.graph_retrieval_enabled", "graph_retrieval_enabled", True),
+    _field("graph_memory.atom_route_weight", "atom_route_weight", 0.25),
     _field("graph_memory.max_topics_per_memory", "graph_max_topics", 6),
     _field(
         "graph_memory.max_participants_per_memory",

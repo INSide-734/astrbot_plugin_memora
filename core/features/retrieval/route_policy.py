@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 _KNOWN_INTENTS = frozenset(
@@ -43,4 +44,42 @@ def _has_graph_facet(query_plan: Any) -> bool:
     return bool(facets & _GRAPH_FACETS)
 
 
-__all__ = ["should_use_graph_route"]
+def graph_route_allowed(
+    graph_retriever: Any | None,
+    graph_route_weight: Any,
+    config: Any,
+) -> bool:
+    """图运行门：已装配、检索开关开启且权重有效为正。"""
+
+    if graph_retriever is None:
+        return False
+    if isinstance(config, dict) and not bool(
+        config.get("graph_retrieval_enabled", True)
+    ):
+        return False
+    try:
+        weight = float(graph_route_weight)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(weight) and weight > 0.0
+
+
+def atom_route_allowed(atom_retriever: Any | None, config: Any) -> bool:
+    """Atom 运行门：已装配且有效权重为正；零权时不创建检索任务。"""
+
+    if atom_retriever is None:
+        return False
+    if not isinstance(config, dict):
+        return False
+    try:
+        weight = float(config.get("atom_route_weight", 0.25))
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(weight) and weight > 0.0
+
+
+__all__ = [
+    "atom_route_allowed",
+    "graph_route_allowed",
+    "should_use_graph_route",
+]

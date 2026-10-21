@@ -201,7 +201,7 @@ class HybridResult:
     vector_score: float | None  # 向量分数
     content: str
     metadata: dict[str, Any]
-    score_breakdown: dict[str, float] | None = None  # 各维度分数明细
+    score_breakdown: dict[str, Any] | None = None  # 各维度分数明细
 
     @property
     def source(self) -> dict[str, Any]:

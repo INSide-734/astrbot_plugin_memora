@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -90,6 +91,38 @@ async def test_merge_preserves_order_breakdown_and_missing_document_loading() ->
         "graph_vector_score": 0.2,
     }
     loader.assert_awaited_once_with(2)
+
+
+@pytest.mark.asyncio
+async def test_merge_decodes_json_string_metadata_from_loader() -> None:
+    """canonical loader 返回 JSON 字符串 metadata 时必须解码而非丢弃。"""
+
+    loader = AsyncMock(
+        return_value={
+            "text": "loaded-2",
+            "metadata": json.dumps(
+                {
+                    "key_facts": ["loaded-2"],
+                    "source_evidence": [],
+                }
+            ),
+        }
+    )
+    results = await merge_dual_results(
+        [],
+        [_graph_result(2, 0.9)],
+        "关系查询",
+        memory_loader=loader,
+        document_route_weight=0.65,
+        graph_route_weight=0.35,
+        cross_route_bonus=0.08,
+        dynamic_route_weighting=False,
+        atom_route_weight=0.25,
+    )
+
+    assert results[0].content == "loaded-2"
+    assert isinstance(results[0].metadata, dict)
+    assert results[0].metadata["key_facts"] == ["loaded-2"]
 
 
 def test_route_and_strategy_weights_preserve_existing_contract() -> None:

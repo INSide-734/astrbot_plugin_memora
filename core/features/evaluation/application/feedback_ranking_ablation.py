@@ -7,7 +7,6 @@ import hashlib
 import inspect
 import json
 import math
-import random
 import time
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -43,6 +42,7 @@ from ...learning.domain.models import (
     FeedbackSignalAggregate,
     FeedbackSignalPolicy,
 )
+from ..domain.statistics import paired_bootstrap_mean_ci
 from .retrieval_quality import (
     EvaluationCase,
     ndcg_at_k,
@@ -628,17 +628,19 @@ def _paired_bootstrap_ci(
         hashlib.sha256(seed_payload.encode("utf-8")).digest()[:8],
         "big",
     )
-    generator = random.Random(seed)
-    size = len(differences)
-    estimates = [
-        sum(differences[generator.randrange(size)] for _ in range(size)) / size
-        for _ in range(iterations)
-    ]
-    tail = (1.0 - confidence_level) * 50.0
-    return (
-        float(_percentile(estimates, tail, digits=6)),
-        float(_percentile(estimates, 100.0 - tail, digits=6)),
+    result = paired_bootstrap_mean_ci(
+        differences,
+        confidence=confidence_level,
+        iterations=iterations,
+        seed=seed,
+        rng="python",
+        interpolation=True,
     )
+    if result is not None:
+        return result
+    # 单样本配对保持原行为：区间退化为该差值。
+    value = float(differences[0]) if differences else 0.0
+    return (value, value)
 
 
 def _latency_evidence(

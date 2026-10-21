@@ -687,6 +687,12 @@
                 "type": "bool",
                 "default": true
             },
+            "graph_retrieval_enabled": {
+                "description": "启用图检索",
+                "hint": "关闭后只跳过图检索路径，保留图存储、图写入与索引；不影响文档路与 Atom 路。",
+                "type": "bool",
+                "default": true
+            },
             "max_topics_per_memory": {
                 "description": "单记忆最大主题数",
                 "hint": "从一条记忆中最多提取多少个 topics 节点。",
@@ -716,6 +722,14 @@
                 "hint": "开启后每条 key_fact 独立为一个记忆原子，拥有自己的存活时间和衰减曲线。关闭则完全回退到原来的粗粒度行为。",
                 "type": "bool",
                 "default": true
+            },
+            "atom_route_weight": {
+                "description": "Atom 路权重",
+                "hint": "存在 Atom 证据时为 Atom 路保留的权重，范围 0-0.5；设为 0 时跳过 Atom 检索任务。",
+                "type": "float",
+                "default": 0.25,
+                "min": 0.0,
+                "max": 0.5
             },
             "atom_maintenance_interval_hours": {
                 "description": "原子维护间隔(小时)",

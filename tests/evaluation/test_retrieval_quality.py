@@ -524,6 +524,8 @@ async def test_memory_engine_retriever_passes_case_metadata_to_search_memories()
             "chain_depth": 2,
             "query_intent": None,
             "recall_strategy": None,
+            "query_scope": None,
+            "require_user_evidence": True,
         }
     ]
 
