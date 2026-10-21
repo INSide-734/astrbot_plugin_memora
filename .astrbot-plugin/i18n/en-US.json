@@ -1212,6 +1212,116 @@
         "rebuildRequested": "Index rebuild requested"
       },
       "evaluation": {
+        "effectGate": {
+          "title": "Effect gate",
+          "description": "Fixed baseline, four variants, and manual/balanced injection; recommendations only.",
+          "runGate": "Run effect gate",
+          "runGateHint": "Server fixes baseline, variants, and manual-balanced injection; slower, recommendations only.",
+          "readiness": "Dataset readiness",
+          "ready": "Ready",
+          "insufficient": "Insufficient evidence",
+          "totalCases": "Total cases {0}",
+          "missing": "Missing",
+          "metrics": "Metrics",
+          "metricName": "Metric",
+          "baseline": "Baseline",
+          "variant": "Variant",
+          "delta": "Delta",
+          "interval": "95% CI",
+          "margin": "Margin",
+          "categoryTable": "Category metrics",
+          "noCategories": "No category metrics for this factor",
+          "categoryName": "Category",
+          "cases": "Cases",
+          "recommendedConfig": "Recommended config",
+          "displayOnly": "Display only; never applied automatically.",
+          "canary": "Privacy canary",
+          "canaryChecked": "Checked {0} values; no violations.",
+          "unmeasured": "Not measured",
+          "manifest": {
+            "title": "Manifest binding",
+            "codeRevision": "Code revision",
+            "configHash": "Config hash",
+            "schemaHash": "Schema hash",
+            "fixtureHmac": "Fixture HMAC",
+            "dbSnapshotHash": "DB snapshot",
+            "injectionConfigHash": "Injection config hash",
+            "seedK": "Seed / k / cases",
+            "policyVersion": "Policy version"
+          },
+          "status": {
+            "pass_enable": "Enable",
+            "pass_disable": "Disable",
+            "reject": "Reject",
+            "insufficient_evidence": "Insufficient evidence",
+            "not_applicable": "Not applicable"
+          },
+          "recommendation": {
+            "enable": "Enable",
+            "keep_disabled": "Keep disabled",
+            "degrade_to_document_only": "Degrade to document only",
+            "collect_more_evidence": "Collect more evidence"
+          },
+          "factor": {
+            "atom": "Atom route",
+            "graph_route": "Graph route",
+            "dynamic_weights": "Dynamic weights",
+            "rerank": "Final rerank"
+          },
+          "metric": {
+            "final_injected_hit_rate": "Final injected hit rate",
+            "injection_precision": "Injection precision",
+            "required_fact_coverage": "Required fact coverage",
+            "negative_injection_rate": "Negative injection rate",
+            "observed_latency_ms": "Observed latency",
+            "observed_provider_calls": "Provider calls"
+          },
+          "category": {
+            "positive": "Positive",
+            "negative": "Negative",
+            "ambiguous": "Ambiguous",
+            "cross_scope": "Cross-scope",
+            "relation": "Relation",
+            "multi_hop": "Multi-hop",
+            "long_payload": "Long payload",
+            "uncategorized": "Uncategorized"
+          },
+          "reason": {
+            "available": "Available",
+            "insufficient_categories": "Insufficient categories",
+            "missing_primary_metric": "Missing primary metric",
+            "primary_regression": "Primary regression",
+            "guardrail_regression": "Guardrail regression",
+            "pareto_improvement": "Pareto improvement",
+            "no_primary_improvement": "No primary improvement",
+            "graph_removal_degrades_quality": "Graph removal degrades quality",
+            "graph_removal_non_inferior": "Graph removal non-inferior",
+            "execution_probe_missing": "Execution probe missing",
+            "variant_not_executed": "Variant not executed",
+            "variant_not_exercised": "Variant not exercised",
+            "baseline_component_not_exercised": "Baseline component not exercised",
+            "equivalent_to_baseline": "Equivalent to baseline",
+            "missing_engine": "Engine missing",
+            "missing_engine_config": "Engine config missing",
+            "missing_dual_route": "Dual route missing",
+            "missing_derived_reader": "Derived reader missing",
+            "readonly_snapshot_cannot_activate_worker": "Readonly snapshot cannot activate worker",
+            "missing_document_vector_access": "Document vectors unavailable",
+            "missing_graph_retriever": "Graph retriever missing",
+            "missing_atom_retriever": "Atom retriever missing",
+            "missing_reranker_dependency": "Reranker dependency missing",
+            "variant_prepare_failed": "Variant preparation failed",
+            "variant_execution_failed": "Variant execution failed",
+            "embedding_query_failed": "Query embedding failed",
+            "unknown_variant": "Unknown variant"
+          },
+          "config": {
+            "atom_route_weight": "Atom route weight",
+            "graph_retrieval_enabled": "Graph retrieval",
+            "dynamic_route_weighting": "Dynamic weighting",
+            "final_reranker": "Final reranker"
+          }
+        },
         "metric": {
           "cases": "Cases",
           "observedP95": "Observed p95",
@@ -1250,7 +1360,10 @@
           "final_reranker_embedding_similarity": "Embedding similarity reranker",
           "graph_neighbors_off": "Graph neighbors off",
           "graph_neighbors_1_hop": "Graph neighbors: 1 hop",
-          "graph_neighbors_2_hops": "Graph neighbors: 2 hops"
+          "graph_neighbors_2_hops": "Graph neighbors: 2 hops",
+          "atom_signal_on": "Atom route on",
+          "graph_route_off": "Graph route off",
+          "dynamic_route_weighting_on": "Dynamic weighting on"
         },
         "reason": {
           "equivalent_to_baseline": "Equivalent to current baseline",

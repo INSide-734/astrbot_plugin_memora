@@ -75,4 +75,24 @@ describe("evaluation mock server", () => {
     expect((report.variants as Record<string, Record<string, unknown>>).final_reranker_mmr)
       .toMatchObject({ status: "skipped", reason_code: "equivalent_to_baseline" });
   });
+
+  it("runs the effect gate fixture and ignores client variants", () => {
+    const report = okData(handleEvaluationRun({
+      datasets: ["private_basic"],
+      k: 9,
+      variants: ["baseline"],
+      effect_gate: {},
+    }));
+
+    expect(report.baseline).toBe("fixed_route_baseline");
+    expect(report.effect_gate).toBeTruthy();
+    expect(report.quality_loop).toBeUndefined();
+    expect((report.summary as Record<string, unknown>).k).toBe(9);
+    expect(Object.keys(report.variants as Record<string, unknown>)).toEqual([
+      "atom_signal_on",
+      "graph_route_off",
+      "dynamic_route_weighting_on",
+      "final_reranker_mmr",
+    ]);
+  });
 });

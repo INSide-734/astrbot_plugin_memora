@@ -16,6 +16,11 @@ from ....features.evaluation import (
     EvaluationDatasetValidationError,
     PreparedEvaluationDataset,
 )
+from ....features.evaluation.infrastructure.effect_gate_evaluation import (
+    EffectGateEvaluationError,
+    EffectGateEvaluationService,
+    build_effect_gate_injection_port,
+)
 from ....features.evaluation.infrastructure.evaluation_service import EvaluationService
 from ....features.evaluation.infrastructure.quality_loop_secret import (
     load_or_create_quality_loop_secret,
@@ -27,6 +32,20 @@ from .response_utils import error_response, ok_response
 
 _CURRENT_MEMORY_DATASET = "current_memories"
 _CURRENT_MEMORY_CASE_LIMIT = 20
+_EFFECT_GATE_FORBIDDEN_FIELDS = frozenset(
+    {
+        "baseline",
+        "variants",
+        "manifest",
+        "injection",
+        "gate_policy",
+        "policy",
+        "fixture_hmac",
+        "db_snapshot_hash",
+        "seed",
+        "context_key",
+    }
+)
 
 
 class EvaluationApiMixin:
@@ -128,6 +147,28 @@ class EvaluationApiMixin:
         if engine is None:
             return error_response("MemoryEngine unavailable")
 
+        effect_gate = payload.get("effect_gate")
+        if effect_gate is not None:
+            if not (
+                effect_gate is True
+                or (isinstance(effect_gate, dict) and not effect_gate)
+            ):
+                return error_response(
+                    "effect_gate 仅支持 true 或空对象",
+                    code="invalid_request",
+                )
+            if _EFFECT_GATE_FORBIDDEN_FIELDS.intersection(payload):
+                return error_response(
+                    "effect_gate 不允许覆盖服务端绑定字段",
+                    code="invalid_request",
+                )
+            if payload.get("quality_loop") is not None:
+                return error_response(
+                    "effect_gate 与 quality_loop 不能同时请求",
+                    code="invalid_request",
+                )
+            return await self._run_effect_gate_payload(engine, payload)
+
         quality_loop_request = None
         if payload.get("quality_loop") is not None:
             quality_loop_request = self._parse_quality_loop_request(
@@ -162,34 +203,12 @@ class EvaluationApiMixin:
         )
         try:
             await service.initialize()
-            requested_dataset_items = self._payload_list(payload.get("datasets"))
-            should_load_current = (
-                _CURRENT_MEMORY_DATASET
-                in {str(item) for item in requested_dataset_items}
-                or "datasets" not in payload
-                or not requested_dataset_items
+            selection = await self._prepare_evaluation_selection(
+                service, payload, engine
             )
-            current_cases = (
-                await self._load_current_memory_cases(engine)
-                if should_load_current
-                else []
-            )
-            runtime_datasets = (
-                {_CURRENT_MEMORY_DATASET: current_cases} if current_cases else {}
-            )
-            known_datasets = {
-                item["name"] for item in service.list_datasets().get("datasets", [])
-            }
-            known_datasets.update(runtime_datasets)
-            selected_datasets = [
-                str(item)
-                for item in requested_dataset_items
-                if str(item) in known_datasets
-            ]
-            if "datasets" not in payload or not requested_dataset_items:
-                selected_datasets = sorted(known_datasets)
-            elif not selected_datasets:
-                return error_response("No known evaluation datasets selected")
+            if isinstance(selection, dict):
+                return selection
+            selected_datasets, runtime_datasets = selection
             result = await service.run_evaluation(
                 datasets=selected_datasets,
                 k=self._clamp_evaluation_k(payload.get("k", 5)),
@@ -223,6 +242,93 @@ class EvaluationApiMixin:
         except Exception as exc:
             logger.error("[评测接口] 执行评测失败，异常类型=%s", exc.__class__.__name__)
             return error_response("执行评测失败", code="evaluation_run_failed")
+
+    async def _prepare_evaluation_selection(
+        self,
+        service: EvaluationService,
+        payload: dict[str, Any],
+        engine: Any,
+    ) -> tuple[list[str], dict[str, list[EvaluationCase]]] | dict[str, Any]:
+        """复用普通与 gate 路径的数据集选择。"""
+
+        requested_dataset_items = self._payload_list(payload.get("datasets"))
+        should_load_current = (
+            _CURRENT_MEMORY_DATASET in {str(item) for item in requested_dataset_items}
+            or "datasets" not in payload
+            or not requested_dataset_items
+        )
+        current_cases = (
+            await self._load_current_memory_cases(engine) if should_load_current else []
+        )
+        runtime_datasets = (
+            {_CURRENT_MEMORY_DATASET: current_cases} if current_cases else {}
+        )
+        known_datasets = {
+            item["name"] for item in service.list_datasets().get("datasets", [])
+        }
+        known_datasets.update(runtime_datasets)
+        selected_datasets = [
+            str(item) for item in requested_dataset_items if str(item) in known_datasets
+        ]
+        if "datasets" not in payload or not requested_dataset_items:
+            selected_datasets = sorted(known_datasets)
+        elif not selected_datasets:
+            return error_response("No known evaluation datasets selected")
+        return selected_datasets, runtime_datasets
+
+    async def _run_effect_gate_payload(
+        self,
+        engine: Any,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        """运行服务端绑定的效果门并返回脱敏报告。"""
+
+        try:
+            fixture_secret = load_or_create_quality_loop_secret(
+                self._evaluation_data_dir()
+            )
+        except RuntimeError:
+            return error_response(
+                "Effect-gate fixture secret unavailable",
+                code="effect_gate_secret_unavailable",
+            )
+        service = self._build_evaluation_service(engine=engine)
+        try:
+            await service.initialize()
+            selection = await self._prepare_evaluation_selection(
+                service, payload, engine
+            )
+            if isinstance(selection, dict):
+                return selection
+            selected_datasets, runtime_datasets = selection
+            gate_service = EffectGateEvaluationService(service)
+            result = await gate_service.run(
+                datasets=selected_datasets,
+                k=self._clamp_evaluation_k(payload.get("k", 5)),
+                save_report=bool(payload.get("save_report", False)),
+                injection_port=build_effect_gate_injection_port(),
+                fixture_secret=fixture_secret,
+                runtime_datasets=runtime_datasets,
+            )
+            safe_effect_gate = EvaluationReportStore.safe_effect_gate_payload(
+                result.get("effect_gate")
+            )
+            if safe_effect_gate is None:
+                return error_response(
+                    "Effect-gate report validation failed",
+                    code="effect_gate_invalid_payload",
+                )
+            result["effect_gate"] = safe_effect_gate
+            result["manifest"] = safe_effect_gate["manifest"]
+            return ok_response(result)
+        except EffectGateEvaluationError as exc:
+            return error_response(str(exc), code=exc.code)
+        except Exception as exc:
+            logger.error(
+                "[评测接口] 执行效果门失败，异常类型=%s",
+                exc.__class__.__name__,
+            )
+            return error_response("执行效果门失败", code="evaluation_run_failed")
 
     async def import_evaluation_dataset_payload(
         self,

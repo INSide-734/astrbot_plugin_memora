@@ -42,6 +42,59 @@ const reportSummary = {
   p95_latency_ms: 42.6,
 };
 
+const categories = [
+  "positive",
+  "negative",
+  "ambiguous",
+  "cross_scope",
+  "relation",
+  "multi_hop",
+  "long_payload",
+];
+const hash = "a".repeat(64);
+const effectGate = {
+  schema_version: "effect-gate-v1",
+  baseline: "fixed_route_baseline",
+  readiness: {
+    required_categories: categories,
+    present_counts: Object.fromEntries(categories.map((name) => [name, 10])),
+    total_cases: 70,
+    missing: [],
+    can_evaluate: true,
+  },
+  factors: Object.fromEntries([
+    ["atom", "atom_signal_on", "pass_enable", "enable", ["pareto_improvement"]],
+    ["graph_route", "graph_route_off", "pass_disable", "degrade_to_document_only", ["graph_removal_non_inferior"]],
+    ["dynamic_weights", "dynamic_route_weighting_on", "reject", "keep_disabled", ["guardrail_regression"]],
+    ["rerank", "final_reranker_mmr", "insufficient_evidence", "collect_more_evidence", ["missing_primary_metric"]],
+  ].map(([factor, variant, status, recommendation, reason_codes]) => [
+    factor,
+    { factor, variant, status, recommendation, reason_codes, metrics: {}, categories: {} },
+  ])),
+  recommended_config: { atom_route_weight: 0.25 },
+  policy: {
+    policy_version: "effect-gate-v1",
+    required_categories: categories,
+    min_cases_per_category: 10,
+    min_total_cases: 60,
+  },
+  manifest: {
+    data_source: "plugin_evaluation_datasets",
+    code_revision: hash,
+    config_hash: hash,
+    schema_hash: hash,
+    fixture_hmac: hash,
+    db_snapshot_hash: hash,
+    seed: 0,
+    k: 5,
+    case_count: 70,
+    injection_config_hash: hash,
+    gate_policy_version: "effect-gate-v1",
+    gate_policy: { policy_version: "effect-gate-v1", required_categories: categories },
+  },
+  privacy_canary: { checked_values: 140, violations: [] },
+};
+
 /** 返回 browser smoke 使用的评测数据集与能力描述符。 */
 export function evaluationDatasetsPayload() {
   return {
@@ -124,6 +177,8 @@ export function evaluationReportDetailPayload() {
       },
       deltas: {},
       cases: [],
+      effect_gate: effectGate,
+      manifest: effectGate.manifest,
     },
   };
 }
