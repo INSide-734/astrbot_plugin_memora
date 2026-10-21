@@ -1208,6 +1208,116 @@
         "rebuildRequested": "Пересборка индекса запрошена"
       },
       "evaluation": {
+        "effectGate": {
+          "title": "Контроль эффекта",
+          "description": "Фиксированные baseline, четыре варианта и manual/balanced инъекции; только рекомендации.",
+          "runGate": "Запустить контроль эффекта",
+          "runGateHint": "Сервер фиксирует baseline, варианты и manual-balanced инъекции; медленнее, только рекомендации.",
+          "readiness": "Готовность набора",
+          "ready": "Готово",
+          "insufficient": "Недостаточно данных",
+          "totalCases": "Всего кейсов {0}",
+          "missing": "Отсутствует",
+          "metrics": "Метрики",
+          "metricName": "Метрика",
+          "baseline": "Базовая",
+          "variant": "Вариант",
+          "delta": "Разница",
+          "interval": "95% CI",
+          "margin": "Допуск",
+          "categoryTable": "Метрики категорий",
+          "noCategories": "Нет метрик категорий",
+          "categoryName": "Категория",
+          "cases": "Кейсы",
+          "recommendedConfig": "Рекомендуемая конфигурация",
+          "displayOnly": "Только отображение; не применяется автоматически.",
+          "canary": "Канарейка приватности",
+          "canaryChecked": "Проверено значений: {0}; нарушений нет.",
+          "unmeasured": "Не измерено",
+          "manifest": {
+            "title": "Привязка manifest",
+            "codeRevision": "Версия кода",
+            "configHash": "Хеш конфигурации",
+            "schemaHash": "Хеш схемы",
+            "fixtureHmac": "HMAC фикстур",
+            "dbSnapshotHash": "Снимок БД",
+            "injectionConfigHash": "Хеш конфигурации инъекции",
+            "seedK": "Сид / k / кейсы",
+            "policyVersion": "Версия политики"
+          },
+          "status": {
+            "pass_enable": "Включить",
+            "pass_disable": "Отключить",
+            "reject": "Отклонить",
+            "insufficient_evidence": "Недостаточно данных",
+            "not_applicable": "Не применимо"
+          },
+          "recommendation": {
+            "enable": "Включить",
+            "keep_disabled": "Оставить отключённым",
+            "degrade_to_document_only": "Только документы",
+            "collect_more_evidence": "Собрать больше данных"
+          },
+          "factor": {
+            "atom": "Атомный маршрут",
+            "graph_route": "Графовый маршрут",
+            "dynamic_weights": "Динамические веса",
+            "rerank": "Финальное переранжирование"
+          },
+          "metric": {
+            "final_injected_hit_rate": "Попадание финальной инъекции",
+            "injection_precision": "Точность инъекции",
+            "required_fact_coverage": "Покрытие обязательных фактов",
+            "negative_injection_rate": "Доля негативных инъекций",
+            "observed_latency_ms": "Измеренная задержка",
+            "observed_provider_calls": "Вызовы провайдера"
+          },
+          "category": {
+            "positive": "Позитивные",
+            "negative": "Негативные",
+            "ambiguous": "Неоднозначные",
+            "cross_scope": "Межобластные",
+            "relation": "Отношения",
+            "multi_hop": "Многошаговые",
+            "long_payload": "Длинные данные",
+            "uncategorized": "Без категории"
+          },
+          "reason": {
+            "available": "Доступно",
+            "insufficient_categories": "Недостаточно категорий",
+            "missing_primary_metric": "Нет основной метрики",
+            "primary_regression": "Регрессия основной метрики",
+            "guardrail_regression": "Регрессия ограничителей",
+            "pareto_improvement": "Улучшение по Парето",
+            "no_primary_improvement": "Нет улучшения основной метрики",
+            "graph_removal_degrades_quality": "Удаление графа ухудшает качество",
+            "graph_removal_non_inferior": "Удаление графа не хуже",
+            "execution_probe_missing": "Нет зонда выполнения",
+            "variant_not_executed": "Вариант не выполнен",
+            "variant_not_exercised": "Вариант не задействован",
+            "baseline_component_not_exercised": "Компонент baseline не задействован",
+            "equivalent_to_baseline": "Эквивалентно baseline",
+            "missing_engine": "Нет движка",
+            "missing_engine_config": "Нет конфигурации движка",
+            "missing_dual_route": "Нет двойного маршрута",
+            "missing_derived_reader": "Нет чтения производных",
+            "readonly_snapshot_cannot_activate_worker": "Снимок только для чтения не запускает worker",
+            "missing_document_vector_access": "Векторы документов недоступны",
+            "missing_graph_retriever": "Нет графового поиска",
+            "missing_atom_retriever": "Нет атомного поиска",
+            "missing_reranker_dependency": "Нет зависимости переранжирования",
+            "variant_prepare_failed": "Ошибка подготовки варианта",
+            "variant_execution_failed": "Ошибка выполнения варианта",
+            "embedding_query_failed": "Ошибка эмбеддинга запроса",
+            "unknown_variant": "Неизвестный вариант"
+          },
+          "config": {
+            "atom_route_weight": "Вес атомного маршрута",
+            "graph_retrieval_enabled": "Графовый поиск",
+            "dynamic_route_weighting": "Динамические веса",
+            "final_reranker": "Финальное переранжирование"
+          }
+        },
         "metric": {
           "cases": "Кейсы",
           "observedP95": "Измеренный p95",
@@ -1246,7 +1356,10 @@
           "final_reranker_embedding_similarity": "Переранжирование по сходству эмбеддингов",
           "graph_neighbors_off": "Без соседей графа",
           "graph_neighbors_1_hop": "Соседи графа: 1 переход",
-          "graph_neighbors_2_hops": "Соседи графа: 2 перехода"
+          "graph_neighbors_2_hops": "Соседи графа: 2 перехода",
+          "atom_signal_on": "Атомный маршрут включён",
+          "graph_route_off": "Графовый маршрут отключён",
+          "dynamic_route_weighting_on": "Динамические веса включены"
         },
         "reason": {
           "equivalent_to_baseline": "Эквивалентно текущей базовой линии",

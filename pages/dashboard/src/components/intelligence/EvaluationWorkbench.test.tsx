@@ -194,7 +194,7 @@ describe("EvaluationWorkbench", () => {
     render(<EvaluationWorkbench showToast={() => undefined} />);
 
     await screen.findByText("private_basic");
-    fireEvent.click(screen.getByRole("button", { name: /Run|运行/ }));
+    fireEvent.click(screen.getByTestId("evaluation-run"));
 
     expect(await screen.findByText(/Recall@K/)).toBeTruthy();
     expect(screen.getByText(/MRR/)).toBeTruthy();
@@ -449,7 +449,7 @@ describe("EvaluationWorkbench", () => {
     expect(screen.getByText("评测工作台")).toBeTruthy();
     expect(screen.getByText("数据集")).toBeTruthy();
     expect(screen.getByText("变体")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /运行/ })).toBeTruthy();
+    expect(screen.getByTestId("evaluation-run")).toBeTruthy();
     expect(screen.getByText("报告历史")).toBeTruthy();
     expect(screen.getByText("暂无保存的报告")).toBeTruthy();
     expect(screen.queryByText("Evaluation Workbench")).toBe(null);
@@ -477,7 +477,7 @@ describe("EvaluationWorkbench", () => {
 
     expect(await screen.findByText("private_basic")).toBeTruthy();
     expect(screen.getByText("私聊")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: /运行/ }));
+    fireEvent.click(screen.getByTestId("evaluation-run"));
 
     expect(await screen.findByText("用例数")).toBeTruthy();
     expect(screen.getByText("变体执行状态")).toBeTruthy();

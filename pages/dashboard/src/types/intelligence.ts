@@ -1,3 +1,30 @@
+import type {
+  EffectGateReport,
+  EffectGateSummary,
+  EvaluationCategoryBreakdown,
+  InjectionSummary,
+} from "./effectGate";
+
+export type {
+  EffectGateCategoryMetric,
+  EffectGateCategoryMetrics,
+  EffectGateFactor,
+  EffectGateFactorName,
+  EffectGateFactorSummary,
+  EffectGateManifest,
+  EffectGateMetric,
+  EffectGateMetricName,
+  EffectGatePolicy,
+  EffectGateReadiness,
+  EffectGateRecommendation,
+  EffectGateRecommendationConfig,
+  EffectGateReport,
+  EffectGateStatus,
+  EffectGateSummary,
+  EvaluationCategoryBreakdown,
+  InjectionSummary,
+} from "./effectGate";
+
 export type IntelligenceTabId =
   | "evaluation"
   | "recallTrace"
@@ -272,6 +299,9 @@ export interface EvaluationSummaryMetrics {
   annotated_token_cost?: number | null;
   reported_provider_calls?: number | null;
   reported_token_cost?: number | null;
+  injection_summary?: InjectionSummary;
+  category_breakdown?: Record<string, EvaluationCategoryBreakdown>;
+  effect_gate_summary?: EffectGateSummary | null;
 }
 
 export interface EvaluationVariantPayload {
@@ -282,6 +312,11 @@ export interface EvaluationVariantPayload {
   capability_status?: "available" | "unavailable" | string;
   reason_code?: string;
   effective_settings?: Record<string, string | number | boolean>;
+  factor?: string;
+  execution?: {
+    target_calls: number | null;
+    target_applied: boolean | null;
+  };
 }
 
 export interface EvaluationVariantDelta {
@@ -359,4 +394,6 @@ export interface EvaluationReport {
   cases?: EvaluationCaseResult[];
   case_count?: number;
   quality_loop?: QualityLoopPayload | null;
+  effect_gate?: EffectGateReport | null;
+  manifest?: EffectGateReport["manifest"];
 }

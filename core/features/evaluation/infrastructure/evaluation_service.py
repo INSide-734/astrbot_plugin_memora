@@ -5,13 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import inspect
-import json
-import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from ...backup.infrastructure.snapshot import snapshot_sqlite
 from ..application.quality_loop import (
     QualityLoopPairError,
     build_quality_loop_pairs,
@@ -27,7 +24,6 @@ from ..application.retrieval_quality import (
     EvaluationCase,
     EvaluationReport,
     evaluate_cases,
-    load_fixture_dir,
     make_memory_engine_retriever,
 )
 from ..domain.quality_loop_stages import (
@@ -44,7 +40,22 @@ from ..domain.quality_loop_stages import (
     make_stage_read,
     stage_read_to_payload,
 )
+from .dataset_selection import load_datasets, select_datasets
+from .evaluation_manifest import (
+    QUALITY_LOOP_CODE_PATHS,
+    configuration_hash,
+    database_snapshot_hash,
+    evaluator_code_revision,
+    schema_hash,
+)
+from .report_comparison import (
+    compare_evaluation_reports,
+    metric_delta,
+    metric_value,
+    report_compare_summary,
+)
 from .report_store import EvaluationReportStore
+from .report_summary import report_cases, report_summary
 
 _SUPPORTED_VARIANTS = frozenset(RETRIEVAL_VARIANT_NAMES)
 _METRICS = ("recall_at_k", "mrr", "ndcg_at_k", "observed_p95_latency_ms")
@@ -264,33 +275,12 @@ class EvaluationService:
         """返回报告 A 到报告 B 的指标差异。"""
         if self.store is None:
             return None
-        report_a = await self.store.get_report(report_id_a)
-        report_b = await self.store.get_report(report_id_b)
-        if report_a is None or report_b is None:
-            return None
-
-        summary_a = report_a.get("summary", {})
-        summary_b = report_b.get("summary", {})
-        return {
-            "report_id_a": report_id_a,
-            "report_id_b": report_id_b,
-            "deltas": {
-                metric: self._metric_delta(
-                    self._metric_value(summary_a, metric),
-                    self._metric_value(summary_b, metric),
-                )
-                for metric in _METRICS
-            },
-            "reports": {
-                "a": self._report_compare_summary(report_a),
-                "b": self._report_compare_summary(report_b),
-            },
-        }
+        return await compare_evaluation_reports(self.store, report_id_a, report_id_b)
 
     def _load_datasets(self) -> dict[str, list[EvaluationCase]]:
         """从夹具目录加载全部 JSONL 数据集。"""
 
-        return load_fixture_dir(
+        return load_datasets(
             self.fixture_dir,
             include_experimental=self.include_experimental_datasets,
         )
@@ -303,13 +293,12 @@ class EvaluationService:
     ) -> dict[str, list[EvaluationCase]]:
         """合并受信运行时用例并按请求名称筛选；空请求表示全部。"""
 
-        available = self._load_datasets()
-        for name, cases in (runtime_datasets or {}).items():
-            available[str(name)] = list(cases)
-        if not requested:
-            return available
-        selected = {name: available[name] for name in requested if name in available}
-        return selected
+        return select_datasets(
+            requested,
+            fixture_dir=self.fixture_dir,
+            include_experimental=self.include_experimental_datasets,
+            runtime_datasets=runtime_datasets,
+        )
 
     @staticmethod
     def _select_variants(variants: Sequence[str] | None) -> list[str]:
@@ -412,108 +401,29 @@ class EvaluationService:
     def _report_summary(report: EvaluationReport) -> dict[str, Any]:
         """从完整报告提取安全汇总指标。"""
 
-        summary = {
-            "total_cases": report.total_cases,
-            "k": report.k,
-            "recall_at_k": report.recall_at_k,
-            "precision_at_k": report.precision_at_k,
-            "mrr": report.mrr,
-            "ndcg_at_k": report.ndcg_at_k,
-            "multi_hop_recall": report.multi_hop_recall,
-            "single_hop_recall": report.single_hop_recall,
-            "noise_negative_false_hit": report.noise_negative_false_hit,
-            "temporal_consistency": report.temporal_consistency,
-            "conflict_accuracy": report.conflict_accuracy,
-            "source_supported_projection_rate": report.source_supported_projection_rate,
-            "observed_p50_latency_ms": report.observed_p50_latency_ms,
-            "observed_p95_latency_ms": report.observed_p95_latency_ms,
-            "annotated_p50_latency_ms": report.annotated_p50_latency_ms,
-            "annotated_p95_latency_ms": report.annotated_p95_latency_ms,
-            "reported_p50_latency_ms": report.reported_p50_latency_ms,
-            "reported_p95_latency_ms": report.reported_p95_latency_ms,
-            "annotated_answer_faithfulness": report.annotated_answer_faithfulness,
-            "annotated_answer_relevancy": report.annotated_answer_relevancy,
-            "judged_answer_faithfulness": report.judged_answer_faithfulness,
-            "judged_answer_relevancy": report.judged_answer_relevancy,
-            "reported_answer_faithfulness": report.reported_answer_faithfulness,
-            "reported_answer_relevancy": report.reported_answer_relevancy,
-            "observed_provider_calls": report.observed_provider_calls,
-            "observed_token_cost": report.observed_token_cost,
-            "annotated_provider_calls": report.annotated_provider_calls,
-            "annotated_token_cost": report.annotated_token_cost,
-            "reported_provider_calls": report.reported_provider_calls,
-            "reported_token_cost": report.reported_token_cost,
-            "reason_code_aggregates": dict(report.reason_code_aggregates),
-            "injection_summary": EvaluationReportStore._normalize_json_value(
-                report.injection_summary
-            ),
-            "category_breakdown": EvaluationReportStore._normalize_json_value(
-                report.category_breakdown
-            ),
-            "dataset_breakdown": EvaluationReportStore._normalize_json_value(
-                report.dataset_breakdown
-            ),
-        }
-        return summary
+        return report_summary(report)
 
     def _configuration_hash(self, engine: Any | None = None) -> str:
         """计算匿名配置摘要，不将配置原文写入评测报告。"""
-        config = getattr(engine if engine is not None else self.engine, "config", {})
-        if not isinstance(config, Mapping):
-            config = {"config_type": type(config).__name__}
-        encoded = json.dumps(
-            self._redact_config(dict(config)),
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        ).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+
+        return configuration_hash(engine if engine is not None else self.engine)
 
     @staticmethod
     def _schema_hash() -> str:
         """读取插件 schema 的哈希，不把 schema 正文写入报告。"""
-        schema_path = Path(__file__).resolve().parents[4] / "_conf_schema.json"
-        try:
-            return hashlib.sha256(schema_path.read_bytes()).hexdigest()
-        except (OSError, ValueError):
-            return hashlib.sha256(b"quality-loop-schema-unavailable").hexdigest()
+
+        return schema_hash()
 
     async def _database_snapshot_hash(self, engine: Any) -> str | None:
         """在线程池中对 canonical SQLite 做临时 backup snapshot 并返回哈希。"""
-        return await asyncio.to_thread(self._database_snapshot_hash_sync, engine)
 
-    def _database_snapshot_hash_sync(self, engine: Any) -> str | None:
-        """同步执行 SQLite snapshot；调用方不得在事件循环直接调用。"""
-        try:
-            database_path = getattr(engine, "db_path", None)
-            if not isinstance(database_path, (str, Path)):
-                return None
-            with tempfile.TemporaryDirectory(prefix="memora-eval-") as directory:
-                result = snapshot_sqlite(
-                    Path(database_path), Path(directory) / "canonical.db"
-                )
-                return result.sha256
-        except Exception:
-            return None
+        return await database_snapshot_hash(engine)
 
     @staticmethod
     def _evaluator_code_revision() -> str:
         """按质量闭环实现源码计算稳定的低敏代码绑定。"""
-        root = Path(__file__).resolve().parents[4]
-        paths = (
-            root / "core/features/evaluation/application/quality_loop.py",
-            root / "core/features/evaluation/domain/quality_loop_manifest.py",
-            root / "core/features/evaluation/domain/quality_loop_stages.py",
-            root / "core/features/evaluation/infrastructure/evaluation_service.py",
-        )
-        digest = hashlib.sha256()
-        for path in paths:
-            digest.update(path.name.encode("ascii"))
-            try:
-                digest.update(path.read_bytes())
-            except OSError:
-                digest.update(b"quality-loop-source-unavailable")
-        return digest.hexdigest()
+
+        return evaluator_code_revision(QUALITY_LOOP_CODE_PATHS)
 
     def _provider_identifiers(
         self, engine: Any
@@ -733,29 +643,11 @@ class EvaluationService:
             if run_engine is not None:
                 await self._clear_evaluation_caches(run_engine)
 
-    @classmethod
-    def _redact_config(cls, config: Mapping[str, Any]) -> dict[str, Any]:
-        """递归隐藏配置中的密钥类字段。"""
-
-        redacted: dict[str, Any] = {}
-        for key, value in config.items():
-            key_text = str(key)
-            if any(
-                token in key_text.lower()
-                for token in ("key", "token", "secret", "password")
-            ):
-                redacted[key_text] = "<已隐藏>"
-            elif isinstance(value, Mapping):
-                redacted[key_text] = cls._redact_config(value)
-            else:
-                redacted[key_text] = value
-        return redacted
-
     @staticmethod
     def _report_cases(report: EvaluationReport) -> list[dict[str, Any]]:
         """把逐用例 dataclass 规范化为可持久化 JSON 值。"""
 
-        return [EvaluationReportStore.safe_case_payload(case) for case in report.cases]
+        return report_cases(report)
 
     @classmethod
     def _variant_deltas(
@@ -789,30 +681,19 @@ class EvaluationService:
     ) -> float | None:
         """将可选指标安全转换为浮点数。"""
 
-        value = report_or_summary.get(metric)
-        try:
-            return None if value is None else float(value)
-        except (TypeError, ValueError):
-            return None
+        return metric_value(report_or_summary, metric)
 
     @staticmethod
     def _metric_delta(a: float | None, b: float | None) -> float | None:
         """返回 B-A 差值；任一值缺失时保持未知。"""
 
-        if a is None or b is None:
-            return None
-        return round(b - a, 4)
+        return metric_delta(a, b)
 
     @staticmethod
     def _report_compare_summary(report: Mapping[str, Any]) -> dict[str, Any]:
         """提取报告对比端点需要的最小摘要。"""
 
-        return {
-            "report_id": report.get("report_id"),
-            "created_at": report.get("created_at"),
-            "baseline": report.get("baseline"),
-            "summary": dict(report.get("summary", {}) or {}),
-        }
+        return report_compare_summary(report)
 
 
 __all__ = ["EvaluationService"]

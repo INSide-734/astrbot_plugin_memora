@@ -1,6 +1,11 @@
 import type { EvaluationReport } from "@/types/intelligence";
 
-import { EVALUATION_DATASETS, EVALUATION_REPORTS, EVALUATION_VARIANTS } from "./data";
+import {
+  EVALUATION_DATASETS,
+  EVALUATION_EFFECT_GATE,
+  EVALUATION_REPORTS,
+  EVALUATION_VARIANTS,
+} from "./data";
 
 export type EvaluationMockResponse = {
   status: string;
@@ -67,6 +72,36 @@ export function handleEvaluationRun(body: Record<string, unknown>): EvaluationMo
   const datasets = Array.isArray(body.datasets) ? body.datasets.map(String) : ["private_basic"];
   const variants = Array.isArray(body.variants) ? body.variants.map(String) : ["baseline"];
   const k = Math.min(20, Math.max(1, Number(body.k ?? template.summary.k)));
+  if (body.effect_gate !== undefined) {
+    const gate = EVALUATION_EFFECT_GATE;
+    const gateVariants: EvaluationReport["variants"] = {};
+    for (const [factor, evidence] of Object.entries(gate.factors)) {
+      if (!evidence) continue;
+      gateVariants[evidence.variant] = {
+        name: evidence.variant,
+        factor,
+        status: evidence.status === "not_applicable" ? "skipped" : "completed",
+        reason_code: evidence.reason_codes[0] ?? "available",
+        summary: { ...template.summary, k },
+      };
+    }
+    const report: EvaluationReport = {
+      ...template,
+      report_id: `eval-gate-${Date.now()}`,
+      created_at: Date.now() / 1000,
+      baseline: gate.baseline,
+      datasets,
+      summary: { ...template.summary, k },
+      variants: gateVariants,
+      deltas: {},
+      cases: (template.cases ?? []).map((item) => ({ ...item })),
+      quality_loop: undefined,
+      effect_gate: gate,
+      manifest: gate.manifest,
+    };
+    EVALUATION_REPORTS.unshift(report);
+    return ok(report);
+  }
   const report: EvaluationReport = {
     ...template,
     report_id: `eval-${Date.now()}`,
@@ -97,6 +132,8 @@ export function handleEvaluationRun(body: Record<string, unknown>): EvaluationMo
       Object.entries(template.deltas ?? {}).filter(([name]) => variants.includes(name)),
     ),
     cases: (template.cases ?? []).map((item) => ({ ...item })),
+    effect_gate: undefined,
+    manifest: undefined,
   };
   EVALUATION_REPORTS.unshift(report);
   return ok(report);

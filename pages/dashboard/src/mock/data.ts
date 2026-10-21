@@ -10,6 +10,10 @@ import type {
   ReviewItem,
   RecallTraceResponse,
 } from "@/types/intelligence";
+
+import { EVALUATION_EFFECT_GATE } from "./effectGateData";
+
+export { EVALUATION_EFFECT_GATE } from "./effectGateData";
 import type {
   InjectionDecisionDetail,
   InjectionOutcome,
@@ -514,6 +518,7 @@ export const EVALUATION_REPORTS: EvaluationReport[] = [
     report_id: "eval-private-basic",
     created_at: Date.now() / 1000 - 1800,
     baseline: "baseline",
+    effect_gate: EVALUATION_EFFECT_GATE,
     datasets: ["private_basic"],
     summary: {
       total_cases: 20,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ClipboardList, Loader2, Play, RefreshCw, Upload } from "lucide-react";
+import { ClipboardList, Loader2, Play, RefreshCw, ShieldCheck, Upload } from "lucide-react";
 
 import { Button } from "@/components/ui/Button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -15,6 +15,7 @@ import type {
   EvaluationVariantDelta,
 } from "@/types/intelligence";
 
+import { EffectGateCard } from "./EffectGateCard";
 import { EvaluationCaseTable } from "./EvaluationCaseTable";
 import { QualityLoopCard } from "./QualityLoopCard";
 
@@ -278,12 +279,13 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
     });
   };
 
-  const runEvaluation = async () => {
+  const runEvaluation = async (gate: boolean) => {
     if (runningRef.current) return;
     if (selectedDatasets.length === 0) {
       showToast(t("intelligence.evaluation.selectDataset"), true);
       return;
     }
+    if (!gate && selectedVariants.length === 0) return;
 
     const nextK = clampK(k);
     setK(nextK);
@@ -293,15 +295,22 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
     try {
       const response = await apiRequest("evaluation/run", {
         method: "POST",
-        body: {
-          datasets: selectedDatasets,
-          k: nextK,
-          variants: selectedVariants,
-          baseline: "baseline",
-          save_report: true,
-          quality_loop: {},
-          quality_loop_seed: 42,
-        },
+        body: gate
+          ? {
+            datasets: selectedDatasets,
+            k: nextK,
+            save_report: true,
+            effect_gate: {},
+          }
+          : {
+            datasets: selectedDatasets,
+            k: nextK,
+            variants: selectedVariants,
+            baseline: "baseline",
+            save_report: true,
+            quality_loop: {},
+            quality_loop_seed: 42,
+          },
       });
       const nextReport = unwrapApiData<EvaluationReport>(response);
       setReport(nextReport);
@@ -463,13 +472,27 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
             </div>
 
             <Button
-              onClick={runEvaluation}
+              data-testid="evaluation-run"
+              onClick={() => { void runEvaluation(false); }}
               disabled={running || loading || selectedDatasets.length === 0 || selectedVariants.length === 0}
               className="w-full"
             >
               {running ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
               {running ? t("intelligence.evaluation.running") : t("intelligence.evaluation.run")}
             </Button>
+            <Button
+              data-testid="evaluation-gate"
+              variant="outline"
+              onClick={() => { void runEvaluation(true); }}
+              disabled={running || loading || selectedDatasets.length === 0}
+              className="w-full"
+            >
+              {running ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+              {t("intelligence.evaluation.effectGate.runGate")}
+            </Button>
+            <p className="text-2xs leading-4 text-[var(--text-tertiary)]">
+              {t("intelligence.evaluation.effectGate.runGateHint")}
+            </p>
             {runError ? <p role="alert" className="text-sm text-destructive">{runError}</p> : null}
           </div>
         </div>
@@ -597,6 +620,7 @@ export function EvaluationWorkbench({ showToast }: EvaluationWorkbenchProps) {
               </div>
             )}
 
+            {report.effect_gate ? <EffectGateCard gate={report.effect_gate} /> : null}
             {report.quality_loop ? <QualityLoopCard qualityLoop={report.quality_loop} /> : null}
             <EvaluationCaseTable cases={failedCases} />
           </>

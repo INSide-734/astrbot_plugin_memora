@@ -13,6 +13,26 @@ export async function openEvaluationReportForSmoke(page) {
   await heading.evaluate((element) => {
     element.scrollIntoView({ block: "center", inline: "nearest" });
   });
+  await assertEffectGateCard(page);
+}
+
+/** 验证效果门卡可见、未测量语义存在且卡内表格不撑破页面。 */
+export async function assertEffectGateCard(page) {
+  const card = page.locator("[data-effect-gate-card]");
+  await card.waitFor({ state: "visible", timeout: 5_000 });
+  await card.getByText("效果门", { exact: true }).waitFor({
+    state: "visible",
+    timeout: 5_000,
+  });
+  await card.getByText("未测量", { exact: true }).first().waitFor({
+    state: "visible",
+    timeout: 5_000,
+  });
+  await card.scrollIntoViewIfNeeded();
+  const overflow = await card.evaluate((element) => element.scrollWidth - element.clientWidth);
+  if (overflow > 1) {
+    throw new Error(`效果门卡横向溢出: ${overflow}px`);
+  }
 }
 
 /** 验证变体卡片列数符合视口预期，且卡片没有撑出选择区域。 */
