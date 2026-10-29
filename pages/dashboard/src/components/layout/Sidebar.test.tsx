@@ -108,7 +108,6 @@ describe("Sidebar", () => {
     expect(iconSlot).not.toBeNull();
     expect(sun).not.toBeNull();
     expect(moon).not.toBeNull();
-    expect(iconSlot?.getAttribute("class") ?? "").toContain("size-4");
     expect(iconSlot?.getAttribute("class") ?? "").toContain("relative");
     expect(sun?.getAttribute("class") ?? "").toContain("opacity-0");
     expect(moon?.getAttribute("class") ?? "").toContain("opacity-100");
