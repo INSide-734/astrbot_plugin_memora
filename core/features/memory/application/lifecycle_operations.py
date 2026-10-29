@@ -22,7 +22,12 @@ from ....shared.memory_status import effective_memory_status, set_memory_status
 from ....shared.number_utils import clamp_float, safe_float
 from ....shared.temporal import parse_datetime, serialize_datetime
 from ...decay.application.operations import _normalize_batch_metadata
-from .write_coordinator import ConnectionRegistry, check_db_alive, is_connection_fatal
+from .write_coordinator import (
+    ConnectionRegistry,
+    check_db_alive,
+    coordinated_transaction,
+    is_connection_fatal,
+)
 
 
 def _safe_count(value: Any) -> int:
@@ -194,47 +199,53 @@ class LifecycleOperationsMixin:
             return 0
 
         updated_ids: list[int] = []
-        for mem_id in memory_ids:
-            try:
-                cursor = await self._db.execute(
-                    "SELECT metadata FROM documents WHERE id = ?", (mem_id,)
-                )
-                row = await cursor.fetchone()
-                if not row:
-                    continue
-                metadata_str = row[0] if row[0] else "{}"
-                metadata = (
-                    json.loads(metadata_str) if isinstance(metadata_str, str) else {}
-                )
-                if not isinstance(metadata, dict):
-                    metadata = {}
-                set_memory_status(
-                    metadata,
-                    new_status,
-                    status_changed_at=timestamp,
-                )
-
-                if new_status == "dormant":
-                    if "emotion_tags" in metadata:
-                        metadata["_archived_emotion_tags"] = metadata["emotion_tags"]
-                    metadata["emotional_intensity"] = round(
-                        safe_float(metadata.get("emotional_intensity"), 0.5) * 0.5, 3
+        async with coordinated_transaction(self._db) as db:
+            for mem_id in memory_ids:
+                try:
+                    cursor = await db.execute(
+                        "SELECT metadata FROM documents WHERE id = ?", (mem_id,)
                     )
-                elif new_status == "archived":
-                    metadata["emotion_tags"] = []
-                    metadata["emotional_intensity"] = 0.0
+                    row = await cursor.fetchone()
+                    await cursor.close()
+                    if not row:
+                        continue
+                    metadata_str = row[0] if row[0] else "{}"
+                    metadata = (
+                        json.loads(metadata_str)
+                        if isinstance(metadata_str, str)
+                        else {}
+                    )
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                    set_memory_status(
+                        metadata,
+                        new_status,
+                        status_changed_at=timestamp,
+                    )
 
-                await self._db.execute(
-                    "UPDATE documents SET metadata = ?, updated_at = ? WHERE id = ?",
-                    (json.dumps(metadata, ensure_ascii=False), updated_at, mem_id),
-                )
-                updated_ids.append(mem_id)
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                logger.debug(f"[维护] 状态更新失败 (id={mem_id})", exc_info=True)
+                    if new_status == "dormant":
+                        if "emotion_tags" in metadata:
+                            metadata["_archived_emotion_tags"] = metadata[
+                                "emotion_tags"
+                            ]
+                        metadata["emotional_intensity"] = round(
+                            safe_float(metadata.get("emotional_intensity"), 0.5) * 0.5,
+                            3,
+                        )
+                    elif new_status == "archived":
+                        metadata["emotion_tags"] = []
+                        metadata["emotional_intensity"] = 0.0
+
+                    await db.execute(
+                        "UPDATE documents SET metadata = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(metadata, ensure_ascii=False), updated_at, mem_id),
+                    )
+                    updated_ids.append(mem_id)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.debug(f"[维护] 状态更新失败 (id={mem_id})", exc_info=True)
         if updated_ids:
-            await self._db.commit()
             if self._invalidate_cache:
                 self._invalidate_cache()
             summary = await self._invalidate_derived_after_status_change(
@@ -474,44 +485,43 @@ class LifecycleOperationsMixin:
 
             if not rows:
                 logger.info("[自动迁移] 未找到需要迁移的旧数据")
-                await self._db.execute(
-                    "INSERT OR REPLACE INTO migration_status (key, value, updated_at) "
-                    "VALUES (?, ?, datetime('now'))",
-                    (migration_key, "true"),
-                )
-                await self._db.commit()
+                async with coordinated_transaction(self._db) as db:
+                    await db.execute(
+                        "INSERT OR REPLACE INTO migration_status (key, value, updated_at) "
+                        "VALUES (?, ?, datetime('now'))",
+                        (migration_key, "true"),
+                    )
                 return
 
             logger.info(f"[自动迁移] 找到 {len(list(rows))} 条旧数据需要迁移")
 
             updated_count = 0
-            for row in rows:
-                doc_id = row[0]
-                metadata_str = row[1]
+            async with coordinated_transaction(self._db) as db:
+                for row in rows:
+                    doc_id = row[0]
+                    metadata_str = row[1]
 
-                try:
-                    metadata = json.loads(metadata_str) if metadata_str else {}
-                except (json.JSONDecodeError, TypeError):
-                    metadata = {}
+                    try:
+                        metadata = json.loads(metadata_str) if metadata_str else {}
+                    except (json.JSONDecodeError, TypeError):
+                        metadata = {}
 
-                old_session_id = metadata.get("session_id", "unknown")
-                metadata["session_id"] = unified_msg_origin
-                metadata["migrated_at"] = time.time()
-                metadata["old_session_id"] = old_session_id
+                    old_session_id = metadata.get("session_id", "unknown")
+                    metadata["session_id"] = unified_msg_origin
+                    metadata["migrated_at"] = time.time()
+                    metadata["old_session_id"] = old_session_id
 
-                await self._db.execute(
-                    "UPDATE documents SET metadata = ? WHERE id = ?",
-                    (json.dumps(metadata, ensure_ascii=False), doc_id),
+                    await db.execute(
+                        "UPDATE documents SET metadata = ? WHERE id = ?",
+                        (json.dumps(metadata, ensure_ascii=False), doc_id),
+                    )
+                    updated_count += 1
+
+                await db.execute(
+                    "INSERT OR REPLACE INTO migration_status (key, value, updated_at) "
+                    "VALUES (?, ?, datetime('now'))",
+                    (migration_key, "true"),
                 )
-                updated_count += 1
-
-            await self._db.commit()
-            await self._db.execute(
-                "INSERT OR REPLACE INTO migration_status (key, value, updated_at) "
-                "VALUES (?, ?, datetime('now'))",
-                (migration_key, "true"),
-            )
-            await self._db.commit()
 
             logger.info(
                 f"[自动迁移] 完成，已将 {updated_count} 条记录更新为 {unified_msg_origin}"

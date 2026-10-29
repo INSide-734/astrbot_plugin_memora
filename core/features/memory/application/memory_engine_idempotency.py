@@ -28,6 +28,7 @@ from ..infrastructure.write_op_repair import (
     ledger_content_digest,
 )
 from .memory_engine_atom_support import reinforce_existing_atoms
+from .write_coordinator import coordinated_transaction
 
 
 class DocumentWriteOutcome(NamedTuple):
@@ -400,94 +401,96 @@ class MemoryEngineIdempotencyMixin:
         connection = getattr(self, "db_connection", None)
         if connection is None:
             return False
-        if getattr(connection, "in_transaction", False):
-            # 不参与嵌套事务：调用方应在事务边界外重试，而不是被 rollback 丢弃。
-            return False
-        began = False
         try:
-            await connection.execute("BEGIN IMMEDIATE")
-            began = True
-            cursor = await connection.execute(
-                "SELECT metadata FROM documents WHERE id=?", (int(memory_id),)
-            )
-            row = await cursor.fetchone()
-            await cursor.close()
-            if row is None:
-                await connection.rollback()
-                return False
-            raw_metadata = row[0]
-            if isinstance(raw_metadata, str):
-                try:
-                    current = json.loads(raw_metadata)
-                except (TypeError, json.JSONDecodeError):
-                    await connection.rollback()
-                    return False
-            elif isinstance(raw_metadata, dict):
-                current = dict(raw_metadata)
-            else:
-                await connection.rollback()
-                return False
-            if not isinstance(current, dict):
-                await connection.rollback()
-                return False
-            if source_fence is not None:
-                recorded_token = current.get("source_fence")
-                if recorded_token is None or str(recorded_token) != str(
-                    source_fence.opaque_token
-                ):
-                    await connection.rollback()
-                    return False
-            if require_pending and not current.get("summary_source_pending"):
-                # 已接受/已拒绝的行不再接受本次状态切换。
-                await connection.rollback()
-                return False
-            current["summary_source_orphan"] = bool(orphan)
-            current["summary_source_pending"] = False
-            updated = await connection.execute(
-                "UPDATE documents SET metadata=? WHERE id=?",
-                (json.dumps(current, ensure_ascii=False), int(memory_id)),
-            )
-            if updated.rowcount != 1:
-                await connection.rollback()
-                return False
-            if op_step is not None:
-                op_cursor = await connection.execute(
-                    """
-                    SELECT id FROM memory_write_ops
-                    WHERE memory_id = ? AND op_type = 'add'
-                      AND status IN ('pending', 'needs_repair')
-                    ORDER BY id DESC LIMIT 1
-                    """,
-                    (int(memory_id),),
+            # 共享连接上的写入统一经写锁串行；已有外层事务时 BEGIN 失败且不会
+            # 回滚外层写入，按 CAS 失败返回。
+            async with coordinated_transaction(connection) as db:
+                accepted = await self._apply_summary_source_state(
+                    db,
+                    memory_id,
+                    orphan=orphan,
+                    op_step=op_step,
+                    source_fence=source_fence,
+                    require_pending=require_pending,
                 )
-                op_row = await op_cursor.fetchone()
-                await op_cursor.close()
-                if op_row is not None:
-                    await connection.execute(
-                        "UPDATE memory_write_ops SET step = ?, updated_at = ? WHERE id = ?",
-                        (op_step, time.time(), int(op_row[0])),
-                    )
-            await connection.commit()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return False
+        if accepted:
             invalidate = getattr(
                 getattr(self, "_retrieval", None), "invalidate_cache", None
             )
             if callable(invalidate):
                 invalidate()
-            return True
-        except asyncio.CancelledError:
-            if began:
-                try:
-                    await connection.rollback()
-                except Exception:
-                    pass
-            raise
-        except Exception:
-            if began:
-                try:
-                    await connection.rollback()
-                except Exception:
-                    pass
+        return accepted
+
+    @staticmethod
+    async def _apply_summary_source_state(
+        db: Any,
+        memory_id: int,
+        *,
+        orphan: bool,
+        op_step: str | None,
+        source_fence: SummarySourceFence | None,
+        require_pending: bool,
+    ) -> bool:
+        """在已开启的写事务内做来源状态 CAS；拒绝时不写入任何行。"""
+
+        cursor = await db.execute(
+            "SELECT metadata FROM documents WHERE id=?", (int(memory_id),)
+        )
+        row = await cursor.fetchone()
+        await cursor.close()
+        if row is None:
             return False
+        raw_metadata = row[0]
+        if isinstance(raw_metadata, str):
+            try:
+                current = json.loads(raw_metadata)
+            except (TypeError, json.JSONDecodeError):
+                return False
+        elif isinstance(raw_metadata, dict):
+            current = dict(raw_metadata)
+        else:
+            return False
+        if not isinstance(current, dict):
+            return False
+        if source_fence is not None:
+            recorded_token = current.get("source_fence")
+            if recorded_token is None or str(recorded_token) != str(
+                source_fence.opaque_token
+            ):
+                return False
+        if require_pending and not current.get("summary_source_pending"):
+            # 已接受/已拒绝的行不再接受本次状态切换。
+            return False
+        current["summary_source_orphan"] = bool(orphan)
+        current["summary_source_pending"] = False
+        updated = await db.execute(
+            "UPDATE documents SET metadata=? WHERE id=?",
+            (json.dumps(current, ensure_ascii=False), int(memory_id)),
+        )
+        if updated.rowcount != 1:
+            return False
+        if op_step is not None:
+            op_cursor = await db.execute(
+                """
+                SELECT id FROM memory_write_ops
+                WHERE memory_id = ? AND op_type = 'add'
+                  AND status IN ('pending', 'needs_repair')
+                ORDER BY id DESC LIMIT 1
+                """,
+                (int(memory_id),),
+            )
+            op_row = await op_cursor.fetchone()
+            await op_cursor.close()
+            if op_row is not None:
+                await db.execute(
+                    "UPDATE memory_write_ops SET step = ?, updated_at = ? WHERE id = ?",
+                    (op_step, time.time(), int(op_row[0])),
+                )
+        return True
 
     async def find_memory_id_by_idempotency_key(self, key: str) -> int | None:
         """从 v9 canonical 唯一映射查找幂等键 owner，不返回正文。"""

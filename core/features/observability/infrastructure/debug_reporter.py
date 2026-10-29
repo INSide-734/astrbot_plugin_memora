@@ -118,6 +118,13 @@ ALLOWED_FIELDS = frozenset(
         "exact_reuse_count",
         "exact_topic_count",
         "duplicate_topic_count",
+        "window_fact_count",
+        "window_char_count",
+        "window_estimated_tokens",
+        "window_dedup_dropped_count",
+        "window_merged_count",
+        "window_budget_dropped_fact_count",
+        "window_budget_dropped_candidate_count",
     }
 )
 
@@ -164,6 +171,13 @@ _NUMERIC_FIELDS = frozenset(
         "exact_reuse_count",
         "exact_topic_count",
         "duplicate_topic_count",
+        "window_fact_count",
+        "window_char_count",
+        "window_estimated_tokens",
+        "window_dedup_dropped_count",
+        "window_merged_count",
+        "window_budget_dropped_fact_count",
+        "window_budget_dropped_candidate_count",
         "used",
         "remaining",
     }

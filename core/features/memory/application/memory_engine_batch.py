@@ -13,6 +13,7 @@ from astrbot.api import logger
 from ....shared.sql import (
     MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
 )
+from .write_coordinator import coordinated_transaction
 
 
 class MemoryEngineBatchMixin:
@@ -46,10 +47,8 @@ class MemoryEngineBatchMixin:
             batch_existing_ids: list[int] = []
             derived_repair_needed = False
             try:
-                await self.db_connection.execute(
-                    MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
-                    batch_params,
-                )
+                # FAISS 删除经宿主自己的引擎按 doc_id 查行再删，必须先于本连接的
+                # DELETE 执行，且不能在本连接持写锁时执行（否则跨连接互等）。
                 cursor = await self.db_connection.execute(
                     """
                     SELECT id, doc_id FROM documents
@@ -58,6 +57,7 @@ class MemoryEngineBatchMixin:
                     batch_params,
                 )
                 uuid_rows = await cursor.fetchall()
+                await cursor.close()
                 batch_existing_ids = [int(row["id"]) for row in uuid_rows]
                 for row in uuid_rows:
                     if row["doc_id"]:
@@ -67,15 +67,16 @@ class MemoryEngineBatchMixin:
                             raise
                         except Exception:
                             pass
-                cursor = await self.db_connection.execute(
-                    """
-                    DELETE FROM documents
-                    WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
-                    """,
-                    batch_params,
-                )
-                await self.db_connection.commit()
-                batch_deleted = int(cursor.rowcount or 0)
+                async with coordinated_transaction(self.db_connection) as db:
+                    await db.execute(MEMORY_FTS_DELETE_BY_JSON_IDS_SQL, batch_params)
+                    cursor = await db.execute(
+                        """
+                        DELETE FROM documents
+                        WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
+                        """,
+                        batch_params,
+                    )
+                    batch_deleted = int(cursor.rowcount or 0)
                 try:
                     await self._delete_graph_and_atoms_for_batch(batch)
                 except asyncio.CancelledError:
@@ -165,10 +166,6 @@ class MemoryEngineBatchMixin:
         if not memory_ids or self.db_connection is None:
             return 0
         batch_params = {"memory_ids_json": json.dumps(memory_ids)}
-        await self.db_connection.execute(
-            MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
-            batch_params,
-        )
         cursor = await self.db_connection.execute(
             """
             SELECT id, doc_id FROM documents
@@ -177,6 +174,7 @@ class MemoryEngineBatchMixin:
             batch_params,
         )
         uuid_rows = await cursor.fetchall()
+        await cursor.close()
         for row in uuid_rows:
             if row["doc_id"]:
                 try:
@@ -185,17 +183,19 @@ class MemoryEngineBatchMixin:
                     raise
                 except Exception as e:
                     logger.warning(f"[批量删除索引] FAISS 向量删除失败: {e}")
-        cursor = await self.db_connection.execute(
-            """
-            DELETE FROM documents
-            WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
-            """,
-            batch_params,
-        )
-        await self.db_connection.commit()
+        async with coordinated_transaction(self.db_connection) as db:
+            await db.execute(MEMORY_FTS_DELETE_BY_JSON_IDS_SQL, batch_params)
+            cursor = await db.execute(
+                """
+                DELETE FROM documents
+                WHERE id IN (SELECT value FROM json_each(:memory_ids_json))
+                """,
+                batch_params,
+            )
+            deleted = int(cursor.rowcount or 0)
         for memory_id in memory_ids:
             await self._invalidate_evolution_after_delete(memory_id)
-        return int(cursor.rowcount or 0)
+        return deleted
 
     async def _delete_graph_and_atoms_for_batch(self, memory_ids: list[int]) -> None:
         if not memory_ids:

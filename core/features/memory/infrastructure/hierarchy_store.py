@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING
 
 from astrbot.api import logger
 
+from ..application.write_coordinator import coordinated_transaction
+
 if TYPE_CHECKING:
     import aiosqlite
 
@@ -41,11 +43,11 @@ class EntityHierarchyStore:
         if await self._would_create_cycle(child, parent):
             logger.warning(f"[Hierarchy] Cycle detected: {child} -> {parent}")
             return False
-        await self._db.execute(
-            "INSERT OR IGNORE INTO entity_hierarchy (child, parent) VALUES (?, ?)",
-            (child, parent),
-        )
-        await self._db.commit()
+        async with coordinated_transaction(self._db) as db:
+            await db.execute(
+                "INSERT OR IGNORE INTO entity_hierarchy (child, parent) VALUES (?, ?)",
+                (child, parent),
+            )
         return True
 
     async def get_parents(self, child: str) -> list[str]:

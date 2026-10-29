@@ -80,5 +80,9 @@ async def test_process_conversation_reports_safe_generation_stage_scalars(
     assert int(provider_event["prompt_chars"]) > 0
     assert int(provider_event["response_chars"]) > 0
     assert all(float(event["duration_ms"]) >= 0 for event in events)
+    window_event = events[-1]
+    assert window_event["window_fact_count"] == 1
+    assert window_event["window_char_count"] == len("用户喜欢喝咖啡。")
+    assert window_event["window_budget_dropped_candidate_count"] == 0
     forbidden = {"prompt", "response", "content", "source_refs", "session_id"}
     assert all(forbidden.isdisjoint(event) for event in events)

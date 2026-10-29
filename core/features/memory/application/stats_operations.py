@@ -31,6 +31,7 @@ from ....shared.sql import (
 from ...decay.application.operations import _normalize_batch_metadata
 from ..domain.revision import memory_revision
 from .graph_memory_manager import GraphSourceIneligibleError, graph_source_gate_reason
+from .write_coordinator import _get_write_lock, coordinated_transaction
 
 _TREND_DAYS = 90
 _MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000
@@ -443,8 +444,9 @@ class StatsOperationsMixin:
                 ),
             ):
                 try:
-                    cursor = await self._db.execute(optimize_sql)
-                    await _close_cursor(cursor)
+                    async with coordinated_transaction(self._db) as db:
+                        cursor = await db.execute(optimize_sql)
+                        await _close_cursor(cursor)
                     fts_optimized.append(fts_table)
                 except asyncio.CancelledError:
                     raise
@@ -455,23 +457,23 @@ class StatsOperationsMixin:
                         exc_info=True,
                     )
 
-            await self._db.commit()
-            checkpoint_cursor = await self._db.execute(
-                "PRAGMA wal_checkpoint(TRUNCATE)"
-            )
-            checkpoint_row = await checkpoint_cursor.fetchone()
-            await _close_cursor(checkpoint_cursor)
+            # checkpoint/VACUUM 不能在事务内执行，只持写锁避免与共享连接上的
+            # 其它写事务交错。
+            async with _get_write_lock():
+                checkpoint_cursor = await self._db.execute(
+                    "PRAGMA wal_checkpoint(TRUNCATE)"
+                )
+                checkpoint_row = await checkpoint_cursor.fetchone()
+                await _close_cursor(checkpoint_cursor)
+                if vacuum:
+                    vacuum_cursor = await self._db.execute("VACUUM")
+                    await _close_cursor(vacuum_cursor)
             checkpoint = {
                 "mode": "TRUNCATE",
                 "busy": int(checkpoint_row[0]) if checkpoint_row else 0,
                 "log_frames": int(checkpoint_row[1]) if checkpoint_row else 0,
                 "checkpointed_frames": int(checkpoint_row[2]) if checkpoint_row else 0,
             }
-
-            if vacuum:
-                vacuum_cursor = await self._db.execute("VACUUM")
-                await _close_cursor(vacuum_cursor)
-                await self._db.commit()
 
             after_size = db_path.stat().st_size if db_path.exists() else 0
             after_wal_size = wal_path.stat().st_size if wal_path.exists() else 0

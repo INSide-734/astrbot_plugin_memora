@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 import aiosqlite
 from astrbot.api import logger
 
+from ..application.write_coordinator import coordinated_transaction
 from .write_op_repair import WriteOpRepairMixin
 
 if TYPE_CHECKING:
@@ -93,22 +94,24 @@ class WriteOpJournal(WriteOpRepairMixin):
             return None
         now = time.time()
         try:
-            cursor = await self._db.execute(
-                """
-                INSERT INTO memory_write_ops(
-                    op_type, memory_id, status, step, payload,
-                    created_at, updated_at
-                ) VALUES (?, ?, 'pending', 'started', ?, ?, ?)
-                """,
-                (
-                    op_type,
-                    memory_id,
-                    json.dumps(payload or {}, ensure_ascii=False),
-                    now,
-                    now,
-                ),
-            )
-            await self._db.commit()
+            # 与共享连接上的其它写入串行；失败由上下文回滚，避免连接滞留在
+            # 隐式事务里，使后续所有写入立即报 locked。
+            async with coordinated_transaction(self._db) as db:
+                cursor = await db.execute(
+                    """
+                    INSERT INTO memory_write_ops(
+                        op_type, memory_id, status, step, payload,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'pending', 'started', ?, ?, ?)
+                    """,
+                    (
+                        op_type,
+                        memory_id,
+                        json.dumps(payload or {}, ensure_ascii=False),
+                        now,
+                        now,
+                    ),
+                )
             return int(cursor.lastrowid) if cursor.lastrowid is not None else None
         except asyncio.CancelledError:
             raise
@@ -133,63 +136,66 @@ class WriteOpJournal(WriteOpRepairMixin):
         try:
             if status == "completed":
                 error = None
-            current_payload: dict[str, Any] = {}
-            if payload_patch:
-                cursor = await self._db.execute(
-                    "SELECT payload FROM memory_write_ops WHERE id = ?",
-                    (op_id,),
-                )
-                row = await cursor.fetchone()
-                if row and row[0]:
-                    try:
-                        loaded = json.loads(row[0])
-                        current_payload = loaded if isinstance(loaded, dict) else {}
-                    except (json.JSONDecodeError, TypeError):
-                        current_payload = {}
-                current_payload.update(payload_patch)
+            async with coordinated_transaction(self._db) as db:
+                current_payload: dict[str, Any] = {}
+                if payload_patch:
+                    cursor = await db.execute(
+                        "SELECT payload FROM memory_write_ops WHERE id = ?",
+                        (op_id,),
+                    )
+                    row = await cursor.fetchone()
+                    await cursor.close()
+                    if row and row[0]:
+                        try:
+                            loaded = json.loads(row[0])
+                            current_payload = loaded if isinstance(loaded, dict) else {}
+                        except (json.JSONDecodeError, TypeError):
+                            current_payload = {}
+                    current_payload.update(payload_patch)
 
-            await self._db.execute(
-                """
-                UPDATE memory_write_ops
-                SET status = :status,
-                    step = :step,
-                    updated_at = :updated_at,
-                    memory_id = CASE
-                        WHEN :set_memory_id = 1 THEN :memory_id
-                        ELSE memory_id
-                    END,
-                    error = CASE
-                        WHEN :clear_error = 1 THEN NULL
-                        WHEN :set_error = 1 THEN :error
-                        ELSE error
-                    END,
-                    retry_count = retry_count + :retry_increment,
-                    payload = CASE
-                        WHEN :set_payload = 1 THEN :payload
-                        ELSE payload
-                    END
-                WHERE id = :op_id
-                """,
-                {
-                    "status": status,
-                    "step": step,
-                    "updated_at": time.time(),
-                    "set_memory_id": int(memory_id is not None),
-                    "memory_id": memory_id,
-                    "clear_error": int(status == "completed"),
-                    "set_error": int(error is not None),
-                    "error": error[:1000] if error is not None else None,
-                    "retry_increment": int(error is not None and status != "completed"),
-                    "set_payload": int(bool(payload_patch)),
-                    "payload": (
-                        json.dumps(current_payload, ensure_ascii=False)
-                        if payload_patch
-                        else None
-                    ),
-                    "op_id": op_id,
-                },
-            )
-            await self._db.commit()
+                await db.execute(
+                    """
+                    UPDATE memory_write_ops
+                    SET status = :status,
+                        step = :step,
+                        updated_at = :updated_at,
+                        memory_id = CASE
+                            WHEN :set_memory_id = 1 THEN :memory_id
+                            ELSE memory_id
+                        END,
+                        error = CASE
+                            WHEN :clear_error = 1 THEN NULL
+                            WHEN :set_error = 1 THEN :error
+                            ELSE error
+                        END,
+                        retry_count = retry_count + :retry_increment,
+                        payload = CASE
+                            WHEN :set_payload = 1 THEN :payload
+                            ELSE payload
+                        END
+                    WHERE id = :op_id
+                    """,
+                    {
+                        "status": status,
+                        "step": step,
+                        "updated_at": time.time(),
+                        "set_memory_id": int(memory_id is not None),
+                        "memory_id": memory_id,
+                        "clear_error": int(status == "completed"),
+                        "set_error": int(error is not None),
+                        "error": error[:1000] if error is not None else None,
+                        "retry_increment": int(
+                            error is not None and status != "completed"
+                        ),
+                        "set_payload": int(bool(payload_patch)),
+                        "payload": (
+                            json.dumps(current_payload, ensure_ascii=False)
+                            if payload_patch
+                            else None
+                        ),
+                        "op_id": op_id,
+                    },
+                )
         except asyncio.CancelledError:
             raise
         except Exception:
