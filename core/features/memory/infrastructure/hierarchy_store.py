@@ -58,12 +58,12 @@ class EntityHierarchyStore:
         )
         return [row[0] for row in await cursor.fetchall()]
 
-    async def get_ancestors(self, child: str, max_depth: int = 5) -> set[str]:
+    async def get_ancestors(self, child: str, max_depth: int | None = 5) -> set[str]:
+        """返回祖先集合；``max_depth=None`` 表示遍历到不再出现新祖先为止。"""
         seen: set[str] = set()
         current = {child}
-        for _ in range(max_depth):
-            if not current:
-                break
+        depth = 0
+        while current and (max_depth is None or depth < max_depth):
             next_level: set[str] = set()
             for c in current:
                 for p in await self.get_parents(c):
@@ -71,17 +71,20 @@ class EntityHierarchyStore:
                         seen.add(p)
                         next_level.add(p)
             current = next_level
+            depth += 1
         return seen
 
     async def _would_create_cycle(self, child: str, parent: str) -> bool:
-        ancestors = await self.get_ancestors(parent, max_depth=50)
+        # 不设深度上限：超过固定深度的长链同样可能被新边闭合成环；
+        # seen 集合保证即使库内已有环也会终止。
+        ancestors = await self.get_ancestors(parent, max_depth=None)
         return child in ancestors
 
     async def detect_cycle(self) -> list[tuple[str, str]]:
         cycles: list[tuple[str, str]] = []
         cursor = await self._db.execute("SELECT child, parent FROM entity_hierarchy")
         for child, parent in await cursor.fetchall():
-            if child in await self.get_ancestors(parent, max_depth=50):
+            if child in await self.get_ancestors(parent, max_depth=None):
                 cycles.append((child, parent))
         return cycles
 
