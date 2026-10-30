@@ -35,7 +35,7 @@ export function GraphTimeRangeFilter({
   onReset,
 }: GraphTimeRangeFilterProps) {
   return (
-    <div className="flex flex-nowrap items-center gap-3 overflow-x-auto whitespace-nowrap border-t px-6 py-2">
+    <div className="flex flex-nowrap items-center gap-3 overflow-x-auto whitespace-nowrap border-t px-4 py-2 sm:px-5 lg:px-6">
       <span className="shrink-0 text-2xs text-muted-foreground">
         {t("graph.timeRange")}
       </span>

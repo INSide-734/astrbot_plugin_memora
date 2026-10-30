@@ -56,6 +56,7 @@ from .representation_migration_contracts import (
 )
 from .representation_migration_plan import MigrationPlanItem
 from .representation_migration_target import compute_representation_target
+from .write_coordinator import coordinated_transaction
 
 _SCAN_SQL: Final[str] = (
     "SELECT id, text, metadata, created_at, updated_at FROM documents "
@@ -296,20 +297,22 @@ class CanonicalRepresentationScanner:
             "status": "completed" if final else "in_progress",
         }
         try:
-            await self._db.execute(
-                _CHECKPOINT_WRITE_SQL,
-                (
-                    _checkpoint_key(fingerprint),
-                    json.dumps(
-                        payload,
-                        ensure_ascii=True,
-                        separators=(",", ":"),
-                        sort_keys=True,
+            async with coordinated_transaction(self._db) as db:
+                await db.execute(
+                    _CHECKPOINT_WRITE_SQL,
+                    (
+                        _checkpoint_key(fingerprint),
+                        json.dumps(
+                            payload,
+                            ensure_ascii=True,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                        datetime.fromtimestamp(
+                            self._clock(), tz=timezone.utc
+                        ).isoformat(),
                     ),
-                    datetime.fromtimestamp(self._clock(), tz=timezone.utc).isoformat(),
-                ),
-            )
-            await self._db.commit()
+                )
         except asyncio.CancelledError:
             raise
         except Exception as error:

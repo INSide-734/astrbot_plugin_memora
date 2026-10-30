@@ -67,7 +67,7 @@ export function RecallPage({ showToast }: RecallPageProps) {
         aria-busy={loading}
       >
         <form
-          className="space-y-4 p-4 sm:p-6"
+          className="space-y-4 p-4 sm:p-5 lg:p-6"
           onSubmit={(event) => {
             event.preventDefault();
             void runRecall();
@@ -141,19 +141,19 @@ export function RecallPage({ showToast }: RecallPageProps) {
         </div>
 
         {errorMessage && (
-          <p role="alert" className="border-y border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:px-6">
+          <p role="alert" className="border-y border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:px-5 lg:px-6">
             {errorMessage}
           </p>
         )}
 
         {results !== null && (
           <div className="flex-1 overflow-auto border-t" aria-labelledby="recall-results-summary">
-            <div id="recall-results-summary" className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b px-4 py-2.5 text-sm sm:px-6">
+            <div id="recall-results-summary" className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b px-4 py-2.5 text-sm sm:px-5 lg:px-6">
               <span className="font-medium">{resultsLabel}</span>
               <span className="text-xs text-muted-foreground">{elapsed}ms</span>
             </div>
             {results.length === 0 ? (
-              <p className="px-4 py-12 text-center text-sm text-muted-foreground sm:px-6">{t("recall.noMatch")}</p>
+              <p className="px-4 py-12 text-center text-sm text-muted-foreground sm:px-5 lg:px-6">{t("recall.noMatch")}</p>
             ) : (
               <ol className="m-0 flex list-none flex-col gap-2 p-4" aria-label={t("recall.resultsRegion")}>
                 {results.map((r, i) => {

@@ -139,11 +139,12 @@ flowchart TB
 | 桌面展开 | 248px |
 | 桌面收起 | 72px，仅保留图标并用 title/aria-label 说明 |
 | 移动抽屉 | min(86vw, 320px) |
-| 导航项 | 高 36px，Lucide 16px，选中态来自 selection-state |
-| 分组 | 五组均可折叠，aria-expanded 与 aria-controls 必须完整 |
+| 导航项 | 高 44px，Lucide 13px、文字 14px，圆角 8px，选中态来自 selection-state |
+| 导航边距 | 导航与页脚左右各 12px；图文间距 12px；页脚状态与主题/语言行高 40px |
+| 分组 | 分组间距 12px，组内项目间距 4px；标题点击区高 40px、圆角 8px |
 | 移动关闭 | 关闭按钮、遮罩点击和向左滑动均可关闭 |
 
-移动 Sidebar 是抽屉，不是独立移动版导航。不得复制页面路由或删减关键页面。
+次要文字使用 12px。移动 Sidebar 是抽屉，不是独立移动版导航。不得复制页面路由或删减关键页面。
 
 ## 6. 页面布局原语
 

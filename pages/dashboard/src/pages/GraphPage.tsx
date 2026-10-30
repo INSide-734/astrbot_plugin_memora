@@ -584,7 +584,7 @@ export function GraphPage({ showToast, theme }: GraphPageProps) {
       </PageToolbar>
 
       {/* 节点与边类型图例。 */}
-      <div className="flex flex-nowrap items-center gap-x-4 overflow-x-auto whitespace-nowrap border-t px-6 py-2 text-muted-foreground">
+      <div className="flex flex-nowrap items-center gap-x-4 overflow-x-auto whitespace-nowrap border-t px-4 py-2 sm:px-5 lg:px-6 text-muted-foreground">
         <span className="mr-1 text-2xs">{t("graph.legendNodes")}</span>
         {Object.entries(GRAPH_NODE_COLORS).map(([type, color]) => (
           <div key={type} className="flex items-center gap-1.5 text-2xs">

@@ -165,7 +165,7 @@ export function TimelinePage({ showToast }: TimelinePageProps) {
         )}
       </div>
 
-      <div className="flex shrink-0 items-center justify-between border-t px-6 py-2 text-xs text-muted-foreground">
+      <div className="flex shrink-0 items-center justify-between border-t px-4 py-2 sm:px-5 lg:px-6 text-xs text-muted-foreground">
         <span>{t("timeline.count", String(filtered.length))}</span>
         <span>{t(`timeline.zoom${zoom.charAt(0).toUpperCase() + zoom.slice(1)}`)}</span>
       </div>

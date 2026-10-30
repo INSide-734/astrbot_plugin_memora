@@ -597,7 +597,13 @@ class MaintenanceApiMixin:
         engine = engines["memory_engine"]
         try:
             if hasattr(engine, "db_connection") and engine.db_connection:
-                await engine.db_connection.execute("VACUUM")
+                from ....features.memory.application.write_coordinator import (
+                    _get_write_lock,
+                )
+
+                # VACUUM 不能在事务内执行，持写锁避免与共享连接上的写事务交错。
+                async with _get_write_lock():
+                    await engine.db_connection.execute("VACUUM")
             return ok_response({"message": "数据库压缩完成"})
         except Exception as e:
             logger.error(f"压缩数据库失败: {e}")

@@ -60,6 +60,29 @@ class TestEntityHierarchyStore:
         await db.close()
 
     @pytest.mark.asyncio
+    async def test_cycle_prevention_beyond_default_depth(self, make_store):
+        store, db, _ = await make_store()
+        await db.executemany(
+            "INSERT INTO entity_hierarchy (child, parent) VALUES (?, ?)",
+            [(f"n{i}", f"n{i + 1}") for i in range(60)],
+        )
+        await db.commit()
+        assert not await store.add_relation("n60", "n0")
+        await db.close()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_opposite_relations_do_not_form_cycle(self, make_store):
+        import asyncio
+
+        store, db, _ = await make_store()
+        results = await asyncio.gather(
+            store.add_relation("a", "b"), store.add_relation("b", "a")
+        )
+        assert sorted(results) == [False, True]
+        assert await store.detect_cycle() == []
+        await db.close()
+
+    @pytest.mark.asyncio
     async def test_detect_existing_cycle(self, make_store):
         store, db, _ = await make_store()
         await store.add_relation("x", "y")

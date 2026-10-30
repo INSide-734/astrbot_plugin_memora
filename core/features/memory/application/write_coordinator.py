@@ -313,16 +313,51 @@ async def write_transaction(
     )
 
 
+_BEGIN_MAX_ATTEMPTS = 5
+_BEGIN_BASE_DELAY = 0.05
+
+
+async def _begin_immediate(db: Any) -> None:
+    """在写锁内开启 ``BEGIN IMMEDIATE``，对瞬态锁冲突做有界退避重试。
+
+    同一共享连接上未收束的读语句会钉住旧 WAL 快照；其它连接提交后，
+    升级为写事务会立即得到 ``database is locked``（BUSY_SNAPSHOT，不走
+    busy_timeout）。BEGIN 失败时尚未开启事务，连接不会滞留在半开事务里，
+    因此可以安全地等读语句结束后重试。
+    """
+
+    for attempt in range(_BEGIN_MAX_ATTEMPTS):
+        try:
+            await db.execute("BEGIN IMMEDIATE")
+            return
+        except Exception as exc:
+            if not _is_retry_eligible(exc) or attempt == _BEGIN_MAX_ATTEMPTS - 1:
+                _WRITE_METRICS["last_error"] = str(exc)
+                _WRITE_METRICS["failures_total"] += 1
+                raise
+            _WRITE_METRICS["lock_retries_total"] += 1
+            _inc_metric("WRITE_LOCK_RETRIES_TOTAL")
+            await asyncio.sleep(
+                _BEGIN_BASE_DELAY * (2**attempt) + random.random() * 0.03
+            )
+
+
 @contextlib.asynccontextmanager
 async def coordinated_transaction(db: Any) -> AsyncGenerator[Any]:
-    """在全局写锁内包住 BEGIN/业务写入/commit/rollback 的事务边界。"""
+    """在全局写锁内包住 BEGIN/业务写入/commit/rollback 的事务边界。
+
+    主体内不得再进入本上下文或 ``write_transaction``：写锁不可重入。
+    """
     lock = _get_write_lock()
     async with lock:
-        await db.execute("BEGIN IMMEDIATE")
         try:
+            await _begin_immediate(db)
             yield db
             await db.commit()
         except BaseException:
+            # BEGIN 也在保护范围内：调用方在 BEGIN 排队执行期间被取消时，aiosqlite
+            # 线程仍会执行它。ROLLBACK 在同一连接队列里排在其后（入队同步完成，
+            # 即使这里再次被取消也已入队），因此释放写锁前连接不会滞留在事务中。
             with contextlib.suppress(Exception):
                 await db.rollback()
             raise
