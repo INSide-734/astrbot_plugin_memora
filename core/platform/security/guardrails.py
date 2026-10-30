@@ -105,8 +105,7 @@ class MemoryAtomSchema(BaseModel):
     topics: list[str] = Field(default_factory=list, description="记忆主题列表")
     key_facts: list[str] = Field(
         default_factory=list,
-        max_length=5,
-        description="长期事实列表，单条记忆最多 5 条",
+        description="长期事实列表；单条超过 5 条时由窗口预算按证据裁剪",
     )
     participants: list[str] = Field(default_factory=list, description="参与者列表")
     sentiment: str = Field(default="neutral", description="整体情感基调")

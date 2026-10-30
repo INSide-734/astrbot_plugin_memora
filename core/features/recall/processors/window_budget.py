@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ...reflection.domain.topic_label_renderer import estimate_token_count
@@ -78,7 +78,11 @@ class _Work:
     span: tuple[int, int] | None
     topic_keys: frozenset[str]
     order: int
+    refs: list[Any]  # 摘要级 source_refs 并集；合并不得使其超过 _MAX_SOURCE_REFS
     changed: bool = False
+    trimmed: bool = False  # 预算裁剪删过事实：因果关系无法再证明，需清空
+    # 事实被同源覆盖而整条并入本候选的输入下标：只贡献元数据与重要性。
+    extra: list[int] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -190,21 +194,29 @@ def _to_work(order: int, item: dict[str, Any]) -> _Work:
             if isinstance(topic, str) and topic.strip()
         ),
         order=order,
+        refs=_union(_list(item.get("source_refs"))),
     )
 
 
-def _covers(kept: _Fact, duplicate: _Fact) -> bool:
-    """同源重复：文本规范化相同，且重复项的证据都已被保留项覆盖。
+def _supported(fact: _Fact) -> bool:
+    """证据存在、非空且每项都是合法消息引用；否则不能证明事实被支持。"""
 
-    证据不同的同文事实（例如一条来自 user、一条来自 assistant）不是同源重复，
-    必须各自交给 grounding 判定，不能互相吞并。
+    return bool(fact.refs) and len(_message_indices(fact.refs)) == len(fact.refs)
+
+
+def _covers(kept: _Fact, duplicate: _Fact) -> bool:
+    """同源重复：文本规范化相同，且双方证据都有效，重复项证据被保留项包含。
+
+    证据缺失、为空、畸形或未对齐的事实无法证明同源，不能被当作已覆盖而删除，
+    必须各自交给 grounding 判定；证据不同的同文事实（例如一条来自 user、一条来自
+    assistant）同样不能互相吞并。
     """
 
     if kept.key != duplicate.key:
         return False
-    if duplicate.refs is None:
-        return True
-    return kept.refs is not None and all(ref in kept.refs for ref in duplicate.refs)
+    if not _supported(kept) or not _supported(duplicate):
+        return False
+    return all(ref in (kept.refs or []) for ref in duplicate.refs or [])
 
 
 def _covered(work: _Work, other: _Work) -> bool:
@@ -212,39 +224,69 @@ def _covered(work: _Work, other: _Work) -> bool:
 
 
 def _absorb_subsets(works: list[_Work], tally: _Tally) -> list[_Work]:
-    """事实集合被另一候选同源覆盖（相互覆盖时保留更早者）的候选整条并入对方。"""
+    """事实集合被另一候选同源覆盖（相互覆盖时保留更早者）的候选整条并入对方。
 
+    被并入候选的元数据（话题、实体、参与者、因果关系）与重要性转交给最终保留者，
+    链式并入时直达链尾，避免写进一个随后也被丢弃的候选。
+    """
+
+    target_of: dict[int, int] = {}
+    for i, work in enumerate(works):
+        if not work.facts:
+            continue
+        for j, other in enumerate(works):
+            if (
+                j != i
+                and _covered(work, other)
+                and (j < i or not _covered(other, work))
+            ):
+                target_of[i] = j
+                break
     kept: list[_Work] = []
     for i, work in enumerate(works):
-        absorbed = bool(work.facts) and any(
-            j != i and _covered(work, other) and (j < i or not _covered(other, work))
-            for j, other in enumerate(works)
-        )
-        if absorbed:
-            tally.dedup += len(work.facts)
-        else:
+        if i not in target_of:
             kept.append(work)
+            continue
+        tally.dedup += len(work.facts)
+        root = target_of[i]
+        for _ in range(len(works)):
+            if root not in target_of:
+                break
+            root = target_of[root]
+        retained = works[root]
+        retained.extra.extend([*work.sources, *work.extra])
+        retained.importance = max(retained.importance, work.importance)
     return kept
 
 
 def _drop_duplicate_facts(works: list[_Work], tally: _Tally) -> list[_Work]:
-    """同源重复事实在窗口内只保留首次出现；被删空的候选整条丢弃。"""
+    """同源重复事实在窗口内只保留首次出现；被删空的候选整条丢弃。
 
-    seen: list[_Fact] = []
+    重复项的重要性并入保留者，被删空候选的元数据转交给保留者，避免预算裁剪时
+    丢掉本应存活的高重要性事实。
+    """
+
+    seen: list[tuple[_Fact, _Work]] = []
     kept: list[_Work] = []
     for work in works:
         had_facts = bool(work.facts)
         unique: list[_Fact] = []
+        first_owner: _Work | None = None
         for fact in work.facts:
-            if any(_covers(prior, fact) for prior in seen):
+            owner = next((o for prior, o in seen if _covers(prior, fact)), None)
+            if owner is not None:
                 tally.dedup += 1
                 work.changed = True
+                owner.importance = max(owner.importance, work.importance)
+                first_owner = first_owner or owner
                 continue
-            seen.append(fact)
+            seen.append((fact, work))
             unique.append(fact)
         work.facts = unique
         if unique or not had_facts:
             kept.append(work)
+        elif first_owner is not None:
+            first_owner.extra.extend([*work.sources, *work.extra])
     return kept
 
 
@@ -258,16 +300,29 @@ def _same_event(left: _Work, right: _Work) -> bool:
 
 
 def _merge_same_events(works: list[_Work], tally: _Tally) -> list[_Work]:
-    """按输入顺序贪心并入首个同事件分组，事实按首个证据消息下标升序。"""
+    """按输入顺序贪心并入首个同事件分组，事实按首个证据消息下标升序。
+
+    摘要级 source_refs 并集超过上限时不合并：截断会让保留事实失去证据。
+    """
 
     groups: list[_Work] = []
     for work in works:
-        target = next((group for group in groups if _same_event(group, work)), None)
+        target = next(
+            (
+                group
+                for group in groups
+                if _same_event(group, work)
+                and len(_union([*group.refs, *work.refs])) <= _MAX_SOURCE_REFS
+            ),
+            None,
+        )
         if target is None:
             groups.append(work)
             continue
         tally.merged += 1
         target.sources.extend(work.sources)
+        target.extra.extend(work.extra)
+        target.refs = _union([*target.refs, *work.refs])
         # 稳定排序：同一证据位置保持原有先后，结果与重试无关。
         target.facts = sorted(target.facts + work.facts, key=lambda fact: fact.evidence)
         target.importance = max(target.importance, work.importance)
@@ -287,6 +342,7 @@ def _drop_earliest_fact(work: _Work, tally: _Tally) -> None:
     position = min(range(len(work.facts)), key=lambda i: work.facts[i].evidence)
     del work.facts[position]
     work.changed = True
+    work.trimmed = True
     tally.dropped_facts += 1
 
 
@@ -335,9 +391,9 @@ def _to_candidate(work: _Work, originals: list[dict[str, Any]]) -> dict[str, Any
     """未改动候选原样返回；改动候选按保留事实确定性重建并重排证据与绑定。"""
 
     base = originals[work.sources[0]]
+    items = [originals[index] for index in (*work.sources, *work.extra)]
     if not work.changed and len(work.sources) == 1:
-        return base
-    sources = [originals[index] for index in work.sources]
+        return _carry_absorbed(base, work, items)
     key_facts = [fact.text for fact in work.facts]
     candidate = dict(base)
     candidate["key_facts"] = key_facts
@@ -349,25 +405,48 @@ def _to_candidate(work: _Work, originals: list[dict[str, Any]]) -> dict[str, Any
     else:
         candidate.pop("fact_source_refs", None)
     candidate["fact_bindings"] = _remapped_bindings(work, originals)
-    candidate["source_refs"] = _union(
-        ref for item in sources for ref in _list(item.get("source_refs"))
-    )[:_MAX_SOURCE_REFS]
-    for field in _UNION_FIELDS:
+    candidate["source_refs"] = list(work.refs)
+    _merge_metadata(candidate, items)
+    if work.trimmed:
+        # 因果双方引用的事实可能已被裁掉，无法再证明关系成立（与事实准入同口径）。
+        candidate["causal_relations"] = []
+    return candidate
+
+
+def _carry_absorbed(
+    base: dict[str, Any], work: _Work, items: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """事实未变的候选：仅在吸收了他人元数据或重要性时才复制，否则原样返回。"""
+
+    raised = work.importance != QualityValidator.validate_importance(
+        base.get("importance", 0.5)
+    )
+    if not work.extra and not raised:
+        return base
+    candidate = dict(base)
+    candidate["importance"] = work.importance
+    _merge_metadata(candidate, items)
+    return candidate
+
+
+def _merge_metadata(candidate: dict[str, Any], items: list[dict[str, Any]]) -> None:
+    """合并话题、实体、参与者、情感标签与因果关系；按首次出现保序去重。"""
+
+    for name in _UNION_FIELDS:
         values = _union(
             value
-            for item in sources
-            for value in _list(item.get(field))
+            for item in items
+            for value in _list(item.get(name))
             if isinstance(value, str) and value.strip()
         )
-        if values or field in candidate:
-            candidate[field] = values
-    if len(sources) > 1:
+        if values or name in candidate:
+            candidate[name] = values
+    if len(items) > 1:
         candidate["causal_relations"] = _union(
             relation
-            for item in sources
+            for item in items
             for relation in _list(item.get("causal_relations"))
         )
-    return candidate
 
 
 def _remapped_bindings(

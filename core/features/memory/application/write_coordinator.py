@@ -350,11 +350,14 @@ async def coordinated_transaction(db: Any) -> AsyncGenerator[Any]:
     """
     lock = _get_write_lock()
     async with lock:
-        await _begin_immediate(db)
         try:
+            await _begin_immediate(db)
             yield db
             await db.commit()
         except BaseException:
+            # BEGIN 也在保护范围内：调用方在 BEGIN 排队执行期间被取消时，aiosqlite
+            # 线程仍会执行它。ROLLBACK 在同一连接队列里排在其后（入队同步完成，
+            # 即使这里再次被取消也已入队），因此释放写锁前连接不会滞留在事务中。
             with contextlib.suppress(Exception):
                 await db.rollback()
             raise

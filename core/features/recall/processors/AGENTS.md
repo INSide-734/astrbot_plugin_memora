@@ -100,7 +100,7 @@ Embedding Provider，并且只在每条原始 `memories[]` 边界内聚类，不
 - `TopicSegmentationRouter` 接受 `a`、`b`、`c`、`d`、`a_b_hybrid` 及别名；非法策略稳定回退 `a_b_hybrid`。
 - `TopicSegmentationPipeline` 只在 A/B/Hybrid 下调用 Router；C/D 和 `enabled=false` 使用旧的单批候选提取语义。
 - Router 为候选附加 strategy、fallback reason、输入/输出计数；这些字段不包含正文、身份、scope 或 source ID。
-- 窗口预算：`TopicSegmentationPipeline.prepare_candidates` 所有路径（含 C/D 与关闭态）在分段后、grounding 与 slot 分配前经 `window_budget.apply_window_budget`。确定性纯函数：同源重复（规范化文本相同且证据被覆盖）去重、被覆盖候选并入；`source_refs` 区间相交且 `topics` 相交的候选按首个证据消息升序合并（策略 B/Hybrid 回退 B 关闭合并）；单条 >5 事实、窗口超 12 事实/4000 字符/2000 估算 token 时先丢证据最早事实，再按 `importance` 升序整条丢弃。改动候选摘要按保留事实重建，`fact_source_refs` 与 `fact_bindings` 同步重排，无法证明对齐时 fail-closed 清除。计数以 `window_*` 字段进入 `window_total` 诊断事件，不含正文。
+- 窗口预算：`TopicSegmentationPipeline.prepare_candidates` 所有路径（含 C/D 与关闭态）在分段后、grounding 与 slot 分配前经 `window_budget.apply_window_budget`。确定性纯函数：同源重复（规范化文本相同，且双方证据非空、均为合法消息引用并对齐，重复项证据被保留项包含；证据缺失/畸形/错位的事实不视为已覆盖）去重、被覆盖候选并入，并把其重要性与话题/实体/参与者/因果元数据转交保留者；`source_refs` 区间相交且 `topics` 相交的候选按首个证据消息升序合并（策略 B/Hybrid 回退 B 关闭合并；摘要级 `source_refs` 并集超过 16 条时不合并，避免截断后保留事实失去证据）；单条 >5 事实（护栏 schema 不再限制条数，由此处裁剪）、窗口超 12 事实/4000 字符/2000 估算 token 时先丢证据最早事实，再按 `importance` 升序整条丢弃；发生事实裁剪的候选清空 `causal_relations`。改动候选摘要按保留事实重建，`fact_source_refs` 与 `fact_bindings` 同步重排，无法证明对齐时 fail-closed 清除。计数以 `window_*` 字段进入 `window_total` 诊断事件，不含正文。
 
 策略输出必须保持输入顺序、边界合法和至少可回退为单段；C/D 的运行成本门控由 handlers 中的 `TopicBatchPreparer` 负责。
 

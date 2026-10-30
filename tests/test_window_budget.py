@@ -229,16 +229,53 @@ def test_empty_window_yields_no_candidates() -> None:
         assert result.counts.fact_count == 0
 
 
-def test_misaligned_evidence_fails_closed() -> None:
+def test_misaligned_evidence_is_not_treated_as_coverage() -> None:
     candidate = _candidate([("用户喜欢猫", 0), ("用户喜欢狗", 1)], topics=["宠物"])
     candidate["fact_source_refs"] = [[_ref(0)]]  # 与 key_facts 不等长
     duplicate = _candidate([("用户喜欢猫", 0)], topics=["猫"])
 
     result = apply_window_budget([duplicate, candidate], merge_events=False)
 
-    rebuilt = result.candidates[-1]
-    assert rebuilt["key_facts"] == ["用户喜欢狗"]
-    assert "fact_source_refs" not in rebuilt  # 无法证明对齐：不伪造证据
+    # 无法证明对齐的事实不能被当作已覆盖而删除，交给 grounding 单独判定。
+    assert result.candidates == [duplicate, candidate]
+    assert result.counts.dedup_dropped_count == 0
+
+
+def test_absorbed_candidate_keeps_importance_and_metadata() -> None:
+    kept = _candidate([("用户喜欢手冲咖啡", 0)], topics=["咖啡"], importance=0.2)
+    covered = _candidate([("用户喜欢手冲咖啡", 0)], topics=["饮品"], importance=0.9)
+    covered["entities"] = ["手冲"]
+
+    result = apply_window_budget([kept, covered], merge_events=False)
+
+    assert len(result.candidates) == 1
+    merged = result.candidates[0]
+    assert merged["importance"] == 0.9
+    assert merged["topics"] == ["咖啡", "饮品"]
+    assert merged["entities"] == ["手冲"]
+
+
+def test_trimmed_candidate_drops_causal_relations() -> None:
+    facts = [(f"用户第{i}次调整计划", i) for i in range(MEMORY_MAX_FACTS + 1)]
+    candidate = _candidate(facts, topics=["计划"])
+    candidate["causal_relations"] = [{"cause": "用户第0次调整计划", "effect": "x"}]
+
+    result = apply_window_budget([candidate])
+
+    assert result.candidates[0]["causal_relations"] == []
+
+
+def test_merge_never_truncates_summary_source_refs() -> None:
+    left = _candidate([(f"左事实{i}", i) for i in range(10)], topics=["旅行"])
+    right = _candidate([(f"右事实{i}", i + 5) for i in range(10)], topics=["旅行"])
+    left["source_refs"] = [_ref(i, 4 + i) for i in range(10)]
+    right["source_refs"] = [_ref(i + 5, 4 + i) for i in range(10)]
+
+    result = apply_window_budget([left, right])
+
+    for candidate in result.candidates:
+        assert len(candidate["source_refs"]) <= 16
+    assert len(result.candidates) == 2  # 并集 >16 条引用：不合并，保住证据
 
 
 def test_retry_is_deterministic_and_input_untouched() -> None:

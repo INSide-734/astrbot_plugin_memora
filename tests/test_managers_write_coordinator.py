@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiosqlite
@@ -390,6 +391,21 @@ class TestCoordinatedTransaction:
         with pytest.raises(RuntimeError, match="boom"):
             async with coordinated_transaction(db):
                 raise RuntimeError("boom")
+
+        db.commit.assert_not_awaited()
+        db.rollback.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_rolls_back_when_cancelled_during_begin(self) -> None:
+        """BEGIN 排队期间被取消时仍须回滚，避免共享连接滞留在事务里。"""
+        db = MagicMock()
+        db.execute = AsyncMock(side_effect=asyncio.CancelledError())
+        db.commit = AsyncMock()
+        db.rollback = AsyncMock()
+
+        with pytest.raises(asyncio.CancelledError):
+            async with coordinated_transaction(db):
+                pytest.fail("BEGIN 被取消后不应进入主体")
 
         db.commit.assert_not_awaited()
         db.rollback.assert_awaited_once()

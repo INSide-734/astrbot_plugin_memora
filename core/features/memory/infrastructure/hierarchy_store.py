@@ -40,10 +40,11 @@ class EntityHierarchyStore:
         """添加 IS-A 关系（child is-a parent）。若检测到环则返回 False。"""
         if child == parent:
             return False
-        if await self._would_create_cycle(child, parent):
-            logger.warning(f"[Hierarchy] Cycle detected: {child} -> {parent}")
-            return False
         async with coordinated_transaction(self._db) as db:
+            # 环检测必须与插入在同一写事务内，否则并发的反向关系会同时通过检查。
+            if await self._would_create_cycle(child, parent):
+                logger.warning(f"[Hierarchy] Cycle detected: {child} -> {parent}")
+                return False
             await db.execute(
                 "INSERT OR IGNORE INTO entity_hierarchy (child, parent) VALUES (?, ?)",
                 (child, parent),
