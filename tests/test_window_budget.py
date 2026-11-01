@@ -120,9 +120,8 @@ def test_disjoint_sources_with_shared_topic_are_not_merged() -> None:
     assert len(result.candidates) == 2
 
 
-def test_merge_disabled_keeps_split_segments() -> None:
-    """策略 B 片段共享来源与话题，关闭合并时仍保持拆分。"""
-
+def test_merge_events_false_keeps_split_segments() -> None:
+    """显式关闭同事件合并时保留分段候选。"""
     left = _candidate([("用户喜欢猫", 0)], topics=["宠物"])
     right = _candidate([("用户养了一只柯基", 0)], topics=["宠物"])
 

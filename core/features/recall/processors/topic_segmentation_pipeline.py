@@ -40,8 +40,8 @@ class TopicSegmentationPipeline:
     ) -> WindowBudgetResult:
         """返回经窗口预算约束的候选与计数；C/D 与关闭状态保持原始批次语义。
 
-        策略 B 及 Hybrid 回退 B 的片段由同一条 memory 拆出，继承相同来源与话题，
-        因此只去重和裁剪，不按同事件合并，避免撤销向量聚类拆分。
+        B 与 Hybrid 回退 B 的片段也按来源消息区间和话题判断是否属于同一事件。
+        独立来源或话题仍保持分开。
         """
 
         if not self._enabled or self._router.strategy_key in {"c", "d"}:
@@ -52,13 +52,8 @@ class TopicSegmentationPipeline:
             messages,
             is_group_chat,
         )
-        split_from_one = self._router.strategy_key == "b" or any(
-            segment.metadata.get("topic_segmentation_fallback_reason")
-            for segment in segments
-        )
         return apply_window_budget(
-            [_segment_to_candidate(segment) for segment in segments],
-            merge_events=not split_from_one,
+            [_segment_to_candidate(segment) for segment in segments]
         )
 
 

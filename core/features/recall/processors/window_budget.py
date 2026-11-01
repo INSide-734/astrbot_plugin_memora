@@ -98,8 +98,7 @@ def apply_window_budget(
 ) -> WindowBudgetResult:
     """对一个来源窗口的候选执行去重、同事件合并与预算裁剪。
 
-    ``merge_events=False`` 用于策略 B 由单条 memory 拆出的片段：片段继承同一
-    ``source_refs`` 与 ``topics``，按同事件合并会撤销话题拆分。
+    ``merge_events=False`` 供需要保留分段边界的调用方跳过同事件合并。
     """
 
     # 无事实且无摘要的候选与处理器的跳过口径一致，直接剔除（R6：不生成占位）。
