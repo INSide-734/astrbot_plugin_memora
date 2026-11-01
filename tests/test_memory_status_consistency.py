@@ -186,42 +186,64 @@ async def test_sql_status_expression_uses_last_duplicate_json_key(
 class _LifecycleHost(LifecycleOperationsMixin):
     """为分层遗忘状态写入提供最小可观测宿主。"""
 
-    def __init__(self) -> None:
-        """创建使用异步数据库替身的宿主。"""
+    def __init__(self, row_metadata: dict[str, object]) -> None:
+        """创建数据库替身：``SELECT`` 返回给定 metadata，其余语句返回 None。
+
+        状态写入在 ``coordinated_transaction`` 内先发 ``BEGIN IMMEDIATE``，
+        替身按 SQL 文本分派，不依赖语句出现顺序。
+        """
+
+        cursor = AsyncMock()
+        cursor.fetchone.return_value = (json.dumps(row_metadata),)
+
+        async def execute(sql: str, params: tuple[object, ...] = ()) -> object | None:
+            return cursor if sql.lstrip().upper().startswith("SELECT") else None
 
         self._db = MagicMock()
+        self._db.execute = AsyncMock(side_effect=execute)
         self._db.commit = AsyncMock()
         self._invalidate_cache: Callable[[], None] | None = None
+
+    def update_params(self) -> tuple[object, ...]:
+        """返回唯一一次 ``UPDATE documents`` 的绑定参数。"""
+
+        updates = [
+            call.args
+            for call in self._db.execute.await_args_list
+            if call.args[0].lstrip().upper().startswith("UPDATE")
+        ]
+        assert len(updates) == 1
+        return updates[0][1]
 
 
 @pytest.mark.asyncio
 async def test_lifecycle_transition_writes_both_status_fields() -> None:
     """分层遗忘进入休眠时，页面与检索读取的状态字段必须同时更新。"""
 
-    host = _LifecycleHost()
+    host = _LifecycleHost({"status": "active"})
     cache = RetrievalOptimizer(config={})
     cache_key = cache.cache_key("状态迁移", 1, None, None)
     cache.set_cached(cache_key, [_result(17, {"status": "active"})])
     host._invalidate_cache = cache.invalidate_cache
-    cursor = AsyncMock()
-    cursor.fetchone.return_value = (json.dumps({"status": "active"}),)
-    host._db.execute = AsyncMock(side_effect=[cursor, None])
 
     assert cache.get_cached(cache_key) is not None
     updated = await host._batch_update_status([17], "dormant", 123.0)
 
     assert updated == 1
-    payload = json.loads(host._db.execute.await_args_list[1].args[1][0])
+    params = host.update_params()
+    payload = json.loads(params[0])
     assert payload["memory_status"] == "dormant"
     assert payload["status"] == "dormant"
     assert payload["status_changed_at"] == 123.0
     # updated_at 是存储后端按 datetime 解析的 revision 列：写入的必须是 ISO 8601
     # 文本（float 会让整批 get_documents 抛错），且落在同一个注入时刻。
-    written_updated_at = host._db.execute.await_args_list[1].args[1][1]
+    written_updated_at = params[1]
     assert isinstance(written_updated_at, str)
     assert datetime.fromisoformat(written_updated_at) == datetime.fromtimestamp(
         123.0, tz=timezone.utc
     )
+    # 写入必须在同一事务内提交，之后才失效检索缓存。
+    host._db.commit.assert_awaited_once()
     assert cache.get_cached(cache_key) is None
 
 
@@ -229,17 +251,12 @@ async def test_lifecycle_transition_writes_both_status_fields() -> None:
 async def test_lifecycle_transition_survives_invalid_emotional_intensity() -> None:
     """emotional_intensity 为非法旧值时，休眠迁移与情感衰减仍必须落库。"""
 
-    host = _LifecycleHost()
-    cursor = AsyncMock()
-    cursor.fetchone.return_value = (
-        json.dumps({"status": "active", "emotional_intensity": "high"}),
-    )
-    host._db.execute = AsyncMock(side_effect=[cursor, None])
+    host = _LifecycleHost({"status": "active", "emotional_intensity": "high"})
 
     updated = await host._batch_update_status([17], "dormant", 123.0)
 
     assert updated == 1
-    payload = json.loads(host._db.execute.await_args_list[1].args[1][0])
+    payload = json.loads(host.update_params()[0])
     assert payload["memory_status"] == "dormant"
     assert payload["emotional_intensity"] == 0.25
 
