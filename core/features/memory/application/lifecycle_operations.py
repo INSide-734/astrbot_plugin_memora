@@ -22,7 +22,7 @@ from ....shared.memory_status import effective_memory_status, set_memory_status
 from ....shared.number_utils import clamp_float, safe_float
 from ....shared.temporal import parse_datetime, serialize_datetime
 from ...decay.application.operations import _normalize_batch_metadata
-from .write_coordinator import (
+from ..infrastructure.write_coordinator import (
     ConnectionRegistry,
     check_db_alive,
     coordinated_transaction,

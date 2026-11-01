@@ -467,7 +467,7 @@ class TopicCatalogStore(
     def _catalog_transaction(self):
         """返回 catalog 写事务上下文，保持统一进程写锁与回滚语义。"""
 
-        from ..application.write_coordinator import coordinated_transaction
+        from .write_coordinator import coordinated_transaction
 
         if self._db is None:
             raise RuntimeError("TopicCatalogStore 尚未绑定数据库连接")

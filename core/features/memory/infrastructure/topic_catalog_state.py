@@ -8,8 +8,8 @@ from typing import Any
 
 from astrbot.api import logger
 
-from ..application.write_coordinator import coordinated_transaction
 from .topic_catalog_models import TopicCatalogDirty
+from .write_coordinator import coordinated_transaction
 
 _ALLOWED_OPERATIONS = frozenset({"add", "metadata_update", "status_update", "delete"})
 _ALLOWED_STATES = frozenset({"pending", "running", "completed", "failed"})

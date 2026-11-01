@@ -30,8 +30,8 @@ from ....shared.sql import (
 )
 from ...decay.application.operations import _normalize_batch_metadata
 from ..domain.revision import memory_revision
+from ..infrastructure.write_coordinator import _get_write_lock, coordinated_transaction
 from .graph_memory_manager import GraphSourceIneligibleError, graph_source_gate_reason
-from .write_coordinator import _get_write_lock, coordinated_transaction
 
 _TREND_DAYS = 90
 _MILLISECOND_TIMESTAMP_THRESHOLD = 100_000_000_000

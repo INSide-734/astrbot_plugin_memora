@@ -597,7 +597,7 @@ class MaintenanceApiMixin:
         engine = engines["memory_engine"]
         try:
             if hasattr(engine, "db_connection") and engine.db_connection:
-                from ....features.memory.application.write_coordinator import (
+                from ....features.memory.infrastructure.write_coordinator import (
                     _get_write_lock,
                 )
 

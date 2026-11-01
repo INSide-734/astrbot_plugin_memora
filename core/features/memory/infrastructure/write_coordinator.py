@@ -195,7 +195,7 @@ class ConnectionRegistry:
 
         try:
             new_conn.row_factory = aiosqlite.Row
-            from ..infrastructure.base import apply_perf_pragmas
+            from .base import apply_perf_pragmas
 
             await apply_perf_pragmas(new_conn)
         except Exception as exc:

@@ -29,10 +29,10 @@ from ...retrieval.vector_retriever import VectorRetriever
 from ..graph.infrastructure.graph_store import GraphStore
 from ..infrastructure.atom_store import AtomStore
 from ..infrastructure.base import apply_perf_pragmas
+from ..infrastructure.write_coordinator import ConnectionRegistry
 from .atom_lifecycle_manager import AtomLifecycleManager
 from .graph_memory_manager import GraphMemoryManager, GraphSourceIneligibleError
 from .schema_migration import SchemaMigrationCoordinator
-from .write_coordinator import ConnectionRegistry
 
 if TYPE_CHECKING:
     from .anomaly_detector import AnomalyDetector

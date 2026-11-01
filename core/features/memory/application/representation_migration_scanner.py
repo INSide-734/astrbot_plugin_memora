@@ -27,6 +27,7 @@ from typing import Any, Final
 from astrbot.api import logger
 
 from ..domain.revision import memory_revision
+from ..infrastructure.write_coordinator import coordinated_transaction
 from .representation_migration_contracts import (
     ACTION_REPRESENTATION_REWRITE,
     CHECKPOINT_KEY_PREFIX,
@@ -56,7 +57,6 @@ from .representation_migration_contracts import (
 )
 from .representation_migration_plan import MigrationPlanItem
 from .representation_migration_target import compute_representation_target
-from .write_coordinator import coordinated_transaction
 
 _SCAN_SQL: Final[str] = (
     "SELECT id, text, metadata, created_at, updated_at FROM documents "

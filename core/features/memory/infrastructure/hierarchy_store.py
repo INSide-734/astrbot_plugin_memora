@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from astrbot.api import logger
 
-from ..application.write_coordinator import coordinated_transaction
+from .write_coordinator import coordinated_transaction
 
 if TYPE_CHECKING:
     import aiosqlite

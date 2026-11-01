@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import aiosqlite
 from astrbot.api import logger
 
-from ..application.write_coordinator import coordinated_transaction
+from .write_coordinator import coordinated_transaction
 from .write_op_repair import WriteOpRepairMixin
 
 if TYPE_CHECKING:

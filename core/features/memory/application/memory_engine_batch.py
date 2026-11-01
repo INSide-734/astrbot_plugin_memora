@@ -14,7 +14,7 @@ from astrbot.api import logger
 from ....shared.sql import (
     MEMORY_FTS_DELETE_BY_JSON_IDS_SQL,
 )
-from .write_coordinator import coordinated_transaction
+from ..infrastructure.write_coordinator import coordinated_transaction
 
 
 class MemoryEngineBatchMixin:

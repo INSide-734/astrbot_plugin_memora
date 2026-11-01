@@ -23,12 +23,12 @@ from ..infrastructure.canonical_idempotency import (
     find_canonical_memory_id_by_merged_idempotency_key,
     normalize_canonical_idempotency_key,
 )
+from ..infrastructure.write_coordinator import coordinated_transaction
 from ..infrastructure.write_op_repair import (
     CONTENT_PREVIEW_LIMIT,
     ledger_content_digest,
 )
 from .memory_engine_atom_support import reinforce_existing_atoms
-from .write_coordinator import coordinated_transaction
 
 
 class DocumentWriteOutcome(NamedTuple):
