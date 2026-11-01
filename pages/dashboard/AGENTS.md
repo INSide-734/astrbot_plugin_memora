@@ -121,6 +121,7 @@ Injection 页面固定为 `dense`：PageHeader 下有 Overview、Strategy Config
 - 旧 `--color-*`、`--text-*` 仅是复杂旧面板兼容别名，不新增消费者。
 - 主题为中性黑白；成功、警告、错误等功能状态色可保留。宿主主题优先，用户手动覆盖持久化到 localStorage。
 - 常规最大圆角是 `rounded-lg`（8px）；不要新增 `rounded-xl`、`rounded-2xl`、`rounded-3xl`。
+- Sidebar 尺寸、间距与行为以 [`DESIGN.md`](./DESIGN.md) 5.3 节为唯一详细来源；此处不重复数值，改动时只更新那里。
 - 卡片只表示独立对象、指标或明确分组；不把普通段落卡片化，不嵌套卡片。
 - 标题、面板标题、正文保持稳定排版层级，不按视口宽度缩放字号。
 - 优先复用 `src/components/ui/` 的 Button、Checkbox、Input、Textarea、Table、Tabs、ToggleGroup、Dialog、Sheet 等；不得恢复自定义 Modal。

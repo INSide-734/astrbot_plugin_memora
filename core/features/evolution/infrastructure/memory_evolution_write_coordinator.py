@@ -7,8 +7,8 @@ import contextlib
 from collections.abc import Callable, Coroutine
 from typing import Any, TypeVar
 
-from ...memory.application.write_coordinator import write_transaction
 from ...memory.infrastructure.base_store import BaseStore
+from ...memory.infrastructure.write_coordinator import write_transaction
 
 T = TypeVar("T")
 

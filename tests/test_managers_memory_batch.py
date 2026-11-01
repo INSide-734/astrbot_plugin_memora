@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock
 
@@ -302,3 +303,41 @@ class TestBatchDeleteMemoriesIntegration:
         assert len(advances) == 1
         assert advances[0].args[1] == "batch_delete_derived_failed"
         assert advances[0].kwargs["status"] == "needs_repair"
+
+    async def test_batch_delete_holds_vector_write_lock(self, tmp_db_path: str) -> None:
+        """向量删除与 canonical DELETE 须在向量写锁内，避免并发正文更新留下孤儿向量。"""
+
+        lock = asyncio.Lock()
+        observed: list[bool] = []
+
+        async def _delete(_doc_id: str) -> None:
+            observed.append(lock.locked())
+
+        mock_faiss = MagicMock()
+        mock_faiss.delete = AsyncMock(side_effect=_delete)
+
+        async with aiosqlite.connect(tmp_db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS memora_memories_fts (doc_id INTEGER)"
+            )
+            await db.execute(
+                "CREATE TABLE IF NOT EXISTS documents (id INTEGER, doc_id TEXT)"
+            )
+            await db.execute("INSERT INTO memora_memories_fts (doc_id) VALUES (1)")
+            await db.execute("INSERT INTO documents (id, doc_id) VALUES (1, 'uuid-1')")
+            await db.commit()
+
+            engine = MemoryEngine(db_path=tmp_db_path, faiss_db=mock_faiss)
+            engine.db_connection = db
+            engine.vector_retriever = MagicMock(_vector_write_lock=lock)
+            engine._retrieval = MagicMock()
+            engine._retrieval.invalidate_cache = MagicMock()
+            engine._write_journal.start_op = AsyncMock(return_value=1)
+            engine._write_journal.advance_op = AsyncMock()
+            engine._delete_graph_and_atoms_for_batch = AsyncMock()
+
+            assert await engine.batch_delete_memories([1]) == 1
+
+        assert observed == [True]
+        assert not lock.locked()

@@ -18,8 +18,8 @@ from ..application.atom_source_binding import (
     bind_atoms_to_canonical_source,
     validate_bound_atoms_match_canonical_source,
 )
-from ..application.write_coordinator import coordinated_transaction
 from ..domain.memory_atom import MemoryAtom
+from .write_coordinator import coordinated_transaction
 from .write_op_serialization import _deserialize_atom_from_repair, safe_json_dict
 
 

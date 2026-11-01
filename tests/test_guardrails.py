@@ -161,6 +161,24 @@ class TestMemoryExtractionResult:
         )
         assert len(result.memories[0].source_refs) == 16
 
+    def test_oversized_key_facts_do_not_reject_other_memories(self):
+        """单条记忆事实超过 5 条时不得让整次抽取结果失败，裁剪交给窗口预算。"""
+        refs = [[{"message_index": 0, "start": 0, "end": 4}] for _ in range(7)]
+        result = MemoryExtractionResult.model_validate(
+            {
+                "memories": [
+                    {
+                        "summary": "一条事实过多的记忆内容",
+                        "key_facts": [f"事实{i}" for i in range(7)],
+                        "fact_source_refs": refs,
+                    },
+                    {"summary": "另一条正常的记忆内容"},
+                ]
+            }
+        )
+        assert len(result.memories) == 2
+        assert len(result.memories[0].key_facts) == 7
+
 
 @pytest.mark.parametrize(
     "groups", [None, [], [[{"message_index": 0, "start": 0, "end": 3}]]]

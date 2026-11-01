@@ -321,17 +321,15 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
             )
             current_stage = "segmentation"
             stage_started = time.perf_counter()
-            memories_raw = await self.topic_segmentation.prepare_candidates(
-                structured_data,
-                messages,
-                is_group_chat=is_group_chat,
+            window = await self.topic_segmentation.prepare_candidates(
+                structured_data, messages, is_group_chat=is_group_chat
             )
             _report_generation_stage(
                 "segmentation",
                 "completed",
                 "reflection_segmentation_completed",
                 stage_started,
-                candidate_count=len(memories_raw),
+                candidate_count=len(window.candidates),
             )
 
             fallback_excerpt = ""
@@ -344,7 +342,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
             current_stage = "grounding"
             stage_started = time.perf_counter()
             results: list[dict[str, Any]] = []
-            for mem in memories_raw:
+            for mem in window.candidates:
                 if isinstance(mem, str):
                     continue
                 mem_summary = str(mem.get("summary", "") or "")
@@ -503,6 +501,7 @@ class MemoryProcessor(MemoryProcessorCandidateMixin, GroundingJudgeMixin):
                 candidate_count=len(results),
                 prompt_chars=len(prompt),
                 response_chars=len(llm_response_text),
+                **window.counts.as_fields(),
             )
             return results
 

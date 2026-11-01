@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from core.features.memory.application.write_coordinator import (
+from core.features.memory.infrastructure.write_coordinator import (
     reset_write_metrics_snapshot,
 )
 from core.features.observability.application import PerfTracker

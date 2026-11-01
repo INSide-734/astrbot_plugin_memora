@@ -19,6 +19,7 @@ Memora 的所有重要变更都记录在此文件中。
 
 ### 变更
 
+- 来源窗口总预算与单条上限分离：话题分段后统一执行确定性窗口预算（同源去重、同事件合并、单条 `key_facts` ≤5、窗口 ≤12 事实/4000 字符/2000 估算 token，超出先丢最早证据事实再按重要性丢弃整条），护栏 `MemoryAtomSchema.key_facts` 同步限制为 5，Prompt 要求同一事件的原因、经过、结论合并为一条；窗口计数进入 `window_total` 诊断，合法零候选仍为 `NO_FACTS`（#90）。
 - 新增 `graph_memory.atom_route_weight`（0–0.5，默认 0.25）与 `graph_memory.graph_retrieval_enabled`（默认 true）：前者让 Atom 检索信号可独立关闭，后者只跳过图检索、保留图存储与写入；默认值保持既有运行时行为，Dashboard 配置叶计数同步为 43/264。
 - 注入策略摘要新增窗口内 `retrieved_count` 与 `injected_count`，Dashboard 概览分别展示检索到与实际注入的记忆数量；保留既有载荷/决策字段语义，不创建 `adopted` 字段。测试效应配置仍保留原键名和默认值，但维护说明改为仅在成功 injected 后生效。
 - 记忆正文更新改为两阶段收敛：新内容先落为不可召回的暂存记录，再在单个事务内切换可见性（赢家恢复原状态、输家隐藏），随后单独删除旧记录；删除未完成记 `replacement_cleanup_pending`，补偿成功/失败分别记 `replacement_rolled_back`/`replacement_rollback_failed`，失败只记录不回滚，由写修复收敛，保证任一时刻最多一条可召回记录（失败原因码 `content_replace_failed`），对同一记录重复发起替换会被安全拒绝。
@@ -38,6 +39,7 @@ Memora 的所有重要变更都记录在此文件中。
 - 迁移/恢复场景下，catalog、索引、主题目录、原子、图、演化、语义压缩和笔记等必要派生阶段必须按固定顺序完成后才允许发布 runtime；普通维护重建仍保留既有降级语义（#96）。
 
 ### 修复
+- 修复长窗口总结在共享 SQLite 连接上并发写入时 `database is locked` 导致写操作账本创建/推进失败、总结来源激活失败并残留不可召回暂存记录、目录收敛循环失败的问题：写操作账本、来源激活、层级关系、批量/生命周期/统计与表示迁移写入统一经 `coordinated_transaction` 串行化，`BEGIN IMMEDIATE` 锁冲突改为有界重试，`VACUUM` 持同一写锁执行（#90）。
 - 修复双路融合未解码 canonical loader 返回的 JSON 字符串 metadata 的问题：graph-only 候选不再因 metadata 被当作非字典而在 `require_user_evidence` 前丢失（#110）。
 - 修复图关系在同一作用域和隐私边界下因不同来源 revision 的物理节点而重复、或二跳扩展绕回已命中节点的问题：邻居按 canonical `node_key` 聚合，关联条目按 canonical 键扩展，二跳排除已命中键；精确 revision 查询仍保持物理节点隔离（#88）。
 - 修复图来源因归档、`mark_write`、证据不足或边界失效而不可派生时，add、图索引修复、重建与再巩固路径误标为失败的问题：现只回收该来源派生数据并按 skipped/完成语义收敛；取消继续传播，未知存储错误仍按失败处理。缺少完整 semantic evidence 的历史图行保持 fail-closed，须由当前 canonical 重建恢复（#88）。

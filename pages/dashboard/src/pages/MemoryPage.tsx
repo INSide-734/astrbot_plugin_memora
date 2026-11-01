@@ -381,7 +381,7 @@ export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: Memor
       </div>
 
       {/* Pagination */}
-      <div className="flex items-center justify-between border-t px-6 py-2.5">
+      <div className="flex items-center justify-between border-t px-4 py-2.5 sm:px-5 lg:px-6">
         <span className="text-xs text-muted-foreground">{t("detail.pageInfo").replace("{page}", String(page)).replace("{total}", String(totalPages)).replace("{totalItems}", String(total))}</span>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>{t("pagination.prev")}</Button>
@@ -392,7 +392,7 @@ export function MemoryPage({ showToast, navigationTarget, onDirtyChange }: Memor
 
       {/* Batch Bar */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 border-t bg-muted/50 px-6 py-2.5 animate-slide-up">
+        <div className="flex items-center gap-3 border-t bg-muted/50 px-4 py-2.5 sm:px-5 lg:px-6 animate-slide-up">
           <span className="text-sm font-medium text-foreground">{t("select.selected", String(selected.size))}</span>
           <Button variant="secondary" size="sm" onClick={() => executeBatchAction("archive")}><Archive size={14} />{t("edit.statusArchived")}</Button>
           <Button variant="destructive" size="sm" onClick={() => setBatchDeleteOpen(true)}><Trash2 size={14} />{t("filter.deleteSelected")}</Button>

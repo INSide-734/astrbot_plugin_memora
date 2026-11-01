@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, cast
 
-from ...memory.application.write_coordinator import is_connection_fatal
+from ...memory.infrastructure.write_coordinator import is_connection_fatal
 from ...observability.infrastructure.metrics import (
     INJECTION_BUDGET_DROP_RATIO,
     INJECTION_CANDIDATE_RETENTION_RATIO,

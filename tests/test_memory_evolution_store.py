@@ -558,7 +558,7 @@ async def test_derived_invalidation_waits_for_global_write_transaction(tmp_path)
             self._lock.release()
             return False
 
-    from core.features.memory.application.write_coordinator import write_transaction
+    from core.features.memory.infrastructure.write_coordinator import write_transaction
 
     store = MemoryEvolutionStore(str(tmp_path / "memory.db"))
     await store.initialize()

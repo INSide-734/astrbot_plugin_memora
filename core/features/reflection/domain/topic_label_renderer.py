@@ -31,7 +31,7 @@ class RenderedLabels:
     reason_codes: tuple[str, ...] = ()
 
 
-def _estimate_token_count(text: str) -> int:
+def estimate_token_count(text: str) -> int:
     """使用固定字符比例估计渲染块 token 数。"""
 
     if not text:
@@ -158,7 +158,7 @@ def render_topic_labels(
         )
 
     lines = ["**历史话题候选**（可选参考，不是当前窗口事实来源）：", ""]
-    current_tokens = _estimate_token_count("\n".join(lines))
+    current_tokens = estimate_token_count("\n".join(lines))
     final_labels: list[str] = []
     truncated_count = 0
     total_chars = 0
@@ -169,7 +169,7 @@ def render_topic_labels(
             or total_chars + len(item) > max_chars
             or (
                 max_total_tokens > 0
-                and current_tokens + _estimate_token_count(item) > max_total_tokens
+                and current_tokens + estimate_token_count(item) > max_total_tokens
             )
         ):
             truncated_count += 1
@@ -178,7 +178,7 @@ def render_topic_labels(
         lines.append(item)
         final_labels.append(label)
         total_chars += len(item)
-        current_tokens += _estimate_token_count(item)
+        current_tokens += estimate_token_count(item)
 
     if not final_labels:
         return RenderedLabels(
@@ -193,7 +193,7 @@ def render_topic_labels(
         valid_count=len(final_labels),
         rejected_count=rejected_count,
         truncated_count=truncated_count,
-        estimated_tokens=_estimate_token_count(rendered_block),
+        estimated_tokens=estimate_token_count(rendered_block),
         reason_codes=tuple(reason_codes),
     )
 
@@ -214,6 +214,7 @@ def validate_label_config(max_total_tokens: int | None) -> int:
 
 __all__ = [
     "RenderedLabels",
+    "estimate_token_count",
     "normalize_topic_key",
     "normalize_topic_label",
     "render_topic_labels",

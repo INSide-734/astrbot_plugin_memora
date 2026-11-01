@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from .topic_splitter import MemorySegment, TopicSegmentationRouter
+from .window_budget import WindowBudgetResult, apply_window_budget
 
 TOPIC_SEGMENTATION_OBSERVABILITY_FIELDS = (
     "topic_segmentation_strategy",
@@ -36,18 +37,24 @@ class TopicSegmentationPipeline:
         messages: list[Any],
         *,
         is_group_chat: bool,
-    ) -> list[dict[str, Any]]:
-        """返回存储构建器可消费的候选；C/D 与关闭状态保持原始批次语义。"""
+    ) -> WindowBudgetResult:
+        """返回经窗口预算约束的候选与计数；C/D 与关闭状态保持原始批次语义。
+
+        B 与 Hybrid 回退 B 的片段也按来源消息区间和话题判断是否属于同一事件。
+        独立来源或话题仍保持分开。
+        """
 
         if not self._enabled or self._router.strategy_key in {"c", "d"}:
-            return _raw_memory_candidates(structured_data)
+            return apply_window_budget(_raw_memory_candidates(structured_data))
 
         segments = await self._router.segment(
             structured_data,
             messages,
             is_group_chat,
         )
-        return [_segment_to_candidate(segment) for segment in segments]
+        return apply_window_budget(
+            [_segment_to_candidate(segment) for segment in segments]
+        )
 
 
 def _raw_memory_candidates(structured_data: dict[str, Any]) -> list[dict[str, Any]]:

@@ -716,7 +716,7 @@ async def test_repair_reopens_only_eligible_source_missing_operations(
             """,
             (step, retry_count, op_id),
         )
-    await db.commit()
+        await db.commit()
 
     try:
         assert await journal.repair_incomplete() == 1

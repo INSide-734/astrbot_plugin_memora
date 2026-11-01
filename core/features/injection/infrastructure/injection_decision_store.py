@@ -425,7 +425,7 @@ class InjectionDecisionStore(BaseStore):
                 raise
             return self.connection.total_changes - before
 
-        from ...memory.application.write_coordinator import write_transaction
+        from ...memory.infrastructure.write_coordinator import write_transaction
 
         return await write_transaction(operation)
 
@@ -777,7 +777,7 @@ class InjectionDecisionStore(BaseStore):
                 deleted_trace_snapshots,
             )
 
-        from ...memory.application.write_coordinator import write_transaction
+        from ...memory.infrastructure.write_coordinator import write_transaction
 
         return await write_transaction(operation)
 

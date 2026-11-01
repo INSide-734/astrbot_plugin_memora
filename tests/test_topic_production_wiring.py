@@ -8,6 +8,9 @@ import pytest
 
 from core.features.recall.processors.memory_grounding import GroundingResult
 from core.features.recall.processors.memory_processor import MemoryProcessor
+from core.features.recall.processors.topic_segmentation_pipeline import (
+    TopicSegmentationPipeline,
+)
 from core.shared.contracts.conversation import Message
 
 
@@ -85,6 +88,48 @@ async def test_hybrid_fallback_runs_in_memory_processor() -> None:
         assert metadata["topic_segmentation_fallback_reason"] == "a_single_mixed_facts"
         assert metadata["topic_segmentation_input_count"] == 1
         assert metadata["topic_segmentation_output_count"] == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("strategy", ["b", "a_b_hybrid"])
+async def test_b_merges_same_event_segments(strategy: str) -> None:
+    """B 与 Hybrid 回退 B 应合并同一事件的原因、进展和结论。"""
+
+    embed_fn = AsyncMock(
+        return_value=[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    )
+    pipeline = TopicSegmentationPipeline(
+        {
+            "topic_segmentation.enabled": True,
+            "topic_segmentation.strategy": strategy,
+            "topic_segmentation.hybrid_fallback_fact_threshold": 3,
+            "topic_segmentation.strategy_b.similarity_threshold": 0.95,
+            "topic_segmentation.strategy_b.max_clusters": 5,
+        },
+        embed_fn=embed_fn,
+    )
+    refs = [{"message_index": index, "start": 0, "end": 10} for index in range(3)]
+    facts = [
+        "天气导致活动需要改期",
+        "组织者把活动改到周五",
+        "参与者最终确认周五参加",
+    ]
+    result = await pipeline.prepare_candidates(
+        {
+            "summary": "活动改期并确认",
+            "key_facts": facts,
+            "fact_source_refs": [[ref] for ref in refs],
+            "source_refs": refs,
+            "topics": ["活动安排"],
+        },
+        [],
+        is_group_chat=False,
+    )
+
+    assert embed_fn.await_count == 1
+    assert len(result.candidates) == 1
+    assert result.candidates[0]["key_facts"] == facts
+    assert result.counts.merged_count == 2
 
 
 @pytest.mark.asyncio

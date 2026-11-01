@@ -534,7 +534,7 @@ class MetricsApiMixin:
     @staticmethod
     def _build_write_coordinator_summary() -> dict[str, Any]:
         try:
-            from ....features.memory.application.write_coordinator import (
+            from ....features.memory.infrastructure.write_coordinator import (
                 get_write_metrics_snapshot,
             )
 

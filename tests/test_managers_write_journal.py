@@ -342,6 +342,7 @@ class TestWriteOpRepairMixinBasics:
             await db.execute(
                 "INSERT INTO documents (id, doc_id, text, metadata) VALUES (42, 'doc-42', '仍然存活', '{}')"
             )
+            await db.commit()
             op_id = await journal.start_op("delete", {"memory_id": 42}, memory_id=42)
 
             await db.execute(
@@ -384,6 +385,7 @@ class TestWriteOpRepairMixinBasics:
             await db.execute(
                 "INSERT INTO documents (id, doc_id, text, metadata) VALUES (42, 'doc-42', '仍然存活', '{}')"
             )
+            await db.commit()
             op_id = await journal.start_op("delete", {"memory_id": 42}, memory_id=42)
 
             await db.execute(

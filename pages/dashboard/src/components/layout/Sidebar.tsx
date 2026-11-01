@@ -97,7 +97,7 @@ export function Sidebar({
         title={collapsed ? item.label : undefined}
         onClick={() => onNavigate(item.id)}
         className={cn(
-          "flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
+          "flex h-11 w-full items-center gap-3 rounded-lg px-2.5 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring",
           collapsed && "justify-center px-0",
           selectionStateVariants({
             kind: "navigation",
@@ -107,7 +107,7 @@ export function Sidebar({
             "text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
         )}
       >
-        <span className="flex size-4 shrink-0 items-center justify-center [&_svg]:size-4">
+        <span className="flex size-[13px] shrink-0 items-center justify-center [&_svg]:size-[13px]">
           <ItemIcon />
         </span>
         {!collapsed ? <span className="min-w-0 truncate">{item.label}</span> : null}
@@ -136,7 +136,7 @@ export function Sidebar({
           mobileOpen !== undefined && !mobileOpen ? "max-md:-translate-x-full" : "max-md:translate-x-0",
         )}
       >
-        <div className={cn("flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-4", collapsed && "justify-center px-2")}>
+        <div className={cn("flex h-14 shrink-0 items-center gap-2.5 border-b border-sidebar-border px-3", collapsed && "justify-center px-2")}>
           <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-sidebar-primary text-sidebar-primary-foreground">
             <MemoraLogo size={18} />
           </div>
@@ -158,7 +158,7 @@ export function Sidebar({
           </Button>
         </div>
 
-        <nav aria-label={t("sidebar.navigationLabel")} className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2 py-3">
+        <nav aria-label={t("sidebar.navigationLabel")} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3 py-3">
           {groups.map((group) => {
             const open = openGroups[group.id];
             return (
@@ -169,10 +169,10 @@ export function Sidebar({
                     aria-expanded={open}
                     aria-controls={`nav-group-${group.id}`}
                     onClick={() => setOpenGroups((value) => ({ ...value, [group.id]: !value[group.id] }))}
-                    className="flex h-7 w-full items-center justify-between rounded-md px-2 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                    className="flex h-10 w-full items-center justify-between rounded-lg px-2.5 text-xs font-medium text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                   >
                     <span>{group.label}</span>
-                    <ChevronDown className={cn("size-3.5 transition-transform", !open && "-rotate-90")} />
+                    <ChevronDown className={cn("size-3 transition-transform", !open && "-rotate-90")} />
                   </button>
                 ) : null}
                 <div id={`nav-group-${group.id}`} className="space-y-1" hidden={!collapsed && !open}>
@@ -183,9 +183,9 @@ export function Sidebar({
           })}
         </nav>
 
-        <div className="shrink-0 space-y-1 border-t border-sidebar-border p-2">
+        <div className="shrink-0 space-y-1 border-t border-sidebar-border px-3 py-3">
           {sseConnected !== undefined ? (
-            <div className={cn("flex min-h-8 items-center gap-2 rounded-lg px-2 text-xs text-muted-foreground", collapsed && "justify-center px-0")}>
+            <div className={cn("flex min-h-10 items-center gap-2 rounded-lg px-2.5 text-sm text-muted-foreground", collapsed && "justify-center px-0")}>
               <span className={cn("size-2 shrink-0 rounded-full", sseConnected ? "bg-emerald-500" : "bg-muted-foreground")} />
               {!collapsed ? <span className="truncate">{sseConnected ? t("status.realtime") : t("status.offline")}</span> : null}
               {unreadCount !== undefined && unreadCount > 0 ? (
@@ -193,7 +193,7 @@ export function Sidebar({
                   type="button"
                   aria-label={t("status.markSeen")}
                   onClick={onMarkSeen}
-                  className={cn("ml-auto rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground", collapsed && "absolute ml-5 -mt-5")}
+                  className={cn("ml-auto rounded-md bg-primary px-1.5 py-0.5 text-xs font-semibold text-primary-foreground", collapsed && "absolute ml-5 -mt-5")}
                 >
                   {unreadCount > 99 ? "99+" : unreadCount}
                 </button>
@@ -201,7 +201,7 @@ export function Sidebar({
             </div>
           ) : null}
           {!collapsed && lastEvent && sseConnected ? (
-            <p className="truncate px-2 pb-1 text-[10px] text-muted-foreground">
+            <p className="truncate px-2 pb-1 text-xs text-muted-foreground">
               {lastEvent.event}: {String(lastEvent.data?.content ?? lastEvent.data?.doc_id ?? "").slice(0, 30)}
             </p>
           ) : null}
@@ -210,17 +210,17 @@ export function Sidebar({
             aria-label={t("header.theme")}
             title={collapsed ? t("header.theme") : undefined}
             onClick={onToggleTheme}
-            className={cn("flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground", collapsed && "justify-center px-0")}
+            className={cn("flex h-10 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground", collapsed && "justify-center px-0")}
           >
             <span
               data-slot="theme-icon"
-              className="relative size-4 shrink-0"
+              className="relative size-[13px] shrink-0"
               aria-hidden="true"
             >
               <Sun
                 data-theme-icon="sun"
                 className={cn(
-                  "absolute inset-0 size-4 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+                  "absolute inset-0 size-[13px] transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
                   theme === "dark"
                     ? "rotate-0 scale-100 opacity-100"
                     : "-rotate-90 scale-75 opacity-0",
@@ -229,7 +229,7 @@ export function Sidebar({
               <Moon
                 data-theme-icon="moon"
                 className={cn(
-                  "absolute inset-0 size-4 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
+                  "absolute inset-0 size-[13px] transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none",
                   theme === "light"
                     ? "rotate-0 scale-100 opacity-100"
                     : "rotate-90 scale-75 opacity-0",
@@ -243,9 +243,9 @@ export function Sidebar({
             aria-label={t("header.lang")}
             title={collapsed ? t("header.lang") : undefined}
             onClick={onCycleLanguage}
-            className={cn("flex h-9 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground", collapsed && "justify-center px-0")}
+            className={cn("flex h-10 w-full items-center gap-3 rounded-lg px-2.5 text-sm text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground", collapsed && "justify-center px-0")}
           >
-            <Languages className="size-4" />
+            <Languages className="size-[13px]" />
             {!collapsed ? <><span className="flex-1 text-left">{t("header.lang")}</span><span className="font-mono text-xs">{langLabel}</span></> : null}
           </button>
         </div>
